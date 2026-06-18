@@ -23,8 +23,10 @@ library. If something seems to need a library, ask the user first.
 
 Top-of-`<script>` config, then logically grouped sections:
 
-- **CONFIG** — `SUPABASE_URL`, `SUPABASE_KEY`, `BUCKET`, `APP_VERSION`,
-  `CATEGORIES`, `PALETTE`, image/encode constants.
+- **CONFIG** — `SUPABASE_URL`, `SUPABASE_KEY`, `BUCKET`, `APP_VERSION`, the
+  category→subcategory `TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
+  `CONTEXTS`, image/encode constants. (Note: the old flat `CATEGORIES` / `PALETTE`
+  constants are being replaced — see "Data model" and "Design model" below.)
 - **SESSION** — `store` is a safe wrapper that probes `localStorage` once and
   falls back to an in-memory Map if storage is blocked (e.g. `data:` URLs).
   Always go through `store` / `saveSession` / `loadSession`, never raw
@@ -48,20 +50,110 @@ Top-of-`<script>` config, then logically grouped sections:
 
 ## Data model
 
-- `items`: id, user_id, name, category, brand, colors (text[]), price (numeric),
-  purchase_date, purchase_place, notes, image_path, archived (bool), created_at.
-- `wears`: id, user_id, item_id, worn_on, occasion, created_at. One row per wear.
-- `user_id` defaults to `auth.uid()` server-side, so the client never sends it.
-- Photos: private `wardrobe` bucket, path `<user_id>/<uuid>.webp`. RLS keys off
-  the first path segment matching `auth.uid()`.
+The schema was **redesigned and migrated 2026-06-17/18** (476 items imported from
+Airtable). The canonical definition is **`schema.sql`** in the repo root — read it
+first. Five tables, all RLS-scoped to `auth.uid()` (client never sends `user_id`):
+
+- `items`: id, user_id, name, **category**, **subcategory**, brand, **retailer**,
+  **color_family** (single, not an array), price, purchase_date, **date_is_guess**,
+  **acquisition** (New|Secondhand|Gift), **size**, **fabric** (text[]),
+  **season** (text[]), **min_occasion**/**max_occasion** (smallint 1–7),
+  **status** (Available|Storage|Archive — replaces the old `archived` bool),
+  tags (text[]), url, order_no, receipt_url, official_name, notes, image_path,
+  created_at.
+- `wears`: id, user_id, item_id, **outfit_id** (nullable), worn_on (date — any
+  past date allowed, so historical back-fill is normal), **context** (text),
+  created_at. One row per item per day worn.
+- `outfits`: id, user_id, name, context, notes, image_path, created_at.
+  Join table `outfit_items(outfit_id, item_id, user_id)`.
+- `capsules`: id, user_id, name, kind (capsule|packing|travel), start_date,
+  end_date, notes, created_at. Join table `capsule_items(capsule_id, item_id,
+  user_id)`. Named sets you build (e.g. "Spain trip"); travel = a capsule.
+- Photos: private `wardrobe` bucket, path `<user_id>/<uuid>.<ext>` (webp/jpg/png).
+  RLS keys off the first path segment matching `auth.uid()`. Display = signed URLs.
+
+**Breaking change vs. the old app:** `archived`→`status`, `colors[]`→`color_family`,
+wears `occasion`→`context`, plus many new columns. `index.html` has NOT yet been
+updated for this schema (see "Build roadmap"), so the deployed app is currently
+**out of sync with the live DB** until Phase 3a lands.
+
+## Design model (occasion, contexts, capsules)
+
+Worked out with the user; encode these as CONFIG constants in `index.html`.
+
+**Formality ladder (1–7)** — a `min_occasion`/`max_occasion` *range* on each item:
+1 At-home · 2 Relaxed · 3 Casual · 4 Smart casual · 5 Professional · 6 Cocktail · 7 Formal.
+(Imported Airtable values were on an old 1–6 scale and were shifted +1; only ~34
+active items have ranges set — the user fills the rest in over time.)
+
+**Contexts** — a named occasion stamped on each *wear/outfit* (not on items). Each
+context has a default formality range and may carry a hard rule. An item is
+eligible for a context when their formality ranges overlap. The 13 contexts:
+Lounge/garden (1) · WFH (1–2) · Errands (2–3) · Friends/rehearsal (3) ·
+Campus (4–5, 2×/wk) · Conference/job talk (5) · Date night (3–6) · Symphony (4–6) ·
+Church service (4–6) · Shower/holiday party (6) · Funeral (6, *rule: darker tones*) ·
+Wedding guest (6–7) · Gala/chorus concert (7, *rule: chorus concert = all black*).
+**Gym** = its own category (off-ladder). **Travel** = a capsule (not a formality).
+
+**Outfits vs capsules:** capsule/packing = a named set of items with an
+"active-capsule" lens (filter the closet to just those items to build the day's
+outfit). Outfit = items worn together; adding an outfit to a capsule pulls its
+items in. Logging an outfit creates a wear row per item.
+
+**Taxonomy** (category → subcategories) — see `migration/import.py` `TAXONOMY`:
+- Tops: Tee shirts, Graphic tees, Long-sleeve tees, Sleeveless, Blouses, Sweaters, Cardigans, Sweatshirts
+- Bottoms: Jeans, Pants, Shorts, Skirts, Leggings/Joggers, Tights
+- Dresses: Casual dresses, Work dresses, Cocktail dresses
+- Outerwear: Blazers, Jackets, Coats
+- Shoes: Boots, Sandals, Flats, Heels, Sneakers
+- Workout: Workout tops, Active shorts, Sports bras
+
+**Color families** (single per item): Green, Teal, Blue, Purple, Maroon, Pink,
+Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
+
+## Migration (done — one-time)
+
+`migration/` holds the throwaway importer (NOT shipped, libraries/installs OK there):
+- `schema.sql` (repo root) — run in the Supabase SQL editor first. Done ✓.
+- `migration/import.py` — stdlib + macOS `sips`; reads Airtable, maps fields,
+  re-hosts photos to Storage, bulk-inserts. `python3 import.py` = dry run,
+  `--live` = real. Already run live ✓ (476 items, 0 photo failures).
+- `migration/.env` (gitignored) holds the Supabase **service-role key** + Airtable
+  token — local use only, never commit. `.env.example` is the committed template.
+- Airtable base "CLOTHING BASE CURRENT" (`appK4hX9DJYTGFGYb`) is the source of truth.
+- **Review later:** `migration/review.json` lists ~46 items whose dress-length
+  subcategory ("Short"/"Long") was dropped + 1 category-less item — retag in-app.
+
+## Build roadmap / current status
+
+- **Phase 1 — schema** ✓ run in Supabase.
+- **Phase 2 — import** ✓ 476 items + photos live; ARCHIVE-prefix names cleaned.
+- **Phase 3 — rewrite `index.html` for the new schema** (NOT STARTED). Build in
+  verifiable slices, keeping the app fully working each step:
+  - 3a Core: new fields + subcategory picker (dependent on category), `status`
+    (Available/Storage/Archive) filter replacing the archived toggle, single
+    `color_family`, the occasion range + `CONTEXTS`, **item editing**, **photo
+    replace**, **back-dated/historical wear logging** (date picker allows past).
+  - 3b Capsules + the active-capsule "lens" filter.
+  - 3c Outfits + log-an-outfit-as-a-wear.
+  - 3d Calendar.
+  - 3e Stats — rebuild around the user's Airtable CPW / score / alert formulas
+    (still TODO: read those formulas from the Airtable "Clothing" table fields like
+    Goal CPW, Total Score, Action Needed and reproduce the logic).
+- **Backlog of agreed ideas** (not yet scheduled): one-tap re-wear, closet
+  utilization % (worn this month), declutter assistant (never-worn + high CPW +
+  old), laundry/available-now status, wishlist (pre-purchase, projected CPW),
+  export/backup JSON, color/category gap analysis. "What I wear by context"
+  analysis falls out once wears carry contexts.
 
 ## Conventions
 
 - **`APP_VERSION`** (date string) is shown in the UI — bump it to the current
   date on each meaningful change. Currently `2026-06-17`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
-- Fixed product choices (categories, color palette, cost-per-wear headline) are
-  `CATEGORIES` / `PALETTE` constants — change them there.
+- Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
+  as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
+  `CONTEXTS`) — change them there. Keep them in sync with `migration/import.py`.
 
 ## Known gotchas / lessons
 

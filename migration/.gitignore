@@ -1,0 +1,5 @@
+.env
+.env.*
+!.env.example
+review.json
+photos_tmp/
