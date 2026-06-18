@@ -1,4 +1,4 @@
-# ROADMAP — Wardrobe App
+# ROADMAP — Wardrobe App (v2)
 
 Forward-looking feature plan. Read alongside `CLAUDE.md` (architecture + hard
 constraints) and `schema.sql` (data model). The "what's already built" history
@@ -7,89 +7,136 @@ lives in `CLAUDE.md`; this file is the plan for what's next.
 ## North star & guardrails (decided 2026-06-18)
 
 - **Personal, single-user tool.** Optimize for one closet (the owner's). No
-  multi-user accounts, no social/sharing layer, no monetization. Don't add
-  features that only make sense for a multi-user product.
+  multi-user accounts, no social/sharing, no monetization.
 - **Heuristics only — no "true AI", ever (current decision).** Stay strictly
-  static: the client ships only the Supabase **anon** key. A secret model key
-  (Claude, vision, etc.) must never reach client code, so we are **not** adding a
-  server proxy / Supabase Edge Function. "Smart" behavior comes from analytics +
-  rules over our own data, plus **keyless** external data (e.g. open-meteo for
-  weather). This rules out: stylist chat, photo auto-tagging / background removal,
-  embedding / semantic search. (Revisit only if the no-backend stance changes.)
-- **Thumbnail outfits, no collage canvas.** Outfits stay clean photo-thumbnail
-  sets; we are not building a free-form drag/resize/layer canvas.
+  static: client ships only the Supabase **anon** key; **no server proxy / Edge
+  Function**. Rules out stylist chat, photo auto-tagging / background removal,
+  embedding / semantic search. "Smart" = analytics + rules over our own data +
+  **keyless** external data (open-meteo weather).
+- **Thumbnail outfits, no collage canvas.**
+- **Data philosophy — derive-first, capture-light.** Compute everything we can
+  from data already logged (wears, outfits, prices, dates, occasion ranges) — it
+  is free and never goes stale. Add a new *captured* field only when (a) it can't
+  be derived and (b) a feature we're building now consumes it. Capture subjective
+  data **at the moment of use** (a one-tap rating when logging a wear), not as a
+  per-item chore. Prefer batch entry (multi-select) for any field applied across
+  many items.
 - All existing **hard constraints from `CLAUDE.md` still hold**: one `index.html`,
   plain `fetch`, no libraries/CDN, mobile-first, Supabase REST + Storage only.
 
-## The 7 subsystems (framing) — where we stand
+Two design rules that fall out of "derive-first":
+- **Pairings / "matches with" / orphans are derived from outfit co-occurrence**
+  (what you actually wear together) — *not* a hand-maintained relationship graph.
+- **Item "confidence/trust" is derived from wear ratings**, not a typed field.
 
-1. **Closet database** — *strong*; rich schema live. Gaps: hierarchy nav,
-   multi-select, laundry state. → Phase A.
-2. **Image processing** — *intentionally minimal* (manual photo + WebP compress).
-   Auto bg-removal / auto-tagging are AI → **out of scope** by the decision above.
-3. **Outfit builder** — *basic* thumbnail sets (kept as-is; no canvas).
-4. **Recommendation engine** — *none yet*; will be **heuristic** only → Phase D.
-5. **Usage tracking** — *strong* (wears, CPW, history). Stats rebuild → Phase C.
-6. **Planning** — *partial*; capsules done, calendar + wishlist → Phase B.
-7. **Social** — *out of scope* (single-user).
+## The 7 subsystems — where we stand
+1. **Closet database** — *strong*; rich schema. Gaps: hierarchy nav ✓(A1), multi-
+   select, laundry/care, a few optional fields. → Phase A.
+2. **Image processing** — *intentionally minimal*; auto bg-removal/tagging is AI →
+   **out of scope**.
+3. **Outfit builder** — *basic* thumbnail sets (kept; no canvas).
+4. **Recommendation engine** — *none yet*; **heuristic** only → Phase D.
+5. **Usage tracking** — *strong*; ratings + the Insights rebuild → A4 + Phase C.
+6. **Planning** — *partial*; capsules done, calendar/wishlist/events → Phase B.
+7. **Social** — *out of scope*.
 
 ## Done so far (see `CLAUDE.md` for detail)
-
-Phase 3a core ✓ · 3b capsules + closet lens ✓ · 3c outfits ✓. App deployed.
+3a core ✓ · 3b capsules + closet lens ✓ · 3c outfits ✓ · A1 hierarchical closet +
+density ✓ (v4) · **Phase A slices 2–4 ✓ (v5): nav→6 tabs (Add-in-Closet, merged
+Log tab, new Fill tab), the random-item Fill page, and sortable grids**.
 
 ## Plan
 
-Legend: ✅ easy · ⚙️ moderate · 🧗 heavy. Legacy phase tags (3d/3e/3f) noted where
-they map. Build in verifiable slices; keep the app working each step.
+Legend: ✅ easy · ⚙️ moderate · 🧗 heavy. New columns are added *with* the feature
+that uses them (not up front); all new captured fields are **optional**.
 
-### Phase A — Closet usability *(in progress — started 2026-06-18)*
-The closet doesn't scale to 476 items as a flat grid. Borrow Stylebook's
-drill-down.
-- **A1 ⚙️ Two-level drill-down**: Closet → category (count + thumbnail) →
-  subcategory (count + thumbnail) → photo grid. Top-level search stays flat
-  across everything. The capsule **lens** keeps its current behavior (flat
-  filtered grid). Status (Available/Storage/Archive) stays a switcher at the
-  closet root. Plus a **2/4-column density toggle** on the photo grid.
-- **A2 ⚙️ Multi-select + batch actions**: a Select mode in the grid → act on many
-  items at once: move status, **add to a capsule**, edit tags, delete.
-- **A3 ✅ Laundry / availability state**: clean · in-laundry · at-cleaners ·
-  lent-out — surfaced so a wear-log / outfit can flag what's actually wearable
-  now. (New column on `items`; default clean.)
+### Phase A — Closet usability, navigation & light data model
+Build order (each slice shippable on its own):
+1. **Hierarchical closet + density** ✅ done — category→subcategory drill-down +
+   2/4-col density toggle (shipped v4).
+2. **Nav restructure** ✅ done (v5) — **Add** moved into the Closet (＋ in the top
+   header bar, shown on the Closet tab); **Wear + Outfits merged into one `Log`
+   tab** with a segmented *Single item | Outfit* toggle; new **`Fill`** tab. Bottom
+   nav is now 6: `Closet · Log · Capsules · Fill · Stats · Settings`. (Pulled the
+   Phase-E nav target forward; the Home dashboard itself stays in E.)
+3. **Fill page** ✅ done (v5) — a "fun" data-completion screen: one **random item**
+   (favors items with a photo), surfaces its **highest-priority empty field**, fast
+   input (chips/segmented for set fields, box for free text), **Save → next** +
+   **Skip** + **Edit full item** + a progress count. Targets the capture-light
+   fields: **occasion range, color, subcategory, season, fabric, price, acquisition,
+   size** (care/storage/fit will join once those columns exist).
+4. **Sorting** ✅ done (v5) — photo grids sortable by recently-added · name A–Z ·
+   **color** (palette order) · category · brand · price ↑↓ · times-worn ·
+   cost-per-wear · recently-worn · longest-unworn. **Default sort set in Settings**
+   (persisted); a per-grid control overrides for the session.
+5. **Multi-select + batch actions** ⚙️ — Select mode → move status, **add to a
+   capsule**, edit tags, delete many; also batch-entry for the optional fields.
+6. **Laundry/availability + care** ⚙️ — clean · in-laundry · at-cleaners ·
+   lent-out, plus care method + **needs-repair / needs-tailoring** flags
+   (→ smart collections later). New optional `items` columns.
+7. **One-tap wear/outfit ratings (START COLLECTING EARLY)** ⚙️ — loved-it / fine /
+   didn't-work + optional "got compliments" + a short felt-note, on the `Log`
+   flows. New `wears` columns (+ `outfits`: rating + tags). Unlocks most-trusted /
+   best-outfits / journal in Phase C.
+8. **Optional extra item fields** ✅ — storage location; fit/length/rise;
+   acquisition detail (source, original vs paid price, discount %). Optional;
+   entered via the Fill page or batch multi-select. Add when convenient.
 
-### Phase B — Planning & history
-- **B1 ⚙️ Calendar (legacy 3d)**: month grid; tap a day to see/log worn items
-  *and* outfits; multiple looks per day; log a single item without an outfit;
-  plan future dates. Mostly a view over existing `wears`.
-- **B2 ⚙️ Capsule polish**: packing checklist (tick as packed), **add an outfit
-  to a capsule** (auto-pulls its items), destination image (+`image_path` on
-  `capsules`), reorder capsules.
-- **B3 ⚙️ Wishlist + "shop your closet"**: track candidate purchases with
-  projected cost-per-wear and "how many outfits would this fit" before buying.
+### Phase B — Planning
+- **B1 ⚙️ Calendar (legacy 3d)** — month grid; see/log worn items & outfits per
+  day; multiple looks/day; plan future dates; **events** (date + dress code +
+  planned/backup outfit). Heat-map shading by usage.
+- **B2 ⚙️ Capsule goals + trip enrich** — capsules track coverage % + wear count +
+  goal; trips add weather (open-meteo) + laundry-access + activities; packing
+  checklist; add-outfit-to-capsule pulls its items; destination image; reorder.
+- **B3 ⚙️ Wishlist + decision support** — wishlist items with **purchase
+  justification** (fits N outfits, M duplicates, projected CPW), **waiting period**
+  (added → 30 days → still want?), and **one-in-one-out** (new buy → removal
+  candidates). Keep/sell/donate pipeline via item status states.
+- **B4 ✅ Rotation mode** — filter to show neglected / hide recently-worn (no AI,
+  just filtering).
 
-### Phase C — Stats + wardrobe intelligence (legacy 3e; pure analytics)
-- **C1 ⚙️ Stats rebuild**: most/least/never worn, closet value, brand spend,
-  category/color/season breakdowns, avg items/look, recently added — plus the
-  owner's Airtable **Goal CPW / Total Score / Action Needed** formulas
-  (still TODO: read those formula fields from Airtable and reproduce the logic).
-- **C2 ⚙️ Wardrobe-intelligence cards**: "you own N sweaters, M black, K unworn
-  >1yr", duplicate detection, gap analysis, closet utilization %, and a declutter
-  assistant with a keep/sell/donate/archive state on items.
+### Phase C — Closet Health / Insights *(the centerpiece)*
+All **derived** unless noted. One rich dashboard + drill-ins.
+- **C1 ⚙️ Usage analytics** — wear velocity, recency states (active/cooling/
+  dormant/unworn), repeat cadence, seasonality %, CPW trends + projected CPW,
+  utilization %.
+- **C2 ⚙️ Distributions** — category / color / **formality (occasion ladder)** /
+  season breakdowns; closet count + value (replacement vs original).
+- **C3 ⚙️ Coverage & gaps** — context × eligible-pieces matrix (we already compute
+  context eligibility), seasonal gaps, outfit-potential combination counts.
+- **C4 ⚙️ Orphans & declutter** — items in 0 outfits / worn once / pair with
+  nothing (from co-occurrence); declutter pipeline (keep/sell/donate); needs-repair
+  queue.
+- **C5 ⚙️ Personal analytics** — most-trusted (top rated), best purchases (wears/$),
+  regret purchases (low wear/high cost) — depend on A4 ratings.
+- **C6 ✅ Smart collections & saved searches** — rule-based filters
+  ("professional + blue + unworn", "needs repair", "summer favorites").
+- **C7 ✅ Timeline & heat map** — purchases by year; calendar usage heat map.
+- The owner's Airtable **Goal CPW / Total Score / Action Needed** formulas (TODO:
+  read those formula fields from Airtable and reproduce the logic).
 
 ### Phase D — Heuristic styling (rules + keyless weather)
-- **D1 ⚙️ Rule-based outfit suggestions**: occasion-range overlap (already
-  computed) + season + color harmony + recently-worn avoidance.
-- **D2 ⚙️ Weather + calendar daily pick**: open-meteo (no key) + today's context.
-- **D3 ⚙️ Capsule / packing auto-generation**: optimal combos from the existing
-  wardrobe for a trip's dates + weather.
-- **D4 ⚙️ Outfit power tools (legacy 3f + extras)**: merge the ~1,543 import
-  duplicates into reusable sets, clone outfit, one-tap re-wear, Outfit Shuffle.
+D1 rule-based outfit suggestions (occasion overlap + season + color + recency) ·
+D2 weather + calendar daily pick (open-meteo) · D3 capsule/packing auto-generation
+· D4 outfit power tools (merge ~1,543 import dupes [legacy 3f], clone, one-tap
+re-wear, Outfit Shuffle).
 
-### Cross-cutting backlog (slot in opportunistically)
-Export/backup JSON · body measurements / sizes by type / brand size exceptions ·
-Home hub + slimmer bottom nav (revisit once the tab count grows past ~7).
+### Phase E — Home dashboard *(last)*
+The 6-tab nav lands earlier in Phase A; Phase E adds the **Home dashboard** as a
+landing surface. Likely tabs by then: `Home · Closet · Log · Calendar · Capsules ·
+Insights` (Stats→Insights; Fill + Settings reachable from Home/menu). Home =
+dashboard: today's weather, suggested capsule, recently worn, neglected pieces,
+laundry, upcoming events, quick log-wear, continue packing, closet-health score.
+Built last so it has real content to surface.
 
-## Explicitly NOT doing (by decision, not omission)
-AI auto-tagging / background removal · stylist chat · semantic / embedding search ·
-server proxy / Edge Functions · outfit collage canvas · social sharing ·
-multi-user / accounts / monetization · built-in shopping/retailer browser ·
-editorial content ("Style Expert").
+### Journal (threads through B/C, not its own phase)
+Outfit diary = wear notes + ratings + weather surfaced as a timeline; "style
+discoveries" = a searchable notes list. Falls out of A4 + B1 + C.
+
+## Explicitly NOT doing (by decision)
+AI auto-tagging / bg-removal · stylist chat · semantic/embedding search · server
+proxy / Edge Functions · outfit collage canvas · social sharing · multi-user /
+accounts / monetization · built-in shopping/retailer browser · editorial content ·
+hand-maintained item relationship graph (derive pairings instead) · per-item
+typed comfort/confidence (derive from ratings).

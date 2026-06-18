@@ -46,6 +46,12 @@
   }
   header.bar h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
   .ver { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .hadd { background: var(--ink); color: #fff; border: 0; width: 30px; height: 30px; border-radius: 50%;
+          font-size: 19px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+  .hadd[hidden] { display: none; }
+  .fillpic { width: 100%; max-width: 280px; aspect-ratio: 1/1; margin: 0 auto 14px; border-radius: var(--radius);
+             background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center;
+             color: var(--muted); font-size: 40px; }
 
   main.tabbody { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 24px); }
 
@@ -56,7 +62,7 @@
     padding-bottom: var(--safe-b);
     background: var(--surface);
     border-top: 1px solid var(--line);
-    display: grid; grid-template-columns: repeat(7, 1fr);
+    display: grid; grid-template-columns: repeat(6, 1fr);
     max-width: 640px; margin: 0 auto;
   }
   nav.tabbar button {
@@ -248,7 +254,10 @@
 <div id="app" hidden>
   <header class="bar">
     <h1 id="title">Closet</h1>
-    <span class="ver"><span class="appver"></span></span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button id="headerAdd" class="hadd" aria-label="Add item">＋</button>
+      <span class="ver"><span class="appver"></span></span>
+    </div>
   </header>
 
   <main class="tabbody">
@@ -375,9 +384,14 @@
       </form>
     </section>
 
-    <!-- LOG WEAR -->
-    <section class="screen" id="tab-wear">
-      <div class="stack">
+    <!-- LOG  (single-item wear + outfits, merged) -->
+    <section class="screen" id="tab-log">
+      <div class="seg wrap" id="logModeSeg" style="margin:2px 0 14px">
+        <button data-logmode="wear" class="on">Single item</button>
+        <button data-logmode="outfit">Outfit</button>
+      </div>
+
+      <div id="logWearPanel" class="stack">
         <div>
           <label class="fld">Find item</label>
           <input class="inp" id="w_search" placeholder="Search by name or brand">
@@ -400,11 +414,15 @@
         <h2 class="sec">Recent wears</h2>
         <div id="recentWears"></div>
       </div>
+
+      <div id="logOutfitPanel" hidden>
+        <div id="outfitsBody"></div>
+      </div>
     </section>
 
-    <!-- OUTFITS -->
-    <section class="screen" id="tab-outfits">
-      <div id="outfitsBody"></div>
+    <!-- FILL  (random item → one empty field) -->
+    <section class="screen" id="tab-fill">
+      <div id="fillBody"></div>
     </section>
 
     <!-- CAPSULES -->
@@ -425,6 +443,11 @@
           <div class="muted" id="set_email" style="font-size:13.5px"></div>
         </div>
         <div class="card stack">
+          <div style="font-weight:600">Default sort</div>
+          <div class="muted" style="font-size:13.5px">How closet grids are ordered. A grid's own sort control can override this for the session.</div>
+          <select class="inp" id="set_sort"></select>
+        </div>
+        <div class="card stack">
           <div style="font-weight:600">Sync</div>
           <div class="muted" style="font-size:13.5px">Pull the latest from Supabase.</div>
           <button class="btn ghost" id="refreshBtn">Refresh data</button>
@@ -440,10 +463,9 @@
 
   <nav class="tabbar" id="tabbar">
     <button data-tab="closet" class="on"><span class="ic">▦</span>Closet</button>
-    <button data-tab="add"><span class="ic">＋</span>Add</button>
-    <button data-tab="wear"><span class="ic">✓</span>Wear</button>
-    <button data-tab="outfits"><span class="ic">👗</span>Outfits</button>
+    <button data-tab="log"><span class="ic">✓</span>Log</button>
     <button data-tab="capsules"><span class="ic">🧳</span>Capsules</button>
+    <button data-tab="fill"><span class="ic">🎲</span>Fill</button>
     <button data-tab="stats"><span class="ic">📊</span>Stats</button>
     <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
   </nav>
@@ -467,7 +489,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v4";
+const APP_VERSION = "2026-06-18 v5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -885,6 +907,42 @@ let closetStatus = "Available";  // Available | Storage | Archive | All
 let drillCat = null;             // null = root (category list); else a category
 let drillSub = null;             // null = subcategory list; else a chosen leaf
 let closetCols = 2;              // photo-grid density: 2 | 4
+
+// Sort options for the photo grids. Default is set in Settings (persisted);
+// a per-grid control overrides it for the session.
+const SORT_KEY = "wardrobe.sort";
+const SORTS = [
+  ["added", "Recently added"], ["name", "Name A–Z"], ["color", "Color"],
+  ["category", "Category"], ["brand", "Brand"],
+  ["price_hi", "Price: high→low"], ["price_lo", "Price: low→high"],
+  ["worn", "Most worn"], ["cpw", "Best cost/wear"],
+  ["recent", "Recently worn"], ["stale", "Longest unworn"],
+];
+let closetSort = store.getItem("wardrobe.sort") || "added";
+
+function sortItems(list) {
+  const arr = list.slice();
+  const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
+  const colorIdx = (i) => { const k = COLOR_FAMILIES.findIndex(c => c[0] === i.color_family); return k < 0 ? 999 : k; };
+  const catIdx = (i) => { const k = CATEGORIES.indexOf(i.category); return k < 0 ? 999 : k; };
+  switch (closetSort) {
+    case "name": arr.sort(byName); break;
+    case "color": arr.sort((a, b) => colorIdx(a) - colorIdx(b) || byName(a, b)); break;
+    case "category": arr.sort((a, b) => catIdx(a) - catIdx(b) || (a.subcategory || "").localeCompare(b.subcategory || "") || byName(a, b)); break;
+    case "brand": arr.sort((a, b) => (a.brand || "~").localeCompare(b.brand || "~") || byName(a, b)); break;
+    case "price_hi": arr.sort((a, b) => (b.price ?? -1) - (a.price ?? -1)); break;
+    case "price_lo": arr.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity)); break;
+    case "worn": arr.sort((a, b) => wearCount(b.id) - wearCount(a.id) || byName(a, b)); break;
+    case "cpw": arr.sort((a, b) => (costPerWear(a) ?? Infinity) - (costPerWear(b) ?? Infinity)); break;
+    case "recent": arr.sort((a, b) => (lastWorn(b.id) || "").localeCompare(lastWorn(a.id) || "")); break;
+    case "stale": arr.sort((a, b) => (lastWorn(a.id) || "").localeCompare(lastWorn(b.id) || "")); break;
+    default: arr.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")); break;
+  }
+  return arr;
+}
+const sortSelect = () => `<select class="inp" id="sortSel" style="width:auto;padding:7px 10px;border-radius:999px;font-size:13px">
+    ${SORTS.map(([v, l]) => `<option value="${v}" ${closetSort === v ? "selected" : ""}>${esc(l)}</option>`).join("")}
+  </select>`;
 const SUB_ALL = " all";     // "All <category>" leaf
 const SUB_NONE = " none";   // items with no subcategory
 
@@ -976,9 +1034,9 @@ function renderCloset() {
       </div>
       <div class="filterbar">
         <input class="inp" id="closetSearch" placeholder="Search this capsule…" value="${esc(closetQuery)}">
-        <div class="frow" style="justify-content:flex-end">${densitySeg()}</div>
+        <div class="frow" style="justify-content:flex-end;gap:8px">${sortSelect()}${densitySeg()}</div>
       </div>` +
-      (list.length ? countLine(list.length) + gridHtml(list)
+      (list.length ? countLine(list.length) + gridHtml(sortItems(list))
                    : `<div class="empty">${closetQuery ? "No items match." : "This capsule is empty."}</div>`);
     wireClosetControls();
     hydratePhotos(body);
@@ -995,8 +1053,14 @@ function renderCloset() {
   // --- search overrides drill-down: flat results across the status scope ---
   if (q) {
     const list = scoped.filter(i => searchMatch(i, q));
-    body.innerHTML = rootHead + (list.length ? countLine(list.length) + gridHtml(list)
-                                             : `<div class="empty">No items match.</div>`);
+    if (list.length) {
+      const controls = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
+        <span class="muted" style="font-size:13px">${list.length} item${list.length === 1 ? "" : "s"}</span>
+        <div style="display:flex;gap:8px">${sortSelect()}${densitySeg()}</div></div>`;
+      body.innerHTML = rootHead + controls + gridHtml(sortItems(list));
+    } else {
+      body.innerHTML = rootHead + `<div class="empty">No items match.</div>`;
+    }
     wireClosetControls();
     hydratePhotos(body);
     return;
@@ -1048,9 +1112,9 @@ function renderCloset() {
     `<button class="backrow" data-back="${backTarget}">‹ ${esc(backTarget === "root" ? "Closet" : drillCat)}</button>
      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
        <span style="font-size:15px;font-weight:600">${esc(scopeLabel + leafLabel)} <span class="muted" style="font-weight:400">· ${list.length}</span></span>
-       ${densitySeg()}
+       <div style="display:flex;gap:8px">${sortSelect()}${densitySeg()}</div>
      </div>` +
-    (list.length ? gridHtml(list) : `<div class="empty">No items.</div>`);
+    (list.length ? gridHtml(sortItems(list)) : `<div class="empty">No items.</div>`);
   wireClosetControls();
   hydratePhotos(body);
 }
@@ -1060,6 +1124,8 @@ function renderCloset() {
 function wireClosetControls() {
   const search = $("#closetSearch");
   if (search) search.oninput = (e) => { closetQuery = e.target.value; debouncedCloset(); };
+  const sortSel = $("#sortSel");
+  if (sortSel) sortSel.onchange = (e) => { closetSort = e.target.value; renderCloset(); };
 }
 
 // Debounce closet re-render while typing so we don't re-render per keystroke,
@@ -2091,19 +2157,20 @@ function bars(map, isColor = false) {
 /* ===================================================================
    TAB SWITCHING + REFRESH
    =================================================================== */
-const TAB_TITLES = { closet: "Closet", add: "Add Item", wear: "Log Wear", outfits: "Outfits", capsules: "Capsules", stats: "Stats", settings: "Settings" };
+const TAB_TITLES = { closet: "Closet", add: "Add Item", log: "Log", fill: "Fill", capsules: "Capsules", stats: "Stats", settings: "Settings" };
 
 function switchTab(name) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   $("#title").textContent = name === "add" && editingId ? "Edit Item" : TAB_TITLES[name];
+  $("#headerAdd").hidden = name !== "closet";   // the ＋ lives on the Closet tab
   window.scrollTo(0, 0);
-  if (name === "wear") buildWearTab();
+  if (name === "log") buildLogTab();
+  if (name === "fill") renderFill();
   if (name === "stats") renderStats();
   if (name === "closet") renderCloset();
-  if (name === "outfits") ensureOutfits();
   if (name === "capsules") ensureCapsules();
-  // Tapping the Add tab fresh (not via Edit) should start a clean form.
+  // Tapping the Add screen fresh (not via Edit) should start a clean form.
   if (name === "add" && !editingId) resetItemForm();
 }
 
@@ -2111,9 +2178,168 @@ function switchTab(name) {
 function refreshViews() {
   renderCloset();
   if ($("#tab-stats").classList.contains("active")) renderStats();
-  if ($("#tab-wear").classList.contains("active")) renderRecentWears();
-  if (outfitsLoaded && $("#tab-outfits").classList.contains("active")) renderOutfits();
+  if ($("#tab-log").classList.contains("active")) {
+    if (logMode === "wear") renderRecentWears();
+    else if (outfitsLoaded) renderOutfits();
+  }
   if (capsulesLoaded && $("#tab-capsules").classList.contains("active")) renderCapsules();
+}
+
+/* ===================================================================
+   LOG TAB  (single-item wear + outfits, toggled)
+   =================================================================== */
+let logMode = "wear";   // "wear" | "outfit"
+function buildLogTab() { setLogMode(logMode); }
+function setLogMode(mode) {
+  logMode = mode;
+  $$("#logModeSeg button").forEach(b => b.classList.toggle("on", b.dataset.logmode === mode));
+  $("#logWearPanel").hidden = mode !== "wear";
+  $("#logOutfitPanel").hidden = mode !== "outfit";
+  if (mode === "wear") buildWearTab();
+  else ensureOutfits();
+}
+
+/* ===================================================================
+   FILL  (show a random item, ask about one empty field — quick capture)
+   =================================================================== */
+// Capture-light fields, in priority order (highest-value gaps first).
+const FILL_FIELDS = ["occasion", "color", "subcategory", "season", "fabric", "price", "acquisition", "size"];
+const FILL_PROMPT = {
+  occasion: "How dressy can it go? (1 At-home → 7 Formal)",
+  color: "What's its main color family?",
+  subcategory: "Which subcategory?",
+  season: "Which seasons do you wear it?",
+  fabric: "What's it made of?",
+  price: "What did it cost?",
+  acquisition: "How did you get it?",
+  size: "What size is it?",
+};
+let fillCurrentId = null;
+
+function fillFieldEmpty(i, f) {
+  switch (f) {
+    case "occasion": return i.min_occasion == null || i.max_occasion == null;
+    case "color": return !i.color_family;
+    case "subcategory": return !i.subcategory && (TAXONOMY[i.category] || []).length > 0;
+    case "season": return !(i.season && i.season.length);
+    case "fabric": return !(i.fabric && i.fabric.length);
+    case "price": return i.price == null;
+    case "acquisition": return !i.acquisition;
+    case "size": return !i.size;
+  }
+  return false;
+}
+const firstEmptyField = (i) => FILL_FIELDS.find(f => fillFieldEmpty(i, f)) || null;
+// active (non-Archive) items that still have at least one empty target field
+const fillPool = () => items.filter(i => itemStatus(i) !== "Archive" && firstEmptyField(i));
+
+function fillWidget(item, field) {
+  if (field === "occasion") {
+    const opts = `<option value="">—</option>` + OCCASION_LADDER.map((l, idx) => `<option value="${idx + 1}">${idx + 1} · ${l}</option>`).join("");
+    return `<div class="row2">
+      <div><label class="fld">From</label><select class="inp" id="fill_min">${opts}</select></div>
+      <div><label class="fld">To</label><select class="inp" id="fill_max">${opts}</select></div>
+    </div>`;
+  }
+  if (field === "color") return `<div class="chips" id="fill_color">${COLOR_FAMILIES.map(([n, h]) =>
+    `<button type="button" class="chip" data-color="${esc(n)}"><span class="sw" style="background:${h}"></span>${esc(n)}</button>`).join("")}</div>`;
+  if (field === "subcategory") return `<div class="chips" id="fill_sub">${(TAXONOMY[item.category] || []).map(s =>
+    `<button type="button" class="chip txt" data-subc="${esc(s)}">${esc(s)}</button>`).join("")}</div>`;
+  if (field === "season") return `<div class="chips" id="fill_season">${SEASONS.map(s =>
+    `<button type="button" class="chip txt" data-season="${s}">${s}</button>`).join("")}</div>`;
+  if (field === "acquisition") return `<div class="seg wrap" id="fill_acq">${ACQUISITIONS.map(a =>
+    `<button type="button" data-acq="${a}">${a}</button>`).join("")}</div>`;
+  if (field === "fabric") return `<input class="inp" id="fill_fabric" placeholder="e.g. Cotton, Wool">`;
+  if (field === "price") return `<input class="inp" id="fill_price" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">`;
+  if (field === "size") return `<input class="inp" id="fill_size" placeholder="e.g. M, 8, 30">`;
+  return "";
+}
+
+function renderFill() {
+  const body = $("#fillBody");
+  if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
+  const pool = fillPool();
+  if (pool.length === 0) {
+    body.innerHTML = `<div class="empty">🎉 Every active item has its key fields filled in.<br>Nothing to tidy right now.</div>`;
+    return;
+  }
+  // prefer items with a photo; don't immediately repeat the last one
+  let pick = pool.filter(i => i.image_path && i.id !== fillCurrentId);
+  if (!pick.length) pick = pool.filter(i => i.id !== fillCurrentId);
+  if (!pick.length) pick = pool;
+  const item = pick[Math.floor(Math.random() * pick.length)];
+  fillCurrentId = item.id;
+  const field = firstEmptyField(item);
+
+  body.innerHTML = `
+    <div class="muted center" style="font-size:13px;margin:2px 0 12px">${pool.length} item${pool.length === 1 ? "" : "s"} still need a field</div>
+    <div class="fillpic" ${item.image_path ? `data-photo="${esc(item.image_path)}"` : ""}>${item.image_path ? "" : "👕"}</div>
+    <h2 style="text-align:center;margin:0 2px 2px;font-size:19px">${esc(item.name)}</h2>
+    <div class="muted center" style="margin-bottom:14px">${esc([item.category, item.subcategory].filter(Boolean).join(" · ") || "—")}</div>
+    <div class="card stack">
+      <label class="fld" style="font-size:14px;color:var(--ink)">${esc(FILL_PROMPT[field])}</label>
+      ${fillWidget(item, field)}
+    </div>
+    <div class="stack" style="margin-top:16px">
+      <button class="btn" id="fillSave">Save &amp; next</button>
+      <button class="btn ghost" id="fillSkip">Skip</button>
+      <button class="btn ghost" id="fillEdit">Edit full item</button>
+    </div>`;
+
+  // toggle behaviors for the chip/seg widgets
+  const single = (wrapId, attr) => {
+    const w = $(wrapId); if (!w) return;
+    w.onclick = (e) => {
+      const b = e.target.closest(`[${attr}]`); if (!b) return;
+      $$(`${wrapId} .sel, ${wrapId} .on`).forEach(x => x.classList.remove("sel", "on"));
+      b.classList.add(attr === "data-acq" ? "on" : "sel");
+    };
+  };
+  single("#fill_color", "data-color");
+  single("#fill_sub", "data-subc");
+  single("#fill_acq", "data-acq");
+  const seasonW = $("#fill_season");
+  if (seasonW) seasonW.onclick = (e) => { const b = e.target.closest("[data-season]"); if (b) b.classList.toggle("sel"); };
+
+  $("#fillSave").onclick = () => fillSave(item.id, field);
+  $("#fillSkip").onclick = () => renderFill();
+  $("#fillEdit").onclick = () => startEdit(item.id);
+  hydratePhotos(body);
+}
+
+async function fillSave(itemId, field) {
+  const patch = {};
+  if (field === "occasion") {
+    const mn = $("#fill_min").value, mx = $("#fill_max").value;
+    if (!mn || !mx) { toast("Pick both ends"); return; }
+    if (Number(mx) < Number(mn)) { toast("'To' must be ≥ 'From'"); return; }
+    patch.min_occasion = Number(mn); patch.max_occasion = Number(mx);
+  } else if (field === "color") {
+    const s = $("#fill_color .sel"); if (!s) { toast("Pick a color"); return; } patch.color_family = s.dataset.color;
+  } else if (field === "subcategory") {
+    const s = $("#fill_sub .sel"); if (!s) { toast("Pick one"); return; } patch.subcategory = s.dataset.subc;
+  } else if (field === "season") {
+    const s = $$("#fill_season .sel").map(b => b.dataset.season); if (!s.length) { toast("Pick at least one"); return; } patch.season = s;
+  } else if (field === "acquisition") {
+    const s = $("#fill_acq button.on"); if (!s) { toast("Pick one"); return; } patch.acquisition = s.dataset.acq;
+  } else if (field === "fabric") {
+    const v = parseList($("#fill_fabric").value); if (!v.length) { toast("Type a fabric"); return; } patch.fabric = v;
+  } else if (field === "price") {
+    const v = $("#fill_price").value; if (v === "") { toast("Enter a price"); return; } patch.price = Number(v);
+  } else if (field === "size") {
+    const v = $("#fill_size").value.trim(); if (!v) { toast("Enter a size"); return; } patch.size = v;
+  }
+  const btn = $("#fillSave"); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    const [u] = await rest(`items?id=eq.${itemId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(patch),
+    });
+    const idx = items.findIndex(x => x.id === itemId); if (idx >= 0) items[idx] = u;
+    toast("Saved");
+    renderFill();
+    renderCloset();
+  } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Save & next"; }
 }
 
 /* ===================================================================
@@ -2193,6 +2419,15 @@ function wireEvents() {
     if (b) switchTab(b.dataset.tab);
   });
 
+  // header ＋ opens a fresh Add-item form (Add lives in the Closet now)
+  $("#headerAdd").addEventListener("click", () => { resetItemForm(); switchTab("add"); });
+
+  // Log tab: toggle between single-item wear and outfits
+  $("#logModeSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-logmode]");
+    if (b) setLogMode(b.dataset.logmode);
+  });
+
   // closet: status switch, density, folder drill-down, back, and open-item
   // (the search box is wired per-render in wireClosetControls)
   $("#closetBody").addEventListener("click", (e) => {
@@ -2235,6 +2470,15 @@ function wireEvents() {
   // log wear
   $("#wearBtn").addEventListener("click", submitWear);
   $("#w_search").addEventListener("input", (e) => populateWearItems(e.target.value));
+
+  // settings: default sort
+  $("#set_sort").innerHTML = SORTS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
+  $("#set_sort").value = closetSort;
+  $("#set_sort").addEventListener("change", (e) => {
+    closetSort = e.target.value;
+    store.setItem(SORT_KEY, closetSort);
+    toast("Default sort saved");
+  });
 
   // settings
   $("#logoutBtn").addEventListener("click", () => handleSignedOut());
