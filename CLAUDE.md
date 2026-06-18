@@ -198,8 +198,10 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 
 ## Conventions
 
-- **`APP_VERSION`** (date string) is shown in the UI — bump it to the current
-  date on each meaningful change. Currently `2026-06-18`.
+- **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
+  **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
+  the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
+  Currently `2026-06-18 v2`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,

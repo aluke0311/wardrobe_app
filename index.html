@@ -217,7 +217,7 @@
       <div id="loginErr" class="err" hidden></div>
       <button class="btn" id="loginBtn" type="submit">Sign in</button>
     </form>
-    <div class="center muted" style="font-size:12px">v<span class="appver"></span></div>
+    <div class="center muted" style="font-size:12px"><span class="appver"></span></div>
   </div>
 </section>
 
@@ -225,7 +225,7 @@
 <div id="app" hidden>
   <header class="bar">
     <h1 id="title">Closet</h1>
-    <span class="ver">v<span class="appver"></span></span>
+    <span class="ver"><span class="appver"></span></span>
   </header>
 
   <main class="tabbody">
@@ -403,7 +403,7 @@
         </div>
         <div class="card">
           <div style="font-weight:600;margin-bottom:8px">About</div>
-          <div class="muted" style="font-size:13.5px">Wardrobe v<span class="appver"></span> · single-file · Supabase backend</div>
+          <div class="muted" style="font-size:13.5px">Wardrobe <span class="appver"></span> · single-file · Supabase backend</div>
         </div>
         <button class="btn danger" id="logoutBtn">Sign out</button>
       </div>
@@ -436,7 +436,9 @@
 const SUPABASE_URL = "https://ofwaxqrwbcixrnjkepuz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
-const APP_VERSION = "2026-06-18";
+// Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
+// increments for each additional push the same day (so same-day pushes differ).
+const APP_VERSION = "2026-06-18 v2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -723,6 +725,17 @@ function itemsForOutfit(outfitId) {
   return (outfitItemMap.get(outfitId) || []).map(id => items.find(i => i.id === id)).filter(Boolean);
 }
 const outfitDate = (o) => (o.created_at || "").slice(0, 10);
+// distinct days this outfit was worn (one "wear" = a day, not one row per item;
+// an outfit can be reworn on many days -> many wears)
+function outfitWearDates(outfitId) {
+  return [...new Set(wears.filter(w => w.outfit_id === outfitId).map(w => w.worn_on))].sort();
+}
+function outfitWearCount(outfitId) { return outfitWearDates(outfitId).length; }
+// most recent day this outfit was worn; falls back to its creation date
+function outfitLastWorn(o) {
+  const ds = outfitWearDates(o.id);
+  return ds.length ? ds[ds.length - 1] : outfitDate(o);
+}
 
 // ---- derived helpers ----
 function wearCount(itemId) { return wears.filter(w => w.item_id === itemId).length; }
@@ -1363,11 +1376,12 @@ function renderOutfits() {
   const slice = outfits.slice(0, outfitsShown);
   const cards = slice.map(o => {
     const its = itemsForOutfit(o.id);
+    const n = outfitWearCount(o.id);
     return `
       <div class="ofit" data-outfit="${o.id}">
         <div class="top">
-          <span class="dt">${esc(outfitDate(o))}</span>
-          ${o.context ? `<span class="pill">${esc(o.context)}</span>` : ""}
+          <span class="dt">${esc(outfitLastWorn(o))}</span>
+          <span>${o.context ? `<span class="pill">${esc(o.context)}</span> ` : ""}<span class="muted" style="font-size:12.5px">${n} wear${n === 1 ? "" : "s"}</span></span>
         </div>
         ${thumbsHtml(its)}
       </div>`;
@@ -1393,12 +1407,16 @@ function openOutfit(id) {
       <div class="nm">${esc(i.name)}</div>
     </div>`).join("");
 
+  const wd = outfitWearDates(o.id).slice().reverse();   // most-recent first
+  const n = wd.length;
   $("#sheet").innerHTML = `
     ${o.image_path ? `<div class="hero" data-photo="${esc(o.image_path)}"></div>` : ""}
-    <h2 style="margin:14px 2px 2px;font-size:20px">Outfit · ${esc(outfitDate(o))}</h2>
-    <div class="muted" style="margin:0 2px 12px">${its.length} item${its.length === 1 ? "" : "s"}${o.context ? " · " + esc(o.context) : ""}</div>
+    <h2 style="margin:14px 2px 2px;font-size:20px">Outfit · ${esc(outfitLastWorn(o))}</h2>
+    <div class="muted" style="margin:0 2px 12px">${its.length} item${its.length === 1 ? "" : "s"} · ${n} wear${n === 1 ? "" : "s"}${o.context ? " · " + esc(o.context) : ""}</div>
 
     <div class="pickgrid">${itemTiles || `<div class="muted">No items.</div>`}</div>
+
+    ${n ? `<h2 class="sec">Worn on</h2><div class="card"><div class="muted" style="font-size:13px">${wd.map(esc).join(" · ")}</div></div>` : ""}
 
     <h2 class="sec">Log this outfit as worn</h2>
     <div class="row2">

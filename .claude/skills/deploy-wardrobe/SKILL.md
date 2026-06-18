@@ -10,9 +10,13 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
 
 ## Steps
 
-1. **Bump `APP_VERSION`** in `index.html` to today's date (`YYYY-MM-DD`) if this
-   is a meaningful change and the version still shows an older date. It's a
-   constant near the top of the `<script>` and is displayed in the UI.
+1. **Bump `APP_VERSION`** in `index.html` (a constant near the top of the
+   `<script>`, shown in the UI). Format is **`YYYY-MM-DD vN`**:
+   - If the current value's date is **before today** → set today's date with `v1`.
+   - If it's **already today** → increment the `vN` (so multiple pushes the same
+     day differ: `v1` → `v2` → …).
+   The UI prints `APP_VERSION` verbatim (no extra "v" prefix), so keep the `vN`
+   inside the string.
 
 2. **Stage and commit** with a clear, specific message describing what changed
    (not "update index.html"). End the commit body with:
