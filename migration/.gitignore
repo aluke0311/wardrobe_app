@@ -2,4 +2,6 @@
 .env.*
 !.env.example
 review.json
+wears_review.json
+outfits_review.json
 photos_tmp/

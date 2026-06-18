@@ -73,9 +73,9 @@ first. Five tables, all RLS-scoped to `auth.uid()` (client never sends `user_id`
   RLS keys off the first path segment matching `auth.uid()`. Display = signed URLs.
 
 **Breaking change vs. the old app:** `archived`→`status`, `colors[]`→`color_family`,
-wears `occasion`→`context`, plus many new columns. `index.html` has NOT yet been
-updated for this schema (see "Build roadmap"), so the deployed app is currently
-**out of sync with the live DB** until Phase 3a lands.
+wears `occasion`→`context`, plus many new columns. `index.html` was rewritten for
+this schema in **Phase 3a** (2026-06-18) and now matches the live DB; later phases
+(capsules, outfits, calendar, stats rebuild) are still pending.
 
 ## Design model (occasion, contexts, capsules)
 
@@ -118,6 +118,29 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 - `migration/import.py` — stdlib + macOS `sips`; reads Airtable, maps fields,
   re-hosts photos to Storage, bulk-inserts. `python3 import.py` = dry run,
   `--live` = real. Already run live ✓ (476 items, 0 photo failures).
+- `migration/import_wears.py` — stdlib; back-fills **historical wears** from the
+  Airtable **Dates** table (one record per day, links the Clothing worn). A wear
+  = (item, day). Run live ✓ 2026-06-18: **3,995 wears** imported, 2015-12-15 →
+  2026-06-11. Items carry no Airtable id, so it re-links each Clothing record to
+  its Supabase item by **normalized name** (strips the `ARCHIVE ` prefix), with
+  status (prefer non-Archive, since dated wears only come from the active table) /
+  purchase_date / price / brand as tiebreakers. `context` left null (Airtable
+  `Occasion` was empty). Future-dated rows (planned outfits) skipped; user_id
+  borrowed from existing items. Dry run writes `wears_review.json` (gitignored).
+- `migration/import_outfits.py` — stdlib + `sips`; imports **outfits** from the
+  Airtable **Outfits** table (a set of Clothing Items worn together on a Date).
+  Run live ✓ 2026-06-18: **1,543 outfits + 4,182 outfit_items**, and back-links
+  **3,993 wears.outfit_id** by (item, day). `created_at` = the outfit's date (the
+  schema has no date column; the date lives on the linked wears). 7 contexts +
+  6 outfit photos re-hosted; same name→item matcher as the wears import. Dry run
+  writes `outfits_review.json`. **Gotcha baked in:** Supabase caps a single REST
+  response at 1000 rows, so the wear back-link fetch **must page** (`sb_page`) —
+  an unpaged fetch silently links only ~1/4. Reusable: re-running needs `--force`
+  (guards on a non-empty outfits table).
+- **Airtable wear model (confirmed with the user):** the **Dates** table is the
+  full wear log; **Outfits** only regroup items already in Dates on the same day
+  (every outfit day exists in Dates; ~all outfit item-slots map to a Dates wear).
+  So wear counts come from Dates alone; outfits add the "worn together" grouping.
 - `migration/.env` (gitignored) holds the Supabase **service-role key** + Airtable
   token — local use only, never commit. `.env.example` is the committed template.
 - Airtable base "CLOTHING BASE CURRENT" (`appK4hX9DJYTGFGYb`) is the source of truth.
@@ -128,18 +151,45 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 
 - **Phase 1 — schema** ✓ run in Supabase.
 - **Phase 2 — import** ✓ 476 items + photos live; ARCHIVE-prefix names cleaned.
-- **Phase 3 — rewrite `index.html` for the new schema** (NOT STARTED). Build in
+- **Phase 3 — rewrite `index.html` for the new schema** (3a DONE). Build in
   verifiable slices, keeping the app fully working each step:
-  - 3a Core: new fields + subcategory picker (dependent on category), `status`
-    (Available/Storage/Archive) filter replacing the archived toggle, single
-    `color_family`, the occasion range + `CONTEXTS`, **item editing**, **photo
-    replace**, **back-dated/historical wear logging** (date picker allows past).
-  - 3b Capsules + the active-capsule "lens" filter.
-  - 3c Outfits + log-an-outfit-as-a-wear.
+  - 3a Core ✓ (2026-06-18): all new fields + subcategory picker (dependent on
+    category), `status` (Available/Storage/Archive) filter + search + category
+    filter replacing the archived toggle, single `color_family`, occasion range
+    + `CONTEXTS` (with item↔context overlap "Works for"), **item editing**,
+    **photo replace**, **back-dated wear logging** (Log Wear date picker allows
+    past; context select). Closet photos lazy-load via IntersectionObserver.
+    Stats adapted to the new fields but its full rebuild is 3e. NOT yet verified
+    against live data by the user / not yet deployed.
+  - 3b Capsules + the active-capsule "lens" filter. (NOT STARTED)
+  - 3c Outfits ✓ (2026-06-18): a 6th **Outfits** tab — browse (date + item-photo
+    thumbnails, "Show more" paging over ~1.5k), outfit detail (tap an item to open
+    it), **log-an-outfit-as-a-wear** (back-datable; one wear per item per day,
+    tagged with `outfit_id`), and a **builder** to create/edit outfits (searchable
+    multi-select item picker, context, date; "Save & log as worn"). Outfits +
+    outfit_items load lazily on first tab open. **Verified against live data.**
+    Note: added `restAll()` paging — `loadData` now pages `wears` (was capped at
+    1000, so the app had been undercounting; CPW/stats were silently wrong).
   - 3d Calendar.
   - 3e Stats — rebuild around the user's Airtable CPW / score / alert formulas
     (still TODO: read those formulas from the Airtable "Clothing" table fields like
     Goal CPW, Total Score, Action Needed and reproduce the logic).
+  - 3f Outfit dedup + rewear (agreed 2026-06-18, NOT STARTED). The import made
+    **one outfit row per wear-day**, so the 1,543 outfits include many duplicates
+    (same item set, different days). Goal: an outfit is a *reusable* set that can
+    have **many wears** (the schema already supports this — `wears.outfit_id` is
+    many-to-one; nothing ties an outfit to a single date except the `created_at`
+    we set at import). Pieces:
+    1. **Merge identical outfits** — collapse outfits whose item set is identical
+       into one; repoint their wears' `outfit_id`; delete the now-empty dupes.
+       (Order-independent compare of `outfit_items`. Likely a `migration/` script
+       + an in-app "merge duplicates" action.) After merge, `created_at` ≈ first
+       worn; surface wear count + last-worn per outfit.
+    2. **Rewear** — "Log as worn" already creates a new dated wear on an existing
+       outfit; with merge this is the primary path (one outfit, growing wear list).
+    3. **Builder shows matching prior outfits** — as the user selects items in the
+       builder, surface existing outfits that match (subset/superset/exact) so they
+       can pick one to rewear instead of creating a duplicate.
 - **Backlog of agreed ideas** (not yet scheduled): one-tap re-wear, closet
   utilization % (worn this month), declutter assistant (never-worn + high CPW +
   old), laundry/available-now status, wishlist (pre-purchase, projected CPW),
@@ -149,7 +199,7 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 ## Conventions
 
 - **`APP_VERSION`** (date string) is shown in the UI — bump it to the current
-  date on each meaningful change. Currently `2026-06-17`.
+  date on each meaningful change. Currently `2026-06-18`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,

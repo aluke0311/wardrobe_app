@@ -56,13 +56,13 @@
     padding-bottom: var(--safe-b);
     background: var(--surface);
     border-top: 1px solid var(--line);
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-template-columns: repeat(6, 1fr);
     max-width: 640px; margin: 0 auto;
   }
   nav.tabbar button {
     background: none; border: 0; color: var(--muted);
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 3px; font-size: 10.5px; padding: 6px 0;
+    gap: 3px; font-size: 10px; padding: 6px 0;
   }
   nav.tabbar button .ic { font-size: 19px; line-height: 1; }
   nav.tabbar button.on { color: var(--ink); }
@@ -77,6 +77,7 @@
   }
   textarea.inp { resize: vertical; min-height: 70px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   .btn {
     width: 100%; padding: 13px; border: 0; border-radius: 12px;
     background: var(--accent); color: var(--accent-ink); font-weight: 600;
@@ -88,26 +89,61 @@
   .center { text-align: center; }
   h2.sec { font-size: 15px; margin: 22px 2px 10px; letter-spacing: -0.01em; }
   h2.sec:first-child { margin-top: 6px; }
+  .checkrow { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-left: 2px; }
+  .checkrow input { width: 17px; height: 17px; }
 
-  /* ---------- color chips ---------- */
-  .colors { display: flex; flex-wrap: wrap; gap: 8px; }
+  /* ---------- chips (colors, seasons, fabric, tags) ---------- */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 6px 11px 6px 8px; border: 1px solid var(--line);
     border-radius: 999px; background: var(--surface); font-size: 13px;
   }
   .chip.sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .chip.txt { padding: 6px 11px; }
   .sw { width: 15px; height: 15px; border-radius: 50%; border: 1px solid rgba(0,0,0,.18); flex: none; }
+
+  /* ---------- segmented control ---------- */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; background: none; padding: 7px 13px; font-size: 13px; color: var(--muted); }
+  .seg button.on { background: var(--ink); color: #fff; }
+  .seg.wrap { display: flex; flex-wrap: wrap; gap: 0; border-radius: 12px; }
+
+  /* ---------- closet filter bar ---------- */
+  .filterbar { display: flex; flex-direction: column; gap: 9px; margin: 2px 0 14px; }
+  .filterbar .frow { display: flex; gap: 8px; }
+  .filterbar select.inp { padding: 9px 10px; border-radius: 999px; }
+  .filterbar input.inp { border-radius: 999px; padding: 9px 14px; }
 
   /* ---------- closet grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
   @media (min-width: 520px) { .grid { grid-template-columns: repeat(3, 1fr); } }
   .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-  .tile .ph { aspect-ratio: 1/1; background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 28px; }
+  .tile .ph { aspect-ratio: 1/1; background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 28px; position: relative; }
   .tile .meta { padding: 9px 10px 11px; }
   .tile .meta .nm { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
   .tile .meta .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
-  .tile.arch { opacity: .55; }
+  .tile.dim { opacity: .55; }
+  .tag-corner { position: absolute; top: 6px; left: 6px; font-size: 10px; padding: 2px 7px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
+
+  /* ---------- occasion ladder bar ---------- */
+  .ladder { display: flex; gap: 3px; margin-top: 4px; }
+  .ladder .rung { flex: 1; height: 6px; border-radius: 2px; background: #e2e0db; }
+  .ladder .rung.on { background: var(--ink); }
+
+  /* ---------- outfits ---------- */
+  .ofit { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 11px 12px; }
+  .ofit + .ofit { margin-top: 10px; }
+  .ofit .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .ofit .dt { font-size: 13.5px; font-weight: 600; }
+  .thumbs { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .thumbs .th { width: 58px; height: 58px; border-radius: 9px; background: #eceae6 center/cover no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 20px; }
+  .pickgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pickgrid .pk { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+  .pickgrid .pk .ph { aspect-ratio: 1/1; background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
+  .pickgrid .pk .nm { font-size: 10.5px; padding: 3px 5px 5px; line-height: 1.2; }
+  .pickgrid .pk.sel { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); }
+  .pickgrid .pk.sel::after { content: "✓"; position: absolute; top: 4px; right: 5px; background: var(--ink); color: #fff; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; display: flex; align-items: center; justify-content: center; }
 
   /* ---------- stats ---------- */
   .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -142,6 +178,8 @@
   .sheet { background: var(--bg); width: 100%; max-width: 640px; margin: 0 auto; max-height: 92vh; overflow: auto;
            border-radius: 18px 18px 0 0; padding: 16px 16px calc(24px + var(--safe-b)); }
   .sheet .hero { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); background: #eceae6 center/cover no-repeat; }
+  .kv { font-size: 14px; }
+  .kv > div { padding: 2px 0; }
 
   /* ---------- toast + misc ---------- */
   #toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + var(--safe-b) + 16px); transform: translateX(-50%);
@@ -196,32 +234,61 @@
       <div id="closetBody"></div>
     </section>
 
-    <!-- ADD ITEM -->
+    <!-- ADD / EDIT ITEM -->
     <section class="screen" id="tab-add">
-      <form id="addForm" class="stack">
+      <form id="itemForm" class="stack">
         <div>
           <input type="file" id="photoInput" accept="image/*" hidden>
           <div class="field-prev" id="photoPrev" role="button" tabindex="0">Tap to add a photo</div>
           <div class="muted center" id="photoNote" style="font-size:12px;margin-top:6px">JPEG/PNG/HEIC — compressed to WebP before upload</div>
         </div>
+
         <div>
           <label class="fld">Name *</label>
           <input class="inp" id="f_name" placeholder="e.g. Black wool coat" required>
         </div>
+
         <div class="row2">
           <div>
             <label class="fld">Category</label>
             <select class="inp" id="f_category"></select>
           </div>
           <div>
+            <label class="fld">Subcategory</label>
+            <select class="inp" id="f_subcategory"></select>
+          </div>
+        </div>
+
+        <div>
+          <label class="fld">Color family</label>
+          <div class="chips" id="f_color"></div>
+        </div>
+
+        <div class="row2">
+          <div>
             <label class="fld">Brand</label>
             <input class="inp" id="f_brand" placeholder="Optional">
           </div>
+          <div>
+            <label class="fld">Retailer</label>
+            <input class="inp" id="f_retailer" placeholder="Where bought">
+          </div>
         </div>
-        <div>
-          <label class="fld">Colors</label>
-          <div class="colors" id="f_colors"></div>
+
+        <h2 class="sec">Occasion range</h2>
+        <div class="muted" style="font-size:12.5px;margin:-4px 2px 8px">How dressy this piece can go (1 At-home → 7 Formal).</div>
+        <div class="row2">
+          <div>
+            <label class="fld">From</label>
+            <select class="inp" id="f_min"></select>
+          </div>
+          <div>
+            <label class="fld">To</label>
+            <select class="inp" id="f_max"></select>
+          </div>
         </div>
+
+        <h2 class="sec">Purchase</h2>
         <div class="row2">
           <div>
             <label class="fld">Price</label>
@@ -232,22 +299,66 @@
             <input class="inp" id="f_pdate" type="date">
           </div>
         </div>
+        <label class="checkrow"><input type="checkbox" id="f_dateguess"> Purchase date is a guess</label>
+        <div class="row2">
+          <div>
+            <label class="fld">Acquisition</label>
+            <select class="inp" id="f_acq"></select>
+          </div>
+          <div>
+            <label class="fld">Size</label>
+            <input class="inp" id="f_size" placeholder="Optional">
+          </div>
+        </div>
+
+        <h2 class="sec">Season</h2>
+        <div class="chips" id="f_season"></div>
+
+        <h2 class="sec">More</h2>
         <div>
-          <label class="fld">Purchased at</label>
-          <input class="inp" id="f_pplace" placeholder="Store or site">
+          <label class="fld">Status</label>
+          <div class="seg" id="f_status"></div>
+        </div>
+        <div>
+          <label class="fld">Fabric (comma-separated)</label>
+          <input class="inp" id="f_fabric" placeholder="e.g. Cotton, Wool">
+        </div>
+        <div>
+          <label class="fld">Tags (comma-separated)</label>
+          <input class="inp" id="f_tags" placeholder="e.g. favorite, needs-tailoring">
+        </div>
+        <div class="row2">
+          <div>
+            <label class="fld">Product URL</label>
+            <input class="inp" id="f_url" placeholder="Optional" inputmode="url">
+          </div>
+          <div>
+            <label class="fld">Order #</label>
+            <input class="inp" id="f_orderno" placeholder="Optional">
+          </div>
+        </div>
+        <div>
+          <label class="fld">Official item name</label>
+          <input class="inp" id="f_official" placeholder="Manufacturer's product name">
         </div>
         <div>
           <label class="fld">Notes</label>
           <textarea class="inp" id="f_notes" placeholder="Fit, care, anything"></textarea>
         </div>
+
         <div id="addErr" class="err" hidden></div>
         <button class="btn" id="addBtn" type="submit">Save to closet</button>
+        <button class="btn ghost" id="cancelEditBtn" type="button" hidden>Cancel edit</button>
       </form>
     </section>
 
     <!-- LOG WEAR -->
     <section class="screen" id="tab-wear">
       <div class="stack">
+        <div>
+          <label class="fld">Find item</label>
+          <input class="inp" id="w_search" placeholder="Search by name or brand">
+        </div>
         <div>
           <label class="fld">Item</label>
           <select class="inp" id="w_item"></select>
@@ -258,14 +369,19 @@
             <input class="inp" id="w_date" type="date">
           </div>
           <div>
-            <label class="fld">Occasion</label>
-            <input class="inp" id="w_occasion" placeholder="Optional">
+            <label class="fld">Context</label>
+            <select class="inp" id="w_context"></select>
           </div>
         </div>
         <button class="btn" id="wearBtn">Log wear</button>
         <h2 class="sec">Recent wears</h2>
         <div id="recentWears"></div>
       </div>
+    </section>
+
+    <!-- OUTFITS -->
+    <section class="screen" id="tab-outfits">
+      <div id="outfitsBody"></div>
     </section>
 
     <!-- STATS -->
@@ -297,7 +413,8 @@
   <nav class="tabbar" id="tabbar">
     <button data-tab="closet" class="on"><span class="ic">▦</span>Closet</button>
     <button data-tab="add"><span class="ic">＋</span>Add</button>
-    <button data-tab="wear"><span class="ic">✓</span>Log Wear</button>
+    <button data-tab="wear"><span class="ic">✓</span>Wear</button>
+    <button data-tab="outfits"><span class="ic">👗</span>Outfits</button>
     <button data-tab="stats"><span class="ic">📊</span>Stats</button>
     <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
   </nav>
@@ -319,16 +436,57 @@
 const SUPABASE_URL = "https://ofwaxqrwbcixrnjkepuz.supabase.co";
 const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
-const APP_VERSION = "2026-06-17";
+const APP_VERSION = "2026-06-18";
 
-const CATEGORIES = ["Tops", "Bottoms", "Dresses", "Outerwear", "Shoes", "Activewear"];
-// Fixed color palette: label + swatch hex. "Multi" is a catch-all for patterns.
-const PALETTE = [
-  ["Black","#1a1a1a"], ["White","#ffffff"], ["Grey","#9a9a9a"], ["Navy","#1f2a44"],
-  ["Blue","#2f6fd0"], ["Green","#3a7d44"], ["Red","#c0392b"], ["Pink","#e88aa8"],
-  ["Purple","#7d54a8"], ["Brown","#7a5230"], ["Beige","#d8c4a0"], ["Yellow","#e6c34a"],
-  ["Orange","#e08a2b"], ["Multi","linear-gradient(135deg,#e84,#4ae,#7d4,#e4a)"]
+// category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
+const TAXONOMY = {
+  "Tops": ["Tee shirts", "Graphic tees", "Long-sleeve tees", "Sleeveless", "Blouses", "Sweaters", "Cardigans", "Sweatshirts"],
+  "Bottoms": ["Jeans", "Pants", "Shorts", "Skirts", "Leggings/Joggers", "Tights"],
+  "Dresses": ["Casual dresses", "Work dresses", "Cocktail dresses"],
+  "Outerwear": ["Blazers", "Jackets", "Coats"],
+  "Shoes": ["Boots", "Sandals", "Flats", "Heels", "Sneakers"],
+  "Workout": ["Workout tops", "Active shorts", "Sports bras"],
+};
+const CATEGORIES = Object.keys(TAXONOMY);
+
+// Single color family per item: label + swatch. Keep in sync with import.py.
+const COLOR_FAMILIES = [
+  ["Green","#3a7d44"], ["Teal","#1f8f8f"], ["Blue","#2f6fd0"], ["Purple","#7d54a8"],
+  ["Maroon","#7b2d3a"], ["Pink","#e88aa8"], ["Red","#c0392b"], ["Orange","#e08a2b"],
+  ["Yellow","#e6c34a"], ["Beige","#d8c4a0"], ["Brown","#7a5230"], ["White","#ffffff"],
+  ["Gray","#9a9a9a"], ["Black","#1a1a1a"],
+  ["Metallic","linear-gradient(135deg,#bfc3c7,#f2f2f2,#c9a14a,#8a8d90)"],
 ];
+const colorHex = (name) => (COLOR_FAMILIES.find(c => c[0] === name) || [])[1] || "#ccc";
+
+// Formality ladder 1-7 (index 0 = level 1).
+const OCCASION_LADDER = [
+  "At-home", "Relaxed", "Casual", "Smart casual", "Professional", "Cocktail", "Formal",
+];
+const occLabel = (n) => (n >= 1 && n <= 7) ? OCCASION_LADDER[n - 1] : null;
+
+// Named occasions stamped on a wear/outfit. min/max = default formality range;
+// rule = a hard styling constraint to surface in the UI.
+const CONTEXTS = [
+  { name: "Lounge/garden",      min: 1, max: 1 },
+  { name: "WFH",                min: 1, max: 2 },
+  { name: "Errands",            min: 2, max: 3 },
+  { name: "Friends/rehearsal",  min: 3, max: 3 },
+  { name: "Campus",             min: 4, max: 5 },
+  { name: "Conference/job talk",min: 5, max: 5 },
+  { name: "Date night",         min: 3, max: 6 },
+  { name: "Symphony",           min: 4, max: 6 },
+  { name: "Church service",     min: 4, max: 6 },
+  { name: "Shower/holiday party", min: 6, max: 6 },
+  { name: "Funeral",            min: 6, max: 6, rule: "darker tones" },
+  { name: "Wedding guest",      min: 6, max: 7 },
+  { name: "Gala/chorus concert",min: 7, max: 7, rule: "chorus concert = all black" },
+];
+
+const ACQUISITIONS = ["New", "Secondhand", "Gift"];
+const STATUSES = ["Available", "Storage", "Archive"];
+const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
+
 const MAX_DIM = 1200;          // longest edge after downscale
 const ENCODE_Q = 0.82;         // quality used for both webp + jpeg fallback
 const SIGNED_TTL = 3600;       // signed photo URL lifetime (s)
@@ -506,20 +664,65 @@ function compressImage(file) {
 /* ===================================================================
    APP STATE + DATA LOADING
    =================================================================== */
-let items = [];   // all items (incl. archived)
+let items = [];   // all items (every status)
 let wears = [];   // all wears
 let dataReady = false;
+
+let outfits = [];          // loaded lazily on first Outfits-tab open
+let outfitItems = [];      // {outfit_id, item_id}
+let outfitItemMap = new Map(); // outfit_id -> [item_id]
+let outfitsLoaded = false;
+
+// PostgREST/Supabase caps a single response at 1000 rows; page through the rest.
+// wears (~4k), outfits (~1.5k) and outfit_items (~4k) all exceed that.
+async function restAll(path) {
+  const PAGE = 1000;
+  let out = [], offset = 0;
+  for (;;) {
+    const sep = path.includes("?") ? "&" : "?";
+    const chunk = await rest(`${path}${sep}limit=${PAGE}&offset=${offset}`);
+    if (!chunk || chunk.length === 0) break;
+    out = out.concat(chunk);
+    if (chunk.length < PAGE) break;
+    offset += PAGE;
+  }
+  return out;
+}
 
 async function loadData() {
   dataReady = false;
   const [it, wr] = await Promise.all([
-    rest("items?select=*&order=created_at.desc"),
-    rest("wears?select=*&order=worn_on.desc"),
+    restAll("items?select=*&order=created_at.desc"),
+    restAll("wears?select=*&order=worn_on.desc"),
   ]);
   items = it || [];
   wears = wr || [];
   dataReady = true;
 }
+
+async function loadOutfits() {
+  const [of, oi] = await Promise.all([
+    restAll("outfits?select=*&order=created_at.desc"),
+    restAll("outfit_items?select=outfit_id,item_id"),
+  ]);
+  outfits = of || [];
+  outfitItems = oi || [];
+  rebuildOutfitMap();
+  outfitsLoaded = true;
+}
+
+function rebuildOutfitMap() {
+  outfitItemMap = new Map();
+  for (const oi of outfitItems) {
+    if (!outfitItemMap.has(oi.outfit_id)) outfitItemMap.set(oi.outfit_id, []);
+    outfitItemMap.get(oi.outfit_id).push(oi.item_id);
+  }
+}
+// resolved item objects for an outfit (skips items not in the loaded set)
+function itemsForOutfit(outfitId) {
+  return (outfitItemMap.get(outfitId) || []).map(id => items.find(i => i.id === id)).filter(Boolean);
+}
+const outfitDate = (o) => (o.created_at || "").slice(0, 10);
 
 // ---- derived helpers ----
 function wearCount(itemId) { return wears.filter(w => w.item_id === itemId).length; }
@@ -536,9 +739,22 @@ function daysSince(dateStr) {
   if (!dateStr) return null;
   return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
 }
+const itemStatus = (i) => i.status || "Available";
+// Contexts an item is eligible for: formality ranges overlap.
+function contextsForItem(i) {
+  if (i.min_occasion == null || i.max_occasion == null) return [];
+  return CONTEXTS.filter(c => i.min_occasion <= c.max && i.max_occasion >= c.min);
+}
+function occRangeLabel(i) {
+  if (i.min_occasion == null && i.max_occasion == null) return null;
+  const lo = occLabel(i.min_occasion), hi = occLabel(i.max_occasion);
+  if (lo && hi) return lo === hi ? lo : `${lo}–${hi}`;
+  return lo || hi;
+}
 const money = (n) => (n == null ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+const parseList = (s) => String(s || "").split(",").map(x => x.trim()).filter(Boolean);
 
 /* ===================================================================
    DOM UTILS
@@ -554,46 +770,99 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
-// Resolve photo paths to signed URLs and set them on matching [data-photo] nodes.
-async function hydratePhotos(root = document) {
-  const nodes = $$("[data-photo]", root).filter(n => !n.dataset.photoDone);
-  await Promise.all(nodes.map(async (n) => {
-    n.dataset.photoDone = "1";
-    const url = await signedUrl(n.dataset.photo);
-    if (url) n.style.backgroundImage = `url("${url}")`;
-  }));
+// Lazy photo loading: sign + set background only when a node nears the viewport.
+// With hundreds of items this avoids signing every URL on render.
+const photoObserver = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    const n = e.target;
+    photoObserver.unobserve(n);
+    loadPhotoNode(n);
+  }
+}, { rootMargin: "300px" });
+
+async function loadPhotoNode(n) {
+  if (n.dataset.photoDone) return;
+  n.dataset.photoDone = "1";
+  const url = await signedUrl(n.dataset.photo);
+  if (url) n.style.backgroundImage = `url("${url}")`;
+}
+function hydratePhotos(root = document) {
+  $$("[data-photo]", root)
+    .filter(n => !n.dataset.photoDone && !n.dataset.photoObs)
+    .forEach(n => { n.dataset.photoObs = "1"; photoObserver.observe(n); });
 }
 
 /* ===================================================================
-   RENDER: CLOSET
+   RENDER: CLOSET  (search + category + status filters)
    =================================================================== */
-let showArchived = false;
+let closetQuery = "";
+let closetCat = "";              // "" = all categories
+let closetStatus = "Available";  // Available | Storage | Archive | All
+
+function filteredItems() {
+  const q = closetQuery.trim().toLowerCase();
+  return items.filter(i => {
+    if (closetStatus !== "All" && itemStatus(i) !== closetStatus) return false;
+    if (closetCat && i.category !== closetCat) return false;
+    if (q) {
+      const hay = [i.name, i.brand, i.subcategory, i.retailer, i.color_family]
+        .filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function statusCounts() {
+  const c = { Available: 0, Storage: 0, Archive: 0 };
+  for (const i of items) c[itemStatus(i)] = (c[itemStatus(i)] || 0) + 1;
+  return c;
+}
 
 function renderCloset() {
   const body = $("#closetBody");
   if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
-
-  const visible = items.filter(i => showArchived || !i.archived);
-  const archCount = items.filter(i => i.archived).length;
 
   if (items.length === 0) {
     body.innerHTML = `<div class="empty">Your closet is empty.<br>Tap <b>Add</b> to photograph your first item.</div>`;
     return;
   }
 
-  const header = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 2px 12px">
-      <span class="muted" style="font-size:13px">${visible.length} item${visible.length===1?"":"s"}</span>
-      ${archCount ? `<button class="pill" id="toggleArch" style="border:0;cursor:pointer">${showArchived ? "Hide" : "Show"} archived (${archCount})</button>` : ""}
+  const counts = statusCounts();
+  const visible = filteredItems();
+
+  const catOpts = `<option value="">All categories</option>` +
+    CATEGORIES.map(c => `<option ${closetCat === c ? "selected" : ""}>${c}</option>`).join("");
+  const statusSeg = ["Available", "Storage", "Archive", "All"].map(s => {
+    const n = s === "All" ? items.length : (counts[s] || 0);
+    return `<button data-status="${s}" class="${closetStatus === s ? "on" : ""}">${s} ${n}</button>`;
+  }).join("");
+
+  const filterbar = `
+    <div class="filterbar">
+      <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
+      <div class="frow">
+        <select class="inp" id="closetCat" style="flex:1">${catOpts}</select>
+      </div>
+      <div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSeg}</div>
     </div>`;
+
+  if (visible.length === 0) {
+    body.innerHTML = filterbar + `<div class="empty">No items match.</div>`;
+    wireClosetControls();
+    return;
+  }
 
   const tiles = visible.map(i => {
     const n = wearCount(i.id);
     const cpw = costPerWear(i);
-    const sub = cpw != null ? `${money(cpw)}/wear` : (n ? `${n} wear${n===1?"":"s"}` : "Never worn");
+    const sub = cpw != null ? `${money(cpw)}/wear` : (n ? `${n} wear${n === 1 ? "" : "s"}` : "Never worn");
+    const dim = itemStatus(i) !== "Available";
+    const corner = dim ? `<span class="tag-corner">${esc(itemStatus(i))}</span>` : "";
     return `
-      <div class="tile ${i.archived ? "arch" : ""}" data-item="${i.id}">
-        <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div class="tile ${dim ? "dim" : ""}" data-item="${i.id}">
+        <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${corner}${i.image_path ? "" : "👕"}</div>
         <div class="meta">
           <div class="nm">${esc(i.name)}</div>
           <div class="sub">${esc(sub)}</div>
@@ -601,13 +870,55 @@ function renderCloset() {
       </div>`;
   }).join("");
 
-  body.innerHTML = header + `<div class="grid">${tiles}</div>`;
+  body.innerHTML = filterbar +
+    `<div class="muted" style="font-size:13px;margin:0 2px 10px">${visible.length} item${visible.length === 1 ? "" : "s"}</div>` +
+    `<div class="grid">${tiles}</div>`;
+  wireClosetControls();
   hydratePhotos(body);
+}
+
+// Re-attach control listeners after each renderCloset (innerHTML wipes them).
+function wireClosetControls() {
+  const search = $("#closetSearch");
+  if (search) {
+    search.oninput = (e) => { closetQuery = e.target.value; debouncedCloset(); };
+  }
+  const cat = $("#closetCat");
+  if (cat) cat.onchange = (e) => { closetCat = e.target.value; renderCloset(); };
+  const seg = $("#closetStatusSeg");
+  if (seg) seg.onclick = (e) => {
+    const b = e.target.closest("[data-status]");
+    if (b) { closetStatus = b.dataset.status; renderCloset(); }
+  };
+}
+
+// Debounce closet re-render while typing so we don't re-render per keystroke,
+// and keep focus in the search box.
+let closetDebounce;
+function debouncedCloset() {
+  clearTimeout(closetDebounce);
+  closetDebounce = setTimeout(() => {
+    const search = $("#closetSearch");
+    const pos = search ? search.selectionStart : null;
+    renderCloset();
+    const s2 = $("#closetSearch");
+    if (s2) { s2.focus(); if (pos != null) s2.setSelectionRange(pos, pos); }
+  }, 180);
 }
 
 /* ===================================================================
    RENDER: ITEM DETAIL SHEET
    =================================================================== */
+function ladderBar(i) {
+  if (i.min_occasion == null && i.max_occasion == null) return "";
+  const lo = i.min_occasion || i.max_occasion, hi = i.max_occasion || i.min_occasion;
+  const rungs = OCCASION_LADDER.map((_, idx) => {
+    const lvl = idx + 1;
+    return `<div class="rung ${lvl >= lo && lvl <= hi ? "on" : ""}"></div>`;
+  }).join("");
+  return `<div class="ladder">${rungs}</div>`;
+}
+
 function openItem(id) {
   const i = items.find(x => x.id === id);
   if (!i) return;
@@ -615,15 +926,20 @@ function openItem(id) {
   const cpw = costPerWear(i);
   const lw = lastWorn(i.id);
   const ds = daysSince(lw);
-  const colorChips = (i.colors || []).map(c => {
-    const hex = (PALETTE.find(p => p[0] === c) || [])[1] || "#ccc";
-    return `<span class="chip"><span class="sw" style="background:${hex}"></span>${esc(c)}</span>`;
-  }).join("");
+  const occ = occRangeLabel(i);
+  const ctxs = contextsForItem(i);
+  const colorChip = i.color_family
+    ? `<span class="chip"><span class="sw" style="background:${colorHex(i.color_family)}"></span>${esc(i.color_family)}</span>` : "";
+
+  const detailLine = (label, val) => val ? `<div><span class="muted">${label}:</span> ${val}</div>` : "";
 
   $("#sheet").innerHTML = `
     <div class="hero" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}></div>
     <h2 style="margin:14px 2px 2px;font-size:20px">${esc(i.name)}</h2>
-    <div class="muted" style="margin:0 2px 12px">${esc(i.category || "—")}${i.brand ? " · " + esc(i.brand) : ""}${i.archived ? ` · <span class="pill">archived</span>` : ""}</div>
+    <div class="muted" style="margin:0 2px 12px">
+      ${esc([i.category, i.subcategory].filter(Boolean).join(" · ") || "—")}${i.brand ? " · " + esc(i.brand) : ""}
+      ${itemStatus(i) !== "Available" ? ` · <span class="pill">${esc(itemStatus(i))}</span>` : ""}
+    </div>
 
     <div class="kpis">
       <div class="kpi"><div class="big">${n}</div><div class="lbl">Times worn</div></div>
@@ -632,18 +948,34 @@ function openItem(id) {
       <div class="kpi"><div class="big">${ds != null ? ds + "d" : "—"}</div><div class="lbl">Since last worn</div></div>
     </div>
 
-    ${colorChips ? `<h2 class="sec">Colors</h2><div class="colors">${colorChips}</div>` : ""}
+    ${occ ? `<h2 class="sec">Occasion</h2><div class="card"><div style="font-size:14px">${esc(occ)}</div>${ladderBar(i)}
+      ${ctxs.length ? `<div class="muted" style="font-size:12.5px;margin-top:9px">Works for: ${ctxs.map(c => esc(c.name)).join(", ")}</div>` : ""}</div>` : ""}
+
+    ${colorChip ? `<h2 class="sec">Color</h2><div class="chips">${colorChip}</div>` : ""}
 
     <h2 class="sec">Details</h2>
-    <div class="card stack" style="font-size:14px">
-      <div><span class="muted">Purchased:</span> ${i.purchase_date ? esc(i.purchase_date) : "—"}${i.purchase_place ? " · " + esc(i.purchase_place) : ""}</div>
-      <div><span class="muted">Last worn:</span> ${lw ? esc(lw) : "Never"}</div>
-      ${i.notes ? `<div><span class="muted">Notes:</span> ${esc(i.notes)}</div>` : ""}
+    <div class="card stack kv">
+      ${detailLine("Retailer", i.retailer ? esc(i.retailer) : "")}
+      ${detailLine("Acquisition", i.acquisition ? esc(i.acquisition) : "")}
+      ${detailLine("Size", i.size ? esc(i.size) : "")}
+      ${detailLine("Fabric", (i.fabric && i.fabric.length) ? esc(i.fabric.join(", ")) : "")}
+      ${detailLine("Season", (i.season && i.season.length) ? esc(i.season.join(", ")) : "")}
+      ${detailLine("Purchased", i.purchase_date ? esc(i.purchase_date) + (i.date_is_guess ? " (guess)" : "") : "")}
+      ${detailLine("Last worn", lw ? esc(lw) : "Never")}
+      ${detailLine("Tags", (i.tags && i.tags.length) ? esc(i.tags.join(", ")) : "")}
+      ${i.url ? `<div><span class="muted">Link:</span> <a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.url)}</a></div>` : ""}
+      ${detailLine("Notes", i.notes ? esc(i.notes) : "")}
     </div>
 
     <div class="stack" style="margin-top:18px">
       <button class="btn" id="sheetWear">Log a wear today</button>
-      <button class="btn ghost" id="sheetArch">${i.archived ? "Un-archive" : "Archive (donated/sold)"}</button>
+      <button class="btn ghost" id="sheetEdit">Edit item</button>
+      <div>
+        <label class="fld">Status</label>
+        <div class="seg wrap" id="sheetStatus">
+          ${STATUSES.map(s => `<button data-set="${s}" class="${itemStatus(i) === s ? "on" : ""}">${s}</button>`).join("")}
+        </div>
+      </div>
       <button class="btn danger" id="sheetDel">Delete item</button>
       <button class="btn ghost" id="sheetClose">Close</button>
     </div>`;
@@ -652,17 +984,24 @@ function openItem(id) {
   hydratePhotos($("#sheet"));
 
   $("#sheetClose").onclick = closeModal;
+  $("#sheetEdit").onclick = () => { closeModal(); startEdit(i.id); };
   $("#sheetWear").onclick = async () => {
-    try { await logWear(i.id, todayStr(), ""); toast("Wear logged"); closeModal(); refreshViews(); }
+    try { await logWear(i.id, todayStr(), null); toast("Wear logged"); closeModal(); refreshViews(); }
     catch (e) { toast(e.message); }
   };
-  $("#sheetArch").onclick = async () => {
+  $("#sheetStatus").onclick = async (e) => {
+    const b = e.target.closest("[data-set]");
+    if (!b) return;
+    const next = b.dataset.set;
+    if (next === itemStatus(i)) return;
     try {
       await rest(`items?id=eq.${i.id}`, { method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ archived: !i.archived }) });
-      i.archived = !i.archived;
-      toast(i.archived ? "Archived" : "Un-archived"); closeModal(); refreshViews();
+        body: JSON.stringify({ status: next }) });
+      i.status = next;
+      toast(`Moved to ${next}`);
+      $$("#sheetStatus button").forEach(x => x.classList.toggle("on", x.dataset.set === next));
+      refreshViews();
     } catch (e) { toast(e.message); }
   };
   $("#sheetDel").onclick = async () => {
@@ -680,20 +1019,60 @@ function openItem(id) {
 function closeModal() { $("#modal").classList.remove("open"); }
 
 /* ===================================================================
-   ADD ITEM
+   ADD / EDIT ITEM  (one form, two modes)
    =================================================================== */
-let pendingPhoto = null; // { blob, ext } from compression
+let pendingPhoto = null;   // { blob, ext } from compression, or null
+let editingId = null;      // item id when editing, else null
+let oldPhotoPath = null;   // image_path being replaced (to delete on save)
 
-function buildAddForm() {
+// Build the static parts of the form (selects + chips) once.
+function buildItemForm() {
   $("#f_category").innerHTML = CATEGORIES.map(c => `<option>${c}</option>`).join("");
-  $("#f_colors").innerHTML = PALETTE.map(([name, hex]) =>
-    `<button type="button" class="chip" data-color="${name}"><span class="sw" style="background:${hex}"></span>${name}</button>`
+  syncSubcategories();
+  $("#f_category").onchange = () => syncSubcategories();
+
+  $("#f_color").innerHTML = COLOR_FAMILIES.map(([name, hex]) =>
+    `<button type="button" class="chip" data-color="${esc(name)}"><span class="sw" style="background:${hex}"></span>${esc(name)}</button>`
   ).join("");
-  $("#f_colors").onclick = (e) => {
+  $("#f_color").onclick = (e) => {
     const b = e.target.closest("[data-color]");
+    if (!b) return;
+    const wasSel = b.classList.contains("sel");
+    $$("#f_color .sel").forEach(c => c.classList.remove("sel")); // single-select
+    if (!wasSel) b.classList.add("sel");
+  };
+
+  $("#f_season").innerHTML = SEASONS.map(s =>
+    `<button type="button" class="chip txt" data-season="${s}">${s}</button>`
+  ).join("");
+  $("#f_season").onclick = (e) => {
+    const b = e.target.closest("[data-season]");
     if (b) b.classList.toggle("sel");
   };
-  $("#f_pdate").value = todayStr();
+
+  const occOpts = (withBlank) => (withBlank ? `<option value="">—</option>` : "") +
+    OCCASION_LADDER.map((lbl, idx) => `<option value="${idx + 1}">${idx + 1} · ${lbl}</option>`).join("");
+  $("#f_min").innerHTML = occOpts(true);
+  $("#f_max").innerHTML = occOpts(true);
+
+  $("#f_acq").innerHTML = `<option value="">—</option>` + ACQUISITIONS.map(a => `<option>${a}</option>`).join("");
+  $("#f_status").innerHTML = STATUSES.map(s =>
+    `<button type="button" data-status="${s}" class="${s === "Available" ? "on" : ""}">${s}</button>`
+  ).join("");
+  $("#f_status").onclick = (e) => {
+    const b = e.target.closest("[data-status]");
+    if (!b) return;
+    $$("#f_status button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+  };
+}
+
+function syncSubcategories() {
+  const cat = $("#f_category").value;
+  const cur = $("#f_subcategory").value;
+  const subs = TAXONOMY[cat] || [];
+  $("#f_subcategory").innerHTML = `<option value="">—</option>` + subs.map(s => `<option>${s}</option>`).join("");
+  if (subs.includes(cur)) $("#f_subcategory").value = cur;
 }
 
 async function handlePhotoPick(file) {
@@ -715,82 +1094,193 @@ async function handlePhotoPick(file) {
   }
 }
 
-function resetAddForm() {
-  $("#addForm").reset();
+// Reset the form to a clean "add new" state.
+function resetItemForm() {
+  editingId = null;
+  oldPhotoPath = null;
   pendingPhoto = null;
+  $("#itemForm").reset();
   $("#photoPrev").style.backgroundImage = "";
   $("#photoPrev").textContent = "Tap to add a photo";
   $("#photoNote").textContent = "JPEG/PNG/HEIC — compressed to WebP before upload";
-  $$("#f_colors .sel").forEach(c => c.classList.remove("sel"));
-  $("#f_pdate").value = todayStr();
+  $$("#f_color .sel").forEach(c => c.classList.remove("sel"));
+  $$("#f_season .sel").forEach(c => c.classList.remove("sel"));
+  $$("#f_status button").forEach(x => x.classList.toggle("on", x.dataset.status === "Available"));
+  $("#f_category").value = CATEGORIES[0];
+  syncSubcategories();
+  $("#f_pdate").value = "";
+  $("#addBtn").textContent = "Save to closet";
+  $("#cancelEditBtn").hidden = true;
+  $("#addErr").hidden = true;
 }
 
-async function submitAdd(e) {
+// Populate the form from an existing item and switch to edit mode.
+function startEdit(id) {
+  const i = items.find(x => x.id === id);
+  if (!i) return;
+  resetItemForm();
+  editingId = id;
+  oldPhotoPath = i.image_path || null;
+
+  $("#f_name").value = i.name || "";
+  if (i.category && CATEGORIES.includes(i.category)) $("#f_category").value = i.category;
+  syncSubcategories();
+  if (i.subcategory) $("#f_subcategory").value = i.subcategory;
+  $("#f_brand").value = i.brand || "";
+  $("#f_retailer").value = i.retailer || "";
+  if (i.color_family) {
+    const cb = $(`#f_color [data-color="${CSS.escape(i.color_family)}"]`);
+    if (cb) cb.classList.add("sel");
+  }
+  $("#f_min").value = i.min_occasion != null ? String(i.min_occasion) : "";
+  $("#f_max").value = i.max_occasion != null ? String(i.max_occasion) : "";
+  $("#f_price").value = i.price != null ? i.price : "";
+  $("#f_pdate").value = i.purchase_date || "";
+  $("#f_dateguess").checked = !!i.date_is_guess;
+  $("#f_acq").value = i.acquisition || "";
+  $("#f_size").value = i.size || "";
+  (i.season || []).forEach(s => {
+    const sb = $(`#f_season [data-season="${CSS.escape(s)}"]`);
+    if (sb) sb.classList.add("sel");
+  });
+  $$("#f_status button").forEach(x => x.classList.toggle("on", x.dataset.status === itemStatus(i)));
+  $("#f_fabric").value = (i.fabric || []).join(", ");
+  $("#f_tags").value = (i.tags || []).join(", ");
+  $("#f_url").value = i.url || "";
+  $("#f_orderno").value = i.order_no || "";
+  $("#f_official").value = i.official_name || "";
+  $("#f_notes").value = i.notes || "";
+
+  if (i.image_path) {
+    const prev = $("#photoPrev");
+    prev.textContent = "";
+    prev.dataset.photo = i.image_path;
+    delete prev.dataset.photoDone; delete prev.dataset.photoObs;
+    hydratePhotos($("#tab-add"));
+    $("#photoNote").textContent = "Tap the photo to replace it";
+  }
+
+  $("#addBtn").textContent = "Save changes";
+  $("#cancelEditBtn").hidden = false;
+  switchTab("add");
+}
+
+// Read the form into a row object for the items table.
+function readItemForm() {
+  const colorSel = $("#f_color .sel");
+  const minV = $("#f_min").value, maxV = $("#f_max").value;
+  const statusBtn = $("#f_status button.on");
+  return {
+    name: $("#f_name").value.trim(),
+    category: $("#f_category").value || null,
+    subcategory: $("#f_subcategory").value || null,
+    brand: $("#f_brand").value.trim() || null,
+    retailer: $("#f_retailer").value.trim() || null,
+    color_family: colorSel ? colorSel.dataset.color : null,
+    min_occasion: minV ? Number(minV) : null,
+    max_occasion: maxV ? Number(maxV) : null,
+    price: $("#f_price").value === "" ? null : Number($("#f_price").value),
+    purchase_date: $("#f_pdate").value || null,
+    date_is_guess: $("#f_dateguess").checked,
+    acquisition: $("#f_acq").value || null,
+    size: $("#f_size").value.trim() || null,
+    season: $$("#f_season .sel").map(c => c.dataset.season),
+    status: statusBtn ? statusBtn.dataset.status : "Available",
+    fabric: parseList($("#f_fabric").value),
+    tags: parseList($("#f_tags").value),
+    url: $("#f_url").value.trim() || null,
+    order_no: $("#f_orderno").value.trim() || null,
+    official_name: $("#f_official").value.trim() || null,
+    notes: $("#f_notes").value.trim() || null,
+  };
+}
+
+async function submitItem(e) {
   e.preventDefault();
   const btn = $("#addBtn");
   const errBox = $("#addErr");
   errBox.hidden = true;
-  const name = $("#f_name").value.trim();
-  if (!name) { errBox.textContent = "Name is required."; errBox.hidden = false; return; }
+
+  const row = readItemForm();
+  if (!row.name) { errBox.textContent = "Name is required."; errBox.hidden = false; return; }
+  if (row.min_occasion && row.max_occasion && row.max_occasion < row.min_occasion) {
+    errBox.textContent = "Occasion 'To' must be the same or dressier than 'From'."; errBox.hidden = false; return;
+  }
 
   btn.disabled = true; btn.textContent = "Saving…";
   try {
-    let image_path = null;
+    // Upload a freshly-picked photo first; remember the old path to clean up.
+    let newPhotoPath = null;
     if (pendingPhoto) {
       btn.textContent = "Uploading photo…";
       const fname = `${crypto.randomUUID()}.${pendingPhoto.ext}`;
-      image_path = await uploadPhoto(pendingPhoto.blob, fname);
+      newPhotoPath = await uploadPhoto(pendingPhoto.blob, fname);
     }
-    const colors = $$("#f_colors .sel").map(c => c.dataset.color);
-    const priceRaw = $("#f_price").value;
-    const row = {
-      name,
-      category: $("#f_category").value,
-      brand: $("#f_brand").value.trim() || null,
-      colors,
-      price: priceRaw === "" ? null : Number(priceRaw),
-      purchase_date: $("#f_pdate").value || null,
-      purchase_place: $("#f_pplace").value.trim() || null,
-      notes: $("#f_notes").value.trim() || null,
-      image_path,
-    };
     btn.textContent = "Saving…";
-    const [created] = await rest("items", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify(row),
-    });
-    items.unshift(created);
-    resetAddForm();
-    toast("Added to closet");
+
+    if (editingId) {
+      const patch = Object.assign({}, row);
+      if (newPhotoPath) patch.image_path = newPhotoPath;
+      const [updated] = await rest(`items?id=eq.${editingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(patch),
+      });
+      const idx = items.findIndex(x => x.id === editingId);
+      if (idx >= 0) items[idx] = updated;
+      if (newPhotoPath && oldPhotoPath) await deletePhoto(oldPhotoPath);
+      toast("Saved");
+    } else {
+      row.image_path = newPhotoPath;
+      const [created] = await rest("items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(row),
+      });
+      items.unshift(created);
+      toast("Added to closet");
+    }
+    resetItemForm();
     switchTab("closet");
     refreshViews();
-  } catch (e) {
-    errBox.textContent = e.message; errBox.hidden = false;
+  } catch (err) {
+    errBox.textContent = err.message; errBox.hidden = false;
   } finally {
-    btn.disabled = false; btn.textContent = "Save to closet";
+    btn.disabled = false;
+    btn.textContent = editingId ? "Save changes" : "Save to closet";
   }
 }
 
 /* ===================================================================
    LOG WEAR
    =================================================================== */
-async function logWear(itemId, worn_on, occasion) {
+async function logWear(itemId, worn_on, context) {
   const [created] = await rest("wears", {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify({ item_id: itemId, worn_on, occasion: occasion || null }),
+    body: JSON.stringify({ item_id: itemId, worn_on, context: context || null }),
   });
   wears.unshift(created);
   return created;
 }
 
 function buildWearTab() {
-  const opts = items.filter(i => !i.archived)
-    .map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join("");
-  $("#w_item").innerHTML = opts || `<option value="">No items yet — add one first</option>`;
+  populateWearItems("");
+  $("#w_context").innerHTML = `<option value="">No context</option>` +
+    CONTEXTS.map(c => `<option>${c.name}</option>`).join("");
   $("#w_date").value = todayStr();
+  $("#w_search").value = "";
   renderRecentWears();
+}
+
+function populateWearItems(q) {
+  const query = q.trim().toLowerCase();
+  const avail = items
+    .filter(i => itemStatus(i) === "Available")
+    .filter(i => !query || [i.name, i.brand].filter(Boolean).join(" ").toLowerCase().includes(query));
+  $("#w_item").innerHTML = avail.length
+    ? avail.map(i => `<option value="${i.id}">${esc(i.name)}${i.brand ? " · " + esc(i.brand) : ""}</option>`).join("")
+    : `<option value="">No matching available items</option>`;
 }
 
 function renderRecentWears() {
@@ -803,7 +1293,7 @@ function renderRecentWears() {
       <div class="thumb" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}></div>
       <div class="grow">
         <div class="t1">${esc(it ? it.name : "Deleted item")}</div>
-        <div class="t2">${esc(w.worn_on)}${w.occasion ? " · " + esc(w.occasion) : ""}</div>
+        <div class="t2">${esc(w.worn_on)}${w.context ? " · " + esc(w.context) : ""}</div>
       </div>
       <button class="pill" data-delwear="${w.id}" style="border:0;cursor:pointer">remove</button>
     </div>`;
@@ -823,12 +1313,11 @@ function renderRecentWears() {
 
 async function submitWear() {
   const id = $("#w_item").value;
-  if (!id) { toast("Add an item first"); return; }
+  if (!id) { toast("Pick an item first"); return; }
   const btn = $("#wearBtn");
   btn.disabled = true; btn.textContent = "Logging…";
   try {
-    await logWear(id, $("#w_date").value || todayStr(), $("#w_occasion").value.trim());
-    $("#w_occasion").value = "";
+    await logWear(id, $("#w_date").value || todayStr(), $("#w_context").value || null);
     toast("Wear logged");
     refreshViews();
   } catch (e) { toast(e.message); }
@@ -836,16 +1325,269 @@ async function submitWear() {
 }
 
 /* ===================================================================
-   STATS
+   OUTFITS  (browse · build · log-as-wear)
+   =================================================================== */
+let outfitsShown = 40;
+
+async function ensureOutfits() {
+  const body = $("#outfitsBody");
+  if (!outfitsLoaded) {
+    body.innerHTML = `<div class="spin"></div>`;
+    try { await loadOutfits(); }
+    catch (e) { body.innerHTML = `<div class="empty">Couldn't load outfits.<br><span class="err">${esc(e.message)}</span></div>`; return; }
+  }
+  renderOutfits();
+}
+
+function thumbsHtml(its) {
+  if (!its.length) return `<div class="muted" style="font-size:12.5px">No items in the current set</div>`;
+  return `<div class="thumbs">` + its.map(i =>
+    `<div class="th" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>`
+  ).join("") + `</div>`;
+}
+
+function renderOutfits() {
+  const body = $("#outfitsBody");
+  const header = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 12px">
+      <span class="muted" style="font-size:13px">${outfits.length} outfit${outfits.length === 1 ? "" : "s"}</span>
+      <button class="btn" id="newOutfitBtn" style="width:auto;padding:9px 14px">＋ New outfit</button>
+    </div>`;
+
+  if (outfits.length === 0) {
+    body.innerHTML = header + `<div class="empty">No outfits yet.<br>Tap <b>New outfit</b> to build one.</div>`;
+    $("#newOutfitBtn").onclick = () => startOutfitBuilder(null);
+    return;
+  }
+
+  const slice = outfits.slice(0, outfitsShown);
+  const cards = slice.map(o => {
+    const its = itemsForOutfit(o.id);
+    return `
+      <div class="ofit" data-outfit="${o.id}">
+        <div class="top">
+          <span class="dt">${esc(outfitDate(o))}</span>
+          ${o.context ? `<span class="pill">${esc(o.context)}</span>` : ""}
+        </div>
+        ${thumbsHtml(its)}
+      </div>`;
+  }).join("");
+
+  const more = outfits.length > outfitsShown
+    ? `<button class="btn ghost" id="moreOutfits" style="margin-top:12px">Show more (${outfits.length - outfitsShown} left)</button>` : "";
+
+  body.innerHTML = header + cards + more;
+  $("#newOutfitBtn").onclick = () => startOutfitBuilder(null);
+  const mo = $("#moreOutfits");
+  if (mo) mo.onclick = () => { outfitsShown += 40; renderOutfits(); };
+  hydratePhotos(body);
+}
+
+function openOutfit(id) {
+  const o = outfits.find(x => x.id === id);
+  if (!o) return;
+  const its = itemsForOutfit(o.id);
+  const itemTiles = its.map(i => `
+    <div class="pk" data-item="${i.id}">
+      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div class="nm">${esc(i.name)}</div>
+    </div>`).join("");
+
+  $("#sheet").innerHTML = `
+    ${o.image_path ? `<div class="hero" data-photo="${esc(o.image_path)}"></div>` : ""}
+    <h2 style="margin:14px 2px 2px;font-size:20px">Outfit · ${esc(outfitDate(o))}</h2>
+    <div class="muted" style="margin:0 2px 12px">${its.length} item${its.length === 1 ? "" : "s"}${o.context ? " · " + esc(o.context) : ""}</div>
+
+    <div class="pickgrid">${itemTiles || `<div class="muted">No items.</div>`}</div>
+
+    <h2 class="sec">Log this outfit as worn</h2>
+    <div class="row2">
+      <div>
+        <label class="fld">Date</label>
+        <input class="inp" id="oWearDate" type="date" value="${todayStr()}">
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button class="btn" id="oLog" style="margin:0">Log as worn</button>
+      </div>
+    </div>
+
+    <div class="stack" style="margin-top:18px">
+      <button class="btn ghost" id="oEdit">Edit outfit</button>
+      <button class="btn danger" id="oDel">Delete outfit</button>
+      <button class="btn ghost" id="oClose">Close</button>
+    </div>`;
+
+  $("#modal").classList.add("open");
+  hydratePhotos($("#sheet"));
+  $("#sheet").querySelector(".pickgrid").onclick = (e) => {
+    const t = e.target.closest("[data-item]");
+    if (t) { closeModal(); openItem(t.dataset.item); }
+  };
+  $("#oClose").onclick = closeModal;
+  $("#oEdit").onclick = () => { closeModal(); startOutfitBuilder(o.id); };
+  $("#oLog").onclick = async () => {
+    const btn = $("#oLog"); btn.disabled = true; btn.textContent = "Logging…";
+    try {
+      const n = await logOutfitWear(o, $("#oWearDate").value || todayStr());
+      toast(n ? `Logged ${n} wear${n === 1 ? "" : "s"}` : "Already logged that day");
+      closeModal(); refreshViews();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Log as worn"; }
+  };
+  $("#oDel").onclick = async () => {
+    if (!confirm("Delete this outfit? Items and their wear history are kept; only the grouping is removed.")) return;
+    try { await deleteOutfit(o.id); toast("Outfit deleted"); closeModal(); renderOutfits(); }
+    catch (e) { toast(e.message); }
+  };
+}
+
+// Create one wear per item in the outfit for `date` (one row per item per day),
+// tagged with this outfit. Returns how many new wears were created.
+async function logOutfitWear(o, date) {
+  const its = itemsForOutfit(o.id);
+  const fresh = its.filter(i => !wears.some(w => w.item_id === i.id && w.worn_on === date));
+  if (!fresh.length) return 0;
+  const rows = fresh.map(i => ({ item_id: i.id, worn_on: date, outfit_id: o.id, context: o.context || null }));
+  const created = await rest("wears", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(rows),
+  });
+  (created || []).forEach(w => wears.unshift(w));
+  return (created || []).length;
+}
+
+async function deleteOutfit(id) {
+  await rest(`outfit_items?outfit_id=eq.${id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  await rest(`outfits?id=eq.${id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  outfits = outfits.filter(o => o.id !== id);
+  outfitItems = outfitItems.filter(oi => oi.outfit_id !== id);
+  rebuildOutfitMap();
+  // deleting an outfit nulls its wears' outfit_id (FK on delete set null)
+  wears.forEach(w => { if (w.outfit_id === id) w.outfit_id = null; });
+}
+
+/* ---- outfit builder (new / edit) ---- */
+let builderSel = new Set();   // selected item ids
+let builderEditId = null;
+let builderQuery = "";
+
+function startOutfitBuilder(editId) {
+  builderEditId = editId;
+  builderQuery = "";
+  builderSel = new Set(editId ? (outfitItemMap.get(editId) || []) : []);
+  const existing = editId ? outfits.find(o => o.id === editId) : null;
+
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 12px;font-size:20px">${editId ? "Edit outfit" : "New outfit"}</h2>
+    <div class="row2">
+      <div>
+        <label class="fld">Date</label>
+        <input class="inp" id="bDate" type="date" value="${existing ? esc(outfitDate(existing)) : todayStr()}">
+      </div>
+      <div>
+        <label class="fld">Context</label>
+        <select class="inp" id="bContext"></select>
+      </div>
+    </div>
+    <h2 class="sec">Items <span class="muted" id="bCount" style="font-size:12.5px;font-weight:400"></span></h2>
+    <input class="inp" id="bSearch" placeholder="Search your closet" style="margin-bottom:10px">
+    <div class="pickgrid" id="bGrid"></div>
+    <div class="stack" style="margin-top:18px">
+      <button class="btn" id="bSave">${editId ? "Save changes" : "Save outfit"}</button>
+      ${editId ? "" : `<button class="btn ghost" id="bSaveLog">Save &amp; log as worn</button>`}
+      <button class="btn ghost" id="bCancel">Cancel</button>
+    </div>`;
+
+  $("#bContext").innerHTML = `<option value="">No context</option>` +
+    CONTEXTS.map(c => `<option ${existing && existing.context === c.name ? "selected" : ""}>${c.name}</option>`).join("");
+
+  $("#modal").classList.add("open");
+  renderBuilderGrid();
+  $("#bSearch").oninput = (e) => { builderQuery = e.target.value; renderBuilderGrid(true); };
+  $("#bCancel").onclick = closeModal;
+  $("#bSave").onclick = () => saveOutfit(false);
+  if ($("#bSaveLog")) $("#bSaveLog").onclick = () => saveOutfit(true);
+}
+
+function renderBuilderGrid(keepFocus) {
+  const q = builderQuery.trim().toLowerCase();
+  // selected first, then Available items matching the search
+  const pool = items.filter(i => itemStatus(i) === "Available" || builderSel.has(i.id));
+  const matched = pool.filter(i => !q || [i.name, i.brand].filter(Boolean).join(" ").toLowerCase().includes(q));
+  matched.sort((a, b) => (builderSel.has(b.id) - builderSel.has(a.id)));
+  const shown = matched.slice(0, 60);
+
+  $("#bCount").textContent = `${builderSel.size} selected`;
+  $("#bGrid").innerHTML = shown.map(i => `
+    <div class="pk ${builderSel.has(i.id) ? "sel" : ""}" data-pick="${i.id}">
+      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div class="nm">${esc(i.name)}</div>
+    </div>`).join("") || `<div class="muted">No matches.</div>`;
+  $("#bGrid").onclick = (e) => {
+    const t = e.target.closest("[data-pick]");
+    if (!t) return;
+    const id = t.dataset.pick;
+    if (builderSel.has(id)) builderSel.delete(id); else builderSel.add(id);
+    t.classList.toggle("sel");
+    $("#bCount").textContent = `${builderSel.size} selected`;
+  };
+  hydratePhotos($("#bGrid"));
+  if (keepFocus) $("#bSearch").focus();
+}
+
+async function saveOutfit(alsoLog) {
+  if (builderSel.size === 0) { toast("Pick at least one item"); return; }
+  const date = $("#bDate").value || todayStr();
+  const context = $("#bContext").value || null;
+  const ids = [...builderSel];
+  const btnId = alsoLog ? "bSaveLog" : "bSave";
+  const btn = $("#" + btnId); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    if (builderEditId) {
+      const [u] = await rest(`outfits?id=eq.${builderEditId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ context, created_at: date + "T12:00:00+00:00" }),
+      });
+      const idx = outfits.findIndex(o => o.id === builderEditId); if (idx >= 0) outfits[idx] = u;
+      // resync join rows: remove all, re-add current selection
+      await rest(`outfit_items?outfit_id=eq.${builderEditId}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await rest("outfit_items", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify(ids.map(item_id => ({ outfit_id: builderEditId, item_id }))) });
+      outfitItems = outfitItems.filter(oi => oi.outfit_id !== builderEditId).concat(ids.map(item_id => ({ outfit_id: builderEditId, item_id })));
+      rebuildOutfitMap();
+      toast("Outfit saved");
+    } else {
+      const [created] = await rest("outfits", {
+        method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ context, created_at: date + "T12:00:00+00:00" }),
+      });
+      await rest("outfit_items", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify(ids.map(item_id => ({ outfit_id: created.id, item_id }))) });
+      outfits.unshift(created);
+      ids.forEach(item_id => outfitItems.push({ outfit_id: created.id, item_id }));
+      rebuildOutfitMap();
+      if (alsoLog) { const n = await logOutfitWear(created, date); toast(n ? `Saved · logged ${n} wear${n === 1 ? "" : "s"}` : "Saved"); }
+      else toast("Outfit saved");
+    }
+    closeModal();
+    outfits.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+    renderOutfits();
+    refreshViews();
+  } catch (e) {
+    toast(e.message); btn.disabled = false; btn.textContent = alsoLog ? "Save & log as worn" : (builderEditId ? "Save changes" : "Save outfit");
+  }
+}
+
+/* ===================================================================
+   STATS  (interim — full rebuild around CPW/score formulas is Phase 3e)
    =================================================================== */
 function renderStats() {
   const body = $("#statsBody");
   if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
 
-  const active = items.filter(i => !i.archived);
+  const active = items.filter(i => itemStatus(i) === "Available");
   if (active.length === 0) { body.innerHTML = `<div class="empty">Add items to see stats.</div>`; return; }
 
-  // headline: cost-per-wear across pieces that have actually been worn
   const totalValue = items.reduce((s, i) => s + (Number(i.price) || 0), 0);
   const totalWears = wears.length;
   const pricedWears = wears.filter(w => {
@@ -856,20 +1598,18 @@ function renderStats() {
   const overallCPW = pricedWears > 0 ? valuedSpend / pricedWears : null;
   const neverWorn = active.filter(i => wearCount(i.id) === 0);
 
-  // ranked lists
   const ranked = active.map(i => ({ i, n: wearCount(i.id), cpw: costPerWear(i), last: lastWorn(i.id) }));
   const mostWorn = [...ranked].filter(r => r.n > 0).sort((a, b) => b.n - a.n).slice(0, 5);
   const bestCPW = [...ranked].filter(r => r.cpw != null).sort((a, b) => a.cpw - b.cpw).slice(0, 5);
   const stale = [...ranked].filter(r => r.last).map(r => ({ ...r, ds: daysSince(r.last) }))
     .sort((a, b) => b.ds - a.ds).slice(0, 5);
 
-  // breakdowns by category + color (counted per wear)
   const byCat = {}, byColor = {};
   for (const w of wears) {
     const it = items.find(i => i.id === w.item_id);
     if (!it) continue;
     byCat[it.category || "Other"] = (byCat[it.category || "Other"] || 0) + 1;
-    for (const c of (it.colors || [])) byColor[c] = (byColor[c] || 0) + 1;
+    if (it.color_family) byColor[it.color_family] = (byColor[it.color_family] || 0) + 1;
   }
 
   body.innerHTML = `
@@ -878,14 +1618,14 @@ function renderStats() {
         <div class="big">${overallCPW != null ? money(overallCPW) : "—"}</div>
         <div class="lbl">Overall cost per wear · ${money(valuedSpend)} of worn pieces ÷ ${pricedWears} wears</div>
       </div>
-      <div class="kpi"><div class="big">${active.length}</div><div class="lbl">Active items</div></div>
+      <div class="kpi"><div class="big">${active.length}</div><div class="lbl">Available items</div></div>
       <div class="kpi"><div class="big">${totalWears}</div><div class="lbl">Total wears</div></div>
       <div class="kpi"><div class="big">${money(totalValue)}</div><div class="lbl">Wardrobe value</div></div>
       <div class="kpi"><div class="big">${neverWorn.length}</div><div class="lbl">Never worn</div></div>
     </div>
 
     ${bestCPW.length ? section("Best value (lowest cost/wear)", listRows(bestCPW.map(r =>
-      ({ item: r.i, t2: `${r.n} wear${r.n===1?"":"s"} · ${money(r.i.price)}`, val: money(r.cpw) + "/w" })))) : ""}
+      ({ item: r.i, t2: `${r.n} wear${r.n === 1 ? "" : "s"} · ${money(r.i.price)}`, val: money(r.cpw) + "/w" })))) : ""}
 
     ${mostWorn.length ? section("Most worn", listRows(mostWorn.map(r =>
       ({ item: r.i, t2: r.i.category || "", val: r.n + "×" })))) : ""}
@@ -893,7 +1633,7 @@ function renderStats() {
     ${stale.length ? section("Haven't worn in a while", listRows(stale.map(r =>
       ({ item: r.i, t2: `last ${r.last}`, val: r.ds + "d" })))) : ""}
 
-    ${neverWorn.length ? section("Never worn", listRows(neverWorn.slice(0,8).map(i =>
+    ${neverWorn.length ? section("Never worn", listRows(neverWorn.slice(0, 8).map(i =>
       ({ item: i, t2: i.category || "", val: i.price != null ? money(i.price) : "" })))) : ""}
 
     ${Object.keys(byCat).length ? section("Wears by category", bars(byCat)) : ""}
@@ -924,10 +1664,10 @@ function bars(map, isColor = false) {
   const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
   const max = Math.max(...entries.map(e => e[1]));
   return `<div class="lst">` + entries.map(([k, v]) => {
-    const hex = isColor ? ((PALETTE.find(p => p[0] === k) || [])[1] || "#888") : null;
+    const hex = isColor ? colorHex(k) : null;
     return `<div class="bar">
       <div class="blab">${hex ? `<span class="sw" style="display:inline-block;vertical-align:-2px;margin-right:5px;background:${hex}"></span>` : ""}${esc(k)}</div>
-      <div class="btrack"><div class="bfill" style="width:${(v/max*100).toFixed(0)}%"></div></div>
+      <div class="btrack"><div class="bfill" style="width:${(v / max * 100).toFixed(0)}%"></div></div>
       <div class="bnum">${v}</div>
     </div>`;
   }).join("") + `</div>`;
@@ -936,16 +1676,19 @@ function bars(map, isColor = false) {
 /* ===================================================================
    TAB SWITCHING + REFRESH
    =================================================================== */
-const TAB_TITLES = { closet: "Closet", add: "Add Item", wear: "Log Wear", stats: "Stats", settings: "Settings" };
+const TAB_TITLES = { closet: "Closet", add: "Add Item", wear: "Log Wear", outfits: "Outfits", stats: "Stats", settings: "Settings" };
 
 function switchTab(name) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
-  $("#title").textContent = TAB_TITLES[name];
+  $("#title").textContent = name === "add" && editingId ? "Edit Item" : TAB_TITLES[name];
   window.scrollTo(0, 0);
   if (name === "wear") buildWearTab();
   if (name === "stats") renderStats();
   if (name === "closet") renderCloset();
+  if (name === "outfits") ensureOutfits();
+  // Tapping the Add tab fresh (not via Edit) should start a clean form.
+  if (name === "add" && !editingId) resetItemForm();
 }
 
 // Re-render whatever views depend on data after a mutation.
@@ -953,6 +1696,7 @@ function refreshViews() {
   renderCloset();
   if ($("#tab-stats").classList.contains("active")) renderStats();
   if ($("#tab-wear").classList.contains("active")) renderRecentWears();
+  if (outfitsLoaded && $("#tab-outfits").classList.contains("active")) renderOutfits();
 }
 
 /* ===================================================================
@@ -975,7 +1719,8 @@ function handleSignedOut() {
 
 async function bootApp() {
   showApp();
-  buildAddForm();
+  buildItemForm();
+  resetItemForm();
   switchTab("closet");
   renderCloset(); // shows spinner while loading
   try {
@@ -1015,21 +1760,29 @@ function wireEvents() {
     if (b) switchTab(b.dataset.tab);
   });
 
-  // closet interactions (toggle archived / open item)
+  // closet open-item (filter controls are wired per-render in wireClosetControls)
   $("#closetBody").addEventListener("click", (e) => {
-    if (e.target.id === "toggleArch") { showArchived = !showArchived; renderCloset(); return; }
     const tile = e.target.closest("[data-item]");
     if (tile) openItem(tile.dataset.item);
   });
 
-  // add item
+  // outfit open (New-outfit / Show-more buttons are wired per-render)
+  $("#outfitsBody").addEventListener("click", (e) => {
+    if (e.target.closest("#newOutfitBtn") || e.target.closest("#moreOutfits")) return;
+    const card = e.target.closest("[data-outfit]");
+    if (card) openOutfit(card.dataset.outfit);
+  });
+
+  // add / edit item
   $("#photoPrev").addEventListener("click", () => $("#photoInput").click());
   $("#photoPrev").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") $("#photoInput").click(); });
   $("#photoInput").addEventListener("change", (e) => handlePhotoPick(e.target.files[0]));
-  $("#addForm").addEventListener("submit", submitAdd);
+  $("#itemForm").addEventListener("submit", submitItem);
+  $("#cancelEditBtn").addEventListener("click", () => { resetItemForm(); switchTab("closet"); });
 
   // log wear
   $("#wearBtn").addEventListener("click", submitWear);
+  $("#w_search").addEventListener("input", (e) => populateWearItems(e.target.value));
 
   // settings
   $("#logoutBtn").addEventListener("click", () => handleSignedOut());
