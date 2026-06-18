@@ -56,7 +56,7 @@
     padding-bottom: var(--safe-b);
     background: var(--surface);
     border-top: 1px solid var(--line);
-    display: grid; grid-template-columns: repeat(6, 1fr);
+    display: grid; grid-template-columns: repeat(7, 1fr);
     max-width: 640px; margin: 0 auto;
   }
   nav.tabbar button {
@@ -114,6 +114,14 @@
   .filterbar .frow { display: flex; gap: 8px; }
   .filterbar select.inp { padding: 9px 10px; border-radius: 999px; }
   .filterbar input.inp { border-radius: 999px; padding: 9px 14px; }
+
+  /* ---------- active-capsule lens banner ---------- */
+  .lensbar { display: flex; align-items: center; gap: 8px; background: var(--ink); color: #fff;
+             border-radius: 12px; padding: 9px 12px; margin: 2px 0 12px; font-size: 13.5px; }
+  .lensbar .lic { font-size: 16px; line-height: 1; flex: none; }
+  .lensbar .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lensbar button { background: rgba(255,255,255,.2); border: 0; color: #fff; border-radius: 999px;
+                    padding: 5px 12px; font-size: 12.5px; flex: none; }
 
   /* ---------- closet grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
@@ -384,6 +392,11 @@
       <div id="outfitsBody"></div>
     </section>
 
+    <!-- CAPSULES -->
+    <section class="screen" id="tab-capsules">
+      <div id="capsulesBody"></div>
+    </section>
+
     <!-- STATS -->
     <section class="screen" id="tab-stats">
       <div id="statsBody"></div>
@@ -415,6 +428,7 @@
     <button data-tab="add"><span class="ic">＋</span>Add</button>
     <button data-tab="wear"><span class="ic">✓</span>Wear</button>
     <button data-tab="outfits"><span class="ic">👗</span>Outfits</button>
+    <button data-tab="capsules"><span class="ic">🧳</span>Capsules</button>
     <button data-tab="stats"><span class="ic">📊</span>Stats</button>
     <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
   </nav>
@@ -438,7 +452,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v2";
+const APP_VERSION = "2026-06-18 v3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -488,6 +502,11 @@ const CONTEXTS = [
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
 const STATUSES = ["Available", "Storage", "Archive"];
 const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
+
+// Capsules: named item sets. "capsule" = seasonal/curated set; "packing"/"travel"
+// = a trip's bag (a trip is just a capsule that carries a date range).
+const CAPSULE_KINDS = ["capsule", "packing", "travel"];
+const kindLabel = (k) => ({ capsule: "Capsule", packing: "Packing", travel: "Travel" }[k] || "Capsule");
 
 const MAX_DIM = 1200;          // longest edge after downscale
 const ENCODE_Q = 0.82;         // quality used for both webp + jpeg fallback
@@ -675,6 +694,13 @@ let outfitItems = [];      // {outfit_id, item_id}
 let outfitItemMap = new Map(); // outfit_id -> [item_id]
 let outfitsLoaded = false;
 
+let capsules = [];          // loaded lazily on first Capsules-tab open (or on boot if a lens is set)
+let capsuleItems = [];      // {capsule_id, item_id}
+let capsuleItemMap = new Map(); // capsule_id -> [item_id]
+let capsulesLoaded = false;
+let activeCapsule = null;   // capsule id used as a closet "lens", or null
+const CAPSULE_LENS_KEY = "wardrobe.lens";
+
 // PostgREST/Supabase caps a single response at 1000 rows; page through the rest.
 // wears (~4k), outfits (~1.5k) and outfit_items (~4k) all exceed that.
 async function restAll(path) {
@@ -719,6 +745,36 @@ function rebuildOutfitMap() {
     if (!outfitItemMap.has(oi.outfit_id)) outfitItemMap.set(oi.outfit_id, []);
     outfitItemMap.get(oi.outfit_id).push(oi.item_id);
   }
+}
+
+async function loadCapsules() {
+  const [cp, ci] = await Promise.all([
+    restAll("capsules?select=*&order=created_at.desc"),
+    restAll("capsule_items?select=capsule_id,item_id"),
+  ]);
+  capsules = cp || [];
+  capsuleItems = ci || [];
+  rebuildCapsuleMap();
+  capsulesLoaded = true;
+}
+function rebuildCapsuleMap() {
+  capsuleItemMap = new Map();
+  for (const ci of capsuleItems) {
+    if (!capsuleItemMap.has(ci.capsule_id)) capsuleItemMap.set(ci.capsule_id, []);
+    capsuleItemMap.get(ci.capsule_id).push(ci.item_id);
+  }
+}
+function itemsForCapsule(capsuleId) {
+  return (capsuleItemMap.get(capsuleId) || []).map(id => items.find(i => i.id === id)).filter(Boolean);
+}
+// "Jun 20 – Jul 2" / "from Jun 20" / "until Jul 2"
+function dateRangeLabel(c) {
+  const f = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+  const s = f(c.start_date), e = f(c.end_date);
+  if (s && e) return `${s} – ${e}`;
+  if (s) return `from ${s}`;
+  if (e) return `until ${e}`;
+  return "";
 }
 // resolved item objects for an outfit (skips items not in the loaded set)
 function itemsForOutfit(outfitId) {
@@ -815,8 +871,12 @@ let closetStatus = "Available";  // Available | Storage | Archive | All
 
 function filteredItems() {
   const q = closetQuery.trim().toLowerCase();
+  // When a capsule lens is active, restrict to its items and show every status
+  // (a capsule is a curated set); otherwise honor the status filter.
+  const lensIds = activeCapsule ? new Set(capsuleItemMap.get(activeCapsule) || []) : null;
   return items.filter(i => {
-    if (closetStatus !== "All" && itemStatus(i) !== closetStatus) return false;
+    if (lensIds) { if (!lensIds.has(i.id)) return false; }
+    else if (closetStatus !== "All" && itemStatus(i) !== closetStatus) return false;
     if (closetCat && i.category !== closetCat) return false;
     if (q) {
       const hay = [i.name, i.brand, i.subcategory, i.retailer, i.color_family]
@@ -825,6 +885,15 @@ function filteredItems() {
     }
     return true;
   });
+}
+
+function activeCapsuleObj() {
+  return activeCapsule ? capsules.find(c => c.id === activeCapsule) : null;
+}
+function setLens(id) {
+  activeCapsule = id || null;
+  if (activeCapsule) store.setItem(CAPSULE_LENS_KEY, activeCapsule);
+  else store.removeItem(CAPSULE_LENS_KEY);
 }
 
 function statusCounts() {
@@ -844,6 +913,14 @@ function renderCloset() {
 
   const counts = statusCounts();
   const visible = filteredItems();
+  const lens = activeCapsuleObj();
+
+  const lensBanner = lens ? `
+    <div class="lensbar">
+      <span class="lic">🧳</span>
+      <span class="grow">Lens: <b>${esc(lens.name)}</b> · ${(capsuleItemMap.get(lens.id) || []).length} item${(capsuleItemMap.get(lens.id) || []).length === 1 ? "" : "s"}</span>
+      <button id="lensClear">Clear</button>
+    </div>` : "";
 
   const catOpts = `<option value="">All categories</option>` +
     CATEGORIES.map(c => `<option ${closetCat === c ? "selected" : ""}>${c}</option>`).join("");
@@ -852,17 +929,18 @@ function renderCloset() {
     return `<button data-status="${s}" class="${closetStatus === s ? "on" : ""}">${s} ${n}</button>`;
   }).join("");
 
+  // In lens mode the status filter is suppressed (the capsule set is shown whole).
   const filterbar = `
     <div class="filterbar">
       <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
       <div class="frow">
         <select class="inp" id="closetCat" style="flex:1">${catOpts}</select>
       </div>
-      <div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSeg}</div>
+      ${lens ? "" : `<div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSeg}</div>`}
     </div>`;
 
   if (visible.length === 0) {
-    body.innerHTML = filterbar + `<div class="empty">No items match.</div>`;
+    body.innerHTML = lensBanner + filterbar + `<div class="empty">${lens ? "This capsule is empty." : "No items match."}</div>`;
     wireClosetControls();
     return;
   }
@@ -883,7 +961,7 @@ function renderCloset() {
       </div>`;
   }).join("");
 
-  body.innerHTML = filterbar +
+  body.innerHTML = lensBanner + filterbar +
     `<div class="muted" style="font-size:13px;margin:0 2px 10px">${visible.length} item${visible.length === 1 ? "" : "s"}</div>` +
     `<div class="grid">${tiles}</div>`;
   wireClosetControls();
@@ -903,6 +981,8 @@ function wireClosetControls() {
     const b = e.target.closest("[data-status]");
     if (b) { closetStatus = b.dataset.status; renderCloset(); }
   };
+  const lensClear = $("#lensClear");
+  if (lensClear) lensClear.onclick = () => { setLens(null); renderCloset(); };
 }
 
 // Debounce closet re-render while typing so we don't re-render per keystroke,
@@ -1597,6 +1677,246 @@ async function saveOutfit(alsoLog) {
 }
 
 /* ===================================================================
+   CAPSULES  (named item sets · build · use as a closet lens)
+   =================================================================== */
+async function ensureCapsules() {
+  const body = $("#capsulesBody");
+  if (!capsulesLoaded) {
+    body.innerHTML = `<div class="spin"></div>`;
+    try { await loadCapsules(); }
+    catch (e) { body.innerHTML = `<div class="empty">Couldn't load capsules.<br><span class="err">${esc(e.message)}</span></div>`; return; }
+  }
+  renderCapsules();
+}
+
+function renderCapsules() {
+  const body = $("#capsulesBody");
+  const header = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 12px">
+      <span class="muted" style="font-size:13px">${capsules.length} capsule${capsules.length === 1 ? "" : "s"}</span>
+      <button class="btn" id="newCapsuleBtn" style="width:auto;padding:9px 14px">＋ New capsule</button>
+    </div>`;
+
+  if (capsules.length === 0) {
+    body.innerHTML = header + `<div class="empty">No capsules yet.<br>Build a packing list or a seasonal set, then use it as a closet lens.</div>`;
+    $("#newCapsuleBtn").onclick = () => startCapsuleBuilder(null);
+    return;
+  }
+
+  const cards = capsules.map(c => {
+    const its = itemsForCapsule(c.id);
+    const dr = dateRangeLabel(c);
+    const isLens = activeCapsule === c.id;
+    return `
+      <div class="ofit" data-capsule="${c.id}">
+        <div class="top">
+          <span class="dt">${esc(c.name)}</span>
+          <span><span class="pill">${esc(kindLabel(c.kind))}</span> <span class="muted" style="font-size:12.5px">${its.length} item${its.length === 1 ? "" : "s"}</span></span>
+        </div>
+        ${dr || isLens ? `<div class="muted" style="font-size:12.5px;margin:-2px 0 8px">${dr ? esc(dr) : ""}${dr && isLens ? " · " : ""}${isLens ? "● active lens" : ""}</div>` : ""}
+        ${thumbsHtml(its)}
+      </div>`;
+  }).join("");
+
+  body.innerHTML = header + cards;
+  $("#newCapsuleBtn").onclick = () => startCapsuleBuilder(null);
+  hydratePhotos(body);
+}
+
+function openCapsule(id) {
+  const c = capsules.find(x => x.id === id);
+  if (!c) return;
+  const its = itemsForCapsule(id);
+  const isLens = activeCapsule === id;
+  const dr = dateRangeLabel(c);
+  const itemTiles = its.map(i => `
+    <div class="pk" data-item="${i.id}">
+      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div class="nm">${esc(i.name)}</div>
+    </div>`).join("");
+
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 2px;font-size:20px">${esc(c.name)}</h2>
+    <div class="muted" style="margin:0 2px 12px">${esc(kindLabel(c.kind))}${dr ? " · " + esc(dr) : ""} · ${its.length} item${its.length === 1 ? "" : "s"}</div>
+    ${c.notes ? `<div class="card" style="margin-bottom:6px;font-size:14px">${esc(c.notes)}</div>` : ""}
+
+    <div class="pickgrid">${itemTiles || `<div class="muted">No items yet — edit to add some.</div>`}</div>
+
+    <div class="stack" style="margin-top:18px">
+      <button class="btn" id="cLens">${isLens ? "Clear closet lens" : "Use as closet lens"}</button>
+      <button class="btn ghost" id="cEdit">Edit capsule</button>
+      <button class="btn danger" id="cDel">Delete capsule</button>
+      <button class="btn ghost" id="cClose">Close</button>
+    </div>`;
+
+  $("#modal").classList.add("open");
+  hydratePhotos($("#sheet"));
+  $("#sheet").querySelector(".pickgrid").onclick = (e) => {
+    const t = e.target.closest("[data-item]");
+    if (t) { closeModal(); openItem(t.dataset.item); }
+  };
+  $("#cClose").onclick = closeModal;
+  $("#cEdit").onclick = () => { closeModal(); startCapsuleBuilder(id); };
+  $("#cLens").onclick = () => {
+    setLens(isLens ? null : id);
+    toast(isLens ? "Lens cleared" : `Closet showing “${c.name}”`);
+    closeModal();
+    switchTab("closet");
+  };
+  $("#cDel").onclick = async () => {
+    if (!confirm(`Delete capsule "${c.name}"? Items and their history are kept; only this set is removed.`)) return;
+    try { await deleteCapsule(id); toast("Capsule deleted"); closeModal(); renderCapsules(); }
+    catch (e) { toast(e.message); }
+  };
+}
+
+async function deleteCapsule(id) {
+  await rest(`capsule_items?capsule_id=eq.${id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  await rest(`capsules?id=eq.${id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+  capsules = capsules.filter(c => c.id !== id);
+  capsuleItems = capsuleItems.filter(ci => ci.capsule_id !== id);
+  rebuildCapsuleMap();
+  if (activeCapsule === id) { setLens(null); renderCloset(); }
+}
+
+/* ---- capsule builder (new / edit) ---- */
+let capSel = new Set();   // selected item ids
+let capEditId = null;
+let capQuery = "";
+
+function startCapsuleBuilder(editId) {
+  capEditId = editId;
+  capQuery = "";
+  capSel = new Set(editId ? (capsuleItemMap.get(editId) || []) : []);
+  const existing = editId ? capsules.find(c => c.id === editId) : null;
+  const kind = existing ? existing.kind : "capsule";
+
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 12px;font-size:20px">${editId ? "Edit capsule" : "New capsule"}</h2>
+    <div>
+      <label class="fld">Name</label>
+      <input class="inp" id="capName" placeholder="e.g. Spain trip, Fall capsule" value="${existing ? esc(existing.name) : ""}">
+    </div>
+    <div style="margin-top:12px">
+      <label class="fld">Kind</label>
+      <div class="seg wrap" id="capKind">
+        ${CAPSULE_KINDS.map(k => `<button type="button" data-kind="${k}" class="${k === kind ? "on" : ""}">${kindLabel(k)}</button>`).join("")}
+      </div>
+    </div>
+    <div class="row2" style="margin-top:12px">
+      <div>
+        <label class="fld">Start date</label>
+        <input class="inp" id="capStart" type="date" value="${existing && existing.start_date ? esc(existing.start_date) : ""}">
+      </div>
+      <div>
+        <label class="fld">End date</label>
+        <input class="inp" id="capEnd" type="date" value="${existing && existing.end_date ? esc(existing.end_date) : ""}">
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <label class="fld">Notes</label>
+      <textarea class="inp" id="capNotes" placeholder="Optional">${existing && existing.notes ? esc(existing.notes) : ""}</textarea>
+    </div>
+
+    <h2 class="sec">Items <span class="muted" id="capCount" style="font-size:12.5px;font-weight:400"></span></h2>
+    <input class="inp" id="capSearch" placeholder="Search your closet" style="margin-bottom:10px">
+    <div class="pickgrid" id="capGrid"></div>
+
+    <div class="stack" style="margin-top:18px">
+      <button class="btn" id="capSave">${editId ? "Save changes" : "Save capsule"}</button>
+      <button class="btn ghost" id="capCancel">Cancel</button>
+    </div>`;
+
+  $("#capKind").onclick = (e) => {
+    const b = e.target.closest("[data-kind]");
+    if (!b) return;
+    $$("#capKind button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+  };
+
+  $("#modal").classList.add("open");
+  renderCapBuilderGrid();
+  $("#capSearch").oninput = (e) => { capQuery = e.target.value; renderCapBuilderGrid(true); };
+  $("#capCancel").onclick = closeModal;
+  $("#capSave").onclick = saveCapsule;
+}
+
+function renderCapBuilderGrid(keepFocus) {
+  const q = capQuery.trim().toLowerCase();
+  // selected items always available; otherwise pull from any non-Archive item
+  const pool = items.filter(i => itemStatus(i) !== "Archive" || capSel.has(i.id));
+  const matched = pool.filter(i => !q || [i.name, i.brand].filter(Boolean).join(" ").toLowerCase().includes(q));
+  matched.sort((a, b) => (capSel.has(b.id) - capSel.has(a.id)));
+  const shown = matched.slice(0, 60);
+
+  $("#capCount").textContent = `${capSel.size} selected`;
+  $("#capGrid").innerHTML = shown.map(i => `
+    <div class="pk ${capSel.has(i.id) ? "sel" : ""}" data-pick="${i.id}">
+      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div class="nm">${esc(i.name)}</div>
+    </div>`).join("") || `<div class="muted">No matches.</div>`;
+  $("#capGrid").onclick = (e) => {
+    const t = e.target.closest("[data-pick]");
+    if (!t) return;
+    const id = t.dataset.pick;
+    if (capSel.has(id)) capSel.delete(id); else capSel.add(id);
+    t.classList.toggle("sel");
+    $("#capCount").textContent = `${capSel.size} selected`;
+  };
+  hydratePhotos($("#capGrid"));
+  if (keepFocus) $("#capSearch").focus();
+}
+
+async function saveCapsule() {
+  const name = $("#capName").value.trim();
+  if (!name) { toast("Name your capsule"); return; }
+  const start_date = $("#capStart").value || null;
+  const end_date = $("#capEnd").value || null;
+  if (start_date && end_date && end_date < start_date) { toast("End date is before the start date"); return; }
+  const row = {
+    name,
+    kind: $("#capKind button.on")?.dataset.kind || "capsule",
+    start_date, end_date,
+    notes: $("#capNotes").value.trim() || null,
+  };
+  const ids = [...capSel];
+  const btn = $("#capSave"); btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    let capsuleId;
+    if (capEditId) {
+      const [u] = await rest(`capsules?id=eq.${capEditId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(row),
+      });
+      const idx = capsules.findIndex(c => c.id === capEditId); if (idx >= 0) capsules[idx] = u;
+      capsuleId = capEditId;
+      // resync join rows: clear then re-add the current selection
+      await rest(`capsule_items?capsule_id=eq.${capsuleId}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      capsuleItems = capsuleItems.filter(ci => ci.capsule_id !== capsuleId);
+    } else {
+      const [created] = await rest("capsules", {
+        method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(row),
+      });
+      capsules.unshift(created);
+      capsuleId = created.id;
+    }
+    if (ids.length) {
+      await rest("capsule_items", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify(ids.map(item_id => ({ capsule_id: capsuleId, item_id }))) });
+      ids.forEach(item_id => capsuleItems.push({ capsule_id: capsuleId, item_id }));
+    }
+    rebuildCapsuleMap();
+    toast("Capsule saved");
+    closeModal();
+    renderCapsules();
+    if (activeCapsule === capsuleId) renderCloset();   // lens set changed
+  } catch (e) {
+    toast(e.message); btn.disabled = false; btn.textContent = capEditId ? "Save changes" : "Save capsule";
+  }
+}
+
+/* ===================================================================
    STATS  (interim — full rebuild around CPW/score formulas is Phase 3e)
    =================================================================== */
 function renderStats() {
@@ -1694,7 +2014,7 @@ function bars(map, isColor = false) {
 /* ===================================================================
    TAB SWITCHING + REFRESH
    =================================================================== */
-const TAB_TITLES = { closet: "Closet", add: "Add Item", wear: "Log Wear", outfits: "Outfits", stats: "Stats", settings: "Settings" };
+const TAB_TITLES = { closet: "Closet", add: "Add Item", wear: "Log Wear", outfits: "Outfits", capsules: "Capsules", stats: "Stats", settings: "Settings" };
 
 function switchTab(name) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
@@ -1705,6 +2025,7 @@ function switchTab(name) {
   if (name === "stats") renderStats();
   if (name === "closet") renderCloset();
   if (name === "outfits") ensureOutfits();
+  if (name === "capsules") ensureCapsules();
   // Tapping the Add tab fresh (not via Edit) should start a clean form.
   if (name === "add" && !editingId) resetItemForm();
 }
@@ -1715,6 +2036,7 @@ function refreshViews() {
   if ($("#tab-stats").classList.contains("active")) renderStats();
   if ($("#tab-wear").classList.contains("active")) renderRecentWears();
   if (outfitsLoaded && $("#tab-outfits").classList.contains("active")) renderOutfits();
+  if (capsulesLoaded && $("#tab-capsules").classList.contains("active")) renderCapsules();
 }
 
 /* ===================================================================
@@ -1732,6 +2054,9 @@ function showApp() {
 function handleSignedOut() {
   saveSession(null);
   items = []; wears = []; dataReady = false; _urlCache.clear();
+  outfits = []; outfitItems = []; outfitItemMap = new Map(); outfitsLoaded = false;
+  capsules = []; capsuleItems = []; capsuleItemMap = new Map(); capsulesLoaded = false;
+  activeCapsule = null;
   showLogin();
 }
 
@@ -1743,6 +2068,7 @@ async function bootApp() {
   renderCloset(); // shows spinner while loading
   try {
     await loadData();
+    await restoreLens();
     renderCloset();
   } catch (e) {
     $("#closetBody").innerHTML = `<div class="empty">Couldn't load your closet.<br><span class="err">${esc(e.message)}</span><br><br><button class="btn ghost" onclick="retryLoad()" style="max-width:200px;margin:0 auto">Retry</button></div>`;
@@ -1753,6 +2079,18 @@ async function retryLoad() {
   try { await loadData(); refreshViews(); } catch (e) { toast(e.message); }
 }
 window.retryLoad = retryLoad;
+
+// If a capsule lens was active last session, load capsules and re-apply it
+// (the closet filter needs the capsule's item map). Silently clears if gone.
+async function restoreLens() {
+  const id = store.getItem(CAPSULE_LENS_KEY);
+  if (!id) return;
+  try {
+    if (!capsulesLoaded) await loadCapsules();
+    if (capsules.some(c => c.id === id)) activeCapsule = id;
+    else setLens(null);
+  } catch { /* leave lens off; user can re-pick it */ }
+}
 
 /* ===================================================================
    EVENT WIRING
@@ -1789,6 +2127,13 @@ function wireEvents() {
     if (e.target.closest("#newOutfitBtn") || e.target.closest("#moreOutfits")) return;
     const card = e.target.closest("[data-outfit]");
     if (card) openOutfit(card.dataset.outfit);
+  });
+
+  // capsule open (New-capsule button is wired per-render)
+  $("#capsulesBody").addEventListener("click", (e) => {
+    if (e.target.closest("#newCapsuleBtn")) return;
+    const card = e.target.closest("[data-capsule]");
+    if (card) openCapsule(card.dataset.capsule);
   });
 
   // add / edit item

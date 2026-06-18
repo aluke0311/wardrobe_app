@@ -161,7 +161,18 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
     past; context select). Closet photos lazy-load via IntersectionObserver.
     Stats adapted to the new fields but its full rebuild is 3e. NOT yet verified
     against live data by the user / not yet deployed.
-  - 3b Capsules + the active-capsule "lens" filter. (NOT STARTED)
+  - 3b Capsules ✓ (2026-06-18): a **Capsules** tab (nav is now 7 tabs) — browse
+    capsule cards (name, kind pill, item count, date range, item-photo thumbnails),
+    capsule detail (tap an item to open it), and a **builder** (name, kind segmented
+    `capsule`/`packing`/`travel`, start/end dates, notes, searchable multi-select
+    item picker — pulls from any non-Archive item). The **active-capsule lens**:
+    "Use as closet lens" filters the Closet to just that capsule's items, shows a
+    dark lens banner with a Clear button, suppresses the status filter (capsule set
+    shown whole, all statuses), and **persists** via `store` (key `wardrobe.lens`,
+    re-applied on boot by `restoreLens`, which lazy-loads capsules if needed).
+    `CAPSULE_KINDS`/`kindLabel`/`dateRangeLabel` are the new constants/helpers.
+    Verified end-to-end against live data (create→lens→clear→delete). Not yet
+    deployed; user hasn't reviewed in the live app.
   - 3c Outfits ✓ (2026-06-18): a 6th **Outfits** tab — browse (date + item-photo
     thumbnails, "Show more" paging over ~1.5k), outfit detail (tap an item to open
     it), **log-an-outfit-as-a-wear** (back-datable; one wear per item per day,
