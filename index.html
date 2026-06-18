@@ -1,11 +1,1060 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Wardrobe</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1a1a1a">
+<title>Wardrobe</title>
+<style>
+  /* ---------- design tokens ---------- */
+  :root {
+    --bg: #f6f5f3;
+    --surface: #ffffff;
+    --ink: #1a1a1a;
+    --muted: #8a8a8a;
+    --line: #e7e5e1;
+    --accent: #1a1a1a;
+    --accent-ink: #ffffff;
+    --danger: #c0392b;
+    --good: #2e7d32;
+    --radius: 14px;
+    --nav-h: 60px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overscroll-behavior-y: none;
+  }
+  button { font: inherit; cursor: pointer; }
+  input, select, textarea { font: inherit; }
+
+  /* ---------- layout ---------- */
+  #app { max-width: 640px; margin: 0 auto; min-height: 100%; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  header.bar {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg);
+    padding: 14px 16px 8px;
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px;
+  }
+  header.bar h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
+  .ver { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+  main.tabbody { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 24px); }
+
+  /* ---------- bottom nav ---------- */
+  nav.tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    height: calc(var(--nav-h) + var(--safe-b));
+    padding-bottom: var(--safe-b);
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    max-width: 640px; margin: 0 auto;
+  }
+  nav.tabbar button {
+    background: none; border: 0; color: var(--muted);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; font-size: 10.5px; padding: 6px 0;
+  }
+  nav.tabbar button .ic { font-size: 19px; line-height: 1; }
+  nav.tabbar button.on { color: var(--ink); }
+
+  /* ---------- generic ui ---------- */
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+  .stack > * + * { margin-top: 12px; }
+  label.fld { display: block; font-size: 13px; color: var(--muted); margin: 0 0 5px 2px; }
+  .inp, select.inp, textarea.inp {
+    width: 100%; padding: 11px 12px; border: 1px solid var(--line);
+    border-radius: 11px; background: var(--surface); color: var(--ink);
+  }
+  textarea.inp { resize: vertical; min-height: 70px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn {
+    width: 100%; padding: 13px; border: 0; border-radius: 12px;
+    background: var(--accent); color: var(--accent-ink); font-weight: 600;
+  }
+  .btn.ghost { background: var(--surface); color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+  .btn.danger { background: var(--surface); color: var(--danger); border: 1px solid var(--line); }
+  .btn:disabled { opacity: .5; }
+  .muted { color: var(--muted); }
+  .center { text-align: center; }
+  h2.sec { font-size: 15px; margin: 22px 2px 10px; letter-spacing: -0.01em; }
+  h2.sec:first-child { margin-top: 6px; }
+
+  /* ---------- color chips ---------- */
+  .colors { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 11px 6px 8px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--surface); font-size: 13px;
+  }
+  .chip.sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .sw { width: 15px; height: 15px; border-radius: 50%; border: 1px solid rgba(0,0,0,.18); flex: none; }
+
+  /* ---------- closet grid ---------- */
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  @media (min-width: 520px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .tile .ph { aspect-ratio: 1/1; background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 28px; }
+  .tile .meta { padding: 9px 10px 11px; }
+  .tile .meta .nm { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
+  .tile .meta .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .tile.arch { opacity: .55; }
+
+  /* ---------- stats ---------- */
+  .kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .kpi .big { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+  .kpi .lbl { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .kpi.wide { grid-column: 1 / -1; }
+  .lst { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .lst .li { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-top: 1px solid var(--line); }
+  .lst .li:first-child { border-top: 0; }
+  .lst .li .thumb { width: 38px; height: 38px; border-radius: 9px; background: #eceae6 center/cover no-repeat; flex: none; }
+  .lst .li .grow { flex: 1; min-width: 0; }
+  .lst .li .t1 { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lst .li .t2 { font-size: 12px; color: var(--muted); }
+  .lst .li .val { font-size: 14px; font-weight: 600; white-space: nowrap; }
+  .bar { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--line); }
+  .bar:first-child { border-top: 0; }
+  .bar .blab { width: 88px; font-size: 12.5px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar .btrack { flex: 1; height: 8px; background: #eceae6; border-radius: 999px; overflow: hidden; }
+  .bar .bfill { height: 100%; background: var(--ink); border-radius: 999px; }
+  .bar .bnum { width: 30px; text-align: right; font-size: 12.5px; color: var(--muted); flex: none; }
+
+  /* ---------- login ---------- */
+  #login { display: none; min-height: 100%; align-items: center; justify-content: center; padding: 24px; }
+  #login.active { display: flex; }
+  #login .box { width: 100%; max-width: 360px; }
+  #login h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.03em; }
+
+  /* ---------- modal (item detail) ---------- */
+  .modal { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.45); display: none; align-items: flex-end; }
+  .modal.open { display: flex; }
+  .sheet { background: var(--bg); width: 100%; max-width: 640px; margin: 0 auto; max-height: 92vh; overflow: auto;
+           border-radius: 18px 18px 0 0; padding: 16px 16px calc(24px + var(--safe-b)); }
+  .sheet .hero { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); background: #eceae6 center/cover no-repeat; }
+
+  /* ---------- toast + misc ---------- */
+  #toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + var(--safe-b) + 16px); transform: translateX(-50%);
+           background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 13.5px;
+           z-index: 60; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90%; text-align: center; }
+  #toast.show { opacity: 1; }
+  .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
+  .spin { width: 22px; height: 22px; border: 2.5px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: sp 0.7s linear infinite; margin: 30px auto; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #eceae6; color: var(--muted); }
+  .err { color: var(--danger); font-size: 13px; }
+  .field-prev { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); border: 1px dashed var(--line);
+                background: var(--surface) center/cover no-repeat; display: flex; align-items: center; justify-content: center;
+                color: var(--muted); font-size: 14px; text-align: center; }
+</style>
 </head>
 <body>
-  <p>Wardrobe app — coming soon.</p>
+
+<!-- ===================== LOGIN ===================== -->
+<section id="login">
+  <div class="box stack">
+    <div>
+      <h1>Wardrobe</h1>
+      <div class="muted">Sign in to your closet.</div>
+    </div>
+    <form id="loginForm" class="card stack" autocomplete="on">
+      <div>
+        <label class="fld" for="email">Email</label>
+        <input class="inp" id="email" type="email" inputmode="email" autocomplete="username" required>
+      </div>
+      <div>
+        <label class="fld" for="pw">Password</label>
+        <input class="inp" id="pw" type="password" autocomplete="current-password" required>
+      </div>
+      <div id="loginErr" class="err" hidden></div>
+      <button class="btn" id="loginBtn" type="submit">Sign in</button>
+    </form>
+    <div class="center muted" style="font-size:12px">v<span class="appver"></span></div>
+  </div>
+</section>
+
+<!-- ===================== APP ===================== -->
+<div id="app" hidden>
+  <header class="bar">
+    <h1 id="title">Closet</h1>
+    <span class="ver">v<span class="appver"></span></span>
+  </header>
+
+  <main class="tabbody">
+    <!-- CLOSET -->
+    <section class="screen active" id="tab-closet">
+      <div id="closetBody"></div>
+    </section>
+
+    <!-- ADD ITEM -->
+    <section class="screen" id="tab-add">
+      <form id="addForm" class="stack">
+        <div>
+          <input type="file" id="photoInput" accept="image/*" hidden>
+          <div class="field-prev" id="photoPrev" role="button" tabindex="0">Tap to add a photo</div>
+          <div class="muted center" id="photoNote" style="font-size:12px;margin-top:6px">JPEG/PNG/HEIC — compressed to WebP before upload</div>
+        </div>
+        <div>
+          <label class="fld">Name *</label>
+          <input class="inp" id="f_name" placeholder="e.g. Black wool coat" required>
+        </div>
+        <div class="row2">
+          <div>
+            <label class="fld">Category</label>
+            <select class="inp" id="f_category"></select>
+          </div>
+          <div>
+            <label class="fld">Brand</label>
+            <input class="inp" id="f_brand" placeholder="Optional">
+          </div>
+        </div>
+        <div>
+          <label class="fld">Colors</label>
+          <div class="colors" id="f_colors"></div>
+        </div>
+        <div class="row2">
+          <div>
+            <label class="fld">Price</label>
+            <input class="inp" id="f_price" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+          </div>
+          <div>
+            <label class="fld">Purchased on</label>
+            <input class="inp" id="f_pdate" type="date">
+          </div>
+        </div>
+        <div>
+          <label class="fld">Purchased at</label>
+          <input class="inp" id="f_pplace" placeholder="Store or site">
+        </div>
+        <div>
+          <label class="fld">Notes</label>
+          <textarea class="inp" id="f_notes" placeholder="Fit, care, anything"></textarea>
+        </div>
+        <div id="addErr" class="err" hidden></div>
+        <button class="btn" id="addBtn" type="submit">Save to closet</button>
+      </form>
+    </section>
+
+    <!-- LOG WEAR -->
+    <section class="screen" id="tab-wear">
+      <div class="stack">
+        <div>
+          <label class="fld">Item</label>
+          <select class="inp" id="w_item"></select>
+        </div>
+        <div class="row2">
+          <div>
+            <label class="fld">Worn on</label>
+            <input class="inp" id="w_date" type="date">
+          </div>
+          <div>
+            <label class="fld">Occasion</label>
+            <input class="inp" id="w_occasion" placeholder="Optional">
+          </div>
+        </div>
+        <button class="btn" id="wearBtn">Log wear</button>
+        <h2 class="sec">Recent wears</h2>
+        <div id="recentWears"></div>
+      </div>
+    </section>
+
+    <!-- STATS -->
+    <section class="screen" id="tab-stats">
+      <div id="statsBody"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="screen" id="tab-settings">
+      <div class="stack">
+        <div class="card">
+          <div style="font-weight:600">Signed in</div>
+          <div class="muted" id="set_email" style="font-size:13.5px"></div>
+        </div>
+        <div class="card stack">
+          <div style="font-weight:600">Sync</div>
+          <div class="muted" style="font-size:13.5px">Pull the latest from Supabase.</div>
+          <button class="btn ghost" id="refreshBtn">Refresh data</button>
+        </div>
+        <div class="card">
+          <div style="font-weight:600;margin-bottom:8px">About</div>
+          <div class="muted" style="font-size:13.5px">Wardrobe v<span class="appver"></span> · single-file · Supabase backend</div>
+        </div>
+        <button class="btn danger" id="logoutBtn">Sign out</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-tab="closet" class="on"><span class="ic">▦</span>Closet</button>
+    <button data-tab="add"><span class="ic">＋</span>Add</button>
+    <button data-tab="wear"><span class="ic">✓</span>Log Wear</button>
+    <button data-tab="stats"><span class="ic">📊</span>Stats</button>
+    <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
+  </nav>
+</div>
+
+<!-- item detail sheet -->
+<div class="modal" id="modal">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* ===================================================================
+   CONFIG  (publishable key + URL are safe to ship in client code)
+   =================================================================== */
+const SUPABASE_URL = "https://ofwaxqrwbcixrnjkepuz.supabase.co";
+const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
+const BUCKET = "wardrobe";
+const APP_VERSION = "2026-06-17";
+
+const CATEGORIES = ["Tops", "Bottoms", "Dresses", "Outerwear", "Shoes", "Activewear"];
+// Fixed color palette: label + swatch hex. "Multi" is a catch-all for patterns.
+const PALETTE = [
+  ["Black","#1a1a1a"], ["White","#ffffff"], ["Grey","#9a9a9a"], ["Navy","#1f2a44"],
+  ["Blue","#2f6fd0"], ["Green","#3a7d44"], ["Red","#c0392b"], ["Pink","#e88aa8"],
+  ["Purple","#7d54a8"], ["Brown","#7a5230"], ["Beige","#d8c4a0"], ["Yellow","#e6c34a"],
+  ["Orange","#e08a2b"], ["Multi","linear-gradient(135deg,#e84,#4ae,#7d4,#e4a)"]
+];
+const MAX_DIM = 1200;          // longest edge after downscale
+const ENCODE_Q = 0.82;         // quality used for both webp + jpeg fallback
+const SIGNED_TTL = 3600;       // signed photo URL lifetime (s)
+
+/* ===================================================================
+   SESSION  (persisted in localStorage)
+   =================================================================== */
+const SESSION_KEY = "wardrobe.session";
+let session = null;   // { access_token, refresh_token, user, expires_at }
+
+// Safe storage: localStorage is blocked in some contexts (e.g. data: URLs,
+// private-mode quirks). Fall back to an in-memory store so the app never throws;
+// the session just won't persist across reloads in that case.
+const store = (() => {
+  try {
+    const k = "__wardrobe_probe__";
+    localStorage.setItem(k, "1"); localStorage.removeItem(k);
+    return localStorage;
+  } catch {
+    const mem = new Map();
+    return {
+      getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+      setItem: (k, v) => mem.set(k, v),
+      removeItem: (k) => mem.delete(k),
+    };
+  }
+})();
+
+function loadSession() {
+  try { session = JSON.parse(store.getItem(SESSION_KEY)) || null; }
+  catch { session = null; }
+}
+function saveSession(s) {
+  session = s;
+  if (s) store.setItem(SESSION_KEY, JSON.stringify(s));
+  else store.removeItem(SESSION_KEY);
+}
+
+/* ===================================================================
+   FETCH HELPERS
+   =================================================================== */
+
+// Auth endpoints (sign in / refresh). apikey only, no bearer needed.
+async function authRequest(grant, body) {
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=${grant}`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error_description || data.msg || data.error || "Auth failed");
+  return data; // { access_token, refresh_token, user, expires_in, ... }
+}
+
+function storeAuth(data) {
+  saveSession({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    user: data.user,
+    expires_at: Date.now() + (data.expires_in || 3600) * 1000,
+  });
+}
+
+async function signIn(email, password) {
+  storeAuth(await authRequest("password", { email, password }));
+}
+
+// Refresh the access token using the stored refresh token. Returns false on failure.
+async function refreshSession() {
+  if (!session?.refresh_token) return false;
+  try { storeAuth(await authRequest("refresh_token", { refresh_token: session.refresh_token })); return true; }
+  catch { return false; }
+}
+
+// Core authed fetch. Adds apikey + bearer, transparently refreshes once on 401.
+async function api(path, opts = {}, _retried = false) {
+  const headers = Object.assign(
+    { apikey: SUPABASE_KEY, Authorization: `Bearer ${session?.access_token || ""}` },
+    opts.headers || {}
+  );
+  let r;
+  try { r = await fetch(`${SUPABASE_URL}${path}`, Object.assign({}, opts, { headers })); }
+  catch (e) { throw new Error("Network error — check your connection."); }
+
+  if (r.status === 401 && !_retried) {
+    if (await refreshSession()) return api(path, opts, true);
+    handleSignedOut();
+    throw new Error("Session expired — please sign in again.");
+  }
+  return r;
+}
+
+// PostgREST helper. Returns parsed JSON (or null for empty).
+async function rest(path, opts = {}) {
+  const r = await api(`/rest/v1/${path}`, opts);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || e.hint || `Request failed (${r.status})`);
+  }
+  if (r.status === 204) return null;
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
+// Upload a Blob to Storage at <user_id>/<name>. RLS keys off the user-id folder.
+async function uploadPhoto(blob, filename) {
+  const path = `${session.user.id}/${filename}`;
+  const r = await api(`/storage/v1/object/${BUCKET}/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": blob.type, "x-upsert": "true" },
+    body: blob,
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || `Photo upload failed (${r.status})`);
+  }
+  return path;
+}
+
+async function deletePhoto(path) {
+  if (!path) return;
+  await api(`/storage/v1/object/${BUCKET}/${path}`, { method: "DELETE" }).catch(() => {});
+}
+
+// Signed URLs for private photos. Cached in-memory so a grid doesn't re-sign each render.
+const _urlCache = new Map();
+async function signedUrl(path) {
+  if (!path) return null;
+  if (_urlCache.has(path)) return _urlCache.get(path);
+  const r = await api(`/storage/v1/object/sign/${BUCKET}/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expiresIn: SIGNED_TTL }),
+  });
+  if (!r.ok) return null;
+  const { signedURL } = await r.json();
+  const full = `${SUPABASE_URL}/storage/v1${signedURL}`;
+  _urlCache.set(path, full);
+  // expire the cache a little before the URL itself does
+  setTimeout(() => _urlCache.delete(path), (SIGNED_TTL - 60) * 1000);
+  return full;
+}
+
+/* ===================================================================
+   IMAGE COMPRESSION  (canvas downscale -> WebP, JPEG fallback)
+   =================================================================== */
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width: w, height: h } = img;
+      if (Math.max(w, h) > MAX_DIM) {
+        const s = MAX_DIM / Math.max(w, h);
+        w = Math.round(w * s); h = Math.round(h * s);
+      }
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); // flatten any transparency
+      ctx.drawImage(img, 0, 0, w, h);
+      // Prefer WebP; if the browser can't encode it toBlob returns a PNG, so we fall back to JPEG.
+      c.toBlob((blob) => {
+        if (blob && blob.type === "image/webp") return resolve({ blob, ext: "webp" });
+        c.toBlob((jpg) => jpg ? resolve({ blob: jpg, ext: "jpg" }) : reject(new Error("Could not process image")),
+                 "image/jpeg", ENCODE_Q);
+      }, "image/webp", ENCODE_Q);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read that image")); };
+    img.src = url;
+  });
+}
+
+/* ===================================================================
+   APP STATE + DATA LOADING
+   =================================================================== */
+let items = [];   // all items (incl. archived)
+let wears = [];   // all wears
+let dataReady = false;
+
+async function loadData() {
+  dataReady = false;
+  const [it, wr] = await Promise.all([
+    rest("items?select=*&order=created_at.desc"),
+    rest("wears?select=*&order=worn_on.desc"),
+  ]);
+  items = it || [];
+  wears = wr || [];
+  dataReady = true;
+}
+
+// ---- derived helpers ----
+function wearCount(itemId) { return wears.filter(w => w.item_id === itemId).length; }
+function lastWorn(itemId) {
+  const ws = wears.filter(w => w.item_id === itemId).map(w => w.worn_on).sort();
+  return ws.length ? ws[ws.length - 1] : null;
+}
+function costPerWear(item) {
+  const n = wearCount(item.id);
+  if (item.price == null || n === 0) return null;
+  return item.price / n;
+}
+function daysSince(dateStr) {
+  if (!dateStr) return null;
+  return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
+}
+const money = (n) => (n == null ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+
+/* ===================================================================
+   DOM UTILS
+   =================================================================== */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+let toastTimer;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+// Resolve photo paths to signed URLs and set them on matching [data-photo] nodes.
+async function hydratePhotos(root = document) {
+  const nodes = $$("[data-photo]", root).filter(n => !n.dataset.photoDone);
+  await Promise.all(nodes.map(async (n) => {
+    n.dataset.photoDone = "1";
+    const url = await signedUrl(n.dataset.photo);
+    if (url) n.style.backgroundImage = `url("${url}")`;
+  }));
+}
+
+/* ===================================================================
+   RENDER: CLOSET
+   =================================================================== */
+let showArchived = false;
+
+function renderCloset() {
+  const body = $("#closetBody");
+  if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
+
+  const visible = items.filter(i => showArchived || !i.archived);
+  const archCount = items.filter(i => i.archived).length;
+
+  if (items.length === 0) {
+    body.innerHTML = `<div class="empty">Your closet is empty.<br>Tap <b>Add</b> to photograph your first item.</div>`;
+    return;
+  }
+
+  const header = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 2px 12px">
+      <span class="muted" style="font-size:13px">${visible.length} item${visible.length===1?"":"s"}</span>
+      ${archCount ? `<button class="pill" id="toggleArch" style="border:0;cursor:pointer">${showArchived ? "Hide" : "Show"} archived (${archCount})</button>` : ""}
+    </div>`;
+
+  const tiles = visible.map(i => {
+    const n = wearCount(i.id);
+    const cpw = costPerWear(i);
+    const sub = cpw != null ? `${money(cpw)}/wear` : (n ? `${n} wear${n===1?"":"s"}` : "Never worn");
+    return `
+      <div class="tile ${i.archived ? "arch" : ""}" data-item="${i.id}">
+        <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+        <div class="meta">
+          <div class="nm">${esc(i.name)}</div>
+          <div class="sub">${esc(sub)}</div>
+        </div>
+      </div>`;
+  }).join("");
+
+  body.innerHTML = header + `<div class="grid">${tiles}</div>`;
+  hydratePhotos(body);
+}
+
+/* ===================================================================
+   RENDER: ITEM DETAIL SHEET
+   =================================================================== */
+function openItem(id) {
+  const i = items.find(x => x.id === id);
+  if (!i) return;
+  const n = wearCount(i.id);
+  const cpw = costPerWear(i);
+  const lw = lastWorn(i.id);
+  const ds = daysSince(lw);
+  const colorChips = (i.colors || []).map(c => {
+    const hex = (PALETTE.find(p => p[0] === c) || [])[1] || "#ccc";
+    return `<span class="chip"><span class="sw" style="background:${hex}"></span>${esc(c)}</span>`;
+  }).join("");
+
+  $("#sheet").innerHTML = `
+    <div class="hero" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}></div>
+    <h2 style="margin:14px 2px 2px;font-size:20px">${esc(i.name)}</h2>
+    <div class="muted" style="margin:0 2px 12px">${esc(i.category || "—")}${i.brand ? " · " + esc(i.brand) : ""}${i.archived ? ` · <span class="pill">archived</span>` : ""}</div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="big">${n}</div><div class="lbl">Times worn</div></div>
+      <div class="kpi"><div class="big">${cpw != null ? money(cpw) : "—"}</div><div class="lbl">Cost per wear</div></div>
+      <div class="kpi"><div class="big">${i.price != null ? money(i.price) : "—"}</div><div class="lbl">Price</div></div>
+      <div class="kpi"><div class="big">${ds != null ? ds + "d" : "—"}</div><div class="lbl">Since last worn</div></div>
+    </div>
+
+    ${colorChips ? `<h2 class="sec">Colors</h2><div class="colors">${colorChips}</div>` : ""}
+
+    <h2 class="sec">Details</h2>
+    <div class="card stack" style="font-size:14px">
+      <div><span class="muted">Purchased:</span> ${i.purchase_date ? esc(i.purchase_date) : "—"}${i.purchase_place ? " · " + esc(i.purchase_place) : ""}</div>
+      <div><span class="muted">Last worn:</span> ${lw ? esc(lw) : "Never"}</div>
+      ${i.notes ? `<div><span class="muted">Notes:</span> ${esc(i.notes)}</div>` : ""}
+    </div>
+
+    <div class="stack" style="margin-top:18px">
+      <button class="btn" id="sheetWear">Log a wear today</button>
+      <button class="btn ghost" id="sheetArch">${i.archived ? "Un-archive" : "Archive (donated/sold)"}</button>
+      <button class="btn danger" id="sheetDel">Delete item</button>
+      <button class="btn ghost" id="sheetClose">Close</button>
+    </div>`;
+
+  $("#modal").classList.add("open");
+  hydratePhotos($("#sheet"));
+
+  $("#sheetClose").onclick = closeModal;
+  $("#sheetWear").onclick = async () => {
+    try { await logWear(i.id, todayStr(), ""); toast("Wear logged"); closeModal(); refreshViews(); }
+    catch (e) { toast(e.message); }
+  };
+  $("#sheetArch").onclick = async () => {
+    try {
+      await rest(`items?id=eq.${i.id}`, { method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ archived: !i.archived }) });
+      i.archived = !i.archived;
+      toast(i.archived ? "Archived" : "Un-archived"); closeModal(); refreshViews();
+    } catch (e) { toast(e.message); }
+  };
+  $("#sheetDel").onclick = async () => {
+    if (!confirm(`Delete "${i.name}"? This removes the item, its photo, and its wear history.`)) return;
+    try {
+      await rest(`wears?item_id=eq.${i.id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await rest(`items?id=eq.${i.id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await deletePhoto(i.image_path);
+      items = items.filter(x => x.id !== i.id);
+      wears = wears.filter(w => w.item_id !== i.id);
+      toast("Deleted"); closeModal(); refreshViews();
+    } catch (e) { toast(e.message); }
+  };
+}
+function closeModal() { $("#modal").classList.remove("open"); }
+
+/* ===================================================================
+   ADD ITEM
+   =================================================================== */
+let pendingPhoto = null; // { blob, ext } from compression
+
+function buildAddForm() {
+  $("#f_category").innerHTML = CATEGORIES.map(c => `<option>${c}</option>`).join("");
+  $("#f_colors").innerHTML = PALETTE.map(([name, hex]) =>
+    `<button type="button" class="chip" data-color="${name}"><span class="sw" style="background:${hex}"></span>${name}</button>`
+  ).join("");
+  $("#f_colors").onclick = (e) => {
+    const b = e.target.closest("[data-color]");
+    if (b) b.classList.toggle("sel");
+  };
+  $("#f_pdate").value = todayStr();
+}
+
+async function handlePhotoPick(file) {
+  if (!file) return;
+  const prev = $("#photoPrev");
+  prev.textContent = "Compressing…";
+  try {
+    pendingPhoto = await compressImage(file);
+    const url = URL.createObjectURL(pendingPhoto.blob);
+    prev.textContent = "";
+    prev.style.backgroundImage = `url("${url}")`;
+    const kb = Math.round(pendingPhoto.blob.size / 1024);
+    $("#photoNote").textContent = `${pendingPhoto.ext.toUpperCase()} · ${kb} KB ready to upload`;
+  } catch (e) {
+    pendingPhoto = null;
+    prev.style.backgroundImage = "";
+    prev.textContent = "Tap to add a photo";
+    toast(e.message);
+  }
+}
+
+function resetAddForm() {
+  $("#addForm").reset();
+  pendingPhoto = null;
+  $("#photoPrev").style.backgroundImage = "";
+  $("#photoPrev").textContent = "Tap to add a photo";
+  $("#photoNote").textContent = "JPEG/PNG/HEIC — compressed to WebP before upload";
+  $$("#f_colors .sel").forEach(c => c.classList.remove("sel"));
+  $("#f_pdate").value = todayStr();
+}
+
+async function submitAdd(e) {
+  e.preventDefault();
+  const btn = $("#addBtn");
+  const errBox = $("#addErr");
+  errBox.hidden = true;
+  const name = $("#f_name").value.trim();
+  if (!name) { errBox.textContent = "Name is required."; errBox.hidden = false; return; }
+
+  btn.disabled = true; btn.textContent = "Saving…";
+  try {
+    let image_path = null;
+    if (pendingPhoto) {
+      btn.textContent = "Uploading photo…";
+      const fname = `${crypto.randomUUID()}.${pendingPhoto.ext}`;
+      image_path = await uploadPhoto(pendingPhoto.blob, fname);
+    }
+    const colors = $$("#f_colors .sel").map(c => c.dataset.color);
+    const priceRaw = $("#f_price").value;
+    const row = {
+      name,
+      category: $("#f_category").value,
+      brand: $("#f_brand").value.trim() || null,
+      colors,
+      price: priceRaw === "" ? null : Number(priceRaw),
+      purchase_date: $("#f_pdate").value || null,
+      purchase_place: $("#f_pplace").value.trim() || null,
+      notes: $("#f_notes").value.trim() || null,
+      image_path,
+    };
+    btn.textContent = "Saving…";
+    const [created] = await rest("items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(row),
+    });
+    items.unshift(created);
+    resetAddForm();
+    toast("Added to closet");
+    switchTab("closet");
+    refreshViews();
+  } catch (e) {
+    errBox.textContent = e.message; errBox.hidden = false;
+  } finally {
+    btn.disabled = false; btn.textContent = "Save to closet";
+  }
+}
+
+/* ===================================================================
+   LOG WEAR
+   =================================================================== */
+async function logWear(itemId, worn_on, occasion) {
+  const [created] = await rest("wears", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({ item_id: itemId, worn_on, occasion: occasion || null }),
+  });
+  wears.unshift(created);
+  return created;
+}
+
+function buildWearTab() {
+  const opts = items.filter(i => !i.archived)
+    .map(i => `<option value="${i.id}">${esc(i.name)}</option>`).join("");
+  $("#w_item").innerHTML = opts || `<option value="">No items yet — add one first</option>`;
+  $("#w_date").value = todayStr();
+  renderRecentWears();
+}
+
+function renderRecentWears() {
+  const box = $("#recentWears");
+  const recent = wears.slice(0, 12);
+  if (recent.length === 0) { box.innerHTML = `<div class="empty">No wears logged yet.</div>`; return; }
+  box.innerHTML = `<div class="lst">` + recent.map(w => {
+    const it = items.find(i => i.id === w.item_id);
+    return `<div class="li">
+      <div class="thumb" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}></div>
+      <div class="grow">
+        <div class="t1">${esc(it ? it.name : "Deleted item")}</div>
+        <div class="t2">${esc(w.worn_on)}${w.occasion ? " · " + esc(w.occasion) : ""}</div>
+      </div>
+      <button class="pill" data-delwear="${w.id}" style="border:0;cursor:pointer">remove</button>
+    </div>`;
+  }).join("") + `</div>`;
+  hydratePhotos(box);
+  box.onclick = async (e) => {
+    const b = e.target.closest("[data-delwear]");
+    if (!b) return;
+    const id = b.dataset.delwear;
+    try {
+      await rest(`wears?id=eq.${id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      wears = wears.filter(w => w.id !== id);
+      toast("Wear removed"); refreshViews();
+    } catch (err) { toast(err.message); }
+  };
+}
+
+async function submitWear() {
+  const id = $("#w_item").value;
+  if (!id) { toast("Add an item first"); return; }
+  const btn = $("#wearBtn");
+  btn.disabled = true; btn.textContent = "Logging…";
+  try {
+    await logWear(id, $("#w_date").value || todayStr(), $("#w_occasion").value.trim());
+    $("#w_occasion").value = "";
+    toast("Wear logged");
+    refreshViews();
+  } catch (e) { toast(e.message); }
+  finally { btn.disabled = false; btn.textContent = "Log wear"; }
+}
+
+/* ===================================================================
+   STATS
+   =================================================================== */
+function renderStats() {
+  const body = $("#statsBody");
+  if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
+
+  const active = items.filter(i => !i.archived);
+  if (active.length === 0) { body.innerHTML = `<div class="empty">Add items to see stats.</div>`; return; }
+
+  // headline: cost-per-wear across pieces that have actually been worn
+  const totalValue = items.reduce((s, i) => s + (Number(i.price) || 0), 0);
+  const totalWears = wears.length;
+  const pricedWears = wears.filter(w => {
+    const it = items.find(i => i.id === w.item_id); return it && it.price != null;
+  }).length;
+  const valuedSpend = items.filter(i => i.price != null && wearCount(i.id) > 0)
+    .reduce((s, i) => s + Number(i.price), 0);
+  const overallCPW = pricedWears > 0 ? valuedSpend / pricedWears : null;
+  const neverWorn = active.filter(i => wearCount(i.id) === 0);
+
+  // ranked lists
+  const ranked = active.map(i => ({ i, n: wearCount(i.id), cpw: costPerWear(i), last: lastWorn(i.id) }));
+  const mostWorn = [...ranked].filter(r => r.n > 0).sort((a, b) => b.n - a.n).slice(0, 5);
+  const bestCPW = [...ranked].filter(r => r.cpw != null).sort((a, b) => a.cpw - b.cpw).slice(0, 5);
+  const stale = [...ranked].filter(r => r.last).map(r => ({ ...r, ds: daysSince(r.last) }))
+    .sort((a, b) => b.ds - a.ds).slice(0, 5);
+
+  // breakdowns by category + color (counted per wear)
+  const byCat = {}, byColor = {};
+  for (const w of wears) {
+    const it = items.find(i => i.id === w.item_id);
+    if (!it) continue;
+    byCat[it.category || "Other"] = (byCat[it.category || "Other"] || 0) + 1;
+    for (const c of (it.colors || [])) byColor[c] = (byColor[c] || 0) + 1;
+  }
+
+  body.innerHTML = `
+    <div class="kpis">
+      <div class="kpi wide">
+        <div class="big">${overallCPW != null ? money(overallCPW) : "—"}</div>
+        <div class="lbl">Overall cost per wear · ${money(valuedSpend)} of worn pieces ÷ ${pricedWears} wears</div>
+      </div>
+      <div class="kpi"><div class="big">${active.length}</div><div class="lbl">Active items</div></div>
+      <div class="kpi"><div class="big">${totalWears}</div><div class="lbl">Total wears</div></div>
+      <div class="kpi"><div class="big">${money(totalValue)}</div><div class="lbl">Wardrobe value</div></div>
+      <div class="kpi"><div class="big">${neverWorn.length}</div><div class="lbl">Never worn</div></div>
+    </div>
+
+    ${bestCPW.length ? section("Best value (lowest cost/wear)", listRows(bestCPW.map(r =>
+      ({ item: r.i, t2: `${r.n} wear${r.n===1?"":"s"} · ${money(r.i.price)}`, val: money(r.cpw) + "/w" })))) : ""}
+
+    ${mostWorn.length ? section("Most worn", listRows(mostWorn.map(r =>
+      ({ item: r.i, t2: r.i.category || "", val: r.n + "×" })))) : ""}
+
+    ${stale.length ? section("Haven't worn in a while", listRows(stale.map(r =>
+      ({ item: r.i, t2: `last ${r.last}`, val: r.ds + "d" })))) : ""}
+
+    ${neverWorn.length ? section("Never worn", listRows(neverWorn.slice(0,8).map(i =>
+      ({ item: i, t2: i.category || "", val: i.price != null ? money(i.price) : "" })))) : ""}
+
+    ${Object.keys(byCat).length ? section("Wears by category", bars(byCat)) : ""}
+    ${Object.keys(byColor).length ? section("Wears by color", bars(byColor, true)) : ""}
+  `;
+  hydratePhotos(body);
+  body.onclick = (e) => {
+    const li = e.target.closest("[data-item]");
+    if (li) openItem(li.dataset.item);
+  };
+}
+
+function section(title, inner) {
+  return `<h2 class="sec">${esc(title)}</h2>${inner}`;
+}
+function listRows(rows) {
+  return `<div class="lst">` + rows.map(r => `
+    <div class="li" data-item="${r.item.id}" style="cursor:pointer">
+      <div class="thumb" ${r.item.image_path ? `data-photo="${esc(r.item.image_path)}"` : ""}></div>
+      <div class="grow">
+        <div class="t1">${esc(r.item.name)}</div>
+        <div class="t2">${esc(r.t2 || "")}</div>
+      </div>
+      <div class="val">${esc(r.val || "")}</div>
+    </div>`).join("") + `</div>`;
+}
+function bars(map, isColor = false) {
+  const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
+  const max = Math.max(...entries.map(e => e[1]));
+  return `<div class="lst">` + entries.map(([k, v]) => {
+    const hex = isColor ? ((PALETTE.find(p => p[0] === k) || [])[1] || "#888") : null;
+    return `<div class="bar">
+      <div class="blab">${hex ? `<span class="sw" style="display:inline-block;vertical-align:-2px;margin-right:5px;background:${hex}"></span>` : ""}${esc(k)}</div>
+      <div class="btrack"><div class="bfill" style="width:${(v/max*100).toFixed(0)}%"></div></div>
+      <div class="bnum">${v}</div>
+    </div>`;
+  }).join("") + `</div>`;
+}
+
+/* ===================================================================
+   TAB SWITCHING + REFRESH
+   =================================================================== */
+const TAB_TITLES = { closet: "Closet", add: "Add Item", wear: "Log Wear", stats: "Stats", settings: "Settings" };
+
+function switchTab(name) {
+  $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
+  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  $("#title").textContent = TAB_TITLES[name];
+  window.scrollTo(0, 0);
+  if (name === "wear") buildWearTab();
+  if (name === "stats") renderStats();
+  if (name === "closet") renderCloset();
+}
+
+// Re-render whatever views depend on data after a mutation.
+function refreshViews() {
+  renderCloset();
+  if ($("#tab-stats").classList.contains("active")) renderStats();
+  if ($("#tab-wear").classList.contains("active")) renderRecentWears();
+}
+
+/* ===================================================================
+   AUTH SCREEN WIRING
+   =================================================================== */
+function showLogin() {
+  $("#login").classList.add("active");
+  $("#app").hidden = true;
+}
+function showApp() {
+  $("#login").classList.remove("active");
+  $("#app").hidden = false;
+  $("#set_email").textContent = session?.user?.email || "";
+}
+function handleSignedOut() {
+  saveSession(null);
+  items = []; wears = []; dataReady = false; _urlCache.clear();
+  showLogin();
+}
+
+async function bootApp() {
+  showApp();
+  buildAddForm();
+  switchTab("closet");
+  renderCloset(); // shows spinner while loading
+  try {
+    await loadData();
+    renderCloset();
+  } catch (e) {
+    $("#closetBody").innerHTML = `<div class="empty">Couldn't load your closet.<br><span class="err">${esc(e.message)}</span><br><br><button class="btn ghost" onclick="retryLoad()" style="max-width:200px;margin:0 auto">Retry</button></div>`;
+  }
+}
+async function retryLoad() {
+  $("#closetBody").innerHTML = `<div class="spin"></div>`;
+  try { await loadData(); refreshViews(); } catch (e) { toast(e.message); }
+}
+window.retryLoad = retryLoad;
+
+/* ===================================================================
+   EVENT WIRING
+   =================================================================== */
+function wireEvents() {
+  // login
+  $("#loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#loginBtn"), err = $("#loginErr");
+    err.hidden = true; btn.disabled = true; btn.textContent = "Signing in…";
+    try {
+      await signIn($("#email").value.trim(), $("#pw").value);
+      $("#pw").value = "";
+      await bootApp();
+    } catch (e2) {
+      err.textContent = e2.message; err.hidden = false;
+    } finally { btn.disabled = false; btn.textContent = "Sign in"; }
+  });
+
+  // tab bar
+  $("#tabbar").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-tab]");
+    if (b) switchTab(b.dataset.tab);
+  });
+
+  // closet interactions (toggle archived / open item)
+  $("#closetBody").addEventListener("click", (e) => {
+    if (e.target.id === "toggleArch") { showArchived = !showArchived; renderCloset(); return; }
+    const tile = e.target.closest("[data-item]");
+    if (tile) openItem(tile.dataset.item);
+  });
+
+  // add item
+  $("#photoPrev").addEventListener("click", () => $("#photoInput").click());
+  $("#photoPrev").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") $("#photoInput").click(); });
+  $("#photoInput").addEventListener("change", (e) => handlePhotoPick(e.target.files[0]));
+  $("#addForm").addEventListener("submit", submitAdd);
+
+  // log wear
+  $("#wearBtn").addEventListener("click", submitWear);
+
+  // settings
+  $("#logoutBtn").addEventListener("click", () => handleSignedOut());
+  $("#refreshBtn").addEventListener("click", async () => {
+    const b = $("#refreshBtn"); b.disabled = true; b.textContent = "Refreshing…";
+    _urlCache.clear();
+    try { await loadData(); refreshViews(); toast("Synced"); }
+    catch (e) { toast(e.message); }
+    finally { b.disabled = false; b.textContent = "Refresh data"; }
+  });
+
+  // modal backdrop closes sheet
+  $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+}
+
+/* ===================================================================
+   START
+   =================================================================== */
+(function init() {
+  $$(".appver").forEach(el => el.textContent = APP_VERSION);
+  wireEvents();
+  loadSession();
+  if (session?.access_token) bootApp();
+  else showLogin();
+})();
+</script>
 </body>
 </html>
