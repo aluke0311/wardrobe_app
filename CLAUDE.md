@@ -149,9 +149,15 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 
 ## Build roadmap / current status
 
+**The forward plan now lives in `ROADMAP.md`** (Phases A–D + the product
+decisions). Key decisions locked 2026-06-18: **personal single-user tool**,
+**heuristics only — no AI/server-proxy/Edge Functions**, **thumbnail outfits (no
+collage canvas)**. The legacy `3d/3e/3f` items below are folded into ROADMAP's
+Phases B/C/D; this section keeps the *done* history + the richer 3f notes.
+
 - **Phase 1 — schema** ✓ run in Supabase.
 - **Phase 2 — import** ✓ 476 items + photos live; ARCHIVE-prefix names cleaned.
-- **Phase 3 — rewrite `index.html` for the new schema** (3a DONE). Build in
+- **Phase 3 — rewrite `index.html` for the new schema** (3a/3b/3c DONE). Build in
   verifiable slices, keeping the app fully working each step:
   - 3a Core ✓ (2026-06-18): all new fields + subcategory picker (dependent on
     category), `status` (Available/Storage/Archive) filter + search + category

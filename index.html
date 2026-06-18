@@ -134,6 +134,21 @@
   .tile.dim { opacity: .55; }
   .tag-corner { position: absolute; top: 6px; left: 6px; font-size: 10px; padding: 2px 7px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; }
 
+  /* ---------- closet drill-down (folders + density) ---------- */
+  .backrow { display: flex; align-items: center; gap: 4px; background: none; border: 0; color: var(--ink); font-size: 15px; font-weight: 600; padding: 4px 2px 12px; }
+  .folders { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .folder { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: none; text-align: left; }
+  .folder:first-child { border-top: 0; }
+  .folder .fthumb { width: 52px; height: 52px; border-radius: 10px; background: #eceae6 center/cover no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
+  .folder .fgrow { flex: 1; min-width: 0; }
+  .folder .fname { font-size: 16px; font-weight: 600; line-height: 1.2; }
+  .folder .fcount { font-size: 13px; color: var(--muted); margin-top: 1px; }
+  .folder .fchev { color: var(--muted); font-size: 20px; flex: none; }
+  .grid.cols4 { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .grid.cols4 .meta { padding: 6px 7px 8px; }
+  .grid.cols4 .meta .nm { font-size: 11px; }
+  .grid.cols4 .meta .sub { font-size: 9.5px; }
+
   /* ---------- occasion ladder bar ---------- */
   .ladder { display: flex; gap: 3px; margin-top: 4px; }
   .ladder .rung { flex: 1; height: 6px; border-radius: 2px; background: #e2e0db; }
@@ -452,7 +467,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v3";
+const APP_VERSION = "2026-06-18 v4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -863,29 +878,15 @@ function hydratePhotos(root = document) {
 }
 
 /* ===================================================================
-   RENDER: CLOSET  (search + category + status filters)
+   RENDER: CLOSET  (search · status · category→subcategory drill-down)
    =================================================================== */
 let closetQuery = "";
-let closetCat = "";              // "" = all categories
 let closetStatus = "Available";  // Available | Storage | Archive | All
-
-function filteredItems() {
-  const q = closetQuery.trim().toLowerCase();
-  // When a capsule lens is active, restrict to its items and show every status
-  // (a capsule is a curated set); otherwise honor the status filter.
-  const lensIds = activeCapsule ? new Set(capsuleItemMap.get(activeCapsule) || []) : null;
-  return items.filter(i => {
-    if (lensIds) { if (!lensIds.has(i.id)) return false; }
-    else if (closetStatus !== "All" && itemStatus(i) !== closetStatus) return false;
-    if (closetCat && i.category !== closetCat) return false;
-    if (q) {
-      const hay = [i.name, i.brand, i.subcategory, i.retailer, i.color_family]
-        .filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-}
+let drillCat = null;             // null = root (category list); else a category
+let drillSub = null;             // null = subcategory list; else a chosen leaf
+let closetCols = 2;              // photo-grid density: 2 | 4
+const SUB_ALL = " all";     // "All <category>" leaf
+const SUB_NONE = " none";   // items with no subcategory
 
 function activeCapsuleObj() {
   return activeCapsule ? capsules.find(c => c.id === activeCapsule) : null;
@@ -901,88 +902,164 @@ function statusCounts() {
   for (const i of items) c[itemStatus(i)] = (c[itemStatus(i)] || 0) + 1;
   return c;
 }
+// Items in the current status scope — the base set the drill-down navigates.
+function statusScoped() {
+  return closetStatus === "All" ? items : items.filter(i => itemStatus(i) === closetStatus);
+}
+const itemCat = (i) => i.category || "Uncategorized";
+const itemSub = (i) => i.subcategory || null;
+function searchMatch(i, q) {
+  const hay = [i.name, i.brand, i.subcategory, i.category, i.retailer, i.color_family]
+    .filter(Boolean).join(" ").toLowerCase();
+  return hay.includes(q);
+}
+const repPhoto = (list) => (list.find(i => i.image_path) || {}).image_path || null;
+
+function tileHtml(i) {
+  const n = wearCount(i.id);
+  const cpw = costPerWear(i);
+  const sub = cpw != null ? `${money(cpw)}/wear` : (n ? `${n} wear${n === 1 ? "" : "s"}` : "Never worn");
+  const dim = itemStatus(i) !== "Available";
+  const corner = dim ? `<span class="tag-corner">${esc(itemStatus(i))}</span>` : "";
+  return `
+    <div class="tile ${dim ? "dim" : ""}" data-item="${i.id}">
+      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${corner}${i.image_path ? "" : "👕"}</div>
+      <div class="meta">
+        <div class="nm">${esc(i.name)}</div>
+        <div class="sub">${esc(sub)}</div>
+      </div>
+    </div>`;
+}
+const gridHtml = (list) => `<div class="grid ${closetCols === 4 ? "cols4" : ""}">${list.map(tileHtml).join("")}</div>`;
+const countLine = (n) => `<div class="muted" style="font-size:13px;margin:0 2px 10px">${n} item${n === 1 ? "" : "s"}</div>`;
+function folderRow(attr, val, name, list) {
+  const rep = repPhoto(list);
+  return `
+    <button class="folder" ${attr}="${esc(val)}">
+      <div class="fthumb" ${rep ? `data-photo="${esc(rep)}"` : ""}>${rep ? "" : "👕"}</div>
+      <div class="fgrow"><div class="fname">${esc(name)}</div><div class="fcount">${list.length} item${list.length === 1 ? "" : "s"}</div></div>
+      <span class="fchev">›</span>
+    </button>`;
+}
+const densitySeg = () => `<div class="seg" id="densitySeg">
+    <button data-cols="2" class="${closetCols === 2 ? "on" : ""}">▦</button>
+    <button data-cols="4" class="${closetCols === 4 ? "on" : ""}">▦▦</button>
+  </div>`;
+function statusSegHtml() {
+  const counts = statusCounts();
+  return ["Available", "Storage", "Archive", "All"].map(s => {
+    const n = s === "All" ? items.length : (counts[s] || 0);
+    return `<button data-status="${s}" class="${closetStatus === s ? "on" : ""}">${s} ${n}</button>`;
+  }).join("");
+}
 
 function renderCloset() {
   const body = $("#closetBody");
   if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
-
   if (items.length === 0) {
     body.innerHTML = `<div class="empty">Your closet is empty.<br>Tap <b>Add</b> to photograph your first item.</div>`;
     return;
   }
-
-  const counts = statusCounts();
-  const visible = filteredItems();
+  const q = closetQuery.trim().toLowerCase();
   const lens = activeCapsuleObj();
 
-  const lensBanner = lens ? `
-    <div class="lensbar">
-      <span class="lic">🧳</span>
-      <span class="grow">Lens: <b>${esc(lens.name)}</b> · ${(capsuleItemMap.get(lens.id) || []).length} item${(capsuleItemMap.get(lens.id) || []).length === 1 ? "" : "s"}</span>
-      <button id="lensClear">Clear</button>
-    </div>` : "";
-
-  const catOpts = `<option value="">All categories</option>` +
-    CATEGORIES.map(c => `<option ${closetCat === c ? "selected" : ""}>${c}</option>`).join("");
-  const statusSeg = ["Available", "Storage", "Archive", "All"].map(s => {
-    const n = s === "All" ? items.length : (counts[s] || 0);
-    return `<button data-status="${s}" class="${closetStatus === s ? "on" : ""}">${s} ${n}</button>`;
-  }).join("");
-
-  // In lens mode the status filter is suppressed (the capsule set is shown whole).
-  const filterbar = `
-    <div class="filterbar">
-      <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
-      <div class="frow">
-        <select class="inp" id="closetCat" style="flex:1">${catOpts}</select>
+  // --- lens mode: flat, searchable grid of the capsule's items (all statuses) ---
+  if (lens) {
+    const ids = new Set(capsuleItemMap.get(lens.id) || []);
+    let list = items.filter(i => ids.has(i.id));
+    if (q) list = list.filter(i => searchMatch(i, q));
+    body.innerHTML = `
+      <div class="lensbar">
+        <span class="lic">🧳</span>
+        <span class="grow">Lens: <b>${esc(lens.name)}</b> · ${ids.size} item${ids.size === 1 ? "" : "s"}</span>
+        <button id="lensClear">Clear</button>
       </div>
-      ${lens ? "" : `<div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSeg}</div>`}
-    </div>`;
-
-  if (visible.length === 0) {
-    body.innerHTML = lensBanner + filterbar + `<div class="empty">${lens ? "This capsule is empty." : "No items match."}</div>`;
+      <div class="filterbar">
+        <input class="inp" id="closetSearch" placeholder="Search this capsule…" value="${esc(closetQuery)}">
+        <div class="frow" style="justify-content:flex-end">${densitySeg()}</div>
+      </div>` +
+      (list.length ? countLine(list.length) + gridHtml(list)
+                   : `<div class="empty">${closetQuery ? "No items match." : "This capsule is empty."}</div>`);
     wireClosetControls();
+    hydratePhotos(body);
     return;
   }
 
-  const tiles = visible.map(i => {
-    const n = wearCount(i.id);
-    const cpw = costPerWear(i);
-    const sub = cpw != null ? `${money(cpw)}/wear` : (n ? `${n} wear${n === 1 ? "" : "s"}` : "Never worn");
-    const dim = itemStatus(i) !== "Available";
-    const corner = dim ? `<span class="tag-corner">${esc(itemStatus(i))}</span>` : "";
-    return `
-      <div class="tile ${dim ? "dim" : ""}" data-item="${i.id}">
-        <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${corner}${i.image_path ? "" : "👕"}</div>
-        <div class="meta">
-          <div class="nm">${esc(i.name)}</div>
-          <div class="sub">${esc(sub)}</div>
-        </div>
-      </div>`;
-  }).join("");
+  const scoped = statusScoped();
+  const rootHead = `
+    <div class="filterbar">
+      <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
+      <div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSegHtml()}</div>
+    </div>`;
 
-  body.innerHTML = lensBanner + filterbar +
-    `<div class="muted" style="font-size:13px;margin:0 2px 10px">${visible.length} item${visible.length === 1 ? "" : "s"}</div>` +
-    `<div class="grid">${tiles}</div>`;
+  // --- search overrides drill-down: flat results across the status scope ---
+  if (q) {
+    const list = scoped.filter(i => searchMatch(i, q));
+    body.innerHTML = rootHead + (list.length ? countLine(list.length) + gridHtml(list)
+                                             : `<div class="empty">No items match.</div>`);
+    wireClosetControls();
+    hydratePhotos(body);
+    return;
+  }
+
+  // --- root: category folders ---
+  if (drillCat === null) {
+    const rows = [...CATEGORIES, "Uncategorized"].map(c => {
+      const list = scoped.filter(i => itemCat(i) === c);
+      return list.length ? folderRow("data-cat", c, c, list) : "";
+    }).filter(Boolean).join("");
+    body.innerHTML = rootHead + (rows ? `<div class="folders">${rows}</div>`
+      : `<div class="empty">No ${closetStatus === "All" ? "" : closetStatus.toLowerCase() + " "}items.</div>`);
+    wireClosetControls();
+    hydratePhotos(body);
+    return;
+  }
+
+  const inCat = scoped.filter(i => itemCat(i) === drillCat);
+  const scopeLabel = closetStatus === "Available" ? "" : `${closetStatus} · `;
+  const hasSubs = (TAXONOMY[drillCat] || []).length > 0;
+
+  // --- category level: subcategory folders ---
+  if (drillSub === null && hasSubs) {
+    const rows = [folderRow("data-sub", SUB_ALL, `All ${drillCat}`, inCat)];
+    for (const s of TAXONOMY[drillCat]) {
+      const list = inCat.filter(i => itemSub(i) === s);
+      if (list.length) rows.push(folderRow("data-sub", s, s, list));
+    }
+    const none = inCat.filter(i => !itemSub(i));
+    if (none.length) rows.push(folderRow("data-sub", SUB_NONE, "No subcategory", none));
+    body.innerHTML =
+      `<button class="backrow" data-back="root">‹ Closet</button>
+       <h2 class="sec" style="margin-top:0">${esc(scopeLabel + drillCat)} <span class="muted" style="font-weight:400">· ${inCat.length}</span></h2>
+       <div class="folders">${rows.join("")}</div>`;
+    wireClosetControls();
+    hydratePhotos(body);
+    return;
+  }
+
+  // --- items level: photo grid for the chosen leaf ---
+  let list, leafLabel;
+  if (drillSub === SUB_NONE) { list = inCat.filter(i => !itemSub(i)); leafLabel = "No subcategory"; }
+  else if (drillSub && drillSub !== SUB_ALL) { list = inCat.filter(i => itemSub(i) === drillSub); leafLabel = drillSub; }
+  else { list = inCat; leafLabel = `All ${drillCat}`; }
+  const backTarget = hasSubs ? "cat" : "root";
+
+  body.innerHTML =
+    `<button class="backrow" data-back="${backTarget}">‹ ${esc(backTarget === "root" ? "Closet" : drillCat)}</button>
+     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
+       <span style="font-size:15px;font-weight:600">${esc(scopeLabel + leafLabel)} <span class="muted" style="font-weight:400">· ${list.length}</span></span>
+       ${densitySeg()}
+     </div>` +
+    (list.length ? gridHtml(list) : `<div class="empty">No items.</div>`);
   wireClosetControls();
   hydratePhotos(body);
 }
 
-// Re-attach control listeners after each renderCloset (innerHTML wipes them).
+// Re-attach the search box listener after each render (innerHTML wipes it).
+// Status / density / folder navigation are handled by the delegated #closetBody listener.
 function wireClosetControls() {
   const search = $("#closetSearch");
-  if (search) {
-    search.oninput = (e) => { closetQuery = e.target.value; debouncedCloset(); };
-  }
-  const cat = $("#closetCat");
-  if (cat) cat.onchange = (e) => { closetCat = e.target.value; renderCloset(); };
-  const seg = $("#closetStatusSeg");
-  if (seg) seg.onclick = (e) => {
-    const b = e.target.closest("[data-status]");
-    if (b) { closetStatus = b.dataset.status; renderCloset(); }
-  };
-  const lensClear = $("#lensClear");
-  if (lensClear) lensClear.onclick = () => { setLens(null); renderCloset(); };
+  if (search) search.oninput = (e) => { closetQuery = e.target.value; debouncedCloset(); };
 }
 
 // Debounce closet re-render while typing so we don't re-render per keystroke,
@@ -2116,8 +2193,20 @@ function wireEvents() {
     if (b) switchTab(b.dataset.tab);
   });
 
-  // closet open-item (filter controls are wired per-render in wireClosetControls)
+  // closet: status switch, density, folder drill-down, back, and open-item
+  // (the search box is wired per-render in wireClosetControls)
   $("#closetBody").addEventListener("click", (e) => {
+    const status = e.target.closest("[data-status]");
+    if (status) { closetStatus = status.dataset.status; drillCat = null; drillSub = null; renderCloset(); return; }
+    if (e.target.closest("#lensClear")) { setLens(null); renderCloset(); return; }
+    const cols = e.target.closest("[data-cols]");
+    if (cols) { closetCols = Number(cols.dataset.cols); renderCloset(); return; }
+    const cat = e.target.closest("[data-cat]");
+    if (cat) { drillCat = cat.dataset.cat; drillSub = null; renderCloset(); return; }
+    const sub = e.target.closest("[data-sub]");
+    if (sub) { drillSub = sub.dataset.sub; renderCloset(); return; }
+    const back = e.target.closest("[data-back]");
+    if (back) { if (back.dataset.back === "root") drillCat = null; drillSub = null; renderCloset(); return; }
     const tile = e.target.closest("[data-item]");
     if (tile) openItem(tile.dataset.item);
   });
