@@ -229,7 +229,7 @@ rating/compliments/note). Migrations are run by the user in the Supabase SQL edi
 - **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
   **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
   the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
-  Currently `2026-06-18 v8`.
+  Currently `2026-06-19 v2`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
