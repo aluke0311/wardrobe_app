@@ -568,7 +568,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-19 v4";
+const APP_VERSION = "2026-06-19 v6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -616,7 +616,7 @@ const CONTEXTS = [
 ];
 
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
-const STATUSES = ["Available", "Storage", "Archive"];
+const STATUSES = ["Available", "Storage", "Archive", "Wishlist"];
 const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
 
 // Upkeep (slice 6): availability = where the item is right now (wearable or not);
@@ -827,8 +827,9 @@ let outfitItemMap = new Map(); // outfit_id -> [item_id]
 let outfitsLoaded = false;
 
 let capsules = [];          // loaded lazily on first Capsules-tab open (or on boot if a lens is set)
-let capsuleItems = [];      // {capsule_id, item_id}
+let capsuleItems = [];      // {capsule_id, item_id, packed}
 let capsuleItemMap = new Map(); // capsule_id -> [item_id]
+let capsulePackedMap = new Map(); // capsule_id -> Map(item_id -> packed)
 let capsulesLoaded = false;
 let activeCapsule = null;   // capsule id used as a closet "lens", or null
 const CAPSULE_LENS_KEY = "wardrobe.lens";
@@ -888,7 +889,7 @@ function rebuildOutfitMap() {
 async function loadCapsules() {
   const [cp, ci] = await Promise.all([
     restAll("capsules?select=*&order=created_at.desc"),
-    restAll("capsule_items?select=capsule_id,item_id"),
+    restAll("capsule_items?select=capsule_id,item_id,packed"),
   ]);
   capsules = cp || [];
   capsuleItems = ci || [];
@@ -897,9 +898,12 @@ async function loadCapsules() {
 }
 function rebuildCapsuleMap() {
   capsuleItemMap = new Map();
+  capsulePackedMap = new Map();
   for (const ci of capsuleItems) {
     if (!capsuleItemMap.has(ci.capsule_id)) capsuleItemMap.set(ci.capsule_id, []);
     capsuleItemMap.get(ci.capsule_id).push(ci.item_id);
+    if (!capsulePackedMap.has(ci.capsule_id)) capsulePackedMap.set(ci.capsule_id, new Map());
+    capsulePackedMap.get(ci.capsule_id).set(ci.item_id, !!ci.packed);
   }
 }
 function itemsForCapsule(capsuleId) {
@@ -952,6 +956,36 @@ function daysSince(dateStr) {
   return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
 }
 const itemStatus = (i) => i.status || "Available";
+function projectedCpw(item) {
+  if (item.price == null || item.price <= 0) return null;
+  // estimate annual wears from owned items in same subcategory (or category)
+  const owned = items.filter(i => itemStatus(i) === "Available" && i.id !== item.id);
+  const match = owned.filter(i => i.subcategory && i.subcategory === item.subcategory);
+  const pool = match.length >= 3 ? match : owned.filter(i => i.category === item.category);
+  const wearRates = pool.map(i => {
+    const n = wearCount(i.id);
+    const ds = daysSince(i.purchase_date || i.created_at);
+    return (ds && ds > 0) ? (n / ds) * 365 : null;
+  }).filter(r => r != null && r > 0);
+  const avgPerYr = wearRates.length ? wearRates.reduce((a, b) => a + b, 0) / wearRates.length : 12;
+  const estLifeYrs = 3;
+  return item.price / (avgPerYr * estLifeYrs);
+}
+function wishlistCard(i) {
+  const pcpw = projectedCpw(i);
+  const dups = items.filter(x => itemStatus(x) !== "Wishlist" && itemStatus(x) !== "Archive"
+    && x.category === i.category && x.subcategory === i.subcategory && x.color_family === i.color_family).length;
+  const waiting = daysSince(i.created_at);
+  return `<div class="card stack" style="border-left:3px solid var(--accent);padding:12px 14px">
+    <div style="font-weight:600;margin-bottom:8px">Purchase justification</div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+      <div><div class="big" style="font-size:22px">${pcpw != null ? money(pcpw) : "—"}</div><div class="lbl">Projected cost/wear</div></div>
+      <div><div class="big" style="font-size:22px">${i.price != null ? money(i.price) : "—"}</div><div class="lbl">Price</div></div>
+      <div><div class="big" style="font-size:22px">${dups}</div><div class="lbl">Similar owned</div></div>
+      <div><div class="big" style="font-size:22px">${waiting != null ? waiting + "d" : "—"}</div><div class="lbl">Days waiting${waiting != null && waiting >= 30 ? " ⚠️" : ""}</div></div>
+    </div>
+  </div>`;
+}
 // Contexts an item is eligible for: formality ranges overlap.
 function contextsForItem(i) {
   if (i.min_occasion == null || i.max_occasion == null) return [];
@@ -1013,6 +1047,7 @@ let closetStatus = "Available";  // Available | Storage | Archive | All
 let drillCat = null;             // null = root (category list); else a category
 let drillSub = null;             // null = subcategory list; else a chosen leaf
 let closetCols = 2;              // photo-grid density: 2 | 4
+let neglectMode = false;         // B4: hide items worn in last 30 days, sort stale
 
 // Sort options for the photo grids. Default is set in Settings (persisted);
 // a per-grid control overrides it for the session.
@@ -1031,7 +1066,7 @@ function sortItems(list) {
   const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
   const colorIdx = (i) => { const k = COLOR_FAMILIES.findIndex(c => c[0] === i.color_family); return k < 0 ? 999 : k; };
   const catIdx = (i) => { const k = CATEGORIES.indexOf(i.category); return k < 0 ? 999 : k; };
-  switch (closetSort) {
+  switch (neglectMode ? "stale" : closetSort) {
     case "name": arr.sort(byName); break;
     case "color": arr.sort((a, b) => colorIdx(a) - colorIdx(b) || byName(a, b)); break;
     case "category": arr.sort((a, b) => catIdx(a) - catIdx(b) || (a.subcategory || "").localeCompare(b.subcategory || "") || byName(a, b)); break;
@@ -1055,6 +1090,7 @@ let selectMode = false;
 let selectedItems = new Set();
 function exitSelect() { selectMode = false; selectedItems.clear(); renderCloset(); }
 const selStartBtn = () => selectMode ? "" : `<button class="selstart" data-selstart>Select</button>`;
+const neglectBtn = () => `<button class="btn ghost${neglectMode ? " on" : ""}" id="neglectToggle" style="border-radius:999px;font-size:13px;padding:7px 12px;white-space:nowrap">Neglected</button>`;
 const selectBar = () => `
   <div class="selbar">
     <button class="selx" data-selcancel aria-label="Cancel">✕</button>
@@ -1084,6 +1120,10 @@ function statusCounts() {
 // Items in the current status scope — the base set the drill-down navigates.
 function statusScoped() {
   return closetStatus === "All" ? items : items.filter(i => itemStatus(i) === closetStatus);
+}
+function applyNeglect(list) {
+  if (!neglectMode) return list;
+  return list.filter(i => { const ds = daysSince(lastWorn(i.id)); return ds === null || ds >= 30; });
 }
 const itemCat = (i) => i.category || "Uncategorized";
 const itemSub = (i) => i.subcategory || null;
@@ -1127,7 +1167,7 @@ const densitySeg = () => `<div class="seg" id="densitySeg">
   </div>`;
 function statusSegHtml() {
   const counts = statusCounts();
-  return ["Available", "Storage", "Archive", "All"].map(s => {
+  return ["Available", "Storage", "Archive", "Wishlist", "All"].map(s => {
     const n = s === "All" ? items.length : (counts[s] || 0);
     return `<button data-status="${s}" class="${closetStatus === s ? "on" : ""}">${s} ${n}</button>`;
   }).join("");
@@ -1166,11 +1206,12 @@ function renderCloset() {
     return;
   }
 
-  const scoped = statusScoped();
+  const scoped = applyNeglect(statusScoped());
   const rootHead = `
     <div class="filterbar">
       <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
       <div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSegHtml()}</div>
+      <div style="display:flex;gap:8px;align-items:center">${neglectBtn()}</div>
     </div>`;
 
   // --- search overrides drill-down: flat results across the status scope ---
@@ -1433,8 +1474,10 @@ function openItem(id) {
       ${detailLine("Notes", i.notes ? esc(i.notes) : "")}
     </div>
 
+    ${itemStatus(i) === "Wishlist" ? wishlistCard(i) : ""}
+
     <div class="stack" style="margin-top:18px">
-      <button class="btn" id="sheetWear">Log a wear today</button>
+      ${itemStatus(i) !== "Wishlist" ? `<button class="btn" id="sheetWear">Log a wear today</button>` : ""}
       <button class="btn ghost" id="sheetEdit">Edit item</button>
       <div>
         <label class="fld">Status</label>
@@ -1457,7 +1500,7 @@ function openItem(id) {
 
   $("#sheetClose").onclick = closeModal;
   $("#sheetEdit").onclick = () => { closeModal(); startEdit(i.id); };
-  $("#sheetWear").onclick = async () => {
+  if ($("#sheetWear")) $("#sheetWear").onclick = async () => {
     try { await logWear(i.id, todayStr(), null); toast("Wear logged"); closeModal(); refreshViews(); }
     catch (e) { toast(e.message); }
   };
@@ -1466,6 +1509,11 @@ function openItem(id) {
     if (!b) return;
     const next = b.dataset.set;
     if (next === itemStatus(i)) return;
+    // one-in-one-out: prompt to archive a same-category item when purchasing a wishlist item
+    if (itemStatus(i) === "Wishlist" && next === "Available") {
+      const samecat = items.filter(x => x.id !== i.id && itemStatus(x) === "Available" && x.category === i.category);
+      if (samecat.length > 0 && !confirm(`You now own ${i.name}! Consider archiving a similar ${i.category} item (you have ${samecat.length}). Continue?`)) return;
+    }
     try {
       await rest(`items?id=eq.${i.id}`, { method: "PATCH",
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
@@ -2221,18 +2269,41 @@ function openCapsule(id) {
   const its = itemsForCapsule(id);
   const isLens = activeCapsule === id;
   const dr = dateRangeLabel(c);
-  const itemTiles = its.map(i => `
-    <div class="pk" data-item="${i.id}">
-      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
-      <div class="nm">${esc(i.name)}</div>
-    </div>`).join("");
+  const packedMap = capsulePackedMap.get(id) || new Map();
+  const packedCount = [...packedMap.values()].filter(Boolean).length;
+
+  function renderPackList() {
+    return its.map(i => {
+      const packed = packedMap.get(i.id) || false;
+      return `<div class="li" data-packitem="${i.id}" style="display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border)">
+        <div class="thumb" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}></div>
+        <div class="grow" style="font-size:14px;${packed ? "text-decoration:line-through;opacity:.5" : ""}">${esc(i.name)}</div>
+        <button class="btn ghost" data-pack="${i.id}" style="padding:4px 12px;font-size:13px">${packed ? "✓" : "Pack"}</button>
+      </div>`;
+    }).join("") || `<div class="muted">No items yet — edit to add some.</div>`;
+  }
 
   $("#sheet").innerHTML = `
     <h2 style="margin:6px 2px 2px;font-size:20px">${esc(c.name)}</h2>
     <div class="muted" style="margin:0 2px 12px">${esc(kindLabel(c.kind))}${dr ? " · " + esc(dr) : ""} · ${its.length} item${its.length === 1 ? "" : "s"}</div>
     ${c.notes ? `<div class="card" style="margin-bottom:6px;font-size:14px">${esc(c.notes)}</div>` : ""}
 
-    <div class="pickgrid">${itemTiles || `<div class="muted">No items yet — edit to add some.</div>`}</div>
+    ${its.length ? `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="fld" style="margin:0">Packing list</span>
+      <span class="muted" id="packCount" style="font-size:13px">${packedCount}/${its.length} packed</span>
+    </div>
+    <div id="packList">${renderPackList()}</div>` :
+    `<div class="muted">No items yet — edit to add some.</div>`}
+
+    <div style="margin-top:14px">
+      <h2 class="sec">Browse items</h2>
+      <div class="pickgrid" id="capItemGrid">${its.map(i => `
+        <div class="pk" data-item="${i.id}">
+          <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+          <div class="nm">${esc(i.name)}</div>
+        </div>`).join("") || ""}</div>
+    </div>
 
     <div class="stack" style="margin-top:18px">
       <button class="btn" id="cLens">${isLens ? "Clear closet lens" : "Use as closet lens"}</button>
@@ -2243,7 +2314,34 @@ function openCapsule(id) {
 
   $("#modal").classList.add("open");
   hydratePhotos($("#sheet"));
-  $("#sheet").querySelector(".pickgrid").onclick = (e) => {
+
+  // packing checklist toggle
+  const packListEl = $("#packList");
+  if (packListEl) {
+    hydratePhotos(packListEl);
+    packListEl.onclick = async (e) => {
+      const b = e.target.closest("[data-pack]");
+      if (!b) return;
+      const itemId = b.dataset.pack;
+      const next = !(packedMap.get(itemId) || false);
+      packedMap.set(itemId, next);
+      // update local capsuleItems
+      const ci = capsuleItems.find(x => x.capsule_id === id && x.item_id === itemId);
+      if (ci) ci.packed = next;
+      try {
+        await rest(`capsule_items?capsule_id=eq.${id}&item_id=eq.${itemId}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ packed: next }) });
+      } catch (e) { toast(e.message); packedMap.set(itemId, !next); }
+      const newPacked = [...packedMap.values()].filter(Boolean).length;
+      $("#packCount").textContent = `${newPacked}/${its.length} packed`;
+      packListEl.innerHTML = renderPackList();
+      hydratePhotos(packListEl);
+    };
+  }
+
+  const capGrid = $("#capItemGrid");
+  if (capGrid) capGrid.onclick = (e) => {
     const t = e.target.closest("[data-item]");
     if (t) { closeModal(); openItem(t.dataset.item); }
   };
@@ -2276,12 +2374,13 @@ let capSel = new Set();   // selected item ids
 let capEditId = null;
 let capQuery = "";
 
-function startCapsuleBuilder(editId, preIds) {
+async function startCapsuleBuilder(editId, preIds) {
   capEditId = editId;
   capQuery = "";
   capSel = new Set(editId ? (capsuleItemMap.get(editId) || []) : (preIds || []));
   const existing = editId ? capsules.find(c => c.id === editId) : null;
   const kind = existing ? existing.kind : "capsule";
+  if (!outfitsLoaded) { try { await loadOutfits(); } catch (e) { /* skip outfit picker if load fails */ } }
 
   $("#sheet").innerHTML = `
     <h2 style="margin:6px 2px 12px;font-size:20px">${editId ? "Edit capsule" : "New capsule"}</h2>
@@ -2310,6 +2409,18 @@ function startCapsuleBuilder(editId, preIds) {
       <textarea class="inp" id="capNotes" placeholder="Optional">${existing && existing.notes ? esc(existing.notes) : ""}</textarea>
     </div>
 
+    ${outfitsLoaded && outfits.length ? `
+    <div style="margin-top:12px">
+      <label class="fld">Add from outfit</label>
+      <div style="display:flex;gap:8px">
+        <select class="inp" id="capOutfitPick" style="flex:1">
+          <option value="">— pick an outfit —</option>
+          ${outfits.map(o => `<option value="${o.id}">${esc(o.name || o.created_at?.slice(0,10) || "Outfit")}</option>`).join("")}
+        </select>
+        <button type="button" class="btn ghost" id="capAddOutfit" style="white-space:nowrap">Add items</button>
+      </div>
+    </div>` : ""}
+
     <h2 class="sec">Items <span class="muted" id="capCount" style="font-size:12.5px;font-weight:400"></span></h2>
     <input class="inp" id="capSearch" placeholder="Search your closet" style="margin-bottom:10px">
     <div class="pickgrid" id="capGrid"></div>
@@ -2331,12 +2442,21 @@ function startCapsuleBuilder(editId, preIds) {
   $("#capSearch").oninput = (e) => { capQuery = e.target.value; renderCapBuilderGrid(true); };
   $("#capCancel").onclick = closeModal;
   $("#capSave").onclick = saveCapsule;
+  const addOutfitBtn = $("#capAddOutfit");
+  if (addOutfitBtn) addOutfitBtn.onclick = () => {
+    const oid = $("#capOutfitPick").value;
+    if (!oid) { toast("Pick an outfit first"); return; }
+    const ids = outfitItemMap.get(oid) || [];
+    ids.forEach(id => capSel.add(id));
+    renderCapBuilderGrid();
+    toast(`Added ${ids.length} item${ids.length === 1 ? "" : "s"} from outfit`);
+  };
 }
 
 function renderCapBuilderGrid(keepFocus) {
   const q = capQuery.trim().toLowerCase();
   // selected items always available; otherwise pull from any non-Archive item
-  const pool = items.filter(i => itemStatus(i) !== "Archive" || capSel.has(i.id));
+  const pool = items.filter(i => (itemStatus(i) !== "Archive" && itemStatus(i) !== "Wishlist") || capSel.has(i.id));
   const matched = pool.filter(i => !q || [i.name, i.brand].filter(Boolean).join(" ").toLowerCase().includes(q));
   matched.sort((a, b) => (capSel.has(b.id) - capSel.has(a.id)));
   const shown = matched.slice(0, 60);
@@ -2782,7 +2902,7 @@ function fillFieldEmpty(i, f) {
 }
 const firstEmptyField = (i) => FILL_FIELDS.find(f => fillFieldEmpty(i, f)) || null;
 // active (non-Archive) items that still have at least one empty target field
-const fillPool = () => items.filter(i => itemStatus(i) !== "Archive" && firstEmptyField(i));
+const fillPool = () => items.filter(i => itemStatus(i) !== "Archive" && itemStatus(i) !== "Wishlist" && firstEmptyField(i));
 
 function fillWidget(item, field) {
   if (field === "occasion") {
@@ -3022,6 +3142,7 @@ function wireEvents() {
     const status = e.target.closest("[data-status]");
     if (status) { if (selectMode) { selectMode = false; selectedItems.clear(); } closetStatus = status.dataset.status; drillCat = null; drillSub = null; renderCloset(); return; }
     if (e.target.closest("#lensClear")) { setLens(null); renderCloset(); return; }
+    if (e.target.closest("#neglectToggle")) { neglectMode = !neglectMode; drillCat = null; drillSub = null; renderCloset(); return; }
     const cols = e.target.closest("[data-cols]");
     if (cols) { closetCols = Number(cols.dataset.cols); renderCloset(); return; }
     const cat = e.target.closest("[data-cat]");

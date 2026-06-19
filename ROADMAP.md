@@ -25,6 +25,10 @@
   relationship graph). Derive item "trust" from **wear ratings** (no typed field).
 - **Hard constraints (from `CLAUDE.md`):** one `index.html`, plain `fetch`, no
   libraries/CDN/`<script src>`, mobile-first, Supabase REST + Storage only.
+- **Mobile-first AND usable on web (locked, user feedback 2026-06-19).** Phone is
+  the primary surface, but the same `index.html` must be comfortable in a desktop
+  browser too — fluid/responsive layout, not a fixed phone-width column. Verify
+  both widths when touching layout.
 
 ---
 
@@ -194,7 +198,15 @@ is NOT a Fill target. *Optional refinement:* only ask `rise` for Bottoms and
 General: each sub-slice that needs DB changes follows the migration dance. Add an
 RLS `own_rows` policy for any new table (copy the pattern in `schema.sql`).
 
-**B1 — Calendar.** ✓ *done 2026-06-19 v4.* See §4 for what's built. New table:
+**B1 — Calendar.** ✓ *done 2026-06-19 v4.* See §4 for what's built.
+*Refinement (user feedback 2026-06-19; reference: Stylebook "Day View" 2026-06-19):*
+the day-detail sheet (`openDay`) should **group that day's wears by `outfit_id`** —
+render an outfit block (its thumbnails together) where wears share an outfit, and only
+list loose items individually for wears with no `outfit_id`. Today it lists every item
+flat with no grouping. *Also:* surface the per-wear/per-outfit **note** inline on each
+day block ("Tap to add notes" → writes `wears.note`, which already exists), so the day
+view doubles as the outfit diary; keep the "+ wear / + outfit for this day" add path.
+New table:
 ```sql
 create table if not exists events (
   id uuid primary key default gen_random_uuid(),
@@ -217,52 +229,92 @@ wear/outfit for this day" (reuse the Log flows with the date preset) and "Add
 event". Load events lazily (`loadEvents`, no paging needed). The "outfit diary" /
 heat-map fall out of this + ratings.
 
-**B2 — Capsule polish.**
+**B2 — Capsule polish. ✓ 2026-06-19 v6 (partial — destination image + reorder deferred)**
+Migration (run in Supabase SQL editor — needed for packing checklist):
 ```sql
 alter table capsule_items add column if not exists packed boolean not null default false;
 alter table capsules
   add column if not exists image_path text,
   add column if not exists sort_order int;
 ```
-- **Packing checklist:** in `openCapsule`, render each item with a packed checkbox;
-  toggle PATCHes `capsule_items` (composite key `capsule_id+item_id`); show "X/Y
-  packed".
-- **Add-an-outfit-to-capsule:** in `startCapsuleBuilder`, add an outfit picker that
-  unions the outfit's item ids into `capSel`.
-- **Destination image:** photo upload in the builder (reuse `compressImage/
-  uploadPhoto`), show on capsule card + detail hero.
-- **Reorder:** order capsules by `sort_order` (nulls last → created_at); simple
-  up/down buttons set `sort_order`. *(Lowest priority; OK to defer.)*
+- **Packing checklist ✓** — `openCapsule` renders items with Pack/✓ buttons; toggle
+  PATCHes `capsule_items`; shows "X/Y packed" count. (Needs migration above to work.)
+- **Add-an-outfit-to-capsule ✓** — `startCapsuleBuilder` has an outfit picker dropdown
+  + "Add items" button that unions the outfit's item IDs into `capSel`.
+- Destination image — deferred.
+- Reorder — deferred (lowest priority).
 
-**B3 — Wishlist + decision support.** *Decision: a wishlist item IS an `items` row
-with `status='Wishlist'`* (reuses add/edit/detail/closet wholesale; converting to
-owned = set status Available). Migration:
+**B3 — Wishlist + decision support. ✓ 2026-06-19 v6**
+Migration (run in Supabase SQL editor):
 ```sql
 alter table items drop constraint if exists items_status_check;
 alter table items add constraint items_status_check
   check (status in ('Available','Storage','Archive','Wishlist'));
 ```
-- Add `"Wishlist"` to `STATUSES`; it appears in the closet status switcher.
-  **Exclude Wishlist from wear/stats/Fill/Log pools** (they're not owned) — audit
-  `statusScoped` default, `populateWearItems`, `fillPool`, builder pools (they
-  filter to Available / non-Archive; add `!== "Wishlist"` where needed).
-- **Purchase-justification card** (in `openItem` when status=Wishlist): projected
-  CPW = `price / estWears` (estWears heuristic, e.g. wears/yr of same subcategory
-  median, or a flat assumption — derive, document the formula); **duplicates** =
-  count owned items with same `category+subcategory+color_family`; **days waiting**
-  = `daysSince(created_at)` with a 30-day nudge.
-- **One-in-one-out:** when converting Wishlist→Available, optionally prompt to pick
-  an owned same-category item to Archive.
+- `"Wishlist"` added to `STATUSES`; appears in closet status switcher and item status seg. ✓
+- Excluded from `fillPool`, capsule builder pool (Wishlist items not owned). ✓
+  (`populateWearItems`, outfit builder already Available-only — no change needed.)
+- **Purchase-justification card ✓** — shown in `openItem` when status=Wishlist:
+  projected CPW (price ÷ est. wears, heuristic: subcategory/category median wears/yr
+  × 3yr life; falls back to 12/yr), price, similar-owned count, days waiting (⚠️ at 30d).
+- **One-in-one-out ✓** — confirm prompt when converting Wishlist→Available if the user
+  owns same-category items.
+- "Log a wear today" hidden for Wishlist items. ✓
 
-**B4 — Rotation mode.** A closet controls toggle "Neglected": forces
-`closetSort='stale'` and hides items worn in the last 30 days (`daysSince(lastWorn)
-< 30`). Pure client filter; no schema.
+**B4 — Rotation mode. ✓ 2026-06-19 v6**
+"Neglected" toggle in the closet filterbar: hides items worn in the last 30 days,
+forces sort to "Longest unworn". Pure client filter; no schema.
 
 ---
 
 ### Phase C — Closet Health / Insights  *(the centerpiece; rebuilds `Stats`→`Insights`)*
 All **derived** (no schema) except where it reads slice-7 ratings. Reuse
-`listRows/bars`; add KPI cards. Definitions to implement (locked):
+`listRows/bars`; add KPI cards.
+
+**UI pattern (reference: Stylebook "Style Stats" — user-provided 2026-06-19).** The
+screen is a stack of **grouped stat cards**, each = an icon/title header + two
+headline KPI columns + a list of tappable **drill-down rows** (every row → a
+filtered item/outfit list, ties into the locked drill-down filters below):
+- **Looks Stats** — KPIs: Outfit Count · Avg items per look. Rows: *Not logged on
+  calendar* · *Worn history* · *Most packed*.
+- **Clothing Stats** — KPIs: Item Count · Total Closet Value. A **color
+  distribution bar** under the KPIs. Rows: *Most recently added* · *Never used in
+  an outfit* · *Not logged on calendar* · *Worn history (most & least worn)* ·
+  *Cost per wear (best & worst CPW)* · *Purchase price (most & least expensive)* ·
+  *Most packed*. Footer caption: "Total Closet Value and Item Count do not include
+  archived items" (matches the Available-only scope rule below).
+- **View Closet By… (donut)** — a **donut chart** segmenting the closet by a chosen
+  field with the lead segment labeled (e.g. "Brand · 18.1% Old Navy", "Size · 37.7%
+  S"; ▲▼ steps the highlighted segment), and a tappable field list under it: Color ·
+  Status · Price · Fabric · Size · Season · Brand. Each opens the closet
+  grouped/filtered by that field. This is the visual home for the **Distributions** +
+  **drill-down** items below. *Refinements (reference: Stylebook Brand/Size donuts,
+  user-provided 2026-06-19):* always include a **"No value" bucket** for items missing
+  that field (it doubles as a fill-gap entry point → tapping it opens those items, a
+  natural hand-off to the Fill flow), and offer a **Sort by Name / Sort by Count**
+  toggle on the row list. Optional **per-row density** (2–5 cols) on any resulting
+  thumbnail grid, like the closet.
+- **Size Tracker** — see backlog item in §5 (small captured-data feature).
+
+Definitions to implement (locked):
+- **Scope (locked, user feedback 2026-06-19):** every Insights stat counts
+  **Available items only** — exclude `status` Storage / Archive (and Wishlist).
+  Make this a single shared pool helper so all KPIs/distributions use it.
+- **CPW $0 rule (locked, user feedback 2026-06-19):** **exclude items with
+  `price` 0 / null** from all CPW math — they're not "free", just unpriced. This
+  applies to CPW now, projected CPW, "best value" (lowest CPW), and best
+  purchases. A $0 item should never win or skew a CPW ranking.
+- **Drill-down filters (locked, user feedback 2026-06-19):** stats are
+  **clickable into a filtered list** — tapping a KPI/row opens the closet (or an
+  Insights detail view) scoped to that slice, with time + category facets. Target
+  examples: *CPW in the past year*, *CPW for Tops only*, *most worn in the past
+  month*. Implement a small filter spec (field + range + window) that both the KPI
+  computation and the resulting list share, so the number and the drilled list
+  always agree. **Time-window options (pin, reference: Stylebook "Range" sheet
+  2026-06-19):** All time · Last 7 / 14 / 30 / 90 days · Last 6 months · Last year.
+  The drilled list is a thumbnail grid with the metric printed under each tile (CPW
+  grid shows `$x.xx`) and a **Best / Worst** order toggle (reference: Stylebook CPW
+  screen).
 - **Recency states** by `daysSince(lastWorn)`: active <30 · cooling 30–120 ·
   dormant 120–365 · unworn >365 · never (no wears).
 - **Wear velocity** = wears in last 90 days. **Repeat cadence** = avg days between
@@ -313,6 +365,11 @@ All **derived** (no schema) except where it reads slice-7 ratings. Reuse
   - **Clone:** copy an outfit + its `outfit_items` with a fresh `created_at`.
   - **One-tap re-wear** (log an existing outfit for today) + **Outfit Shuffle**
     (random Available combos).
+  - **Outfit action menu (reference: Indyx 2026-06-19):** tapping an outfit opens a
+    quick-action sheet — Edit · Outfit Details · **Duplicate** · Selfies · **Add to
+    Calendar** · **Add to Collection (capsule)** · Delete. Good template for the
+    outfit detail actions (ties Duplicate→Clone, Add to Calendar→B1, Add to
+    Collection→B2 capsules).
 
 ---
 
@@ -323,9 +380,121 @@ Home/a menu). Home cards: today's weather (D2), suggested capsule, recently worn
 neglected pieces, in-laundry items, upcoming events (B1), quick log-wear, continue
 packing, closet-health score (C). Built last so it has real content to surface.
 
+**UI pattern (reference: ALTA home — user-provided 2026-06-19):**
+- **Week strip** across the top: Sun–Sat with date numbers, today underlined; each
+  day shows a silhouette/thumbnail of that day's planned or logged outfit (empty =
+  faded silhouette). Tapping a day → that day's calendar detail (B1). Two buttons
+  under it: **Add Look** and **Plan Event**.
+- **Greeting + weather** row: "Good afternoon, {name}" + current temp / hi-lo /
+  condition icon (D2 open-meteo).
+- **Today's suggestions**: a labeled, paged carousel ("Home casual" + cadence tag
+  like "Every day", `1/3`) of suggested outfits (item thumbnails grouped) for
+  today's context/weather (D1). Swipe through alternatives.
+
 ### Journal (threads through B/C — not its own slice)
 Outfit diary = wear `note` + `rating` + weather surfaced as a timeline (B1 + C7);
 "style discoveries" = a searchable notes list.
+
+---
+
+### Phase F — Post-build polish (user feedback 2026-06-19)
+Small, mostly client-only refinements to ship after the core phases are in. Each
+is independent; do as one-off slices.
+
+- **F1 — Card images "fit" not "fill" (quick).** Closet/outfit/capsule card
+  thumbnails currently crop (`object-fit: cover`). Switch to `object-fit:
+  contain` so the whole garment shows. Audit every card `img` rule; keep a fixed
+  cell box (letterbox the contained image) so the grid stays even.
+- **F2 — Fill page upgrades.** Three asks: (a) **Available-only pool** — `fillPool`
+  must exclude Storage/Archive (and Wishlist), only `status='Available'`. (b)
+  **More randomized item order** — shuffle the candidate items, don't serve them in
+  a stable/category order. (c) **Random field, not just occasion** — today Fill
+  leads with occasion; instead pick *any* empty open field for the shown item at
+  random across `FILL_FIELDS` (occasion, color_family, fabric, season, fit, etc.),
+  so each card prompts a different gap. Keep single-tap chip saves.
+- **F3 — Outfit builder "I liked it" affordance.** In the outfit create/edit flow
+  the "liked"/rating control is hard to find. Surface a clear like/rating toggle
+  inline in the builder near Save (and on "Save & log as worn"), so the user can
+  mark a fresh outfit as liked during creation, not only after. *Reference: Indyx
+  treats **Favorite** as a first-class, filterable flag (a facet in the filter
+  sheet).* Consider a simple persistent `favorite` boolean on items **and** outfits
+  (cheap, filterable in F6), distinct from the per-wear `rating` (which is
+  moment-of-use). Confirm whether you want both, or just the favorite flag.
+- **F4 — Rethink categorization (bigger; design first).** Today `TAXONOMY`
+  (category→subcategory) is a fixed top-of-script constant. The user wants to
+  **change categories and add their own**. **Reference models seen 2026-06-19:**
+  - **Stylebook "Edit Folders" (what the user wants):** categories are
+    user-editable **folders** — add (`+ Folder`), rename (tap), delete (−), and
+    drag-reorder, each showing a live item count. Tapping a folder opens its
+    **subcategory** editor (same add/rename/delete/reorder, with counts). So a
+    fully user-owned 2-level taxonomy. *(Note: Stylebook also models Archive /
+    Storage / Pack / Workout as folders — we should NOT copy that; we already have
+    a `status` field, keep status orthogonal to category.)*
+  - **Indyx (the other approach):** a **fixed** top-level category list (Top,
+    Bottom, Outerwear, One Piece, Bag, Shoes, Accessory, Jewelry, Swim, Other) and
+    leans on rich multi-facet filters instead of custom categories.
+  - **Recommendation:** go the Stylebook route since the ask is explicitly
+    user-editable categories. Move taxonomy into RLS-scoped `categories` +
+    `subcategories` tables (id, user_id, name, sort_order, parent), seed from the
+    current `TAXONOMY`, and build a "Manage categories" UI in Settings mirroring
+    Edit Folders. Items keep `category`/`subcategory` as text (or FK). **Decide:**
+    rename = update in place; on delete, prompt to reassign affected items (don't
+    orphan the 476). This breaks the "fixed choices live as constants" convention —
+    confirm before building. **Do not start without a decision.**
+- **F5 — Item-detail enrichment (references: Stylebook + Indyx item sheet,
+  user-provided 2026-06-19).** All **pure-derive, no schema** — bundle these onto the
+  item detail sheet (`openItem`):
+  - **"Used in N outfits" mosaic** — tappable row, outfit count + a small thumbnail
+    **mosaic** of those outfits (from `outfitItemMap`), opens the filtered outfit list.
+  - **"Wear it with" pairings** — top co-occurring items derived from outfit
+    co-occurrence (count items sharing an `outfit_id`/wear-day with this one, rank by
+    frequency, show 2–4 thumbnails → tap to open). This is the concrete surface for
+    the north-star "derive matches-with from co-occurrence" (no manual pairing graph).
+  - **"Create outfit from this item"** button → `startOutfitBuilder(null,[id])`
+    (preIds is already supported — near-free wiring). Build a look around the piece
+    you're viewing.
+  - **Elevate $/wear to a headline** on the sheet (Indyx puts `$x.xx / WEAR` at the
+    top), and show **days-owned** ("In wardrobe: N days" from `purchase_date`) +
+    outfits-made alongside the existing "Worn N days / last worn". Respect the CPW $0
+    rule (don't show a CPW headline for unpriced items).
+- **F6 — Closet grid header + filter/sort polish (reference: Indyx).** Tighten the
+  closet toolbar: sort label + live item count, search, a filter button with an
+  **active-filter count badge**, a **Select** (multi-select) toggle, and a two-row
+  chip filter — **category chips** with a **subcategory chip row** under the chosen
+  category. Optional **time-range tabs** (1M/6M/1Y/ALL). The Indyx **filter sheet**
+  is the reference for a full-screen filter: facet groups = Category · Season ·
+  Color (swatch grid) · Visibility (Private/Favorite/Archive/Sold-Donated/Do-not-
+  style ≈ our `status` + a favorite flag) · Source (Purchase/Gift/Self-made ≈ our
+  `acquisition`) · Secondhand · Location (≈ `storage_location`); a sticky "Clear" +
+  "Apply Filter". Indyx **sort** options to mirror: Created newest/oldest, Purchased
+  newest/oldest, Cost/Wear high/low, Most/Least worn, Category, Custom. Mostly
+  re-dressing existing fields; confirm which controls already exist before building.
+- **F8 — Type-ahead "previously entered" for free-text fields (reference: Stylebook
+  Size entry 2026-06-19).** When entering a free-text field (`size`, `brand`,
+  `retailer`), show a **"Previously entered"** suggestion list derived from the
+  distinct existing values across `items`, filtered by what's typed. Pure client
+  (compute from the loaded `items` array), no schema. Big mobile-typing win and it
+  keeps values consistent (avoids "Old navy" vs "Old Navy" drift — consider a
+  case-insensitive de-dupe in the suggestion list). Low effort; do alongside F6.
+- **F9 — Browse outfits by context (reference: Stylebook "Outfit Tags" grid
+  2026-06-19) — DECISION REQUIRED, don't build blind.** Stylebook shows a grid of
+  free-text outfit tags each with a count (Casual 47, Out & About 104, Home 45,
+  Travel 37, Symphony 5, Wedding 2, Spring/Summer/Fall/Winter…). **Do not copy this
+  as a new free-text tag table.** Those "tags" are really a *mix of dimensions we
+  already model:* occasion → our `context`; Spring/Summer/etc → derivable from item
+  `season`; Travel / place names (Emory) → a **capsule**. A parallel free-tag system
+  would fragment the same data three ways. **Recommendation:** build the *view* (a
+  grid of contexts with outfit counts → tap a context to browse its outfits) on top of
+  the **existing `outfits.context`** — zero schema, gives the same browse affordance.
+  Only add a real `outfits.tags text[]` if the user, after seeing that, still wants
+  arbitrary labels that don't map to context/season/capsule. **Confirm with the user
+  before building; default to the no-schema context-browse view.**
+- **F7 — Size Tracker (small new captured-data feature; reference: Stylebook).** A
+  Settings/Insights page holding the user's own measurements + per-brand/category
+  sizes (e.g. "Old Navy top = M"). This is *captured*, not derived, so it's a
+  deliberate exception to derive-first — keep it tiny and optional. Likely a single
+  `profile`/`sizes` row or a small `sizes` table (RLS-scoped). Confirm scope before
+  building.
 
 ---
 
@@ -335,3 +504,18 @@ proxy / Edge Functions · outfit collage canvas · social sharing · multi-user 
 accounts / monetization · built-in shopping/retailer browser · editorial content ·
 hand-maintained item relationship graph (derive pairings) · per-item typed
 comfort/confidence (derive from ratings).
+
+**Reviewed-and-rejected from reference screenshots (IMG_0838–0857, 2026-06-19) —
+recorded so they don't get re-proposed:**
+- **Per-item condition / "State" (New/Used)** and **Resale value** (Indyx) — only
+  meaningful for reselling, which this app doesn't do; no consuming feature →
+  violates derive-first/capture-light. (If a *sell* declutter path ever lands,
+  resale value could attach there — not before.)
+- **"Mood" per-item styling tag** (Indyx) — subjective per-item chore, against
+  capture-light. Subjective signal is captured at moment-of-use via the wear `rating`.
+- **Manual usage +/- stepper** on item stats (Indyx "Scheduled/Unscheduled") — breaks
+  the one-row-per-(item, day) wear model. Back-dated wear logging already covers
+  "I wore this before I started tracking."
+- **Visibility/Followers, Outfit selfies, Style submissions, Lookbooks, Create
+  Avatar, style-descriptor profile + completion %** (Indyx/ALTA) — all social /
+  multi-user / profile cruft; covered by the no-social, single-user stance.
