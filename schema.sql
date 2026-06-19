@@ -164,6 +164,23 @@ do $$ begin
 end $$;
 
 -- -------------------------------------------------------------------
+-- EVENTS — upcoming occasions to plan outfits for (B1 Calendar)
+-- Idempotent; safe to run on an existing DB (create table if not exists).
+-- -------------------------------------------------------------------
+create table if not exists events (
+  id                 uuid primary key default gen_random_uuid(),
+  user_id            uuid not null default auth.uid(),
+  title              text,
+  event_date         date not null,
+  context            text,               -- one of the app CONTEXTS
+  dress_code         text,
+  planned_outfit_id  uuid references outfits(id) on delete set null,
+  backup_outfit_id   uuid references outfits(id) on delete set null,
+  notes              text,
+  created_at         timestamptz not null default now()
+);
+
+-- -------------------------------------------------------------------
 -- INDEXES
 -- -------------------------------------------------------------------
 create index if not exists items_user_idx        on items(user_id);
@@ -172,6 +189,7 @@ create index if not exists wears_item_idx         on wears(item_id);
 create index if not exists wears_worn_on_idx      on wears(user_id, worn_on);
 create index if not exists outfit_items_item_idx  on outfit_items(item_id);
 create index if not exists capsule_items_item_idx on capsule_items(item_id);
+create index if not exists events_user_date_idx   on events(user_id, event_date);
 
 -- -------------------------------------------------------------------
 -- ROW-LEVEL SECURITY — every table scoped to the signed-in user.
@@ -183,11 +201,12 @@ alter table outfit_items  enable row level security;
 alter table capsules      enable row level security;
 alter table capsule_items enable row level security;
 alter table wears         enable row level security;
+alter table events        enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['items','outfits','outfit_items','capsules','capsule_items','wears']
+  foreach t in array array['items','outfits','outfit_items','capsules','capsule_items','wears','events']
   loop
     execute format('drop policy if exists own_rows on %I', t);
     execute format(

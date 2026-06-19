@@ -62,7 +62,7 @@
     padding-bottom: var(--safe-b);
     background: var(--surface);
     border-top: 1px solid var(--line);
-    display: grid; grid-template-columns: repeat(6, 1fr);
+    display: grid; grid-template-columns: repeat(7, 1fr);
     max-width: 640px; margin: 0 auto;
   }
   nav.tabbar button {
@@ -238,6 +238,23 @@
   .field-prev { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); border: 1px dashed var(--line);
                 background: var(--surface) center/cover no-repeat; display: flex; align-items: center; justify-content: center;
                 color: var(--muted); font-size: 14px; text-align: center; }
+
+  /* ---------- calendar ---------- */
+  .cal-nav { display:flex; align-items:center; justify-content:space-between; padding:4px 0 12px; }
+  .cal-nav .cal-title { font-weight:600; font-size:16px; }
+  .cal-nav .cal-arr { background:none; border:none; font-size:24px; color:var(--ink); padding:4px 12px; line-height:1; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
+  .cal-hdr { text-align:center; font-size:11px; color:var(--muted); font-weight:600; padding:4px 0 6px; }
+  .cal-cell { position:relative; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; user-select:none; }
+  .cal-cell.empty { cursor:default; pointer-events:none; }
+  .cal-num { font-size:13px; font-weight:500; }
+  .cal-today .cal-num { background:var(--ink); color:#fff; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .cal-dot { position:absolute; bottom:3px; width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  /* day-sheet wear thumbnails */
+  .day-thumbs { display:flex; gap:8px; flex-wrap:wrap; }
+  .day-th { width:72px; }
+  .day-th .dp { width:72px; height:72px; border-radius:10px; background:#eceae6 center/cover no-repeat; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:24px; }
+  .day-th .dn { font-size:11px; margin-top:4px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; }
 </style>
 </head>
 <body>
@@ -486,6 +503,11 @@
       <div id="capsulesBody"></div>
     </section>
 
+    <!-- CALENDAR -->
+    <section class="screen" id="tab-calendar">
+      <div id="calBody"></div>
+    </section>
+
     <!-- STATS -->
     <section class="screen" id="tab-stats">
       <div id="statsBody"></div>
@@ -521,6 +543,7 @@
     <button data-tab="closet" class="on"><span class="ic">▦</span>Closet</button>
     <button data-tab="log"><span class="ic">✓</span>Log</button>
     <button data-tab="capsules"><span class="ic">🧳</span>Capsules</button>
+    <button data-tab="calendar"><span class="ic">📅</span>Calendar</button>
     <button data-tab="fill"><span class="ic">🎲</span>Fill</button>
     <button data-tab="stats"><span class="ic">📊</span>Stats</button>
     <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
@@ -545,7 +568,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-19 v3";
+const APP_VERSION = "2026-06-19 v4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -809,6 +832,12 @@ let capsuleItemMap = new Map(); // capsule_id -> [item_id]
 let capsulesLoaded = false;
 let activeCapsule = null;   // capsule id used as a closet "lens", or null
 const CAPSULE_LENS_KEY = "wardrobe.lens";
+
+let events = [];            // upcoming/past calendar events, loaded lazily
+let eventsLoaded = false;
+let calYear = new Date().getFullYear();
+let calMonth = new Date().getMonth();   // 0-indexed
+let logPresetDate = null;   // set from Calendar to pre-fill dates in Log forms
 
 // PostgREST/Supabase caps a single response at 1000 rows; page through the rest.
 // wears (~4k), outfits (~1.5k) and outfit_items (~4k) all exceed that.
@@ -1934,7 +1963,7 @@ function openOutfit(id) {
     <div class="stack">
       <div>
         <label class="fld">Date</label>
-        <input class="inp" id="oWearDate" type="date" value="${todayStr()}">
+        <input class="inp" id="oWearDate" type="date" value="${logPresetDate || todayStr()}">
       </div>
       ${ratingControls("o")}
       <button class="btn" id="oLog">Log as worn</button>
@@ -1947,6 +1976,7 @@ function openOutfit(id) {
     </div>`;
 
   $("#modal").classList.add("open");
+  logPresetDate = null;
   hydratePhotos($("#sheet"));
   wireRating("o");
   $("#sheet").querySelector(".pickgrid").onclick = (e) => {
@@ -2476,7 +2506,163 @@ function bars(map, isColor = false) {
 /* ===================================================================
    TAB SWITCHING + REFRESH
    =================================================================== */
-const TAB_TITLES = { closet: "Closet", add: "Add Item", log: "Log", fill: "Fill", capsules: "Capsules", stats: "Stats", settings: "Settings" };
+/* ===================================================================
+   CALENDAR  (month grid, day detail, events)
+   =================================================================== */
+async function loadEvents() {
+  events = await restAll("events?order=event_date.asc");
+  eventsLoaded = true;
+}
+
+async function ensureCalendar() {
+  if (!eventsLoaded) {
+    try { await loadEvents(); } catch (e) { toast(e.message); }
+  }
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const body = $("#calBody");
+  if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
+
+  const wByDate = {};
+  for (const w of wears) wByDate[w.worn_on] = (wByDate[w.worn_on] || 0) + 1;
+  const evByDate = {};
+  for (const e of events) { if (!evByDate[e.event_date]) evByDate[e.event_date] = []; evByDate[e.event_date].push(e); }
+
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const yr = calYear, mo = calMonth;
+  const firstDay = new Date(yr, mo, 1).getDay();
+  const daysInMonth = new Date(yr, mo + 1, 0).getDate();
+  const today = todayStr();
+
+  let maxW = 1;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const k = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if ((wByDate[k] || 0) > maxW) maxW = wByDate[k];
+  }
+
+  const DAY_HDRS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  let cells = DAY_HDRS.map(h => `<div class="cal-hdr">${h}</div>`).join("");
+  for (let i = 0; i < firstDay; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const k = `${yr}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const wc = wByDate[k] || 0;
+    const isToday = k === today;
+    const hasDot = !!(evByDate[k]?.length);
+    const alpha = wc > 0 ? (0.08 + (wc / maxW) * 0.28).toFixed(3) : 0;
+    cells += `<div class="cal-cell${isToday ? " cal-today" : ""}" data-day="${k}"${alpha > 0 ? ` style="background:rgba(26,26,26,${alpha})"` : ""}><span class="cal-num">${d}</span>${hasDot ? `<span class="cal-dot"></span>` : ""}</div>`;
+  }
+
+  body.innerHTML = `
+    <div class="cal-nav">
+      <button class="cal-arr" id="calPrev">‹</button>
+      <span class="cal-title">${MONTHS[mo]} ${yr}</span>
+      <button class="cal-arr" id="calNext">›</button>
+    </div>
+    <div class="cal-grid" id="calGrid">${cells}</div>`;
+
+  $("#calPrev").onclick = () => { if (calMonth === 0) { calMonth = 11; calYear--; } else calMonth--; renderCalendar(); };
+  $("#calNext").onclick = () => { if (calMonth === 11) { calMonth = 0; calYear++; } else calMonth++; renderCalendar(); };
+  $("#calGrid").onclick = (e) => { const c = e.target.closest("[data-day]"); if (c) openDay(c.dataset.day); };
+}
+
+function openDay(dateStr) {
+  const [yr, mo, dy] = dateStr.split("-").map(Number);
+  const label = new Date(yr, mo - 1, dy).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const dayWears = wears.filter(w => w.worn_on === dateStr);
+  const dayEvents = events.filter(e => e.event_date === dateStr);
+
+  const thumbsHtml = dayWears.length
+    ? `<div class="day-thumbs">${dayWears.map(w => {
+        const it = items.find(i => i.id === w.item_id);
+        return `<div class="day-th">
+          <div class="dp" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}>${it?.image_path ? "" : "👕"}</div>
+          <div class="dn">${esc(it ? it.name : "?")}${w.rating ? " " + ratingEmoji(w.rating) : ""}</div>
+        </div>`;
+      }).join("")}</div>`
+    : `<div class="muted" style="font-size:13.5px">No wears logged.</div>`;
+
+  const evtHtml = dayEvents.length
+    ? `<div class="card" style="margin-bottom:14px">${dayEvents.map(ev => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)">
+          <div><div style="font-size:14px;font-weight:600">${esc(ev.title || "Event")}</div>${ev.context ? `<div class="muted" style="font-size:12.5px">${esc(ev.context)}</div>` : ""}</div>
+          <button class="pill" data-delev="${ev.id}" style="cursor:pointer;border:0;flex:none">remove</button>
+        </div>`).join("")}</div>`
+    : "";
+
+  $("#sheet").innerHTML = `
+    <h2 style="margin:0 0 12px;font-size:18px">${esc(label)}</h2>
+    ${evtHtml}
+    ${thumbsHtml}
+    <div class="stack" style="margin-top:16px">
+      <button class="btn ghost" id="dayLogWear">Log a wear for this day</button>
+      <button class="btn ghost" id="dayLogOutfit">Log an outfit for this day</button>
+      <button class="btn ghost" id="dayAddEvent">Add event</button>
+      <button class="btn ghost" id="dayClose">Close</button>
+    </div>`;
+
+  $("#modal").classList.add("open");
+  hydratePhotos($("#sheet"));
+
+  if (dayEvents.length) {
+    $("#sheet").querySelector(".card").onclick = async (e) => {
+      const b = e.target.closest("[data-delev]"); if (!b) return;
+      try {
+        await rest(`events?id=eq.${b.dataset.delev}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+        events = events.filter(x => x.id !== b.dataset.delev);
+        toast("Event removed"); closeModal(); renderCalendar();
+      } catch (err) { toast(err.message); }
+    };
+  }
+  $("#dayLogWear").onclick = () => { closeModal(); logPresetDate = dateStr; setLogMode("wear"); switchTab("log"); };
+  $("#dayLogOutfit").onclick = () => { closeModal(); logPresetDate = dateStr; setLogMode("outfit"); switchTab("log"); };
+  $("#dayAddEvent").onclick = () => { closeModal(); openAddEvent(dateStr); };
+  $("#dayClose").onclick = closeModal;
+}
+
+function openAddEvent(dateStr) {
+  const ctxOpts = `<option value="">No context</option>` + CONTEXTS.map(c => `<option>${esc(c.name)}</option>`).join("");
+  $("#sheet").innerHTML = `
+    <h2 style="margin:0 0 16px;font-size:18px">Add event</h2>
+    <div class="stack">
+      <div><label class="fld">Title</label><input class="inp" id="evtTitle" placeholder="e.g. Job interview, Wedding"></div>
+      <div><label class="fld">Date *</label><input class="inp" id="evtDate" type="date" value="${esc(dateStr || todayStr())}"></div>
+      <div><label class="fld">Context</label><select class="inp" id="evtCtx">${ctxOpts}</select></div>
+      <div><label class="fld">Dress code</label><input class="inp" id="evtDress" placeholder="Optional"></div>
+      <div><label class="fld">Notes</label><textarea class="inp" id="evtNotes" rows="3" placeholder="Optional"></textarea></div>
+    </div>
+    <div class="stack" style="margin-top:16px">
+      <button class="btn" id="evtSave">Save event</button>
+      <button class="btn ghost" id="evtCancel">Cancel</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  $("#evtSave").onclick = async () => {
+    const date = $("#evtDate").value;
+    if (!date) { toast("Date is required"); return; }
+    const btn = $("#evtSave"); btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const [ev] = await rest("events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({
+          title: $("#evtTitle").value.trim() || null,
+          event_date: date,
+          context: $("#evtCtx").value || null,
+          dress_code: $("#evtDress").value.trim() || null,
+          notes: $("#evtNotes").value.trim() || null,
+        }),
+      });
+      events.push(ev);
+      toast("Event saved");
+      closeModal();
+      if ($("#tab-calendar").classList.contains("active")) renderCalendar();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Save event"; }
+  };
+  $("#evtCancel").onclick = closeModal;
+}
+
+const TAB_TITLES = { closet: "Closet", add: "Add Item", log: "Log", fill: "Fill", capsules: "Capsules", calendar: "Calendar", stats: "Stats", settings: "Settings" };
 
 function switchTab(name) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
@@ -2489,6 +2675,7 @@ function switchTab(name) {
   if (name === "stats") renderStats();
   if (name === "closet") renderCloset();
   if (name === "capsules") ensureCapsules();
+  if (name === "calendar") ensureCalendar();
   // Tapping the Add screen fresh (not via Edit) should start a clean form.
   if (name === "add" && !editingId) resetItemForm();
 }
@@ -2502,6 +2689,7 @@ function refreshViews() {
     else if (outfitsLoaded) renderOutfits();
   }
   if (capsulesLoaded && $("#tab-capsules").classList.contains("active")) renderCapsules();
+  if (eventsLoaded && $("#tab-calendar").classList.contains("active")) renderCalendar();
 }
 
 /* ===================================================================
@@ -2546,8 +2734,10 @@ function setLogMode(mode) {
   $$("#logModeSeg button").forEach(b => b.classList.toggle("on", b.dataset.logmode === mode));
   $("#logWearPanel").hidden = mode !== "wear";
   $("#logOutfitPanel").hidden = mode !== "outfit";
-  if (mode === "wear") buildWearTab();
-  else ensureOutfits();
+  if (mode === "wear") {
+    buildWearTab();
+    if (logPresetDate) { $("#w_date").value = logPresetDate; logPresetDate = null; }
+  } else ensureOutfits();
 }
 
 /* ===================================================================
@@ -2751,6 +2941,7 @@ function handleSignedOut() {
   outfits = []; outfitItems = []; outfitItemMap = new Map(); outfitsLoaded = false;
   capsules = []; capsuleItems = []; capsuleItemMap = new Map(); capsulesLoaded = false;
   activeCapsule = null;
+  events = []; eventsLoaded = false; logPresetDate = null;
   showLogin();
 }
 
