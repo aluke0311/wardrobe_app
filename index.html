@@ -545,7 +545,7 @@
     <button data-tab="capsules"><span class="ic">🧳</span>Capsules</button>
     <button data-tab="calendar"><span class="ic">📅</span>Calendar</button>
     <button data-tab="fill"><span class="ic">🎲</span>Fill</button>
-    <button data-tab="stats"><span class="ic">📊</span>Stats</button>
+    <button data-tab="stats"><span class="ic">📊</span>Insights</button>
     <button data-tab="settings"><span class="ic">⚙</span>Settings</button>
   </nav>
 </div>
@@ -568,7 +568,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-19 v6";
+const APP_VERSION = "2026-06-19 v7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -820,6 +820,9 @@ function compressImage(file) {
 let items = [];   // all items (every status)
 let wears = [];   // all wears
 let dataReady = false;
+let insightsWindow = "all";   // time-window filter for wear-based Insights stats
+let insightsField  = "color"; // active donut field
+let insightsDonutIdx = 0;     // highlighted donut segment index
 
 let outfits = [];          // loaded lazily on first Outfits-tab open
 let outfitItems = [];      // {outfit_id, item_id}
@@ -2531,68 +2534,353 @@ async function saveCapsule() {
 /* ===================================================================
    STATS  (interim — full rebuild around CPW/score formulas is Phase 3e)
    =================================================================== */
+/* ===================================================================
+   INSIGHTS (Phase C) helpers
+   =================================================================== */
+const WINDOW_OPTS = [
+  ["all","All time"],["7d","7 days"],["14d","14 days"],["30d","30 days"],
+  ["90d","90 days"],["6m","6 months"],["1y","1 year"]
+];
+const DONUT_PALETTE = ["#7c8fbe","#8fb87c","#be8f7c","#be7c8f","#8fbebe",
+  "#b4a05c","#5cb4a0","#a05cb4","#b45c8f","#c4a868","#68a4c4","#c46868","#7cbeb4"];
+const PRICE_BUCKETS = [
+  ["Under $25",    p => p > 0 && p < 25],
+  ["$25–$50",      p => p >= 25 && p < 50],
+  ["$50–$100",     p => p >= 50 && p < 100],
+  ["$100–$200",    p => p >= 100 && p < 200],
+  ["$200+",        p => p >= 200],
+  ["No price",     p => !p || p <= 0],
+];
+
+function iPool() { return items.filter(i => itemStatus(i) === "Available"); }
+
+function windowCutoff() {
+  if (insightsWindow === "all") return null;
+  const n = new Date();
+  const d = {"7d":7,"14d":14,"30d":30,"90d":90}[insightsWindow];
+  if (d) return new Date(n - d*86400000).toISOString().slice(0,10);
+  if (insightsWindow === "6m") return new Date(n.getFullYear(), n.getMonth()-6, n.getDate()).toISOString().slice(0,10);
+  if (insightsWindow === "1y") return new Date(n.getFullYear()-1, n.getMonth(), n.getDate()).toISOString().slice(0,10);
+  return null;
+}
+
+function iCpw(item) {
+  if (!item.price || item.price <= 0) return null;
+  const n = wearCount(item.id); return n > 0 ? item.price / n : null;
+}
+
+function wearsIn(cutoff, poolIds) {
+  return wears.filter(w => (!cutoff || w.worn_on >= cutoff) && (!poolIds || poolIds.has(w.item_id)));
+}
+
+function donutSvg(segs, hlIdx) {
+  const CX=110, CY=110, R=82, TH=28;
+  const total = segs.reduce((s,x)=>s+x.n, 0);
+  if (!total) return "";
+  let angle = -Math.PI/2, paths = "";
+  segs.forEach((seg, i) => {
+    const frac = seg.n/total, sweep = frac*2*Math.PI;
+    const hl = i === hlIdx, r = R+(hl?9:0), r2 = r-TH;
+    let p;
+    if (frac >= 0.9999) {
+      p = `M ${CX} ${CY-r} A ${r} ${r} 0 1 1 ${(CX-0.01).toFixed(2)} ${CY-r} Z M ${CX} ${CY-r2} A ${r2} ${r2} 0 1 0 ${(CX-0.01).toFixed(2)} ${CY-r2} Z`;
+    } else {
+      const a2=angle+sweep, lg=sweep>Math.PI?1:0;
+      const [x1,y1]=[CX+r*Math.cos(angle),CY+r*Math.sin(angle)];
+      const [x2,y2]=[CX+r*Math.cos(a2),CY+r*Math.sin(a2)];
+      const [x3,y3]=[CX+r2*Math.cos(a2),CY+r2*Math.sin(a2)];
+      const [x4,y4]=[CX+r2*Math.cos(angle),CY+r2*Math.sin(angle)];
+      const f=v=>v.toFixed(2);
+      p=`M ${f(x1)} ${f(y1)} A ${r} ${r} 0 ${lg} 1 ${f(x2)} ${f(y2)} L ${f(x3)} ${f(y3)} A ${r2} ${r2} 0 ${lg} 0 ${f(x4)} ${f(y4)} Z`;
+    }
+    paths += `<path d="${p}" fill="${seg.color}" data-seg="${i}" style="cursor:pointer;opacity:${hl?1:0.72}"/>`;
+    angle += sweep;
+  });
+  const hl = segs[hlIdx] ?? segs[0];
+  const pct = hl ? (hl.n/total*100).toFixed(1) : "";
+  return `<svg viewBox="0 0 220 220" style="width:190px;height:190px;display:block;margin:0 auto">
+    ${paths}
+    <text x="${CX}" y="${CY-4}" text-anchor="middle" font-size="22" font-weight="700" fill="var(--ink)">${pct}%</text>
+    <text x="${CX}" y="${CY+17}" text-anchor="middle" font-size="11.5" fill="var(--muted)">${esc(hl?.label??'')}</text>
+  </svg>`;
+}
+
+function segmentsFor(field) {
+  const pool = field === "status" ? items : iPool();
+  const gmap = new Map();
+  const add = k => gmap.set(k, (gmap.get(k)||0)+1);
+  if (field==="color")  for (const i of pool) add(i.color_family||"");
+  else if (field==="status") for (const i of pool) add(itemStatus(i));
+  else if (field==="brand")  for (const i of pool) add(i.brand||"");
+  else if (field==="size")   for (const i of pool) add(i.size||"");
+  else if (field==="fabric") for (const i of pool) (i.fabric||[]).forEach(f=>add(f));
+  else if (field==="season") for (const i of pool) (i.season||[]).forEach(s=>add(s));
+  else if (field==="price") {
+    for (const i of pool) {
+      const b = PRICE_BUCKETS.find(([,fn])=>fn(i.price));
+      if (b) add(b[0]);
+    }
+  }
+  return [...gmap.entries()].sort((a,b)=>b[1]-a[1]).map(([label,n],i)=>({
+    label: label||"No value", n,
+    color: field==="color" ? (label?colorHex(label):"#ccc") : DONUT_PALETTE[i%DONUT_PALETTE.length]
+  }));
+}
+
+function showDrillDown(title, list, metricFn) {
+  const tiles = list.map(i => {
+    const m = metricFn ? metricFn(i) : "";
+    return `<div class="tile" data-item="${i.id}">
+      <div class="ph" ${i.image_path?`data-photo="${esc(i.image_path)}"`:""}>
+        ${i.image_path?"":"👕"}</div>
+      <div class="meta"><div class="nm">${esc(i.name)}</div>${m?`<div class="sub">${esc(m)}</div>`:""}</div>
+    </div>`;
+  }).join("");
+  $("#sheet").innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <button class="btn ghost" id="ddClose" style="padding:5px 14px;font-size:14px">‹</button>
+      <h2 style="margin:0;font-size:18px;flex:1">${esc(title)} <span class="muted" style="font-weight:400;font-size:13px">${list.length}</span></h2>
+    </div>
+    <div class="grid">${tiles||`<div class="empty">No items.</div>`}</div>`;
+  $("#modal").classList.add("open");
+  hydratePhotos($("#sheet"));
+  $("#ddClose").onclick = closeModal;
+  $("#sheet").querySelector(".grid")?.addEventListener("click", e => {
+    const t = e.target.closest("[data-item]");
+    if (t) { closeModal(); openItem(t.dataset.item); }
+  });
+}
+
+async function ensureInsights() {
+  if (!outfitsLoaded) { try { await loadOutfits(); } catch(e) { /* degrade */ } }
+  renderStats();
+}
+
 function renderStats() {
   const body = $("#statsBody");
   if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
+  const pool = iPool();
+  if (!pool.length) { body.innerHTML = `<div class="empty">Add items to see insights.</div>`; return; }
 
-  const active = items.filter(i => itemStatus(i) === "Available");
-  if (active.length === 0) { body.innerHTML = `<div class="empty">Add items to see stats.</div>`; return; }
+  const cutoff = windowCutoff();
+  const poolIds = new Set(pool.map(i=>i.id));
+  const poolWears = wearsIn(cutoff, poolIds);
 
-  const totalValue = items.reduce((s, i) => s + (Number(i.price) || 0), 0);
-  const totalWears = wears.length;
-  const pricedWears = wears.filter(w => {
-    const it = items.find(i => i.id === w.item_id); return it && it.price != null;
-  }).length;
-  const valuedSpend = items.filter(i => i.price != null && wearCount(i.id) > 0)
-    .reduce((s, i) => s + Number(i.price), 0);
-  const overallCPW = pricedWears > 0 ? valuedSpend / pricedWears : null;
-  const neverWorn = active.filter(i => wearCount(i.id) === 0);
+  // --- Clothing Stats ---
+  const closetValue = pool.reduce((s,i)=>s+(i.price>0?Number(i.price):0), 0);
+  const neverWorn   = pool.filter(i=>wearCount(i.id)===0);
+  const neverOutfit = pool.filter(i=>![...((outfitItemMap&&outfitItemMap.size)?outfitItemMap.values():[])].flat().includes(i.id));
+  const needsRepair = pool.filter(i=>i.needs_repair||i.needs_tailoring);
+  const ranked = pool.map(i=>({i, n:wearCount(i.id), cpw:iCpw(i), lw:lastWorn(i.id)}));
+  const mostWorn  = [...ranked].filter(r=>r.n>0).sort((a,b)=>b.n-a.n);
+  const leastWorn = [...ranked].filter(r=>r.n>0).sort((a,b)=>a.n-b.n);
+  const bestCPW   = [...ranked].filter(r=>r.cpw!=null).sort((a,b)=>a.cpw-b.cpw);
+  const worstCPW  = [...ranked].filter(r=>r.cpw!=null).sort((a,b)=>b.cpw-a.cpw);
+  const priciest  = pool.filter(i=>i.price>0).sort((a,b)=>b.price-a.price);
+  const cheapest  = pool.filter(i=>i.price>0).sort((a,b)=>a.price-b.price);
+  const recentAdd = pool.slice().sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
 
-  const ranked = active.map(i => ({ i, n: wearCount(i.id), cpw: costPerWear(i), last: lastWorn(i.id) }));
-  const mostWorn = [...ranked].filter(r => r.n > 0).sort((a, b) => b.n - a.n).slice(0, 5);
-  const bestCPW = [...ranked].filter(r => r.cpw != null).sort((a, b) => a.cpw - b.cpw).slice(0, 5);
-  const stale = [...ranked].filter(r => r.last).map(r => ({ ...r, ds: daysSince(r.last) }))
-    .sort((a, b) => b.ds - a.ds).slice(0, 5);
+  // overall CPW: sum(price) of priced worn items / total wears of those items
+  const pricedWorn = pool.filter(i=>i.price>0&&wearCount(i.id)>0);
+  const overallCPW = pricedWorn.length
+    ? pricedWorn.reduce((s,i)=>s+i.price,0) / pricedWorn.reduce((s,i)=>s+wearCount(i.id),0)
+    : null;
 
-  const byCat = {}, byColor = {};
-  for (const w of wears) {
-    const it = items.find(i => i.id === w.item_id);
-    if (!it) continue;
-    byCat[it.category || "Other"] = (byCat[it.category || "Other"] || 0) + 1;
-    if (it.color_family) byColor[it.color_family] = (byColor[it.color_family] || 0) + 1;
+  // utilization: distinct pool items worn in last 365d
+  const yr = new Date(); yr.setFullYear(yr.getFullYear()-1);
+  const yrCut = yr.toISOString().slice(0,10);
+  const wornYr = new Set(wears.filter(w=>w.worn_on>=yrCut&&poolIds.has(w.item_id)).map(w=>w.item_id));
+  const util = pool.length ? (wornYr.size/pool.length*100).toFixed(0)+"%" : "—";
+
+  // color distribution bar (by item count)
+  const colorCounts = {};
+  for (const i of pool) if (i.color_family) colorCounts[i.color_family]=(colorCounts[i.color_family]||0)+1;
+  const colorEntries = Object.entries(colorCounts).sort((a,b)=>b[1]-a[1]);
+  const colorMax = colorEntries.length ? colorEntries[0][1] : 1;
+  const colorBar = colorEntries.map(([k,v])=>`
+    <div class="bar" style="cursor:pointer" data-drill-color="${esc(k)}">
+      <div class="blab"><span class="sw" style="display:inline-block;vertical-align:-2px;margin-right:4px;background:${colorHex(k)}"></span>${esc(k)}</div>
+      <div class="btrack"><div class="bfill" style="width:${(v/colorMax*100).toFixed(0)}%;background:${colorHex(k)}"></div></div>
+      <div class="bnum">${v}</div>
+    </div>`).join("");
+
+  // recency breakdown
+  const recency = {active:0,cooling:0,dormant:0,unworn:0,never:0};
+  for (const i of pool) {
+    const ds = daysSince(lastWorn(i.id));
+    if (ds===null) recency.never++;
+    else if (ds<30) recency.active++;
+    else if (ds<120) recency.cooling++;
+    else if (ds<365) recency.dormant++;
+    else recency.unworn++;
   }
 
+  // --- Looks Stats ---
+  const outfitCount = outfitsLoaded ? outfits.length : null;
+  const avgItems = outfitsLoaded && outfits.length
+    ? (outfits.reduce((s,o)=>(outfitItemMap.get(o.id)||[]).length+s,0)/outfits.length).toFixed(1)
+    : null;
+
+  // --- Occasion coverage ---
+  const coverage = CONTEXTS.map(c => {
+    const eligible = pool.filter(i => {
+      if (i.min_occasion==null||i.max_occasion==null) return false;
+      return i.min_occasion<=c.max && i.max_occasion>=c.min;
+    });
+    return { c, n: eligible.length, items: eligible };
+  });
+
+  // --- Donut segments ---
+  const segs = segmentsFor(insightsField);
+  if (insightsDonutIdx >= segs.length) insightsDonutIdx = 0;
+
+  // --- Render ---
+  const winSeg = WINDOW_OPTS.map(([v,l])=>`<button data-win="${v}" class="${insightsWindow===v?"on":""}">${l}</button>`).join("");
+  const fieldBtns = ["color","brand","size","season","fabric","price","status"].map(f=>
+    `<button data-field="${f}" class="btn ghost${insightsField===f?" on":""}" style="border-radius:999px;font-size:12px;padding:5px 11px">${f[0].toUpperCase()+f.slice(1)}</button>`).join("");
+
+  const drillRow = (label, list, metricFn, val) =>
+    `<div class="li" style="cursor:pointer" data-drill='${JSON.stringify({label,ids:list.slice(0,40).map(i=>i.id),hasMetric:!!metricFn})}'>
+      <div class="grow"><div class="t1">${esc(label)}</div></div>
+      <div class="val">${val!=null?esc(String(val)):""} ›</div>
+    </div>`;
+
   body.innerHTML = `
-    <div class="kpis">
-      <div class="kpi wide">
-        <div class="big">${overallCPW != null ? money(overallCPW) : "—"}</div>
-        <div class="lbl">Overall cost per wear · ${money(valuedSpend)} of worn pieces ÷ ${pricedWears} wears</div>
-      </div>
-      <div class="kpi"><div class="big">${active.length}</div><div class="lbl">Available items</div></div>
-      <div class="kpi"><div class="big">${totalWears}</div><div class="lbl">Total wears</div></div>
-      <div class="kpi"><div class="big">${money(totalValue)}</div><div class="lbl">Wardrobe value</div></div>
-      <div class="kpi"><div class="big">${neverWorn.length}</div><div class="lbl">Never worn</div></div>
+    <div class="seg wrap" id="insightsWin" style="margin-bottom:14px">${winSeg}</div>
+
+    <h2 class="sec" style="margin-top:0">Clothing Stats</h2>
+    <div class="kpis" style="margin-bottom:10px">
+      <div class="kpi"><div class="big">${pool.length}</div><div class="lbl">Available items</div></div>
+      <div class="kpi"><div class="big">${money(closetValue)}</div><div class="lbl">Closet value</div></div>
+      <div class="kpi"><div class="big">${overallCPW!=null?money(overallCPW):"—"}</div><div class="lbl">Cost per wear</div></div>
+      <div class="kpi"><div class="big">${util}</div><div class="lbl">Utilization (1yr)</div></div>
+    </div>
+    ${colorBar ? `<div class="lst" style="margin-bottom:12px">${colorBar}</div>` : ""}
+    <div class="lst" style="margin-bottom:20px">
+      ${drillRow("Most recently added", recentAdd, i=>i.created_at?.slice(0,10)||"", recentAdd.length)}
+      ${drillRow("Never worn", neverWorn, i=>i.price>0?money(i.price):"", neverWorn.length)}
+      ${drillRow("Never in an outfit", neverOutfit, null, outfitsLoaded?neverOutfit.length:"?")}
+      ${drillRow("Most worn", mostWorn, i=>wearCount(i.id)+"×", mostWorn.length)}
+      ${drillRow("Least worn", leastWorn, i=>wearCount(i.id)+"×", leastWorn.length)}
+      ${drillRow("Best cost/wear", bestCPW, i=>iCpw(i)!=null?money(iCpw(i))+"/w":"", bestCPW.length)}
+      ${drillRow("Worst cost/wear", worstCPW, i=>iCpw(i)!=null?money(iCpw(i))+"/w":"", worstCPW.length)}
+      ${drillRow("Most expensive", priciest, i=>i.price>0?money(i.price):"", priciest.length)}
+      ${needsRepair.length ? drillRow("Needs repair/tailoring", needsRepair, i=>i.needs_repair&&i.needs_tailoring?"both":i.needs_repair?"repair":"tailoring", needsRepair.length) : ""}
     </div>
 
-    ${bestCPW.length ? section("Best value (lowest cost/wear)", listRows(bestCPW.map(r =>
-      ({ item: r.i, t2: `${r.n} wear${r.n === 1 ? "" : "s"} · ${money(r.i.price)}`, val: money(r.cpw) + "/w" })))) : ""}
+    <div class="kpis" style="margin-bottom:6px">
+      <div class="kpi"><div class="big">${recency.active}</div><div class="lbl">Active (&lt;30d)</div></div>
+      <div class="kpi"><div class="big">${recency.cooling}</div><div class="lbl">Cooling (30–120d)</div></div>
+      <div class="kpi"><div class="big">${recency.dormant}</div><div class="lbl">Dormant (120–365d)</div></div>
+      <div class="kpi"><div class="big">${recency.never+recency.unworn}</div><div class="lbl">Never / &gt;365d</div></div>
+    </div>
 
-    ${mostWorn.length ? section("Most worn", listRows(mostWorn.map(r =>
-      ({ item: r.i, t2: r.i.category || "", val: r.n + "×" })))) : ""}
+    ${outfitsLoaded ? `
+    <h2 class="sec">Looks Stats</h2>
+    <div class="kpis" style="margin-bottom:10px">
+      <div class="kpi"><div class="big">${outfitCount}</div><div class="lbl">Outfits</div></div>
+      <div class="kpi"><div class="big">${avgItems}</div><div class="lbl">Avg items/look</div></div>
+    </div>
+    <div class="lst" style="margin-bottom:20px">
+      ${drillRow("Never in an outfit", neverOutfit, null, neverOutfit.length)}
+    </div>` : `<div class="muted" style="font-size:13px;margin:10px 0 20px">Open the Outfits tab once to load Looks Stats.</div>`}
 
-    ${stale.length ? section("Haven't worn in a while", listRows(stale.map(r =>
-      ({ item: r.i, t2: `last ${r.last}`, val: r.ds + "d" })))) : ""}
+    <h2 class="sec">View Closet By…</h2>
+    <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px">${fieldBtns}</div>
+    ${segs.length ? `
+    <div style="position:relative;text-align:center">
+      ${donutSvg(segs, insightsDonutIdx)}
+      <div style="display:flex;justify-content:center;gap:12px;margin-top:8px">
+        <button class="btn ghost" id="dPrev" style="padding:4px 14px">▲</button>
+        <span style="font-size:14px;font-weight:600;align-self:center">${esc(segs[insightsDonutIdx]?.label||"")} · ${segs[insightsDonutIdx]?.n||0}</span>
+        <button class="btn ghost" id="dNext" style="padding:4px 14px">▼</button>
+      </div>
+    </div>
+    <div class="lst" style="margin-top:10px;margin-bottom:20px">
+      ${segs.map((s,i)=>`<div class="bar" style="cursor:pointer" data-seg="${i}">
+        <div class="blab"><span class="sw" style="display:inline-block;vertical-align:-2px;margin-right:4px;background:${s.color}"></span>${esc(s.label)}</div>
+        <div class="btrack"><div class="bfill" style="width:${(s.n/segs[0].n*100).toFixed(0)}%;background:${s.color}"></div></div>
+        <div class="bnum">${s.n} ›</div>
+      </div>`).join("")}
+    </div>` : ""}
 
-    ${neverWorn.length ? section("Never worn", listRows(neverWorn.slice(0, 8).map(i =>
-      ({ item: i, t2: i.category || "", val: i.price != null ? money(i.price) : "" })))) : ""}
+    <h2 class="sec">Occasion Coverage</h2>
+    <div class="lst" style="margin-bottom:20px">
+      ${coverage.map(({c,n,items:its})=>`
+        <div class="bar" style="cursor:pointer" data-cov="${esc(c.name)}">
+          <div class="blab" style="width:120px;font-size:12px">${esc(c.name)}</div>
+          <div class="btrack"><div class="bfill" style="width:${pool.length?Math.min(n/pool.length*100*3,100).toFixed(0):0}%"></div></div>
+          <div class="bnum">${n} ›</div>
+        </div>`).join("")}
+    </div>
 
-    ${Object.keys(byCat).length ? section("Wears by category", bars(byCat)) : ""}
-    ${Object.keys(byColor).length ? section("Wears by color", bars(byColor, true)) : ""}
-  `;
+    <p class="muted" style="font-size:12px;margin:0 0 20px">Clothing Stats counts Available items only.</p>`;
+
   hydratePhotos(body);
+
+  // Store drill metadata for click handler
+  const _drillMeta = {};
+  body.querySelectorAll("[data-drill]").forEach(el => {
+    try { _drillMeta[el.dataset.drill] = JSON.parse(el.dataset.drill); } catch(e){}
+  });
+
   body.onclick = (e) => {
-    const li = e.target.closest("[data-item]");
-    if (li) openItem(li.dataset.item);
+    // time window
+    const win = e.target.closest("[data-win]");
+    if (win) { insightsWindow = win.dataset.win; renderStats(); return; }
+    // donut field
+    const field = e.target.closest("[data-field]");
+    if (field) { insightsField = field.dataset.field; insightsDonutIdx = 0; renderStats(); return; }
+    // donut segment (from SVG)
+    const seg = e.target.closest("[data-seg]");
+    if (seg) {
+      const idx = Number(seg.dataset.seg);
+      insightsDonutIdx = idx;
+      const s = segs[idx];
+      if (s) {
+        // drill into items matching this segment
+        const segPool = insightsField === "status" ? items : pool;
+        let list;
+        if (insightsField==="color")  list = segPool.filter(i=>(i.color_family||"No value")===(s.label==="No value"?"":s.label)||(!i.color_family&&s.label==="No value"));
+        else if (insightsField==="brand") list = segPool.filter(i=>(i.brand||"No value")===(s.label==="No value"?"":s.label)||(!i.brand&&s.label==="No value"));
+        else if (insightsField==="size")  list = segPool.filter(i=>(i.size||"No value")===(s.label==="No value"?"":s.label)||(!i.size&&s.label==="No value"));
+        else if (insightsField==="status") list = segPool.filter(i=>itemStatus(i)===s.label);
+        else if (insightsField==="fabric") list = segPool.filter(i=>(i.fabric||[]).includes(s.label)||(s.label==="No value"&&!(i.fabric||[]).length));
+        else if (insightsField==="season") list = segPool.filter(i=>(i.season||[]).includes(s.label)||(s.label==="No value"&&!(i.season||[]).length));
+        else if (insightsField==="price") {
+          const b = PRICE_BUCKETS.find(([lbl])=>lbl===s.label);
+          list = b ? segPool.filter(i=>b[1](i.price)) : [];
+        } else list = [];
+        if (list.length) { showDrillDown(s.label, list, null); return; }
+      }
+      renderStats(); return;
+    }
+    // donut nav
+    if (e.target.closest("#dPrev")) { insightsDonutIdx = (insightsDonutIdx - 1 + segs.length) % segs.length; renderStats(); return; }
+    if (e.target.closest("#dNext")) { insightsDonutIdx = (insightsDonutIdx + 1) % segs.length; renderStats(); return; }
+    // color bar drill-down
+    const dc = e.target.closest("[data-drill-color]");
+    if (dc) { const col=dc.dataset.drillColor; showDrillDown(col, pool.filter(i=>i.color_family===col), i=>wearCount(i.id)+"×"); return; }
+    // coverage matrix drill-down
+    const cov = e.target.closest("[data-cov]");
+    if (cov) { const ctx=coverage.find(x=>x.c.name===cov.dataset.cov); if(ctx) showDrillDown(ctx.c.name+" items",ctx.items,null); return; }
+    // generic drill-down rows
+    const drill = e.target.closest("[data-drill]");
+    if (drill) {
+      try {
+        const meta = JSON.parse(drill.dataset.drill);
+        const label = meta.label, ids = new Set(meta.ids);
+        // rebuild list from live data (first 40 ids)
+        let list = meta.ids.map(id=>items.find(i=>i.id===id)).filter(Boolean);
+        // metric fn: rebuild based on label
+        const mfn = label.includes("worn")&&label.includes("Most") ? i=>wearCount(i.id)+"×"
+          : label.includes("worn")&&label.includes("Least") ? i=>wearCount(i.id)+"×"
+          : label.includes("cost") ? i=>{ const c=iCpw(i); return c!=null?money(c)+"/w":""; }
+          : label.includes("expensive") ? i=>i.price>0?money(i.price):"" : null;
+        showDrillDown(label, list, mfn);
+      } catch(e) {}
+      return;
+    }
   };
 }
 
@@ -2782,7 +3070,7 @@ function openAddEvent(dateStr) {
   $("#evtCancel").onclick = closeModal;
 }
 
-const TAB_TITLES = { closet: "Closet", add: "Add Item", log: "Log", fill: "Fill", capsules: "Capsules", calendar: "Calendar", stats: "Stats", settings: "Settings" };
+const TAB_TITLES = { closet: "Closet", add: "Add Item", log: "Log", fill: "Fill", capsules: "Capsules", calendar: "Calendar", stats: "Insights", settings: "Settings" };
 
 function switchTab(name) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
@@ -2792,7 +3080,7 @@ function switchTab(name) {
   window.scrollTo(0, 0);
   if (name === "log") buildLogTab();
   if (name === "fill") renderFill();
-  if (name === "stats") renderStats();
+  if (name === "stats") ensureInsights();
   if (name === "closet") renderCloset();
   if (name === "capsules") ensureCapsules();
   if (name === "calendar") ensureCalendar();
@@ -2803,7 +3091,7 @@ function switchTab(name) {
 // Re-render whatever views depend on data after a mutation.
 function refreshViews() {
   renderCloset();
-  if ($("#tab-stats").classList.contains("active")) renderStats();
+  if ($("#tab-stats").classList.contains("active")) ensureInsights();
   if ($("#tab-log").classList.contains("active")) {
     if (logMode === "wear") renderRecentWears();
     else if (outfitsLoaded) renderOutfits();
