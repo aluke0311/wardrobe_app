@@ -518,7 +518,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-19 v1";
+const APP_VERSION = "2026-06-19 v2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -863,6 +863,11 @@ function outfitWearDates(outfitId) {
   return [...new Set(wears.filter(w => w.outfit_id === outfitId).map(w => w.worn_on))].sort();
 }
 function outfitWearCount(outfitId) { return outfitWearDates(outfitId).length; }
+// rating/compliments for an outfit on a given day (its item-wears share them)
+function outfitDayMeta(outfitId, date) {
+  const w = wears.find(x => x.outfit_id === outfitId && x.worn_on === date && (x.rating || x.compliments));
+  return w ? { rating: w.rating, compliments: w.compliments } : null;
+}
 // most recent day this outfit was worn; falls back to its creation date
 function outfitLastWorn(o) {
   const ds = outfitWearDates(o.id);
@@ -1816,11 +1821,13 @@ function renderOutfits() {
   const cards = slice.map(o => {
     const its = itemsForOutfit(o.id);
     const n = outfitWearCount(o.id);
+    const m = n ? outfitDayMeta(o.id, outfitLastWorn(o)) : null;
+    const rate = m && m.rating ? ` ${ratingEmoji(m.rating)}` : "";
     return `
       <div class="ofit" data-outfit="${o.id}">
         <div class="top">
           <span class="dt">${esc(outfitLastWorn(o))}</span>
-          <span>${o.context ? `<span class="pill">${esc(o.context)}</span> ` : ""}<span class="muted" style="font-size:12.5px">${n} wear${n === 1 ? "" : "s"}</span></span>
+          <span>${o.context ? `<span class="pill">${esc(o.context)}</span> ` : ""}<span class="muted" style="font-size:12.5px">${n} wear${n === 1 ? "" : "s"}${rate}</span></span>
         </div>
         ${thumbsHtml(its)}
       </div>`;
@@ -1855,7 +1862,10 @@ function openOutfit(id) {
 
     <div class="pickgrid">${itemTiles || `<div class="muted">No items.</div>`}</div>
 
-    ${n ? `<h2 class="sec">Worn on</h2><div class="card"><div class="muted" style="font-size:13px">${wd.map(esc).join(" · ")}</div></div>` : ""}
+    ${n ? `<h2 class="sec">Worn on</h2><div class="card"><div class="muted" style="font-size:13px">${wd.map(d => {
+      const m = outfitDayMeta(o.id, d);
+      return esc(d) + (m && m.rating ? " " + ratingEmoji(m.rating) : "") + (m && m.compliments ? " 👏" : "");
+    }).join(" · ")}</div></div>` : ""}
 
     <h2 class="sec">Log this outfit as worn</h2>
     <div class="stack">
