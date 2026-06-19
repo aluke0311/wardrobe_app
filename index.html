@@ -438,6 +438,7 @@
             <select class="inp" id="w_context"></select>
           </div>
         </div>
+        <div id="w_ratingSlot"></div>
         <button class="btn" id="wearBtn">Log wear</button>
         <h2 class="sec">Recent wears</h2>
         <div id="recentWears"></div>
@@ -517,7 +518,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v7";
+const APP_VERSION = "2026-06-18 v8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -573,6 +574,10 @@ const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
 const AVAILABILITY = ["Ready", "Laundry", "Cleaners", "Lent"];
 const CARE_METHODS = ["Machine wash", "Hand wash", "Dry clean", "Air dry", "Iron", "Steam"];
 const availLabel = (a) => a || "Ready";
+
+// Wear ratings (slice 7): one-tap feel, captured when logging. 3=loved, 2=fine, 1=nope.
+const RATINGS = [[3, "Loved it", "💜"], [2, "Fine", "🙂"], [1, "Didn't work", "👎"]];
+const ratingEmoji = (r) => (RATINGS.find(x => x[0] === r) || [])[2] || "";
 
 // Capsules: named item sets. "capsule" = seasonal/curated set; "packing"/"travel"
 // = a trip's bag (a trip is just a capsule that carries a date range).
@@ -992,8 +997,8 @@ const selectBar = () => `
     <button data-batch="tags">Tag</button>
     <button data-batch="del">Delete</button>
   </div>`;
-const SUB_ALL = " all";     // "All <category>" leaf
-const SUB_NONE = " none";   // items with no subcategory
+const SUB_ALL = "__ALL__";     // "All <category>" leaf
+const SUB_NONE = "__NONE__";   // items with no subcategory
 
 function activeCapsuleObj() {
   return activeCapsule ? capsules.find(c => c.id === activeCapsule) : null;
@@ -1695,11 +1700,14 @@ async function submitItem(e) {
 /* ===================================================================
    LOG WEAR
    =================================================================== */
-async function logWear(itemId, worn_on, context) {
+async function logWear(itemId, worn_on, context, opts = {}) {
   const [created] = await rest("wears", {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify({ item_id: itemId, worn_on, context: context || null }),
+    body: JSON.stringify({
+      item_id: itemId, worn_on, context: context || null,
+      rating: opts.rating ?? null, compliments: !!opts.compliments, note: opts.note || null,
+    }),
   });
   wears.unshift(created);
   return created;
@@ -1711,6 +1719,8 @@ function buildWearTab() {
     CONTEXTS.map(c => `<option>${c.name}</option>`).join("");
   $("#w_date").value = todayStr();
   $("#w_search").value = "";
+  $("#w_ratingSlot").innerHTML = ratingControls("w");
+  wireRating("w");
   renderRecentWears();
 }
 
@@ -1734,7 +1744,7 @@ function renderRecentWears() {
       <div class="thumb" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}></div>
       <div class="grow">
         <div class="t1">${esc(it ? it.name : "Deleted item")}</div>
-        <div class="t2">${esc(w.worn_on)}${w.context ? " · " + esc(w.context) : ""}</div>
+        <div class="t2">${esc(w.worn_on)}${w.context ? " · " + esc(w.context) : ""}${w.rating ? " · " + ratingEmoji(w.rating) : ""}${w.compliments ? " 👏" : ""}</div>
       </div>
       <button class="pill" data-delwear="${w.id}" style="border:0;cursor:pointer">remove</button>
     </div>`;
@@ -1758,8 +1768,9 @@ async function submitWear() {
   const btn = $("#wearBtn");
   btn.disabled = true; btn.textContent = "Logging…";
   try {
-    await logWear(id, $("#w_date").value || todayStr(), $("#w_context").value || null);
+    await logWear(id, $("#w_date").value || todayStr(), $("#w_context").value || null, readRating("w"));
     toast("Wear logged");
+    buildWearTab();   // reset the form (incl. rating) for the next entry
     refreshViews();
   } catch (e) { toast(e.message); }
   finally { btn.disabled = false; btn.textContent = "Log wear"; }
@@ -1847,14 +1858,13 @@ function openOutfit(id) {
     ${n ? `<h2 class="sec">Worn on</h2><div class="card"><div class="muted" style="font-size:13px">${wd.map(esc).join(" · ")}</div></div>` : ""}
 
     <h2 class="sec">Log this outfit as worn</h2>
-    <div class="row2">
+    <div class="stack">
       <div>
         <label class="fld">Date</label>
         <input class="inp" id="oWearDate" type="date" value="${todayStr()}">
       </div>
-      <div style="display:flex;align-items:flex-end">
-        <button class="btn" id="oLog" style="margin:0">Log as worn</button>
-      </div>
+      ${ratingControls("o")}
+      <button class="btn" id="oLog">Log as worn</button>
     </div>
 
     <div class="stack" style="margin-top:18px">
@@ -1865,6 +1875,7 @@ function openOutfit(id) {
 
   $("#modal").classList.add("open");
   hydratePhotos($("#sheet"));
+  wireRating("o");
   $("#sheet").querySelector(".pickgrid").onclick = (e) => {
     const t = e.target.closest("[data-item]");
     if (t) { closeModal(); openItem(t.dataset.item); }
@@ -1874,7 +1885,7 @@ function openOutfit(id) {
   $("#oLog").onclick = async () => {
     const btn = $("#oLog"); btn.disabled = true; btn.textContent = "Logging…";
     try {
-      const n = await logOutfitWear(o, $("#oWearDate").value || todayStr());
+      const n = await logOutfitWear(o, $("#oWearDate").value || todayStr(), readRating("o"));
       toast(n ? `Logged ${n} wear${n === 1 ? "" : "s"}` : "Already logged that day");
       closeModal(); refreshViews();
     } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Log as worn"; }
@@ -1888,11 +1899,12 @@ function openOutfit(id) {
 
 // Create one wear per item in the outfit for `date` (one row per item per day),
 // tagged with this outfit. Returns how many new wears were created.
-async function logOutfitWear(o, date) {
+async function logOutfitWear(o, date, opts = {}) {
   const its = itemsForOutfit(o.id);
   const fresh = its.filter(i => !wears.some(w => w.item_id === i.id && w.worn_on === date));
   if (!fresh.length) return 0;
-  const rows = fresh.map(i => ({ item_id: i.id, worn_on: date, outfit_id: o.id, context: o.context || null }));
+  const rows = fresh.map(i => ({ item_id: i.id, worn_on: date, outfit_id: o.id, context: o.context || null,
+    rating: opts.rating ?? null, compliments: !!opts.compliments, note: opts.note || null }));
   const created = await rest("wears", {
     method: "POST",
     headers: { "Content-Type": "application/json", Prefer: "return=representation" },
@@ -2394,6 +2406,38 @@ function refreshViews() {
    LOG TAB  (single-item wear + outfits, toggled)
    =================================================================== */
 let logMode = "wear";   // "wear" | "outfit"
+
+// Reusable one-tap rating block (rating seg + compliments + note), keyed by a prefix.
+function ratingControls(prefix) {
+  return `
+    <div>
+      <label class="fld">How did it feel? (optional)</label>
+      <div class="seg wrap" id="${prefix}_rate">
+        ${RATINGS.map(([v, l, e]) => `<button type="button" data-rate="${v}">${e} ${l}</button>`).join("")}
+      </div>
+    </div>
+    <label class="checkrow"><input type="checkbox" id="${prefix}_compliments"> Got compliments 👏</label>
+    <div><input class="inp" id="${prefix}_note" placeholder="Note (optional)"></div>`;
+}
+function wireRating(prefix) {
+  const seg = $(`#${prefix}_rate`);
+  if (seg) seg.onclick = (e) => {
+    const b = e.target.closest("[data-rate]");
+    if (!b) return;
+    const was = b.classList.contains("on");
+    $$(`#${prefix}_rate button`).forEach(x => x.classList.remove("on"));
+    if (!was) b.classList.add("on");   // tapping the active one clears it
+  };
+}
+function readRating(prefix) {
+  const on = $(`#${prefix}_rate button.on`);
+  return {
+    rating: on ? Number(on.dataset.rate) : null,
+    compliments: $(`#${prefix}_compliments`)?.checked || false,
+    note: $(`#${prefix}_note`)?.value.trim() || null,
+  };
+}
+
 function buildLogTab() { setLogMode(logMode); }
 function setLogMode(mode) {
   logMode = mode;

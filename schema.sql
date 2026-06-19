@@ -130,8 +130,24 @@ create table if not exists wears (
   outfit_id  uuid references outfits(id)          on delete set null,
   worn_on    date not null,
   context    text,
+  -- ratings (slice 7): how the wear felt. rating 3=loved 2=fine 1=didn't work.
+  rating      smallint check (rating between 1 and 3),
+  compliments boolean not null default false,
+  note        text,
   created_at timestamptz not null default now()
 );
+
+-- Migration for the EXISTING DB (slice 7 — wear ratings). Idempotent; run once
+-- in the Supabase SQL editor. Safe on a fresh DB too.
+alter table wears
+  add column if not exists rating      smallint,
+  add column if not exists compliments boolean not null default false,
+  add column if not exists note        text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'wears_rating_check') then
+    alter table wears add constraint wears_rating_check check (rating between 1 and 3);
+  end if;
+end $$;
 
 -- -------------------------------------------------------------------
 -- INDEXES

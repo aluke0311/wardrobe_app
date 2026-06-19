@@ -44,8 +44,9 @@ Two design rules that fall out of "derive-first":
 3a core ✓ · 3b capsules + closet lens ✓ · 3c outfits ✓ · A1 hierarchical closet +
 density ✓ (v4) · Phase A slices 2–4 ✓ (v5): nav→6 tabs (Add-in-Closet, merged Log
 tab, new Fill tab), the random-item Fill page, and sortable grids · slice 5 ✓
-(v6): multi-select + batch (move / capsule / tag / delete) · **slice 6 ✓ (v7):
-laundry/availability + care fields (live items migration)**.
+(v6): multi-select + batch (move / capsule / tag / delete) · slice 6 ✓ (v7):
+laundry/availability + care fields (live items migration) · **slice 7 ✓ (v8):
+one-tap wear ratings (live wears migration)**.
 
 ## Plan
 
@@ -80,10 +81,12 @@ Build order (each slice shippable on its own):
    Captured in the Add/Edit form's "Upkeep" section, shown in the detail sheet with
    a one-tap availability toggle, and asked about in Fill (care). Needed a live
    `items` migration (4 columns — in `schema.sql`).
-7. **One-tap wear/outfit ratings (START COLLECTING EARLY)** ⚙️ — loved-it / fine /
-   didn't-work + optional "got compliments" + a short felt-note, on the `Log`
-   flows. New `wears` columns (+ `outfits`: rating + tags). Unlocks most-trusted /
-   best-outfits / journal in Phase C.
+7. **One-tap wear ratings** ✅ done (v8) — 💜 loved / 🙂 fine / 👎 didn't-work +
+   "got compliments" + optional note, captured on both Log flows (single item and
+   log-outfit-as-worn, where it stamps every item-wear). Shown in Recent wears.
+   New `wears` columns (rating/compliments/note; migration in `schema.sql`).
+   Outfit-level rating is **derived** from its wears (Phase C); outfit *tags* are a
+   later micro-add. Now collecting so Phase C insights accrue history.
 8. **Optional extra item fields** ✅ — storage location; fit/length/rise;
    acquisition detail (source, original vs paid price, discount %). Optional;
    entered via the Fill page or batch multi-select. Add when convenient.
