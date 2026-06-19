@@ -42,8 +42,9 @@ Two design rules that fall out of "derive-first":
 
 ## Done so far (see `CLAUDE.md` for detail)
 3a core ✓ · 3b capsules + closet lens ✓ · 3c outfits ✓ · A1 hierarchical closet +
-density ✓ (v4) · **Phase A slices 2–4 ✓ (v5): nav→6 tabs (Add-in-Closet, merged
-Log tab, new Fill tab), the random-item Fill page, and sortable grids**.
+density ✓ (v4) · Phase A slices 2–4 ✓ (v5): nav→6 tabs (Add-in-Closet, merged Log
+tab, new Fill tab), the random-item Fill page, and sortable grids · **slice 5 ✓
+(v6): multi-select + batch (move / capsule / tag / delete)**.
 
 ## Plan
 
@@ -69,8 +70,10 @@ Build order (each slice shippable on its own):
    **color** (palette order) · category · brand · price ↑↓ · times-worn ·
    cost-per-wear · recently-worn · longest-unworn. **Default sort set in Settings**
    (persisted); a per-grid control overrides for the session.
-5. **Multi-select + batch actions** ⚙️ — Select mode → move status, **add to a
-   capsule**, edit tags, delete many; also batch-entry for the optional fields.
+5. **Multi-select + batch actions** ✅ done (v6) — a **Select** button in the tile
+   grids enters select mode; tap tiles to pick; a dark action bar offers **Move**
+   (status), **Capsule** (add to / new-with-these), **Tag** (append tags), and
+   **Delete** — all operating on the whole selection via bulk endpoints.
 6. **Laundry/availability + care** ⚙️ — clean · in-laundry · at-cleaners ·
    lent-out, plus care method + **needs-repair / needs-tailoring** flags
    (→ smart collections later). New optional `items` columns.

@@ -155,6 +155,21 @@
   .grid.cols4 .meta .nm { font-size: 11px; }
   .grid.cols4 .meta .sub { font-size: 9.5px; }
 
+  /* ---------- multi-select ---------- */
+  .selstart { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; font-size: 13px; color: var(--ink); }
+  .selbar { display: flex; align-items: center; gap: 8px; background: var(--ink); color: #fff; border-radius: 12px;
+            padding: 8px 8px 8px 12px; margin: 0 0 12px; font-size: 13.5px; position: sticky; top: 52px; z-index: 9; }
+  .selbar .grow { flex: 1; min-width: 0; }
+  .selbar button { background: rgba(255,255,255,.16); border: 0; color: #fff; border-radius: 999px; padding: 6px 11px; font-size: 12.5px; flex: none; }
+  .selbar .selx { background: transparent; padding: 6px 4px; font-size: 16px; }
+  .selbar button[data-batch="del"] { background: rgba(255,90,80,.4); }
+  .tile.selectable { cursor: pointer; }
+  .tile.selectable .ph::after { content: ""; position: absolute; top: 6px; right: 6px; width: 20px; height: 20px;
+            border-radius: 50%; border: 2px solid #fff; background: rgba(0,0,0,.25); box-sizing: border-box; }
+  .tile.picked .ph::after { content: "✓"; display: flex; align-items: center; justify-content: center;
+            background: var(--ink); border-color: #fff; color: #fff; font-size: 12px; font-weight: 700; }
+  .tile.picked { box-shadow: inset 0 0 0 2px var(--ink); }
+
   /* ---------- occasion ladder bar ---------- */
   .ladder { display: flex; gap: 3px; margin-top: 4px; }
   .ladder .rung { flex: 1; height: 6px; border-radius: 2px; background: #e2e0db; }
@@ -489,7 +504,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v5";
+const APP_VERSION = "2026-06-18 v6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -943,6 +958,21 @@ function sortItems(list) {
 const sortSelect = () => `<select class="inp" id="sortSel" style="width:auto;padding:7px 10px;border-radius:999px;font-size:13px">
     ${SORTS.map(([v, l]) => `<option value="${v}" ${closetSort === v ? "selected" : ""}>${esc(l)}</option>`).join("")}
   </select>`;
+
+// Multi-select: a Select mode in the tile grids enables batch actions.
+let selectMode = false;
+let selectedItems = new Set();
+function exitSelect() { selectMode = false; selectedItems.clear(); renderCloset(); }
+const selStartBtn = () => selectMode ? "" : `<button class="selstart" data-selstart>Select</button>`;
+const selectBar = () => `
+  <div class="selbar">
+    <button class="selx" data-selcancel aria-label="Cancel">✕</button>
+    <span class="grow"><b id="selCount">${selectedItems.size}</b> selected</span>
+    <button data-batch="status">Move</button>
+    <button data-batch="capsule">Capsule</button>
+    <button data-batch="tags">Tag</button>
+    <button data-batch="del">Delete</button>
+  </div>`;
 const SUB_ALL = " all";     // "All <category>" leaf
 const SUB_NONE = " none";   // items with no subcategory
 
@@ -979,8 +1009,9 @@ function tileHtml(i) {
   const sub = cpw != null ? `${money(cpw)}/wear` : (n ? `${n} wear${n === 1 ? "" : "s"}` : "Never worn");
   const dim = itemStatus(i) !== "Available";
   const corner = dim ? `<span class="tag-corner">${esc(itemStatus(i))}</span>` : "";
+  const selCls = selectMode ? ` selectable${selectedItems.has(i.id) ? " picked" : ""}` : "";
   return `
-    <div class="tile ${dim ? "dim" : ""}" data-item="${i.id}">
+    <div class="tile ${dim ? "dim" : ""}${selCls}" data-item="${i.id}">
       <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${corner}${i.image_path ? "" : "👕"}</div>
       <div class="meta">
         <div class="nm">${esc(i.name)}</div>
@@ -1034,8 +1065,9 @@ function renderCloset() {
       </div>
       <div class="filterbar">
         <input class="inp" id="closetSearch" placeholder="Search this capsule…" value="${esc(closetQuery)}">
-        <div class="frow" style="justify-content:flex-end;gap:8px">${sortSelect()}${densitySeg()}</div>
+        <div class="frow" style="justify-content:flex-end;gap:8px">${sortSelect()}${densitySeg()}${selStartBtn()}</div>
       </div>` +
+      (selectMode ? selectBar() : "") +
       (list.length ? countLine(list.length) + gridHtml(sortItems(list))
                    : `<div class="empty">${closetQuery ? "No items match." : "This capsule is empty."}</div>`);
     wireClosetControls();
@@ -1056,8 +1088,8 @@ function renderCloset() {
     if (list.length) {
       const controls = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
         <span class="muted" style="font-size:13px">${list.length} item${list.length === 1 ? "" : "s"}</span>
-        <div style="display:flex;gap:8px">${sortSelect()}${densitySeg()}</div></div>`;
-      body.innerHTML = rootHead + controls + gridHtml(sortItems(list));
+        <div style="display:flex;gap:8px;align-items:center">${sortSelect()}${densitySeg()}${selStartBtn()}</div></div>`;
+      body.innerHTML = rootHead + controls + (selectMode ? selectBar() : "") + gridHtml(sortItems(list));
     } else {
       body.innerHTML = rootHead + `<div class="empty">No items match.</div>`;
     }
@@ -1112,8 +1144,9 @@ function renderCloset() {
     `<button class="backrow" data-back="${backTarget}">‹ ${esc(backTarget === "root" ? "Closet" : drillCat)}</button>
      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
        <span style="font-size:15px;font-weight:600">${esc(scopeLabel + leafLabel)} <span class="muted" style="font-weight:400">· ${list.length}</span></span>
-       <div style="display:flex;gap:8px">${sortSelect()}${densitySeg()}</div>
+       <div style="display:flex;gap:8px;align-items:center">${sortSelect()}${densitySeg()}${selStartBtn()}</div>
      </div>` +
+    (selectMode ? selectBar() : "") +
     (list.length ? gridHtml(sortItems(list)) : `<div class="empty">No items.</div>`);
   wireClosetControls();
   hydratePhotos(body);
@@ -1140,6 +1173,104 @@ function debouncedCloset() {
     const s2 = $("#closetSearch");
     if (s2) { s2.focus(); if (pos != null) s2.setSelectionRange(pos, pos); }
   }, 180);
+}
+
+/* ---- batch actions on the current selection ---- */
+function batchAction(type) {
+  const ids = [...selectedItems];
+  if (!ids.length) { toast("Tap some items first"); return; }
+  if (type === "status") batchStatus(ids);
+  else if (type === "capsule") batchCapsule(ids);
+  else if (type === "tags") batchTags(ids);
+  else if (type === "del") batchDelete(ids);
+}
+
+function batchStatus(ids) {
+  const n = ids.length;
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 12px;font-size:20px">Move ${n} item${n === 1 ? "" : "s"} to…</h2>
+    <div class="stack">
+      ${STATUSES.map(s => `<button class="btn ghost" data-bstatus="${s}">${s}</button>`).join("")}
+      <button class="btn ghost" id="bCancel">Cancel</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  $("#bCancel").onclick = closeModal;
+  $("#sheet").onclick = async (e) => {
+    const b = e.target.closest("[data-bstatus]");
+    if (!b) return;
+    const s = b.dataset.bstatus;
+    try {
+      await rest(`items?id=in.(${ids.join(",")})`, { method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ status: s }) });
+      ids.forEach(id => { const it = items.find(x => x.id === id); if (it) it.status = s; });
+      toast(`Moved ${ids.length} to ${s}`); closeModal(); exitSelect();
+    } catch (err) { toast(err.message); }
+  };
+}
+
+async function batchCapsule(ids) {
+  try { if (!capsulesLoaded) await loadCapsules(); } catch (e) { toast(e.message); return; }
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 12px;font-size:20px">Add ${ids.length} item${ids.length === 1 ? "" : "s"} to…</h2>
+    <div class="stack">
+      ${capsules.map(c => `<button class="btn ghost" data-bcap="${c.id}" style="text-align:left">${esc(c.name)} <span class="muted">· ${esc(kindLabel(c.kind))}</span></button>`).join("")}
+      <button class="btn" id="bNewCap">＋ New capsule with these</button>
+      <button class="btn ghost" id="bCancel">Cancel</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  $("#bCancel").onclick = closeModal;
+  $("#bNewCap").onclick = () => { closeModal(); const sel = [...selectedItems]; exitSelect(); startCapsuleBuilder(null, sel); };
+  $("#sheet").onclick = async (e) => {
+    const b = e.target.closest("[data-bcap]");
+    if (!b) return;
+    const capId = b.dataset.bcap;
+    const have = new Set(capsuleItemMap.get(capId) || []);
+    const add = ids.filter(id => !have.has(id));
+    try {
+      if (add.length) {
+        await rest("capsule_items", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify(add.map(item_id => ({ capsule_id: capId, item_id }))) });
+        add.forEach(item_id => capsuleItems.push({ capsule_id: capId, item_id }));
+        rebuildCapsuleMap();
+      }
+      toast(add.length ? `Added ${add.length} to capsule` : "Already in that capsule");
+      closeModal(); exitSelect();
+    } catch (err) { toast(err.message); }
+  };
+}
+
+async function batchTags(ids) {
+  const input = prompt(`Add tag(s) to ${ids.length} item(s), comma-separated:`);
+  if (input == null) return;
+  const add = parseList(input);
+  if (!add.length) return;
+  try {
+    await Promise.all(ids.map(async id => {
+      const it = items.find(x => x.id === id); if (!it) return;
+      const merged = [...new Set([...(it.tags || []), ...add])];
+      const [u] = await rest(`items?id=eq.${id}`, { method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ tags: merged }) });
+      const idx = items.findIndex(x => x.id === id); if (idx >= 0) items[idx] = u;
+    }));
+    toast(`Tagged ${ids.length} item${ids.length === 1 ? "" : "s"}`); exitSelect();
+  } catch (e) { toast(e.message); }
+}
+
+async function batchDelete(ids) {
+  if (!confirm(`Delete ${ids.length} item${ids.length === 1 ? "" : "s"}? This removes them, their photos, and wear history.`)) return;
+  const idSet = new Set(ids);
+  const paths = ids.map(id => items.find(x => x.id === id)?.image_path).filter(Boolean);
+  try {
+    await rest(`wears?item_id=in.(${ids.join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+    await rest(`items?id=in.(${ids.join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+    await Promise.all(paths.map(p => deletePhoto(p)));
+    items = items.filter(x => !idSet.has(x.id));
+    wears = wears.filter(w => !idSet.has(w.item_id));
+    // prune local join rows (DB cascades these; keep memory consistent)
+    capsuleItems = capsuleItems.filter(ci => !idSet.has(ci.item_id)); rebuildCapsuleMap();
+    outfitItems = outfitItems.filter(oi => !idSet.has(oi.item_id)); rebuildOutfitMap();
+    toast(`Deleted ${ids.length} item${ids.length === 1 ? "" : "s"}`); exitSelect();
+  } catch (e) { toast(e.message); }
 }
 
 /* ===================================================================
@@ -1252,7 +1383,7 @@ function openItem(id) {
     } catch (e) { toast(e.message); }
   };
 }
-function closeModal() { $("#modal").classList.remove("open"); }
+function closeModal() { $("#modal").classList.remove("open"); $("#sheet").onclick = null; }
 
 /* ===================================================================
    ADD / EDIT ITEM  (one form, two modes)
@@ -1927,10 +2058,10 @@ let capSel = new Set();   // selected item ids
 let capEditId = null;
 let capQuery = "";
 
-function startCapsuleBuilder(editId) {
+function startCapsuleBuilder(editId, preIds) {
   capEditId = editId;
   capQuery = "";
-  capSel = new Set(editId ? (capsuleItemMap.get(editId) || []) : []);
+  capSel = new Set(editId ? (capsuleItemMap.get(editId) || []) : (preIds || []));
   const existing = editId ? capsules.find(c => c.id === editId) : null;
   const kind = existing ? existing.kind : "capsule";
 
@@ -2431,8 +2562,14 @@ function wireEvents() {
   // closet: status switch, density, folder drill-down, back, and open-item
   // (the search box is wired per-render in wireClosetControls)
   $("#closetBody").addEventListener("click", (e) => {
+    // multi-select controls
+    if (e.target.closest("[data-selstart]")) { selectMode = true; selectedItems.clear(); renderCloset(); return; }
+    if (e.target.closest("[data-selcancel]")) { exitSelect(); return; }
+    const batch = e.target.closest("[data-batch]");
+    if (batch) { batchAction(batch.dataset.batch); return; }
+    // status / navigation — leaving the current grid exits select mode
     const status = e.target.closest("[data-status]");
-    if (status) { closetStatus = status.dataset.status; drillCat = null; drillSub = null; renderCloset(); return; }
+    if (status) { if (selectMode) { selectMode = false; selectedItems.clear(); } closetStatus = status.dataset.status; drillCat = null; drillSub = null; renderCloset(); return; }
     if (e.target.closest("#lensClear")) { setLens(null); renderCloset(); return; }
     const cols = e.target.closest("[data-cols]");
     if (cols) { closetCols = Number(cols.dataset.cols); renderCloset(); return; }
@@ -2441,9 +2578,16 @@ function wireEvents() {
     const sub = e.target.closest("[data-sub]");
     if (sub) { drillSub = sub.dataset.sub; renderCloset(); return; }
     const back = e.target.closest("[data-back]");
-    if (back) { if (back.dataset.back === "root") drillCat = null; drillSub = null; renderCloset(); return; }
+    if (back) { if (selectMode) { selectMode = false; selectedItems.clear(); } if (back.dataset.back === "root") drillCat = null; drillSub = null; renderCloset(); return; }
     const tile = e.target.closest("[data-item]");
-    if (tile) openItem(tile.dataset.item);
+    if (tile) {
+      if (selectMode) {
+        const id = tile.dataset.item;
+        if (selectedItems.has(id)) selectedItems.delete(id); else selectedItems.add(id);
+        tile.classList.toggle("picked");
+        const c = $("#selCount"); if (c) c.textContent = selectedItems.size;
+      } else openItem(tile.dataset.item);
+    }
   });
 
   // outfit open (New-outfit / Show-more buttons are wired per-render)
