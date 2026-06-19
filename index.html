@@ -518,7 +518,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v8";
+const APP_VERSION = "2026-06-19 v1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1897,21 +1897,50 @@ function openOutfit(id) {
   };
 }
 
-// Create one wear per item in the outfit for `date` (one row per item per day),
-// tagged with this outfit. Returns how many new wears were created.
+// Attribute this outfit's items to `date` (one wear per item per day). For items
+// not yet worn that day, create a wear; for items that already have an *untagged*
+// wear that day (e.g. left orphaned after the outfit was deleted), re-tag it to
+// this outfit so re-logging restores the wear. Items whose wear that day already
+// belongs to another outfit are left alone. Returns how many item-wears were
+// attributed (created + re-tagged).
 async function logOutfitWear(o, date, opts = {}) {
   const its = itemsForOutfit(o.id);
-  const fresh = its.filter(i => !wears.some(w => w.item_id === i.id && w.worn_on === date));
-  if (!fresh.length) return 0;
-  const rows = fresh.map(i => ({ item_id: i.id, worn_on: date, outfit_id: o.id, context: o.context || null,
-    rating: opts.rating ?? null, compliments: !!opts.compliments, note: opts.note || null }));
-  const created = await rest("wears", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify(rows),
-  });
-  (created || []).forEach(w => wears.unshift(w));
-  return (created || []).length;
+  const todays = new Map();
+  for (const w of wears) if (w.worn_on === date) todays.set(w.item_id, w);
+
+  const toCreate = [];      // items with no wear that day
+  const retagIds = [];      // orphaned (untagged) same-day wears to claim
+  for (const i of its) {
+    const w = todays.get(i.id);
+    if (!w) toCreate.push(i);
+    else if (w.outfit_id == null) retagIds.push(w.id);
+  }
+
+  let n = 0;
+  if (retagIds.length) {
+    const patch = { outfit_id: o.id };
+    if (opts.rating != null) patch.rating = opts.rating;
+    if (opts.compliments) patch.compliments = true;
+    if (opts.note) patch.note = opts.note;
+    await rest(`wears?id=in.(${retagIds.join(",")})`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify(patch),
+    });
+    retagIds.forEach(id => { const w = wears.find(x => x.id === id); if (w) Object.assign(w, patch); });
+    n += retagIds.length;
+  }
+  if (toCreate.length) {
+    const rows = toCreate.map(i => ({ item_id: i.id, worn_on: date, outfit_id: o.id, context: o.context || null,
+      rating: opts.rating ?? null, compliments: !!opts.compliments, note: opts.note || null }));
+    const created = await rest("wears", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(rows),
+    });
+    (created || []).forEach(w => wears.unshift(w));
+    n += (created || []).length;
+  }
+  return n;
 }
 
 async function deleteOutfit(id) {
