@@ -366,6 +366,19 @@
           <label class="fld">Status</label>
           <div class="seg" id="f_status"></div>
         </div>
+
+        <h2 class="sec">Upkeep</h2>
+        <div>
+          <label class="fld">Available now</label>
+          <div class="seg wrap" id="f_avail"></div>
+        </div>
+        <div>
+          <label class="fld">Care</label>
+          <div class="chips" id="f_care"></div>
+        </div>
+        <label class="checkrow"><input type="checkbox" id="f_repair"> Needs repair</label>
+        <label class="checkrow"><input type="checkbox" id="f_tailor"> Needs tailoring</label>
+
         <div>
           <label class="fld">Fabric (comma-separated)</label>
           <input class="inp" id="f_fabric" placeholder="e.g. Cotton, Wool">
@@ -504,7 +517,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-18 v6";
+const APP_VERSION = "2026-06-18 v7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -554,6 +567,12 @@ const CONTEXTS = [
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
 const STATUSES = ["Available", "Storage", "Archive"];
 const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
+
+// Upkeep (slice 6): availability = where the item is right now (wearable or not);
+// care = wash/care methods. Separate from `status` (wardrobe membership).
+const AVAILABILITY = ["Ready", "Laundry", "Cleaners", "Lent"];
+const CARE_METHODS = ["Machine wash", "Hand wash", "Dry clean", "Air dry", "Iron", "Steam"];
+const availLabel = (a) => a || "Ready";
 
 // Capsules: named item sets. "capsule" = seasonal/curated set; "packing"/"travel"
 // = a trip's bag (a trip is just a capsule that carries a date range).
@@ -1329,6 +1348,9 @@ function openItem(id) {
       ${detailLine("Season", (i.season && i.season.length) ? esc(i.season.join(", ")) : "")}
       ${detailLine("Purchased", i.purchase_date ? esc(i.purchase_date) + (i.date_is_guess ? " (guess)" : "") : "")}
       ${detailLine("Last worn", lw ? esc(lw) : "Never")}
+      ${detailLine("Available", (i.availability && i.availability !== "Ready") ? esc(i.availability) : "")}
+      ${detailLine("Care", (i.care && i.care.length) ? esc(i.care.join(", ")) : "")}
+      ${(i.needs_repair || i.needs_tailoring) ? `<div><span class="muted">Upkeep:</span> ${[i.needs_repair ? "needs repair" : "", i.needs_tailoring ? "needs tailoring" : ""].filter(Boolean).join(" · ")}</div>` : ""}
       ${detailLine("Tags", (i.tags && i.tags.length) ? esc(i.tags.join(", ")) : "")}
       ${i.url ? `<div><span class="muted">Link:</span> <a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.url)}</a></div>` : ""}
       ${detailLine("Notes", i.notes ? esc(i.notes) : "")}
@@ -1341,6 +1363,12 @@ function openItem(id) {
         <label class="fld">Status</label>
         <div class="seg wrap" id="sheetStatus">
           ${STATUSES.map(s => `<button data-set="${s}" class="${itemStatus(i) === s ? "on" : ""}">${s}</button>`).join("")}
+        </div>
+      </div>
+      <div>
+        <label class="fld">Available now</label>
+        <div class="seg wrap" id="sheetAvail">
+          ${AVAILABILITY.map(a => `<button data-avail="${a}" class="${availLabel(i.availability) === a ? "on" : ""}">${a}</button>`).join("")}
         </div>
       </div>
       <button class="btn danger" id="sheetDel">Delete item</button>
@@ -1369,6 +1397,20 @@ function openItem(id) {
       toast(`Moved to ${next}`);
       $$("#sheetStatus button").forEach(x => x.classList.toggle("on", x.dataset.set === next));
       refreshViews();
+    } catch (e) { toast(e.message); }
+  };
+  $("#sheetAvail").onclick = async (e) => {
+    const b = e.target.closest("[data-avail]");
+    if (!b) return;
+    const next = b.dataset.avail;
+    if (next === availLabel(i.availability)) return;
+    try {
+      await rest(`items?id=eq.${i.id}`, { method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ availability: next }) });
+      i.availability = next;
+      toast(next === "Ready" ? "Marked ready" : `Marked: ${next}`);
+      $$("#sheetAvail button").forEach(x => x.classList.toggle("on", x.dataset.avail === next));
     } catch (e) { toast(e.message); }
   };
   $("#sheetDel").onclick = async () => {
@@ -1432,6 +1474,24 @@ function buildItemForm() {
     $$("#f_status button").forEach(x => x.classList.remove("on"));
     b.classList.add("on");
   };
+
+  $("#f_avail").innerHTML = AVAILABILITY.map(a =>
+    `<button type="button" data-avail="${a}" class="${a === "Ready" ? "on" : ""}">${a}</button>`
+  ).join("");
+  $("#f_avail").onclick = (e) => {
+    const b = e.target.closest("[data-avail]");
+    if (!b) return;
+    $$("#f_avail button").forEach(x => x.classList.remove("on"));
+    b.classList.add("on");
+  };
+
+  $("#f_care").innerHTML = CARE_METHODS.map(c =>
+    `<button type="button" class="chip txt" data-care="${esc(c)}">${esc(c)}</button>`
+  ).join("");
+  $("#f_care").onclick = (e) => {
+    const b = e.target.closest("[data-care]");
+    if (b) b.classList.toggle("sel");
+  };
 }
 
 function syncSubcategories() {
@@ -1472,7 +1532,9 @@ function resetItemForm() {
   $("#photoNote").textContent = "JPEG/PNG/HEIC — compressed to WebP before upload";
   $$("#f_color .sel").forEach(c => c.classList.remove("sel"));
   $$("#f_season .sel").forEach(c => c.classList.remove("sel"));
+  $$("#f_care .sel").forEach(c => c.classList.remove("sel"));
   $$("#f_status button").forEach(x => x.classList.toggle("on", x.dataset.status === "Available"));
+  $$("#f_avail button").forEach(x => x.classList.toggle("on", x.dataset.avail === "Ready"));
   $("#f_category").value = CATEGORIES[0];
   syncSubcategories();
   $("#f_pdate").value = "";
@@ -1511,6 +1573,13 @@ function startEdit(id) {
     if (sb) sb.classList.add("sel");
   });
   $$("#f_status button").forEach(x => x.classList.toggle("on", x.dataset.status === itemStatus(i)));
+  $$("#f_avail button").forEach(x => x.classList.toggle("on", x.dataset.avail === availLabel(i.availability)));
+  (i.care || []).forEach(c => {
+    const cb = $(`#f_care [data-care="${CSS.escape(c)}"]`);
+    if (cb) cb.classList.add("sel");
+  });
+  $("#f_repair").checked = !!i.needs_repair;
+  $("#f_tailor").checked = !!i.needs_tailoring;
   $("#f_fabric").value = (i.fabric || []).join(", ");
   $("#f_tags").value = (i.tags || []).join(", ");
   $("#f_url").value = i.url || "";
@@ -1537,6 +1606,7 @@ function readItemForm() {
   const colorSel = $("#f_color .sel");
   const minV = $("#f_min").value, maxV = $("#f_max").value;
   const statusBtn = $("#f_status button.on");
+  const availBtn = $("#f_avail button.on");
   return {
     name: $("#f_name").value.trim(),
     category: $("#f_category").value || null,
@@ -1553,6 +1623,10 @@ function readItemForm() {
     size: $("#f_size").value.trim() || null,
     season: $$("#f_season .sel").map(c => c.dataset.season),
     status: statusBtn ? statusBtn.dataset.status : "Available",
+    availability: availBtn ? availBtn.dataset.avail : "Ready",
+    care: $$("#f_care .sel").map(c => c.dataset.care),
+    needs_repair: $("#f_repair").checked,
+    needs_tailoring: $("#f_tailor").checked,
     fabric: parseList($("#f_fabric").value),
     tags: parseList($("#f_tags").value),
     url: $("#f_url").value.trim() || null,
@@ -2334,7 +2408,7 @@ function setLogMode(mode) {
    FILL  (show a random item, ask about one empty field — quick capture)
    =================================================================== */
 // Capture-light fields, in priority order (highest-value gaps first).
-const FILL_FIELDS = ["occasion", "color", "subcategory", "season", "fabric", "price", "acquisition", "size"];
+const FILL_FIELDS = ["occasion", "color", "subcategory", "season", "fabric", "price", "acquisition", "size", "care"];
 const FILL_PROMPT = {
   occasion: "How dressy can it go? (1 At-home → 7 Formal)",
   color: "What's its main color family?",
@@ -2344,6 +2418,7 @@ const FILL_PROMPT = {
   price: "What did it cost?",
   acquisition: "How did you get it?",
   size: "What size is it?",
+  care: "How do you care for it?",
 };
 let fillCurrentId = null;
 
@@ -2357,6 +2432,7 @@ function fillFieldEmpty(i, f) {
     case "price": return i.price == null;
     case "acquisition": return !i.acquisition;
     case "size": return !i.size;
+    case "care": return !(i.care && i.care.length);
   }
   return false;
 }
@@ -2378,6 +2454,8 @@ function fillWidget(item, field) {
     `<button type="button" class="chip txt" data-subc="${esc(s)}">${esc(s)}</button>`).join("")}</div>`;
   if (field === "season") return `<div class="chips" id="fill_season">${SEASONS.map(s =>
     `<button type="button" class="chip txt" data-season="${s}">${s}</button>`).join("")}</div>`;
+  if (field === "care") return `<div class="chips" id="fill_care">${CARE_METHODS.map(c =>
+    `<button type="button" class="chip txt" data-care="${esc(c)}">${esc(c)}</button>`).join("")}</div>`;
   if (field === "acquisition") return `<div class="seg wrap" id="fill_acq">${ACQUISITIONS.map(a =>
     `<button type="button" data-acq="${a}">${a}</button>`).join("")}</div>`;
   if (field === "fabric") return `<input class="inp" id="fill_fabric" placeholder="e.g. Cotton, Wool">`;
@@ -2431,6 +2509,8 @@ function renderFill() {
   single("#fill_acq", "data-acq");
   const seasonW = $("#fill_season");
   if (seasonW) seasonW.onclick = (e) => { const b = e.target.closest("[data-season]"); if (b) b.classList.toggle("sel"); };
+  const careW = $("#fill_care");
+  if (careW) careW.onclick = (e) => { const b = e.target.closest("[data-care]"); if (b) b.classList.toggle("sel"); };
 
   $("#fillSave").onclick = () => fillSave(item.id, field);
   $("#fillSkip").onclick = () => renderFill();
@@ -2451,6 +2531,8 @@ async function fillSave(itemId, field) {
     const s = $("#fill_sub .sel"); if (!s) { toast("Pick one"); return; } patch.subcategory = s.dataset.subc;
   } else if (field === "season") {
     const s = $$("#fill_season .sel").map(b => b.dataset.season); if (!s.length) { toast("Pick at least one"); return; } patch.season = s;
+  } else if (field === "care") {
+    const s = $$("#fill_care .sel").map(b => b.dataset.care); if (!s.length) { toast("Pick at least one"); return; } patch.care = s;
   } else if (field === "acquisition") {
     const s = $("#fill_acq button.on"); if (!s) { toast("Pick one"); return; } patch.acquisition = s.dataset.acq;
   } else if (field === "fabric") {

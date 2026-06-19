@@ -43,8 +43,9 @@ Two design rules that fall out of "derive-first":
 ## Done so far (see `CLAUDE.md` for detail)
 3a core ✓ · 3b capsules + closet lens ✓ · 3c outfits ✓ · A1 hierarchical closet +
 density ✓ (v4) · Phase A slices 2–4 ✓ (v5): nav→6 tabs (Add-in-Closet, merged Log
-tab, new Fill tab), the random-item Fill page, and sortable grids · **slice 5 ✓
-(v6): multi-select + batch (move / capsule / tag / delete)**.
+tab, new Fill tab), the random-item Fill page, and sortable grids · slice 5 ✓
+(v6): multi-select + batch (move / capsule / tag / delete) · **slice 6 ✓ (v7):
+laundry/availability + care fields (live items migration)**.
 
 ## Plan
 
@@ -74,9 +75,11 @@ Build order (each slice shippable on its own):
    grids enters select mode; tap tiles to pick; a dark action bar offers **Move**
    (status), **Capsule** (add to / new-with-these), **Tag** (append tags), and
    **Delete** — all operating on the whole selection via bulk endpoints.
-6. **Laundry/availability + care** ⚙️ — clean · in-laundry · at-cleaners ·
-   lent-out, plus care method + **needs-repair / needs-tailoring** flags
-   (→ smart collections later). New optional `items` columns.
+6. **Laundry/availability + care** ✅ done (v7) — `availability` (Ready / Laundry /
+   Cleaners / Lent), `care` methods, and `needs_repair` / `needs_tailoring` flags.
+   Captured in the Add/Edit form's "Upkeep" section, shown in the detail sheet with
+   a one-tap availability toggle, and asked about in Fill (care). Needed a live
+   `items` migration (4 columns — in `schema.sql`).
 7. **One-tap wear/outfit ratings (START COLLECTING EARLY)** ⚙️ — loved-it / fine /
    didn't-work + optional "got compliments" + a short felt-note, on the `Log`
    flows. New `wears` columns (+ `outfits`: rating + tags). Unlocks most-trusted /

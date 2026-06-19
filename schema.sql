@@ -44,6 +44,12 @@ create table if not exists items (
   max_occasion  smallint check (max_occasion between 1 and 7),
   status        text not null default 'Available'
                   check (status in ('Available','Storage','Archive')),
+  -- upkeep (slice 6): where the item is right now + how to care for it
+  availability    text not null default 'Ready'
+                    check (availability in ('Ready','Laundry','Cleaners','Lent')),
+  care            text[] not null default '{}',   -- wash/care methods
+  needs_repair    boolean not null default false,
+  needs_tailoring boolean not null default false,
   tags          text[] not null default '{}',
   url           text,           -- product link
   order_no      text,
@@ -54,6 +60,20 @@ create table if not exists items (
   created_at    timestamptz not null default now(),
   constraint occasion_range check (max_occasion >= min_occasion)
 );
+
+-- Migration for the EXISTING DB (slice 6 — upkeep fields). Idempotent; run once
+-- in the Supabase SQL editor. Safe on a fresh DB too (columns already present).
+alter table items
+  add column if not exists availability    text not null default 'Ready',
+  add column if not exists care            text[] not null default '{}',
+  add column if not exists needs_repair    boolean not null default false,
+  add column if not exists needs_tailoring boolean not null default false;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'items_availability_check') then
+    alter table items add constraint items_availability_check
+      check (availability in ('Ready','Laundry','Cleaners','Lent'));
+  end if;
+end $$;
 
 -- -------------------------------------------------------------------
 -- OUTFITS — a saved set of items worn together
