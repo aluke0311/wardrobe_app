@@ -338,24 +338,31 @@
         <h2 class="sec">Purchase</h2>
         <div class="row2">
           <div>
-            <label class="fld">Price</label>
+            <label class="fld">Price paid</label>
             <input class="inp" id="f_price" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
           </div>
           <div>
+            <label class="fld">Retail price</label>
+            <input class="inp" id="f_price_original" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">
+          </div>
+        </div>
+        <div class="row2">
+          <div>
             <label class="fld">Purchased on</label>
             <input class="inp" id="f_pdate" type="date">
+          </div>
+          <div>
+            <label class="fld">Acquisition</label>
+            <select class="inp" id="f_acq"></select>
           </div>
         </div>
         <label class="checkrow"><input type="checkbox" id="f_dateguess"> Purchase date is a guess</label>
         <div class="row2">
           <div>
-            <label class="fld">Acquisition</label>
-            <select class="inp" id="f_acq"></select>
-          </div>
-          <div>
             <label class="fld">Size</label>
             <input class="inp" id="f_size" placeholder="Optional">
           </div>
+          <div></div>
         </div>
 
         <h2 class="sec">Season</h2>
@@ -378,6 +385,26 @@
         </div>
         <label class="checkrow"><input type="checkbox" id="f_repair"> Needs repair</label>
         <label class="checkrow"><input type="checkbox" id="f_tailor"> Needs tailoring</label>
+
+        <h2 class="sec">Fit &amp; storage</h2>
+        <div>
+          <label class="fld">Fit</label>
+          <div class="seg wrap" id="f_fit"></div>
+        </div>
+        <div class="row2">
+          <div>
+            <label class="fld">Length</label>
+            <div class="seg wrap" id="f_length"></div>
+          </div>
+          <div>
+            <label class="fld">Rise</label>
+            <div class="seg wrap" id="f_rise"></div>
+          </div>
+        </div>
+        <div>
+          <label class="fld">Stored in</label>
+          <div class="seg wrap" id="f_storage_loc"></div>
+        </div>
 
         <div>
           <label class="fld">Fabric (comma-separated)</label>
@@ -518,7 +545,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-19 v2";
+const APP_VERSION = "2026-06-19 v3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -578,6 +605,12 @@ const availLabel = (a) => a || "Ready";
 // Wear ratings (slice 7): one-tap feel, captured when logging. 3=loved, 2=fine, 1=nope.
 const RATINGS = [[3, "Loved it", "💜"], [2, "Fine", "🙂"], [1, "Didn't work", "👎"]];
 const ratingEmoji = (r) => (RATINGS.find(x => x[0] === r) || [])[2] || "";
+
+// Fit & storage (slice 8): optional physical descriptors on items.
+const STORAGE_LOCATIONS = ["Closet", "Dresser", "Under-bed", "Coat closet", "Attic", "Storage bin", "Suitcase"];
+const FITS = ["Tight", "Fitted", "Relaxed", "Oversized"];
+const LENGTHS = ["Cropped", "Regular", "Long"];
+const RISES = ["Low", "Mid", "High"];
 
 // Capsules: named item sets. "capsule" = seasonal/curated set; "packing"/"travel"
 // = a trip's bag (a trip is just a capsule that carries a date range).
@@ -1357,10 +1390,15 @@ function openItem(id) {
       ${detailLine("Fabric", (i.fabric && i.fabric.length) ? esc(i.fabric.join(", ")) : "")}
       ${detailLine("Season", (i.season && i.season.length) ? esc(i.season.join(", ")) : "")}
       ${detailLine("Purchased", i.purchase_date ? esc(i.purchase_date) + (i.date_is_guess ? " (guess)" : "") : "")}
+      ${detailLine("Retail price", i.price_original != null ? money(i.price_original) : "")}
       ${detailLine("Last worn", lw ? esc(lw) : "Never")}
       ${detailLine("Available", (i.availability && i.availability !== "Ready") ? esc(i.availability) : "")}
       ${detailLine("Care", (i.care && i.care.length) ? esc(i.care.join(", ")) : "")}
       ${(i.needs_repair || i.needs_tailoring) ? `<div><span class="muted">Upkeep:</span> ${[i.needs_repair ? "needs repair" : "", i.needs_tailoring ? "needs tailoring" : ""].filter(Boolean).join(" · ")}</div>` : ""}
+      ${detailLine("Fit", i.fit ? esc(i.fit) : "")}
+      ${detailLine("Length", i.length ? esc(i.length) : "")}
+      ${detailLine("Rise", i.rise ? esc(i.rise) : "")}
+      ${detailLine("Stored in", i.storage_location ? esc(i.storage_location) : "")}
       ${detailLine("Tags", (i.tags && i.tags.length) ? esc(i.tags.join(", ")) : "")}
       ${i.url ? `<div><span class="muted">Link:</span> <a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.url)}</a></div>` : ""}
       ${detailLine("Notes", i.notes ? esc(i.notes) : "")}
@@ -1502,6 +1540,20 @@ function buildItemForm() {
     const b = e.target.closest("[data-care]");
     if (b) b.classList.toggle("sel");
   };
+
+  const makeSeg = (wrapId, values, attr) => {
+    $(wrapId).innerHTML = values.map(v => `<button type="button" data-${attr}="${esc(v)}">${esc(v)}</button>`).join("");
+    $(wrapId).onclick = (e) => {
+      const b = e.target.closest(`[data-${attr}]`); if (!b) return;
+      const wasOn = b.classList.contains("on");
+      $$(`${wrapId} .on`).forEach(x => x.classList.remove("on"));
+      if (!wasOn) b.classList.add("on");
+    };
+  };
+  makeSeg("#f_fit",         FITS,              "fit");
+  makeSeg("#f_length",      LENGTHS,           "length");
+  makeSeg("#f_rise",        RISES,             "rise");
+  makeSeg("#f_storage_loc", STORAGE_LOCATIONS, "loc");
 }
 
 function syncSubcategories() {
@@ -1545,6 +1597,7 @@ function resetItemForm() {
   $$("#f_care .sel").forEach(c => c.classList.remove("sel"));
   $$("#f_status button").forEach(x => x.classList.toggle("on", x.dataset.status === "Available"));
   $$("#f_avail button").forEach(x => x.classList.toggle("on", x.dataset.avail === "Ready"));
+  $$("#f_fit button, #f_length button, #f_rise button, #f_storage_loc button").forEach(x => x.classList.remove("on"));
   $("#f_category").value = CATEGORIES[0];
   syncSubcategories();
   $("#f_pdate").value = "";
@@ -1590,6 +1643,11 @@ function startEdit(id) {
   });
   $("#f_repair").checked = !!i.needs_repair;
   $("#f_tailor").checked = !!i.needs_tailoring;
+  if (i.fit) { const b = $(`#f_fit [data-fit="${CSS.escape(i.fit)}"]`); if (b) b.classList.add("on"); }
+  if (i.length) { const b = $(`#f_length [data-length="${CSS.escape(i.length)}"]`); if (b) b.classList.add("on"); }
+  if (i.rise) { const b = $(`#f_rise [data-rise="${CSS.escape(i.rise)}"]`); if (b) b.classList.add("on"); }
+  if (i.storage_location) { const b = $(`#f_storage_loc [data-loc="${CSS.escape(i.storage_location)}"]`); if (b) b.classList.add("on"); }
+  $("#f_price_original").value = i.price_original != null ? i.price_original : "";
   $("#f_fabric").value = (i.fabric || []).join(", ");
   $("#f_tags").value = (i.tags || []).join(", ");
   $("#f_url").value = i.url || "";
@@ -1637,6 +1695,11 @@ function readItemForm() {
     care: $$("#f_care .sel").map(c => c.dataset.care),
     needs_repair: $("#f_repair").checked,
     needs_tailoring: $("#f_tailor").checked,
+    fit: ($("#f_fit button.on") || {}).dataset?.fit || null,
+    length: ($("#f_length button.on") || {}).dataset?.length || null,
+    rise: ($("#f_rise button.on") || {}).dataset?.rise || null,
+    storage_location: ($("#f_storage_loc button.on") || {}).dataset?.loc || null,
+    price_original: $("#f_price_original").value === "" ? null : Number($("#f_price_original").value),
     fabric: parseList($("#f_fabric").value),
     tags: parseList($("#f_tags").value),
     url: $("#f_url").value.trim() || null,
@@ -2491,7 +2554,7 @@ function setLogMode(mode) {
    FILL  (show a random item, ask about one empty field — quick capture)
    =================================================================== */
 // Capture-light fields, in priority order (highest-value gaps first).
-const FILL_FIELDS = ["occasion", "color", "subcategory", "season", "fabric", "price", "acquisition", "size", "care"];
+const FILL_FIELDS = ["occasion", "color", "subcategory", "season", "fabric", "price", "acquisition", "size", "care", "storage_location", "fit", "length", "rise"];
 const FILL_PROMPT = {
   occasion: "How dressy can it go? (1 At-home → 7 Formal)",
   color: "What's its main color family?",
@@ -2502,6 +2565,10 @@ const FILL_PROMPT = {
   acquisition: "How did you get it?",
   size: "What size is it?",
   care: "How do you care for it?",
+  storage_location: "Where do you store it?",
+  fit: "How does it fit?",
+  length: "What's the length?",
+  rise: "What's the rise? (bottoms)",
 };
 let fillCurrentId = null;
 
@@ -2516,6 +2583,10 @@ function fillFieldEmpty(i, f) {
     case "acquisition": return !i.acquisition;
     case "size": return !i.size;
     case "care": return !(i.care && i.care.length);
+    case "storage_location": return !i.storage_location;
+    case "fit": return !i.fit;
+    case "length": return !i.length;
+    case "rise": return !i.rise;
   }
   return false;
 }
@@ -2544,6 +2615,12 @@ function fillWidget(item, field) {
   if (field === "fabric") return `<input class="inp" id="fill_fabric" placeholder="e.g. Cotton, Wool">`;
   if (field === "price") return `<input class="inp" id="fill_price" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">`;
   if (field === "size") return `<input class="inp" id="fill_size" placeholder="e.g. M, 8, 30">`;
+  const segFill = (id, values, attr) =>
+    `<div class="seg wrap" id="${id}">${values.map(v => `<button type="button" data-${attr}="${esc(v)}">${esc(v)}</button>`).join("")}</div>`;
+  if (field === "storage_location") return segFill("fill_storage_loc", STORAGE_LOCATIONS, "loc");
+  if (field === "fit")    return segFill("fill_fit",    FITS,    "fit");
+  if (field === "length") return segFill("fill_length", LENGTHS, "length");
+  if (field === "rise")   return segFill("fill_rise",   RISES,   "rise");
   return "";
 }
 
@@ -2594,6 +2671,16 @@ function renderFill() {
   if (seasonW) seasonW.onclick = (e) => { const b = e.target.closest("[data-season]"); if (b) b.classList.toggle("sel"); };
   const careW = $("#fill_care");
   if (careW) careW.onclick = (e) => { const b = e.target.closest("[data-care]"); if (b) b.classList.toggle("sel"); };
+  // single-select seg controls for slice 8 fields
+  ["#fill_storage_loc", "#fill_fit", "#fill_length", "#fill_rise"].forEach(id => {
+    const w = $(id); if (!w) return;
+    w.onclick = (e) => {
+      const b = e.target.closest("button"); if (!b) return;
+      const wasOn = b.classList.contains("on");
+      $$(`${id} .on`).forEach(x => x.classList.remove("on"));
+      if (!wasOn) b.classList.add("on");
+    };
+  });
 
   $("#fillSave").onclick = () => fillSave(item.id, field);
   $("#fillSkip").onclick = () => renderFill();
@@ -2624,6 +2711,14 @@ async function fillSave(itemId, field) {
     const v = $("#fill_price").value; if (v === "") { toast("Enter a price"); return; } patch.price = Number(v);
   } else if (field === "size") {
     const v = $("#fill_size").value.trim(); if (!v) { toast("Enter a size"); return; } patch.size = v;
+  } else if (field === "storage_location") {
+    const s = $("#fill_storage_loc button.on"); if (!s) { toast("Pick one"); return; } patch.storage_location = s.dataset.loc;
+  } else if (field === "fit") {
+    const s = $("#fill_fit button.on"); if (!s) { toast("Pick one"); return; } patch.fit = s.dataset.fit;
+  } else if (field === "length") {
+    const s = $("#fill_length button.on"); if (!s) { toast("Pick one"); return; } patch.length = s.dataset.length;
+  } else if (field === "rise") {
+    const s = $("#fill_rise button.on"); if (!s) { toast("Pick one"); return; } patch.rise = s.dataset.rise;
   }
   const btn = $("#fillSave"); btn.disabled = true; btn.textContent = "Saving…";
   try {

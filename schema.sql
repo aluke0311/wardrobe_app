@@ -50,6 +50,12 @@ create table if not exists items (
   care            text[] not null default '{}',   -- wash/care methods
   needs_repair    boolean not null default false,
   needs_tailoring boolean not null default false,
+  -- fit & storage (slice 8): optional physical descriptors
+  storage_location text,          -- where it lives in the home
+  fit             text,           -- Tight | Fitted | Relaxed | Oversized
+  length          text,           -- Cropped | Regular | Long
+  rise            text,           -- Low | Mid | High (bottoms)
+  price_original  numeric,        -- retail/MSRP for discount tracking
   tags          text[] not null default '{}',
   url           text,           -- product link
   order_no      text,
@@ -74,6 +80,14 @@ do $$ begin
       check (availability in ('Ready','Laundry','Cleaners','Lent'));
   end if;
 end $$;
+
+-- Migration for the EXISTING DB (slice 8 — fit & storage fields). Idempotent.
+alter table items
+  add column if not exists storage_location text,
+  add column if not exists fit              text,
+  add column if not exists length           text,
+  add column if not exists rise             text,
+  add column if not exists price_original   numeric;
 
 -- -------------------------------------------------------------------
 -- OUTFITS — a saved set of items worn together
