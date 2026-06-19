@@ -157,14 +157,14 @@ collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
 `3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
 *done* history.
 
-**Phase A (closet usability) is nearly complete (through v8):** A1 hierarchical
-closet + density, nav→6 tabs (Add-in-Closet, merged **Log** tab, new **Fill** tab),
-the random-item Fill page, sortable grids, multi-select + batch actions, upkeep
-fields (availability/care/needs-repair), and one-tap wear ratings. **Only slice 8
-(optional fit/storage/acquisition fields) remains.** Live DB has gained columns
-since the baseline — see ROADMAP §2 (items: availability/care/needs_*; wears:
-rating/compliments/note). Migrations are run by the user in the Supabase SQL editor;
-**never deploy UI that writes a new column before its migration is confirmed.**
+**Phase A (closet usability) COMPLETE (v9 / 2026-06-19 v3):** A1 hierarchical
+closet + density, nav→7 tabs (Add-in-Closet, merged **Log** tab, new **Fill** tab,
+**Calendar** tab), the random-item Fill page, sortable grids, multi-select + batch
+actions, upkeep fields (availability/care/needs-repair), one-tap wear ratings, and
+optional fit/storage fields (storage_location, fit, length, rise, price_original).
+**Phase B1 (Calendar) also complete (2026-06-19 v4).** Live DB has gained columns —
+see ROADMAP §2. Migrations are run by the user in the Supabase SQL editor;
+**never deploy UI that writes a new column/table before its migration is confirmed.**
 
 - **Phase 1 — schema** ✓ run in Supabase.
 - **Phase 2 — import** ✓ 476 items + photos live; ARCHIVE-prefix names cleaned.
@@ -198,7 +198,7 @@ rating/compliments/note). Migrations are run by the user in the Supabase SQL edi
     outfit_items load lazily on first tab open. **Verified against live data.**
     Note: added `restAll()` paging — `loadData` now pages `wears` (was capped at
     1000, so the app had been undercounting; CPW/stats were silently wrong).
-  - 3d Calendar.
+  - 3d Calendar ✓ (2026-06-19 v4, see Phase B1 below).
   - 3e Stats — rebuild around the user's Airtable CPW / score / alert formulas
     (still TODO: read those formulas from the Airtable "Clothing" table fields like
     Goal CPW, Total Score, Action Needed and reproduce the logic).

@@ -82,16 +82,17 @@
   ASCII tokens like `"__ALL__"`.)
 
 ### 1d. File map (`index.html`, ~2780 lines, all inline)
-- **CONFIG consts** (~l.480–620): `SUPABASE_URL/KEY`, `BUCKET`, `APP_VERSION`,
+- **CONFIG consts** (~l.480–640): `SUPABASE_URL/KEY`, `BUCKET`, `APP_VERSION`,
   `TAXONOMY`→`CATEGORIES`, `COLOR_FAMILIES`, `OCCASION_LADDER`, `CONTEXTS`,
   `ACQUISITIONS`, `STATUSES`, `SEASONS`, `AVAILABILITY`, `CARE_METHODS`, `RATINGS`,
-  `CAPSULE_KINDS`, `SORTS`.
+  `STORAGE_LOCATIONS`, `FITS`, `LENGTHS`, `RISES`, `CAPSULE_KINDS`, `SORTS`.
 - **Fetch helpers:** `authRequest/api/rest/restAll`, `uploadPhoto/deletePhoto/
   signedUrl`, `compressImage`.
 - **State:** `items/wears/dataReady`; outfits (`outfits/outfitItems/outfitItemMap/
-  outfitsLoaded`); capsules (same shape) + `activeCapsule`; closet (`closetQuery/
-  closetStatus/drillCat/drillSub/closetCols/closetSort/selectMode/selectedItems`);
-  `logMode`; `fillCurrentId`; form (`editingId/pendingPhoto/oldPhotoPath`).
+  outfitsLoaded`); capsules (same shape) + `activeCapsule`; events (`events/
+  eventsLoaded/calYear/calMonth/logPresetDate`); closet (`closetQuery/closetStatus/
+  drillCat/drillSub/closetCols/closetSort/selectMode/selectedItems`); `logMode`;
+  `fillCurrentId`; form (`editingId/pendingPhoto/oldPhotoPath`).
 - **Derived:** `wearCount/lastWorn/costPerWear/daysSince/itemStatus/contextsForItem/
   occRangeLabel/money/esc/parseList`.
 - **Closet render:** `renderCloset` (branches: lens → search → root folders →
@@ -113,35 +114,49 @@
 - **Fill:** `renderFill/fillFieldEmpty/firstEmptyField/fillPool/fillWidget/fillSave`
   + `FILL_FIELDS/FILL_PROMPT`.
 - **Stats (interim — rebuild is Phase C):** `renderStats/section/listRows/bars`.
+- **Calendar:** `loadEvents/ensureCalendar/renderCalendar/openDay/openAddEvent`.
 - **Tabs/boot:** `TAB_TITLES/switchTab/refreshViews/wireEvents/bootApp/init`.
 
 ---
 
-## 2. Current data model delta (live as of v8)
-Beyond the `schema.sql` baseline, these columns exist in the live DB (migrations
-already run by the user):
+## 2. Current data model delta (live as of 2026-06-19 v4)
+Beyond the `schema.sql` baseline, these columns/tables exist in the live DB
+(migrations already run by the user):
 - **items:** `availability` (Ready|Laundry|Cleaners|Lent, default Ready), `care`
   text[], `needs_repair` bool, `needs_tailoring` bool. *(v7)*
 - **wears:** `rating` smallint (3=loved,2=fine,1=didn't-work), `compliments` bool,
   `note` text. *(v8)*
+- **items:** `storage_location` text, `fit` text, `length` text, `rise` text,
+  `price_original` numeric. *(Phase A slice 8 / v3)*
+- **events table** (new): id, user_id, title, event_date date, context, dress_code,
+  planned_outfit_id → outfits, backup_outfit_id → outfits, notes, created_at.
+  RLS own_rows policy. Index on (user_id, event_date). *(Phase B1 / v4)*
 
 ---
 
-## 3. The 6 nav tabs today
-`Closet · Log · Capsules · Fill · Stats · Settings`. Add lives in the Closet header
-(＋). Log = single-item wear **|** outfits (segmented). Phase E rebalances nav.
+## 3. The 7 nav tabs today
+`Closet · Log · Capsules · Calendar · Fill · Stats · Settings`. Add lives in the
+Closet header (＋). Log = single-item wear **|** outfits (segmented). Phase E
+rebalances nav.
 
 ## 4. Done so far
 3a core ✓ · 3b capsules + lens ✓ · 3c outfits ✓ · **Phase A:** A1 hierarchical
 closet + density ✓ (v4) · nav→6 tabs + Fill page + sortable grids ✓ (v5) ·
 multi-select + batch ✓ (v6) · laundry/availability + care ✓ (v7) · one-tap wear
-ratings ✓ (v8). **Remaining in A: slice 8 only.**
+ratings ✓ (v8) · **slice 8 fit/storage/price_original fields ✓ (v3 2026-06-19)**.
+**Phase A complete.**
+**Phase B1 — Calendar ✓ (v4 2026-06-19):** 7th nav tab, month grid heat-shaded by
+wear count, today circled, event dots, day detail sheet (wears + events + remove),
+"Log wear/outfit for this day" (pre-fills date in Log), Add Event form (title,
+date, context, dress code, notes). New state: `events/eventsLoaded/calYear/calMonth/
+logPresetDate`. New functions: `loadEvents/ensureCalendar/renderCalendar/openDay/
+openAddEvent`. New constants: `STORAGE_LOCATIONS/FITS/LENGTHS/RISES`.
 
 ---
 
 ## 5. Plan (per-slice, execution-ready)
 
-### Phase A · slice 8 — Optional fields  *(NEXT; completes Phase A)*
+### Phase A · slice 8 — Optional fields  ✓ *done 2026-06-19 v3*
 **Decisions.** Add fit/storage/acquisition-detail fields, all optional, single-
 select from fixed lists, surfaced in the Add/Edit form + Fill page.
 **New consts:**
@@ -179,8 +194,7 @@ is NOT a Fill target. *Optional refinement:* only ask `rise` for Bottoms and
 General: each sub-slice that needs DB changes follows the migration dance. Add an
 RLS `own_rows` policy for any new table (copy the pattern in `schema.sql`).
 
-**B1 — Calendar.** *Decision: add a 7th `Calendar` tab now (icon 📅); Phase E
-rebalances nav.* New table:
+**B1 — Calendar.** ✓ *done 2026-06-19 v4.* See §4 for what's built. New table:
 ```sql
 create table if not exists events (
   id uuid primary key default gen_random_uuid(),
