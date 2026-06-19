@@ -149,11 +149,22 @@ Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 
 ## Build roadmap / current status
 
-**The forward plan now lives in `ROADMAP.md`** (Phases A–D + the product
-decisions). Key decisions locked 2026-06-18: **personal single-user tool**,
+**The forward plan now lives in `ROADMAP.md`, which is written as an execution-ready
+spec** (executor handbook + file map + per-slice decisions, schema, and migration
+SQL) — start there. Key decisions locked 2026-06-18: **personal single-user tool**,
 **heuristics only — no AI/server-proxy/Edge Functions**, **thumbnail outfits (no
-collage canvas)**. The legacy `3d/3e/3f` items below are folded into ROADMAP's
-Phases B/C/D; this section keeps the *done* history + the richer 3f notes.
+collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
+`3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
+*done* history.
+
+**Phase A (closet usability) is nearly complete (through v8):** A1 hierarchical
+closet + density, nav→6 tabs (Add-in-Closet, merged **Log** tab, new **Fill** tab),
+the random-item Fill page, sortable grids, multi-select + batch actions, upkeep
+fields (availability/care/needs-repair), and one-tap wear ratings. **Only slice 8
+(optional fit/storage/acquisition fields) remains.** Live DB has gained columns
+since the baseline — see ROADMAP §2 (items: availability/care/needs_*; wears:
+rating/compliments/note). Migrations are run by the user in the Supabase SQL editor;
+**never deploy UI that writes a new column before its migration is confirmed.**
 
 - **Phase 1 — schema** ✓ run in Supabase.
 - **Phase 2 — import** ✓ 476 items + photos live; ARCHIVE-prefix names cleaned.
@@ -218,7 +229,7 @@ Phases B/C/D; this section keeps the *done* history + the richer 3f notes.
 - **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
   **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
   the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
-  Currently `2026-06-18 v5`.
+  Currently `2026-06-18 v8`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
