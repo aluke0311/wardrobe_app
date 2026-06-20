@@ -555,6 +555,15 @@
           <div class="muted" style="font-size:13.5px">Pull the latest from Supabase.</div>
           <button class="btn ghost" id="refreshBtn">Refresh data</button>
         </div>
+        <div class="card stack" id="set_location_card">
+          <div style="font-weight:600">Location</div>
+          <div class="muted" style="font-size:13.5px">Used for weather in outfit suggestions. Your coordinates are stored locally only.</div>
+          <div id="set_geo_status" style="font-size:13px;color:var(--muted)">No location saved.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn ghost" id="set_geo_update" style="flex:1;min-width:120px">Update location</button>
+            <button class="btn ghost" id="set_geo_clear" style="flex:1;min-width:120px">Clear</button>
+          </div>
+        </div>
         <div class="card">
           <div style="font-weight:600;margin-bottom:8px">About</div>
           <div class="muted" style="font-size:13.5px">Wardrobe <span class="appver"></span> · single-file · Supabase backend</div>
@@ -593,7 +602,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v11";
+const APP_VERSION = "2026-06-20 v12";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -840,6 +849,74 @@ async function prewarmUrlCache() {
   for (let i = 0; i < paths.length; i += 100) {
     signedUrlBatch(paths.slice(i, i + 100)); // fire and forget — don't block render
   }
+}
+
+/* ===================================================================
+   WEATHER  (open-meteo, no API key — D2)
+   =================================================================== */
+let weatherCache = null;   // { temp_f, precip, code, fetched_ms } or null
+
+async function savedGeo() {
+  const s = store.getItem("wardrobe.geo");
+  return s ? JSON.parse(s) : null;
+}
+async function requestGeo() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      p => {
+        const geo = { lat: +p.coords.latitude.toFixed(4), lon: +p.coords.longitude.toFixed(4) };
+        store.setItem("wardrobe.geo", JSON.stringify(geo));
+        resolve(geo);
+      },
+      () => resolve(null),
+      { timeout: 6000 }
+    );
+  });
+}
+async function loadWeather(forceRefresh) {
+  try {
+    if (!forceRefresh) {
+      const s = store.getItem("wardrobe.weather");
+      if (s) {
+        const c = JSON.parse(s);
+        if (Date.now() - c.fetched_ms < 30 * 60_000) { weatherCache = c; return; }
+      }
+    }
+    const geo = (await savedGeo()) || (await requestGeo());
+    if (!geo) return;
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}&current=temperature_2m,precipitation,weather_code&temperature_unit=fahrenheit`;
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const d = await r.json();
+    weatherCache = {
+      temp_f: Math.round(d.current.temperature_2m),
+      precip: d.current.precipitation ?? 0,
+      code:   d.current.weather_code,
+      fetched_ms: Date.now(),
+    };
+    store.setItem("wardrobe.weather", JSON.stringify(weatherCache));
+    return weatherCache;
+  } catch { /* non-fatal */ }
+}
+function weatherIcon(code) {
+  if (code === 0)           return "☀️";
+  if (code <= 3)            return "⛅";
+  if (code <= 48)           return "🌫";
+  if (code <= 55)           return "🌦";
+  if (code <= 65 || (code >= 80 && code <= 82)) return "🌧";
+  if (code <= 77)           return "❄️";
+  return "⛈";
+}
+function weatherDesc(code) {
+  if (code === 0) return "Clear";
+  if (code <= 3)  return "Partly cloudy";
+  if (code <= 48) return "Foggy";
+  if (code <= 55) return "Drizzle";
+  if (code <= 65) return "Rain";
+  if (code <= 77) return "Snow";
+  if (code <= 82) return "Showers";
+  return "Thunderstorm";
 }
 
 /* ===================================================================
@@ -2229,6 +2306,19 @@ function suggestOutfits(ctxName, n = 5) {
     if (recentIds.has(i.id)) s -= 3;
     else if (coolIds.has(i.id)) s -= 1;
     if (ctxObj && !ctxFitsItem(ctxObj, i)) s -= 10;
+    // weather nudge: temp → season preference; rain → avoid sandals
+    if (weatherCache) {
+      const tf = weatherCache.temp_f;
+      const isHot  = tf >= 75;
+      const isCold = tf < 50;
+      if (seas.length) {
+        if (isHot  && seas.some(x => x === "Spring" || x === "Summer")) s += 0.5;
+        if (isHot  && !seas.some(x => x === "Spring" || x === "Summer")) s -= 0.5;
+        if (isCold && seas.some(x => x === "Fall"   || x === "Winter")) s += 0.5;
+        if (isCold && !seas.some(x => x === "Fall"  || x === "Winter")) s -= 0.5;
+      }
+      if ((weatherCache.precip || 0) > 0.1 && i.subcategory === "Sandals") s -= 2;
+    }
     return s;
   }
 
@@ -2320,12 +2410,19 @@ function _renderSuggestSheet() {
           </div>`;
       }).join("");
 
+  const weatherRow = weatherCache
+    ? `<div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+         ${weatherIcon(weatherCache.code)} ${weatherCache.temp_f}°F · ${weatherDesc(weatherCache.code)}
+       </div>`
+    : "";
+
   const html = `
     <div class="subhead" style="padding:16px 16px 10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <span style="font-size:18px;font-weight:700">Outfit ideas</span>
         <button id="sugClose" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;color:var(--muted)">✕</button>
       </div>
+      ${weatherRow}
       <div style="font-size:12.5px;color:var(--muted);margin-bottom:6px">Occasion (optional)</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">${ctxChips}</div>
       <button class="btn ghost" id="sugRefresh" style="width:auto;padding:7px 14px;font-size:13px">🔄 Shuffle</button>
@@ -4150,6 +4247,7 @@ async function bootApp() {
   try {
     await loadData();
     prewarmUrlCache(); // fire-and-forget: batch-sign all photo URLs into cache
+    loadWeather();     // fire-and-forget: fetch weather for outfit suggestions
     await restoreLens();
     renderCloset();
   } catch (e) {
@@ -4277,6 +4375,41 @@ function wireEvents() {
     closetSort = e.target.value;
     store.setItem(SORT_KEY, closetSort);
     toast("Default sort saved");
+  });
+
+  // settings: location / weather
+  function refreshGeoStatus() {
+    const s = store.getItem("wardrobe.geo");
+    const el = $("#set_geo_status");
+    if (!el) return;
+    if (s) {
+      const g = JSON.parse(s);
+      const w = weatherCache;
+      el.textContent = `${g.lat.toFixed(2)}, ${g.lon.toFixed(2)}` +
+        (w ? ` · ${weatherIcon(w.code)} ${w.temp_f}°F` : "");
+    } else {
+      el.textContent = "No location saved.";
+    }
+  }
+  refreshGeoStatus();
+  $("#set_geo_update").addEventListener("click", async () => {
+    const btn = $("#set_geo_update"); btn.disabled = true; btn.textContent = "Detecting…";
+    const geo = await requestGeo();
+    if (geo) {
+      await loadWeather(true);
+      refreshGeoStatus();
+      toast("Location updated");
+    } else {
+      toast("Location unavailable — allow location access in your browser");
+    }
+    btn.disabled = false; btn.textContent = "Update location";
+  });
+  $("#set_geo_clear").addEventListener("click", () => {
+    store.removeItem("wardrobe.geo");
+    store.removeItem("wardrobe.weather");
+    weatherCache = null;
+    refreshGeoStatus();
+    toast("Location cleared");
   });
 
   // settings
