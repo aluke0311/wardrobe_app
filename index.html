@@ -249,6 +249,8 @@
   .spin { width: 22px; height: 22px; border: 2.5px solid var(--line); border-top-color: var(--ink); border-radius: 50%; animation: sp 0.7s linear infinite; margin: 30px auto; }
   @keyframes sp { to { transform: rotate(360deg); } }
   .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #eceae6; color: var(--muted); }
+  button.pill { cursor: pointer; border: 1.5px solid transparent; }
+  button.pill.on { background: var(--ink); color: #fff; border-color: var(--ink); }
   .err { color: var(--danger); font-size: 13px; }
   .field-prev { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); border: 1px dashed var(--line);
                 background: var(--surface) center/contain no-repeat; display: flex; align-items: center; justify-content: center;
@@ -591,7 +593,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v9";
+const APP_VERSION = "2026-06-20 v10";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
