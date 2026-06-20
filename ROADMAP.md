@@ -169,6 +169,15 @@ field selection across all empty fields; shuffled item order each card.
 **F8 — Type-ahead ✓ (v10 2026-06-19):** brand/retailer/size inputs in
 Add/Edit form show `<datalist>` of previously-entered values (case-deduped,
 sorted).
+**D1 — Outfit suggestions ✓ (v8 2026-06-20):** ✨ Outfit ideas button in
+Log→Outfit tab. `suggestOutfits(ctx, n)` scores Available items by season,
+recency, color harmony (neutrals/adjacent), formality overlap, co-occurrence
+bonus; builds top+bottom + dress combos with optional shoe. `openSuggestSheet()`
+shows occasion chips (13 contexts), 🔄 Shuffle, "Use this outfit" → builder
+with pre-selected ids. State: `suggestCtx`, `suggestSeed` (increments on Shuffle).
+**Photo perf + transparency (v9–v11 2026-06-20):** batch-sign (`signedUrlBatch` /
+`prewarmUrlCache`) reduces ~476 per-image requests to ~5 on load. Transparent
+PNG/WebP garments now show on white tile (`loadPhotoNode` clears `backgroundColor`).
 
 ---
 
