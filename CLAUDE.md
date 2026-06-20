@@ -161,7 +161,7 @@ collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
 `3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
 *done* history.
 
-**Current state: v14 / 2026-06-20. All phases through B + partial C/D/F done.**
+**Current state: v17 / 2026-06-20. All phases through B + partial C/D/F done.**
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI that
 writes a new column/table before its migration is confirmed.**
 
@@ -179,7 +179,8 @@ writes a new column/table before its migration is confirmed.**
 - **Worn outfits filter (v14 2026-06-20):** "Hide singles (N)" / "Show singles (N)" pill in the Worn outfits header. State: `outfitHideSingles` bool. Filters `wornOutfitMap()` entries where `ids.length === 1` before rendering; count badge shows how many singles exist. Resets `outfitsShown` on toggle.
 - **v15 (2026-06-20):** F3 rating in outfit builder · D4 clone outfit, add-to-capsule from detail, merge duplicate outfits ("Merge dupes" button in Saved header).
 - **v16 (2026-06-20):** Quick re-wear section at top of Log → Outfit tab — shows top 6 recently-worn multi-item combos with inline date picker + Log button. `renderQuickRewear()` called in `setLogMode("outfit")`; uses `wornOutfitMap()`.
-- **Still pending:** D3 (capsule auto-gen) · E (Home dashboard) · F4/F6/F7/F9. D4 done except D4 one-tap re-wear (now covered by Quick re-wear in Log). F3 done.
+- **v17 (2026-06-20):** F8 type-ahead for fill_size + fill_fabric (shared dl_size datalist; new dl_fabric populated from text[] fabric arrays via `fillDlArray`). F9 "By Context" third view in Outfits tab — folders derived from `outfits.context`, drill into outfit list, no schema change. "Style This Orphan" card in Log → Outfit — finds Available items with 0 outfit appearances, shows one randomly, "Build an outfit around this" + Skip button; `renderOrphanCard()` called after `ensureOutfits()` resolves. Strict weather hard-filter in `suggestOutfits` — `isCold` (temp_f < 50) removes Sandals + Shorts from pool entirely; `isRainy` (precip > 0.1) removes Sandals (previously only soft-scored ±0.5). Batch Season + Color — two new buttons in multi-select bar; `batchSeason()` opens chip sheet (additive merge); `batchColor()` opens swatch sheet (sets color_family). New(90d) closet filter chip — toggleable chip in filterbar root header filters items by `purchase_date >= today-90`; `applyFacets` now actually called in `renderCloset` (was dead code before).
+- **Still pending:** D3 (capsule auto-gen) · E (Home dashboard) · F4 (user-editable categories, decision required) · F6 (advanced filter sheet) · F7 (size tracker).
 
 **Outfit dedup note (D4, NOT started):** the import created one outfit row per
 wear-day, so the ~1,543 outfits include many duplicates (same item set, different
@@ -226,6 +227,10 @@ merge script + in-app "merge duplicates" action would clean the `outfits` table 
 - **`geoFromZip` uses zippopotam.us** — `GET https://api.zippopotam.us/us/{zip}` returns `{ places: [{ latitude, longitude }] }`. US-only, free, no key. Falls back gracefully (returns null) on bad ZIP or network error. Saves geo to `wardrobe.geo` same as `requestGeo`.
 - **`outfitHideSingles` filter state** — bool at module level, default false. Applied in `renderWornOutfits` before slicing for the "Show more" pagination, so the count and the "more" button reflect the filtered set, not the raw total.
 - **`renderQuickRewear()` is called in `setLogMode("outfit")`** — renders the top 6 recently-worn multi-item combos from `wornOutfitMap()` into `#quickRewearSection`. Uses `logPresetDate` if set for the default date. Log button creates bare wear rows (no `outfit_id`) and calls `refreshViews()` + re-renders the section.
+- **`applyFacets` is called in `renderCloset`** — wraps `applyNeglect(statusScoped())` result. Facets: `closetSeasonFilter`, `closetColorFilter`, `closetRecentFilter` (New 90d). `closetFilterActive()` / `clearClosetFacets()` manage all three. The "New (90d)" chip toggles `closetRecentFilter`; the chip row is wired in `wireClosetControls` via `#closetFilterChips`.
+- **`renderOrphanCard()` in Log → Outfit** — shows one random Available item with 0 outfit appearances in `#orphanCardSection`. Called after `ensureOutfits()` resolves in `setLogMode("outfit")`. Skip temporarily adds the picked id to the in-memory `inOutfits` set and redraws (session only, not persisted).
+- **`fillDlArray(id, field)` for array fields** — like `fillDl` but flattens `text[]` arrays from items. Used for `#dl_fabric`. `fillDl` assumes scalar strings; `fillDlArray` iterates `(i[field] || [])`. Both live in `wireItemForm`.
+- **Outfit "By Context" view** — `outfitView === "context"` dispatches to `renderContextOutfits()`. State: `outfitContextBrowse` (null = root folders, else chosen context name). Reset on view-toggle click. Uses `outfits.context` directly — no schema change. Checks `outfitsLoaded` and shows spinner + calls `ensureOutfits()` if not yet loaded.
 
 ## Deploy
 
