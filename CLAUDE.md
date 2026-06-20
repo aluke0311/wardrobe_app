@@ -157,7 +157,7 @@ collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
 `3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
 *done* history.
 
-**Current state: v10 / 2026-06-19. All phases through B + partial C/F done.**
+**Current state: v7 / 2026-06-20. All phases through B + partial C/F done + UI polish session.**
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI that
 writes a new column/table before its migration is confirmed.**
 
@@ -166,21 +166,22 @@ writes a new column/table before its migration is confirmed.**
 - **Phase 3a–3d core:** new schema, capsules+lens, outfits+builder, calendar (all ✓).
 - **Phase A complete:** hierarchical closet, 7 tabs, Fill page, sortable grids, multi-select+batch, upkeep fields, wear ratings, fit/storage/price_original fields.
 - **Phase B complete:** B1 Calendar (month grid, events, day-detail) + B1 refinement (wears grouped by outfit_id, inline notes) · B2 Capsule polish (packing checklist, outfit→capsule) · B3 Wishlist status + purchase-justification card · B4 Rotation/"Neglected" mode.
-- **Phase C (Insights) partially complete:** KPI cards (item count, closet value, CPW, utilization) · drill-downs with time-range filter + Best/Worst toggle (CPW, Most Worn, Velocity, Never Worn, Best Purchases, Recency) · View Closet By donut charts (color/brand/size/season/fabric/price) · Occasion Coverage. All Available-only scope. CPW $0 rule applied. *Airtable Goal CPW / Total Score formulas still pending — ask user for those formulas before implementing.*
-- **Phase F partial:** F2 fill upgrades (Available-only pool, random field, shuffled order) · F5 item detail enrichment (outfit mosaic, "Wear it with" pairings, "Create outfit" button, days-in-wardrobe KPI) · F8 type-ahead for brand/retailer/size.
+- **Phase C (Insights) partially complete:** KPI cards (item count, closet value, CPW, utilization) · drill-downs with time-range filter + Best/Worst toggle (CPW, Most Worn, Velocity, Never Worn, Best Purchases, Recency) · View Closet By donut charts (color/brand/size/season/fabric/price) · Occasion Coverage · **category filter chip row**. All Available-only scope. CPW $0 rule applied. *Airtable Goal CPW / Total Score formulas still pending — ask user for those formulas before implementing.*
+- **Phase F partial:** F2 fill upgrades (Available-only pool, random field, shuffled order) · F5 item detail enrichment (outfit mosaic 2×2 collage, "Wear it with" pairings, "Create outfit" button, days-in-wardrobe KPI) · F8 type-ahead for brand/retailer/size.
+- **UI polish (2026-06-20 session, v1–v7):** all item photos → `contain` (fit, never cover) everywhere · item detail: back button on hero, combined last-worn/KPI row, tap-to-edit attribute rows (shared `readFillPatch` / `wireFillWidgets`) · calendar compacted (`.cal-wrap` max-width `min(340px,86vw)`, `aspect-ratio:1/0.66`) · status filter → `<select>` dropdown · log screen overlap fixed · "Got compliments" removed · calendar "Log a wear for this day" now presets date correctly · calendar day-detail: ✕ per item (deletes one wear row) + "Remove outfit" button (bulk-deletes all wears for that outfit_id+date) · **"Worn" outfit log** — `wornOutfitMap()` derives accurate outfit history from wears (group by `outfit_id+worn_on`, collapse by exact item-set key), preserving same-day multi-outfit.
 - **Still pending:** D1–D4 (outfit suggestions, weather, capsule auto-gen, outfit dedup/merge) · E (Home dashboard) · F1/F3/F4/F6/F7/F9.
 
 **Outfit dedup note (D4, NOT started):** the import created one outfit row per
 wear-day, so the ~1,543 outfits include many duplicates (same item set, different
-days). A merge script + in-app "merge duplicates" action is the plan — see
-ROADMAP §D4 for the approach.
+days). The "Worn" view already solves *display* by deriving from wears; a future
+merge script + in-app "merge duplicates" action would clean the `outfits` table itself — see ROADMAP §D4.
 
 ## Conventions
 
 - **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
   **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
   the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
-  Currently `2026-06-19 v10`.
+  Currently `2026-06-20 v7`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -205,6 +206,9 @@ ROADMAP §D4 for the approach.
 - **Named functions vs aliases:** if a function is renamed, grep for all call sites —
   e.g. `openOutfitDetail` was called in Insights but the real function was `openOutfit`
   (silently undefined until fixed in v10).
+- **All item photos use `background-size: contain` everywhere** — tile thumbnails, folder thumbs, pick-grid, list rows, outfit mosaic cells, calendar day thumbs, and the hero on item detail. Never use `cover`/`fill` for item photos; the user explicitly wants `contain` throughout.
+- **`wornOutfitMap()` derives "Worn" outfit log** — groups wears by `outfit_id+worn_on`, then collapses by sorted item-set key. Lone wears (no `outfit_id`) each get a unique key. This preserves same-day multi-outfit. ✕-ing one item from a day shifts that day to a different item-set bucket; "Remove outfit" deletes all wears for that `outfit_id` on that date.
+- **`logPresetDate` is consumed once** — set it directly (`logPresetDate = dateStr`) then call `switchTab("log")`; do NOT call `setLogMode()` before `switchTab` or the preset gets consumed twice and the date field shows today.
 
 ## Deploy
 
