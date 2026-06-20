@@ -161,7 +161,7 @@ collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
 `3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
 *done* history.
 
-**Current state: v18 / 2026-06-20. All phases through B + E + partial C/D/F done.**
+**Current state: v19 / 2026-06-20. All phases through B + E + partial C/D/F done.**
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI that
 writes a new column/table before its migration is confirmed.**
 
@@ -181,7 +181,8 @@ writes a new column/table before its migration is confirmed.**
 - **v16 (2026-06-20):** Quick re-wear section at top of Log → Outfit tab — shows top 6 recently-worn multi-item combos with inline date picker + Log button. `renderQuickRewear()` called in `setLogMode("outfit")`; uses `wornOutfitMap()`.
 - **v17 (2026-06-20):** F8 type-ahead for fill_size + fill_fabric (shared dl_size datalist; new dl_fabric populated from text[] fabric arrays via `fillDlArray`). F9 "By Context" third view in Outfits tab — folders derived from `outfits.context`, drill into outfit list, no schema change. "Style This Orphan" card in Log → Outfit — finds Available items with 0 outfit appearances, shows one randomly, "Build an outfit around this" + Skip button; `renderOrphanCard()` called after `ensureOutfits()` resolves. Strict weather hard-filter in `suggestOutfits` — `isCold` (temp_f < 50) removes Sandals + Shorts from pool entirely; `isRainy` (precip > 0.1) removes Sandals (previously only soft-scored ±0.5). Batch Season + Color — two new buttons in multi-select bar; `batchSeason()` opens chip sheet (additive merge); `batchColor()` opens swatch sheet (sets color_family). New(90d) closet filter chip — toggleable chip in filterbar root header filters items by `purchase_date >= today-90`; `applyFacets` now actually called in `renderCloset` (was dead code before).
 - **Phase E complete (v18 2026-06-20):** Home dashboard landing tab. Nav rebalanced to 6 tabs: Home · Closet · Log · Calendar · Capsules · Insights (Fill + Settings removed from nav; Settings via ⚙ gear in header; Fill via Home quick-action). `renderHome()` builds: week strip (Sun–Sat current week, first worn item's thumbnail per day, wear-dot, today highlighted, tap → `openDay`), greeting + weather row, today's picks (top 2 from `suggestOutfits(null,2)`, "Use this outfit" → builder, "More ideas" → suggest sheet), quick-action buttons (Log / Fill gaps / Browse closet), upcoming events (loaded lazily, re-renders on load, tap → `openDay`), neglected strip (Available items unworn 30d+, horizontal scroll, "View all →" sets `neglectMode=true`), needs-attention list (laundry/repair items, tap → `openItem`). App now boots to Home tab.
-- **Still pending:** D3 (capsule auto-gen) · F4 (user-editable categories, decision required) · F6 (advanced filter sheet) · F7 (size tracker).
+- **F6 closet filter polish (v19 2026-06-20):** Filters button with active-count badge in the closet toolbar. `openFilterSheet()` opens `#modal` with Season chips, Color swatches, and Acquisition (New/Secondhand/Gift) chips — all toggle independently, Done/Clear all/✕ buttons. `closetAcqFilter` state + `applyFacets` + `closetFilterCount()` wired. Active acquisition filter shown as dismissible chip. "Recently purchased" sort option added.
+- **Still pending:** D3 (capsule auto-gen) · F4 (user-editable categories, decision required) · F7 (size tracker).
 
 **Outfit dedup note (D4, NOT started):** the import created one outfit row per
 wear-day, so the ~1,543 outfits include many duplicates (same item set, different
@@ -193,7 +194,7 @@ merge script + in-app "merge duplicates" action would clean the `outfits` table 
 - **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
   **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
   the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
-  Currently `2026-06-20 v18`.
+  Currently `2026-06-20 v19`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -236,6 +237,7 @@ merge script + in-app "merge duplicates" action would clean the `outfits` table 
 - **`renderHome()` derives from in-memory state** — reads `items`, `wears`, `weatherCache`, `events`/`eventsLoaded` directly; no additional network calls. Events are loaded lazily: `renderHome` calls `loadEvents().then(() => renderHome())` if `eventsLoaded` is false, so the upcoming-events section auto-appears after data arrives.
 - **Week strip thumbnails** — each day cell shows the `image_path` of the first item worn that day (via `wearsByDay` map built from `wears` array). `data-photo` attribute on `.hd-thumb` means `hydratePhotos(body)` will fill signed URLs via the IntersectionObserver. The `.home-day.today` class applies the ink-background highlight; child elements inherit `color: #fff` for the label/number, but `.hd-thumb` uses its own background.
 - **Neglected "View all →"** — sets the module-level `neglectMode = true` then calls `switchTab("closet")`. This activates the same B4 neglect filter as the "Neglected" toggle button in the closet header, so the two stay in sync.
+- **`openFilterSheet()` closet filter sheet** — opens `#modal` + `#sheet` with Season/Color/Acquisition facets. State: `closetSeasonFilter`, `closetColorFilter`, `closetAcqFilter` (null or value). `closetFilterCount()` returns the active-filter count shown as a badge on the "Filters" button in the closet toolbar. All filters persist across sheet open/close; Done or ✕ closes + re-renders closet; Clear all resets all three + closes. `.fswatch` CSS class for the 34px circular color swatches.
 
 ## Deploy
 

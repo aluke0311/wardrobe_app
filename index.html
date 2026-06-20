@@ -161,6 +161,10 @@
   .filterbar select.inp { padding: 9px 10px; border-radius: 999px; }
   .filterbar input.inp { border-radius: 999px; padding: 9px 14px; }
 
+  /* ---------- filter sheet color swatches ---------- */
+  .fswatch { width: 34px; height: 34px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); cursor: pointer; transition: outline .1s; }
+  .fswatch.on { outline: 2px solid var(--ink); outline-offset: 2px; }
+
   /* ---------- active-capsule lens banner ---------- */
   .lensbar { display: flex; align-items: center; gap: 8px; background: var(--ink); color: #fff;
              border-radius: 12px; padding: 9px 12px; margin: 2px 0 12px; font-size: 13.5px; }
@@ -649,7 +653,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v18";
+const APP_VERSION = "2026-06-20 v19";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1264,16 +1268,17 @@ let neglectMode = false;         // B4: hide items worn in last 30 days, sort st
 // a per-grid control overrides it for the session.
 const SORT_KEY = "wardrobe.sort";
 const SORTS = [
-  ["added", "Recently added"], ["name", "Name A–Z"], ["color", "Color"],
-  ["category", "Category"], ["brand", "Brand"],
+  ["added", "Recently added"], ["purchased", "Recently purchased"], ["name", "Name A–Z"],
+  ["color", "Color"], ["category", "Category"], ["brand", "Brand"],
   ["price_hi", "Price: high→low"], ["price_lo", "Price: low→high"],
   ["worn", "Most worn"], ["cpw", "Best cost/wear"],
   ["recent", "Recently worn"], ["stale", "Longest unworn"],
 ];
 let closetSort = store.getItem("wardrobe.sort") || "added";
-let closetSeasonFilter = null;   // null = all, else "Summer" etc.
-let closetColorFilter = null;    // null = all, else a color family name
-let closetRecentFilter = false;  // true = only items purchased in last 90 days
+let closetSeasonFilter = null;      // null = all, else "Summer" etc.
+let closetColorFilter = null;       // null = all, else a color family name
+let closetRecentFilter = false;     // true = only items purchased in last 90 days
+let closetAcqFilter = null;         // null = all, else "New"|"Secondhand"|"Gift"
 
 function sortItems(list) {
   const arr = list.slice();
@@ -1281,6 +1286,7 @@ function sortItems(list) {
   const colorIdx = (i) => { const k = COLOR_FAMILIES.findIndex(c => c[0] === i.color_family); return k < 0 ? 999 : k; };
   const catIdx = (i) => { const k = CATEGORIES.indexOf(i.category); return k < 0 ? 999 : k; };
   switch (neglectMode ? "stale" : closetSort) {
+    case "purchased": arr.sort((a, b) => (b.purchase_date || "").localeCompare(a.purchase_date || "")); break;
     case "name": arr.sort(byName); break;
     case "color": arr.sort((a, b) => colorIdx(a) - colorIdx(b) || byName(a, b)); break;
     case "category": arr.sort((a, b) => catIdx(a) - catIdx(b) || (a.subcategory || "").localeCompare(b.subcategory || "") || byName(a, b)); break;
@@ -1344,6 +1350,7 @@ function applyNeglect(list) {
 function applyFacets(list) {
   if (closetSeasonFilter) list = list.filter(i => (i.season || []).includes(closetSeasonFilter));
   if (closetColorFilter) list = list.filter(i => i.color_family === closetColorFilter);
+  if (closetAcqFilter) list = list.filter(i => i.acquisition === closetAcqFilter);
   if (closetRecentFilter) {
     const cut = new Date(); cut.setDate(cut.getDate() - 90);
     const cutStr = cut.toISOString().slice(0, 10);
@@ -1351,8 +1358,11 @@ function applyFacets(list) {
   }
   return list;
 }
-function closetFilterActive() { return closetSeasonFilter || closetColorFilter || closetRecentFilter; }
-function clearClosetFacets() { closetSeasonFilter = null; closetColorFilter = null; closetRecentFilter = false; }
+function closetFilterActive() { return closetSeasonFilter || closetColorFilter || closetRecentFilter || closetAcqFilter; }
+function closetFilterCount() {
+  return [closetSeasonFilter, closetColorFilter, closetAcqFilter, closetRecentFilter ? "x" : null].filter(Boolean).length;
+}
+function clearClosetFacets() { closetSeasonFilter = null; closetColorFilter = null; closetRecentFilter = false; closetAcqFilter = null; }
 const itemCat = (i) => i.category || "Uncategorized";
 const itemSub = (i) => i.subcategory || null;
 function searchMatch(i, q) {
@@ -1440,14 +1450,18 @@ function renderCloset() {
   const filterChips = () => {
     const chips = [];
     if (closetRecentFilter) chips.push(`<button class="chip sel" data-fclear="recent">New (90d) ✕</button>`);
-    else chips.push(`<button class="chip" data-fset="recent">New (90d)</button>`);
     if (closetSeasonFilter) chips.push(`<button class="chip sel" data-fclear="season">${esc(closetSeasonFilter)} ✕</button>`);
     if (closetColorFilter)  chips.push(`<button class="chip sel" data-fclear="color">${esc(closetColorFilter)} ✕</button>`);
+    if (closetAcqFilter)    chips.push(`<button class="chip sel" data-fclear="acq">${esc(closetAcqFilter)} ✕</button>`);
     return chips.length ? `<div class="chips" style="margin:-2px 0 0" id="closetFilterChips">${chips.join("")}</div>` : "";
   };
+  const fCount = closetFilterCount();
   const rootHead = `
     <div class="filterbar">
-      <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
+      <div class="frow">
+        <input class="inp" style="flex:1;min-width:0" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
+        <button class="btn ghost" id="closetFilterBtn" style="white-space:nowrap;padding:9px 14px;border-radius:999px;font-size:13.5px;flex:none">Filters${fCount ? ` <span style="background:var(--ink);color:#fff;border-radius:999px;font-size:11px;padding:1px 6px;margin-left:2px">${fCount}</span>` : ""}</button>
+      </div>
       <div class="frow">${statusSegHtml()}</div>
       ${filterChips()}
     </div>`;
@@ -1533,12 +1547,79 @@ function wireClosetControls() {
   if (statusSel) statusSel.onchange = (e) => { closetStatus = e.target.value; drillCat = null; drillSub = null; renderCloset(); };
   const chips = $("#closetFilterChips");
   if (chips) chips.onclick = (e) => {
-    const s = e.target.closest("[data-fset]");
     const c = e.target.closest("[data-fclear]");
-    if (s?.dataset.fset === "recent") { closetRecentFilter = true; renderCloset(); }
     if (c?.dataset.fclear === "recent") { closetRecentFilter = false; renderCloset(); }
     if (c?.dataset.fclear === "season") { closetSeasonFilter = null; renderCloset(); }
     if (c?.dataset.fclear === "color")  { closetColorFilter = null;  renderCloset(); }
+    if (c?.dataset.fclear === "acq")    { closetAcqFilter = null;    renderCloset(); }
+  };
+  const filterBtn = $("#closetFilterBtn");
+  if (filterBtn) filterBtn.onclick = openFilterSheet;
+}
+
+function openFilterSheet() {
+  const seasonChips = SEASONS.map(s =>
+    `<button class="chip${closetSeasonFilter === s ? " sel" : ""}" data-fs="${esc(s)}">${esc(s)}</button>`
+  ).join("");
+  const colorSwatches = COLOR_FAMILIES.map(([name, hex]) =>
+    `<button class="fswatch${closetColorFilter === name ? " on" : ""}" data-fc="${esc(name)}" title="${esc(name)}"
+       style="background:${hex};outline:${closetColorFilter === name ? "2px solid var(--ink)" : "none"};outline-offset:2px"></button>`
+  ).join("");
+  const acqChips = ACQUISITIONS.map(a =>
+    `<button class="chip${closetAcqFilter === a ? " sel" : ""}" data-fa="${esc(a)}">${esc(a)}</button>`
+  ).join("");
+
+  const html = `
+    <div style="padding:16px 16px 0;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:18px;font-weight:700">Filter</span>
+      <button id="fsClose" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;color:var(--muted)">✕</button>
+    </div>
+    <div style="padding:12px 16px 32px">
+      <div style="font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:12px 0 8px">Season</div>
+      <div class="chips" id="fsSeasonRow">${seasonChips}</div>
+
+      <div style="font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:16px 0 8px">Color</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px" id="fsColorRow">${colorSwatches}</div>
+
+      <div style="font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:16px 0 8px">Source</div>
+      <div class="chips" id="fsAcqRow">${acqChips}</div>
+
+      <div style="margin-top:24px;display:flex;gap:10px">
+        <button class="btn ghost" id="fsClear" style="flex:1">Clear all</button>
+        <button class="btn" id="fsDone" style="flex:1">Done</button>
+      </div>
+    </div>`;
+
+  $("#sheet").innerHTML = html;
+  $("#modal").classList.add("open");
+
+  $("#fsClose").onclick = () => { closeModal(); renderCloset(); };
+  $("#fsDone").onclick   = () => { closeModal(); renderCloset(); };
+  $("#fsClear").onclick  = () => { clearClosetFacets(); closeModal(); renderCloset(); };
+
+  $("#fsSeasonRow").onclick = (e) => {
+    const b = e.target.closest("[data-fs]");
+    if (!b) return;
+    closetSeasonFilter = closetSeasonFilter === b.dataset.fs ? null : b.dataset.fs;
+    $$("#fsSeasonRow button").forEach(x => x.classList.toggle("sel", x.dataset.fs === closetSeasonFilter));
+  };
+
+  $("#fsColorRow").onclick = (e) => {
+    const b = e.target.closest("[data-fc]");
+    if (!b) return;
+    closetColorFilter = closetColorFilter === b.dataset.fc ? null : b.dataset.fc;
+    $$("#fsColorRow button").forEach(x => {
+      const on = x.dataset.fc === closetColorFilter;
+      x.classList.toggle("on", on);
+      x.style.outline = on ? "2px solid var(--ink)" : "none";
+    });
+  };
+
+  $("#fsAcqRow").onclick = (e) => {
+    const b = e.target.closest("[data-fa]");
+    if (!b) return;
+    closetAcqFilter = closetAcqFilter === b.dataset.fa ? null : b.dataset.fa;
+    $$("#fsAcqRow button").forEach(x => x.classList.toggle("sel", x.dataset.fa === closetAcqFilter));
   };
 }
 
