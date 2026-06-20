@@ -588,7 +588,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v5";
+const APP_VERSION = "2026-06-20 v6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3285,7 +3285,12 @@ function openDay(dateStr) {
           <div class="dn">${esc(it ? it.name : "?")}</div>
         </div>`;
       }).join("");
-      const outfitLabel = outfit ? `<div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px">Outfit${outfit.context ? " · " + esc(outfit.context) : ""}${rating ? " " + ratingEmoji(rating) : ""}</div>` : "";
+      const outfitLabel = outfit
+        ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+             <span style="font-size:12px;font-weight:600;color:var(--muted)">Outfit${outfit.context ? " · " + esc(outfit.context) : ""}${rating ? " " + ratingEmoji(rating) : ""}</span>
+             <button class="pill" data-deloutfit="${esc(g.outfitId)}" style="border:0;cursor:pointer;flex:none">Remove outfit</button>
+           </div>`
+        : "";
       const noteHtml = note ? `<div class="muted" style="font-size:12.5px;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">${esc(note)}</div>` : "";
       const wearId = g.wears[0]?.id;
       const editNoteHtml = `<div id="wn_${esc(wearId||"")}" style="font-size:12px;color:var(--accent);cursor:pointer;margin-top:4px" data-editnote="${esc(wearId||"")}">${note ? "Edit note" : "+ Add note"}</div>`;
@@ -3336,8 +3341,24 @@ function openDay(dateStr) {
     });
   }
 
-  // Wear blocks: remove a wear; item tap → openItem; note edit
+  // Wear blocks: remove whole outfit / remove a wear; item tap → openItem; note edit
   $("#dayWearBlocks").addEventListener("click", async (e) => {
+    const dox = e.target.closest("[data-deloutfit]");
+    if (dox) {
+      const oid = dox.dataset.deloutfit;
+      const ids = wears.filter(w => w.outfit_id === oid && w.worn_on === dateStr).map(w => w.id);
+      if (!ids.length) return;
+      if (!confirm(`Remove this whole outfit (${ids.length} item${ids.length === 1 ? "" : "s"}) from ${label}?`)) return;
+      try {
+        await rest(`wears?id=in.(${ids.join(",")})`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+        const idset = new Set(ids);
+        wears = wears.filter(w => !idset.has(w.id));
+        toast("Outfit removed from this day");
+        renderCalendar();
+        openDay(dateStr);
+      } catch (err) { toast(err.message); }
+      return;
+    }
     const dx = e.target.closest("[data-delwear]");
     if (dx) {
       const wid = dx.dataset.delwear;
