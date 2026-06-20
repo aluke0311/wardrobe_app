@@ -606,7 +606,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v13";
+const APP_VERSION = "2026-06-20 v14";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2202,6 +2202,7 @@ async function submitWear() {
    =================================================================== */
 let outfitsShown = 40;
 let outfitView = "worn";       // "worn" (derived accurate log) | "library" (raw template list)
+let outfitHideSingles = false; // filter: hide single-item entries in the Worn view
 let _wornAgg = new Map();      // cache: item-set key -> { ids:[], dates:Set } from wornOutfitMap()
 let suggestCtx  = null;        // active context filter for outfit suggestions
 let suggestSeed = 0;           // incremented on Refresh to shuffle candidates differently
@@ -2531,11 +2532,20 @@ function renderWornOutfits() {
     return { key, ids: v.ids, dates, count: dates.length, last: dates[dates.length - 1] };
   }).sort((a, b) => b.count - a.count || (b.last || "").localeCompare(a.last || ""));
 
-  const header = viewToggle() + `<div class="muted" style="font-size:13px;margin:0 2px 12px">${entries.length} distinct outfit${entries.length === 1 ? "" : "s"} worn</div>`;
+  const visible = outfitHideSingles ? entries.filter(e => e.ids.length > 1) : entries;
+  const singleCount = entries.length - entries.filter(e => e.ids.length > 1).length;
 
-  if (!entries.length) { body.innerHTML = header + `<div class="empty">No wears logged yet.</div>`; return; }
+  const header = viewToggle() + `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:0 2px 12px">
+      <span class="muted" style="font-size:13px">${visible.length} distinct outfit${visible.length === 1 ? "" : "s"} worn</span>
+      <button id="toggleSingles" class="pill${outfitHideSingles ? " on" : ""}" style="font-size:12.5px">
+        ${outfitHideSingles ? `Show singles (${singleCount})` : `Hide singles (${singleCount})`}
+      </button>
+    </div>`;
 
-  const cards = entries.slice(0, outfitsShown).map(e => {
+  if (!visible.length) { body.innerHTML = header + `<div class="empty">${entries.length ? "All entries are single-item — toggle to show them." : "No wears logged yet."}</div>`; wireToggleSingles(); return; }
+
+  const cards = visible.slice(0, outfitsShown).map(e => {
     const its = e.ids.map(id => items.find(i => i.id === id)).filter(Boolean);
     return `
       <div class="ofit" data-worn="${esc(e.key)}">
@@ -2547,13 +2557,19 @@ function renderWornOutfits() {
       </div>`;
   }).join("");
 
-  const more = entries.length > outfitsShown
-    ? `<button class="btn ghost" id="moreOutfits" style="margin-top:12px">Show more (${entries.length - outfitsShown} left)</button>` : "";
+  const more = visible.length > outfitsShown
+    ? `<button class="btn ghost" id="moreOutfits" style="margin-top:12px">Show more (${visible.length - outfitsShown} left)</button>` : "";
 
   body.innerHTML = header + cards + more;
+  wireToggleSingles();
   const mo = $("#moreOutfits");
   if (mo) mo.onclick = () => { outfitsShown += 40; renderOutfits(); };
   hydratePhotos(body);
+
+  function wireToggleSingles() {
+    const btn = $("#toggleSingles");
+    if (btn) btn.onclick = () => { outfitHideSingles = !outfitHideSingles; outfitsShown = 40; renderOutfits(); };
+  }
 }
 
 function openWornOutfit(key) {
