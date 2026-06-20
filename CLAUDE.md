@@ -111,7 +111,11 @@ items in. Logging an outfit creates a wear row per item.
 **Color families** (single per item): Green, Teal, Blue, Purple, Maroon, Pink,
 Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 
-## Migration (done — one-time)
+## Migration (initial run done; full reset planned)
+
+**Planned full data reset:** once the app is feature-complete, the user will
+update Airtable with new schema fields, replace photos, wipe Supabase, and
+re-import. Full plan in `migration/RESET_PLAN.md`. Current data is pilot/provisional.
 
 `migration/` holds the throwaway importer (NOT shipped, libraries/installs OK there):
 - `schema.sql` (repo root) — run in the Supabase SQL editor first. Done ✓.

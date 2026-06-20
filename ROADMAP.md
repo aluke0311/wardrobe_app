@@ -529,7 +529,30 @@ is independent; do as one-off slices.
 
 ---
 
-## 6. Explicitly NOT doing (by decision)
+## 6. Planned data reset (Airtable re-import)
+
+Once the app is feature-complete (or close to it), do a **full wipe and re-import
+from a cleaned-up Airtable base.** Current data is pilot/provisional — the reset
+gives a clean slate with properly enriched fields and better photos.
+
+**Full plan:** `migration/RESET_PLAN.md` — read that first. Summary:
+
+1. **Update Airtable schema** — add columns for all new fields: `Color Family`
+   (single select), `Min Occasion` / `Max Occasion` (1–7, new scale directly),
+   `Acquisition`, `Size`, `Fabric` (multi-select), `Season` (multi-select),
+   `Status` (Available/Storage/Archive), `Subcategory` (taxonomy values).
+2. **Bulk-fill data in Airtable** — fill in the enriched fields across all ~476 items.
+3. **Replace photos** — swap `Picture` attachments in Airtable with better shots;
+   the import script downloads and re-hosts them automatically.
+4. **Wipe Supabase** — `DELETE FROM outfit_items; capsule_items; wears; outfits; capsules; items;`
+   then wipe the `wardrobe` Storage bucket.
+5. **Update `migration/import.py`** — remove the `+1` occasion offset (`remap_occ`
+   currently shifts old 1-6 → 1-7; with new Airtable values on 1-7, just clamp).
+6. **Re-run:** `import.py --live` → `import_wears.py --live` → `import_outfits.py --live`.
+
+---
+
+## 7. Explicitly NOT doing (by decision)
 AI auto-tagging / bg-removal · stylist chat · semantic/embedding search · server
 proxy / Edge Functions · outfit collage canvas · social sharing · multi-user /
 accounts / monetization · built-in shopping/retailer browser · editorial content ·
