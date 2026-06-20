@@ -2,7 +2,7 @@
 
 > Single source of truth for what's next. Written so a **fresh session (any model)
 > can execute without re-deriving decisions**. Read `CLAUDE.md` (architecture +
-> hard constraints) and `schema.sql` (DB) alongside this. Status as of **v8**.
+> hard constraints) and `schema.sql` (DB) alongside this. Status as of **v14**.
 
 ---
 
@@ -178,6 +178,14 @@ with pre-selected ids. State: `suggestCtx`, `suggestSeed` (increments on Shuffle
 **Photo perf + transparency (v9–v11 2026-06-20):** batch-sign (`signedUrlBatch` /
 `prewarmUrlCache`) reduces ~476 per-image requests to ~5 on load. Transparent
 PNG/WebP garments now show on white tile (`loadPhotoNode` clears `backgroundColor`).
+**D2 — Weather integration ✓ (v12–v13 2026-06-20):** `loadWeather()` fetches
+open-meteo (no key) using geolocation or ZIP→lat/lon via zippopotam.us. `weatherCache`
+`{ temp_f, precip, code }` shown in suggest sheet header; scores nudge ±0.5 for
+season/temp match, −2 for Sandals in rain. Settings → Location card: ZIP input
+(primary), Auto-detect, Clear. All cached in localStorage with 30-min TTL.
+**Worn outfits filter ✓ (v14 2026-06-20):** "Hide singles / Show singles (N)" pill
+in Worn view header. `outfitHideSingles` bool filters `wornOutfitMap()` entries
+where `ids.length === 1`.
 
 ---
 
@@ -373,7 +381,7 @@ Definitions to implement (locked):
   dress, + shoes/layers), score = context occasion-overlap + current-season match +
   color harmony (neutral/analogous via `COLOR_FAMILIES` order) − recency penalty
   (worn recently). Return top N.
-- **D2 weather + calendar daily pick:** **open-meteo, no key** —
+- **D2 weather + calendar daily pick: ✓ done v12–v13** — `loadWeather` + `weatherCache`; see §4. Still to connect: wire into Home dashboard (Phase E) for the daily pick / week strip context. **open-meteo, no key** —
   `GET https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,precipitation,weather_code`.
   Location via `navigator.geolocation`, fallback lat/lon saved in Settings
   (`store` key `wardrobe.geo`). Map temp/precip → season/formality nudge for D1.

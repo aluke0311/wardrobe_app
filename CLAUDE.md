@@ -157,7 +157,7 @@ collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
 `3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
 *done* history.
 
-**Current state: v11 / 2026-06-20. All phases through B + partial C/D/F done.**
+**Current state: v14 / 2026-06-20. All phases through B + partial C/D/F done.**
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI that
 writes a new column/table before its migration is confirmed.**
 
@@ -168,10 +168,12 @@ writes a new column/table before its migration is confirmed.**
 - **Phase B complete:** B1 Calendar (month grid, events, day-detail) + B1 refinement (wears grouped by outfit_id, inline notes) · B2 Capsule polish (packing checklist, outfit→capsule) · B3 Wishlist status + purchase-justification card · B4 Rotation/"Neglected" mode.
 - **Phase C (Insights) partially complete:** KPI cards (item count, closet value, CPW, utilization) · drill-downs with time-range filter + Best/Worst toggle (CPW, Most Worn, Velocity, Never Worn, Best Purchases, Recency) · View Closet By donut charts (color/brand/size/season/fabric/price) · Occasion Coverage · **category filter chip row**. All Available-only scope. CPW $0 rule applied. *Airtable Goal CPW / Total Score formulas still pending — ask user for those formulas before implementing.*
 - **Phase D1 complete (v8 2026-06-20):** ✨ Outfit ideas button in Log→Outfit tab. `suggestOutfits(ctx, n)` scores Available items by season match, recency penalty (−3 worn <7d, −1 worn <30d), color harmony (neutrals/adjacent hues), formality overlap, co-occurrence bonus. Builds top+bottom and dress combos, optionally adds best-fit shoe. `openSuggestSheet()` shows 13 occasion chips to filter by formality, 🔄 Shuffle (reseed candidates), "Use this outfit" → `startOutfitBuilder(null, ids)`. State: `suggestCtx`, `suggestSeed`. Button is a static element in `#logOutfitPanel`, wired once in `wireEvents`.
+- **Phase D2 complete (v12–v13 2026-06-20):** Weather integration via open-meteo (no API key). `loadWeather(forceRefresh?)` fetches current temp/precip/code; `savedGeo()`/`requestGeo()` handle geolocation; `geoFromZip(zip)` looks up lat/lon via zippopotam.us as a fallback. `weatherCache` holds `{ temp_f, precip, code, fetched_ms }`, cached in `store` with 30-min TTL. Suggest sheet shows weather row (icon + temp + description). `suggestOutfits` scoring nudges ±0.5 for season/temp match and −2 for Sandals in rain. Settings → Location card: ZIP input (primary) + Auto-detect button + Clear; geo stored in `wardrobe.geo`, weather in `wardrobe.weather`, ZIP in `wardrobe.geo.zip`.
 - **Phase F partial:** F2 fill upgrades (Available-only pool, random field, shuffled order) · F5 item detail enrichment (outfit mosaic 2×2 collage, "Wear it with" pairings, "Create outfit" button, days-in-wardrobe KPI) · F8 type-ahead for brand/retailer/size.
 - **UI polish (2026-06-20 session, v1–v7):** all item photos → `contain` (fit, never cover) everywhere · item detail: back button on hero, combined last-worn/KPI row, tap-to-edit attribute rows (shared `readFillPatch` / `wireFillWidgets`) · calendar compacted · status filter → `<select>` dropdown · log screen overlap fixed · "Got compliments" removed · calendar "Log a wear for this day" now presets date correctly · calendar day-detail: ✕ per item + "Remove outfit" button · **"Worn" outfit log** via `wornOutfitMap()`.
 - **Photo improvements (v9–v11 2026-06-20):** v9 transparent backgrounds — `loadPhotoNode` sets `backgroundColor="transparent"` on successful URL load so transparent PNG/WebP garments show cleanly on white tile surface. v11 batch URL signing — `signedUrlBatch(paths)` uses `POST /storage/v1/object/sign/{bucket}` (body `{ paths, expiresIn }`) to sign up to 100 URLs in one call; `prewarmUrlCache()` fires after `loadData()` so all item photos are cache-ready before IntersectionObserver fires (reduces ~476 round-trips to ~5).
-- **Still pending:** D2–D4 (weather, capsule auto-gen, outfit dedup/merge) · E (Home dashboard) · F3/F4/F6/F7/F9.
+- **Worn outfits filter (v14 2026-06-20):** "Hide singles (N)" / "Show singles (N)" pill in the Worn outfits header. State: `outfitHideSingles` bool. Filters `wornOutfitMap()` entries where `ids.length === 1` before rendering; count badge shows how many singles exist. Resets `outfitsShown` on toggle.
+- **Still pending:** D3 (capsule auto-gen) · D4 (outfit dedup/merge, clone, action menu) · E (Home dashboard) · F3/F4/F6/F7/F9.
 
 **Outfit dedup note (D4, NOT started):** the import created one outfit row per
 wear-day, so the ~1,543 outfits include many duplicates (same item set, different
@@ -183,7 +185,7 @@ merge script + in-app "merge duplicates" action would clean the `outfits` table 
 - **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
   **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
   the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
-  Currently `2026-06-20 v11`.
+  Currently `2026-06-20 v14`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -214,6 +216,9 @@ merge script + in-app "merge duplicates" action would clean the `outfits` table 
 - **Batch-sign photo URLs on load** — `POST /storage/v1/object/sign/{bucket}` with body `{ paths: string[], expiresIn: number }` returns `[{ path, signedURL, error }]`; full URL = `` `${SUPABASE_URL}/storage/v1${row.signedURL}` ``. Call `prewarmUrlCache()` after `loadData()` to fill `_urlCache` before any IntersectionObserver fires. Don't `await` it — fire-and-forget so it doesn't block render.
 - **`button.pill.on` CSS needed for chip selected state** — the `.pill` class alone has no `.on` rule; add `button.pill.on { background: var(--ink); color: #fff; }` alongside any interactive chip group. The context chips in the suggest sheet use this.
 - **Transparent photo backgrounds** — `loadPhotoNode` sets `el.style.backgroundColor = "transparent"` when a URL resolves, letting the tile's white `--surface` show through transparent PNG/WebP garments. Placeholder tiles (no `data-photo`) keep the `#eceae6` warm gray.
+- **Weather is fire-and-forget** — `loadWeather()` is called without `await` in `bootApp` and `retryLoad` so it never blocks render. `weatherCache` starts null; the suggest sheet checks it at render time and simply omits the weather row if null. Don't await it in the boot path.
+- **`geoFromZip` uses zippopotam.us** — `GET https://api.zippopotam.us/us/{zip}` returns `{ places: [{ latitude, longitude }] }`. US-only, free, no key. Falls back gracefully (returns null) on bad ZIP or network error. Saves geo to `wardrobe.geo` same as `requestGeo`.
+- **`outfitHideSingles` filter state** — bool at module level, default false. Applied in `renderWornOutfits` before slicing for the "Show more" pagination, so the count and the "more" button reflect the filtered set, not the raw total.
 
 ## Deploy
 
