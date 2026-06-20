@@ -557,11 +557,15 @@
         </div>
         <div class="card stack" id="set_location_card">
           <div style="font-weight:600">Location</div>
-          <div class="muted" style="font-size:13.5px">Used for weather in outfit suggestions. Your coordinates are stored locally only.</div>
+          <div class="muted" style="font-size:13.5px">Used for weather in outfit suggestions. Stored locally only.</div>
           <div id="set_geo_status" style="font-size:13px;color:var(--muted)">No location saved.</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input class="inp" id="set_zip" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="5" placeholder="ZIP code" style="flex:1;max-width:120px">
+            <button class="btn" id="set_zip_save" style="flex:1">Save ZIP</button>
+          </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn ghost" id="set_geo_update" style="flex:1;min-width:120px">Update location</button>
-            <button class="btn ghost" id="set_geo_clear" style="flex:1;min-width:120px">Clear</button>
+            <button class="btn ghost" id="set_geo_update" style="flex:1;min-width:120px;font-size:13px">Auto-detect</button>
+            <button class="btn ghost" id="set_geo_clear" style="flex:1;min-width:120px;font-size:13px">Clear</button>
           </div>
         </div>
         <div class="card">
@@ -602,7 +606,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v12";
+const APP_VERSION = "2026-06-20 v13";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -873,6 +877,18 @@ async function requestGeo() {
       { timeout: 6000 }
     );
   });
+}
+async function geoFromZip(zip) {
+  try {
+    const r = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const place = d.places?.[0];
+    if (!place) return null;
+    const geo = { lat: +parseFloat(place.latitude).toFixed(4), lon: +parseFloat(place.longitude).toFixed(4) };
+    store.setItem("wardrobe.geo", JSON.stringify(geo));
+    return geo;
+  } catch { return null; }
 }
 async function loadWeather(forceRefresh) {
   try {
@@ -4392,6 +4408,25 @@ function wireEvents() {
     }
   }
   refreshGeoStatus();
+  // prefill zip if one was saved before
+  const _savedGeoRaw = store.getItem("wardrobe.geo.zip");
+  if (_savedGeoRaw) $("#set_zip").value = _savedGeoRaw;
+
+  $("#set_zip_save").addEventListener("click", async () => {
+    const zip = $("#set_zip").value.trim();
+    if (!/^\d{5}$/.test(zip)) { toast("Enter a 5-digit ZIP code"); return; }
+    const btn = $("#set_zip_save"); btn.disabled = true; btn.textContent = "Saving…";
+    store.setItem("wardrobe.geo.zip", zip);
+    const geo = await geoFromZip(zip);
+    if (geo) {
+      await loadWeather(true);
+      refreshGeoStatus();
+      toast("Location set from ZIP");
+    } else {
+      toast("ZIP not found — check the code and try again");
+    }
+    btn.disabled = false; btn.textContent = "Save ZIP";
+  });
   $("#set_geo_update").addEventListener("click", async () => {
     const btn = $("#set_geo_update"); btn.disabled = true; btn.textContent = "Detecting…";
     const geo = await requestGeo();
