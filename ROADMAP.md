@@ -433,23 +433,24 @@ Definitions to implement (locked):
 
 ---
 
-### Phase E — Home dashboard + nav rebalance  *(last)*
-Add a **Home** landing tab (dashboard). Target nav (~6): `Home · Closet · Log ·
-Calendar · Capsules · Insights` (Stats→Insights; Fill + Settings reachable from
-Home/a menu). Home cards: today's weather (D2), suggested capsule, recently worn,
-neglected pieces, in-laundry items, upcoming events (B1), quick log-wear, continue
-packing, closet-health score (C). Built last so it has real content to surface.
-
-**UI pattern (reference: ALTA home — user-provided 2026-06-19):**
-- **Week strip** across the top: Sun–Sat with date numbers, today underlined; each
-  day shows a silhouette/thumbnail of that day's planned or logged outfit (empty =
-  faded silhouette). Tapping a day → that day's calendar detail (B1). Two buttons
-  under it: **Add Look** and **Plan Event**.
-- **Greeting + weather** row: "Good afternoon, {name}" + current temp / hi-lo /
-  condition icon (D2 open-meteo).
-- **Today's suggestions**: a labeled, paged carousel ("Home casual" + cadence tag
-  like "Every day", `1/3`) of suggested outfits (item thumbnails grouped) for
-  today's context/weather (D1). Swipe through alternatives.
+### Phase E — Home dashboard + nav rebalance ✓ *done 2026-06-20 v18*
+Nav rebalanced to 6 tabs: `Home · Closet · Log · Calendar · Capsules · Insights`.
+Fill + Settings moved out of nav; Settings reachable via gear ⚙ icon in header;
+Fill via "Fill gaps" quick-action on Home. `renderHome()` builds:
+- **Week strip** (Sun–Sat, current week): each day shows first worn item's thumbnail
+  (or 👕 placeholder if worn but no photo, empty if nothing worn), wear-dot indicator,
+  today highlighted in ink. Tapping a day → `openDay(dateStr)` (calendar day-detail modal).
+- **Greeting + weather**: time-of-day greeting + `weatherCache` temp/icon/desc; "Set
+  location" link to Settings if no weather cached.
+- **Today's picks**: top 2 from `suggestOutfits(null, 2)` with thumbnails, item labels,
+  "Use this outfit" → `startOutfitBuilder`; "✨ More ideas" → `openSuggestSheet()`.
+- **Quick actions**: Log a wear · Fill gaps · Browse closet (3 ghost buttons).
+- **Upcoming events**: rendered if `eventsLoaded`; events loaded lazily on first Home
+  visit, re-renders when loaded. Tapping event row → `openDay`.
+- **Neglected strip**: horizontal scroll of Available items not worn in 30+ days, sorted
+  by longest-unworn first; "View all →" sets `neglectMode = true` + opens Closet.
+- **Needs attention**: items with `availability` Laundry/Cleaners/Lent or
+  `needs_repair`/`needs_tailoring`; each row tappable → `openItem`.
 
 ### Journal (threads through B/C — not its own slice)
 Outfit diary = wear `note` + `rating` + weather surfaced as a timeline (B1 + C7);
