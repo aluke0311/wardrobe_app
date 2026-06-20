@@ -606,7 +606,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v14";
+const APP_VERSION = "2026-06-20 v15";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2487,7 +2487,10 @@ function renderOutfits() {
   const header = viewToggle() + `
     <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 12px">
       <span class="muted" style="font-size:13px">${outfits.length} outfit${outfits.length === 1 ? "" : "s"}</span>
-      <button class="btn" id="newOutfitBtn" style="width:auto;padding:9px 14px">＋ New outfit</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn ghost" id="mergeDupesBtn" style="width:auto;padding:9px 14px;font-size:13px">Merge dupes</button>
+        <button class="btn" id="newOutfitBtn" style="width:auto;padding:9px 14px">＋ New outfit</button>
+      </div>
     </div>`;
 
   if (outfits.length === 0) {
@@ -2517,6 +2520,16 @@ function renderOutfits() {
 
   body.innerHTML = header + cards + more;
   $("#newOutfitBtn").onclick = () => startOutfitBuilder(null);
+  const mergeBtn = $("#mergeDupesBtn");
+  if (mergeBtn) mergeBtn.onclick = async () => {
+    if (!confirm(`Merge duplicate outfits? This groups saved outfits with identical item sets and keeps the earliest, re-linking all wear history to it. Can't be undone.`)) return;
+    mergeBtn.disabled = true; mergeBtn.textContent = "Merging…";
+    try {
+      const { kept, merged } = await mergeOutfitDuplicates();
+      toast(`Done — ${merged} duplicate${merged===1?"":"s"} merged, ${kept} unique outfit${kept===1?"":"s"} kept`);
+      renderOutfits();
+    } catch (e) { toast(e.message); mergeBtn.disabled = false; mergeBtn.textContent = "Merge dupes"; }
+  };
   const mo = $("#moreOutfits");
   if (mo) mo.onclick = () => { outfitsShown += 40; renderOutfits(); };
   hydratePhotos(body);
@@ -2636,6 +2649,17 @@ function openOutfit(id) {
 
     <div class="stack" style="margin-top:18px">
       <button class="btn ghost" id="oEdit">Edit outfit</button>
+      <button class="btn ghost" id="oDupe">Duplicate outfit</button>
+      ${capsulesLoaded && capsules.length ? `<div>
+        <label class="fld">Add to capsule</label>
+        <div style="display:flex;gap:8px">
+          <select class="inp" id="oCapSel" style="flex:1">
+            <option value="">— choose capsule —</option>
+            ${capsules.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}
+          </select>
+          <button class="btn ghost" id="oCapAdd" style="width:auto;padding:9px 14px">Add</button>
+        </div>
+      </div>` : ""}
       <button class="btn danger" id="oDel">Delete outfit</button>
       <button class="btn ghost" id="oClose">Close</button>
     </div>`;
@@ -2650,6 +2674,37 @@ function openOutfit(id) {
   };
   $("#oClose").onclick = closeModal;
   $("#oEdit").onclick = () => { closeModal(); startOutfitBuilder(o.id); };
+  $("#oDupe").onclick = async () => {
+    const btn = $("#oDupe"); btn.disabled = true; btn.textContent = "Duplicating…";
+    try {
+      await cloneOutfit(o.id);
+      toast("Outfit duplicated"); closeModal(); renderOutfits();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Duplicate outfit"; }
+  };
+  const oCapAdd = $("#oCapAdd");
+  if (oCapAdd) oCapAdd.onclick = async () => {
+    const capId = $("#oCapSel").value;
+    if (!capId) { toast("Pick a capsule first"); return; }
+    const ids = outfitItemMap.get(o.id) || [];
+    if (!ids.length) { toast("No items in this outfit"); return; }
+    oCapAdd.disabled = true; oCapAdd.textContent = "Adding…";
+    try {
+      // get existing capsule items to avoid duplicates
+      const existing = new Set(capsuleItems.filter(ci => ci.capsule_id === capId).map(ci => ci.item_id));
+      const toAdd = ids.filter(id => !existing.has(id));
+      if (toAdd.length) {
+        const rows = toAdd.map(item_id => ({ capsule_id: capId, item_id }));
+        const added = await rest("capsule_items", {
+          method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+          body: JSON.stringify(rows),
+        });
+        (added || []).forEach(ci => capsuleItems.push(ci));
+      }
+      const cap = capsules.find(c => c.id === capId);
+      toast(toAdd.length ? `Added ${toAdd.length} item${toAdd.length===1?"":"s"} to ${cap?.name||"capsule"}` : "Items already in that capsule");
+      oCapAdd.disabled = false; oCapAdd.textContent = "Add";
+    } catch (e) { toast(e.message); oCapAdd.disabled = false; oCapAdd.textContent = "Add"; }
+  };
   $("#oLog").onclick = async () => {
     const btn = $("#oLog"); btn.disabled = true; btn.textContent = "Logging…";
     try {
@@ -2721,6 +2776,69 @@ async function deleteOutfit(id) {
   wears.forEach(w => { if (w.outfit_id === id) w.outfit_id = null; });
 }
 
+async function cloneOutfit(id) {
+  const src = outfits.find(o => o.id === id);
+  if (!src) return;
+  const ids = outfitItemMap.get(id) || [];
+  const [created] = await rest("outfits", {
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({ context: src.context || null }),
+  });
+  if (ids.length) await rest("outfit_items", {
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(ids.map(item_id => ({ outfit_id: created.id, item_id }))),
+  });
+  outfits.unshift(created);
+  ids.forEach(item_id => outfitItems.push({ outfit_id: created.id, item_id }));
+  rebuildOutfitMap();
+  return created;
+}
+
+// Merge all duplicate outfits (same sorted item-set → keep earliest, repoint wears, delete dupes).
+// Returns { kept, merged } counts.
+async function mergeOutfitDuplicates() {
+  const groups = new Map(); // key → [outfit, ...]
+  for (const o of outfits) {
+    const ids = (outfitItemMap.get(o.id) || []).slice().sort();
+    const key = ids.join(",");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  }
+  let merged = 0;
+  for (const [, grp] of groups) {
+    if (grp.length < 2) continue;
+    grp.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+    const keeper = grp[0];
+    const dupes = grp.slice(1);
+    // repoint wears from dupes → keeper, then delete dupes
+    for (const d of dupes) {
+      const dupeWearIds = wears.filter(w => w.outfit_id === d.id).map(w => w.id);
+      if (dupeWearIds.length) {
+        // chunk to avoid URL length issues
+        for (let s = 0; s < dupeWearIds.length; s += 100) {
+          const chunk = dupeWearIds.slice(s, s + 100);
+          await rest(`wears?id=in.(${chunk.join(",")})`, {
+            method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify({ outfit_id: keeper.id }),
+          });
+        }
+        dupeWearIds.forEach(id => { const w = wears.find(x => x.id === id); if (w) w.outfit_id = keeper.id; });
+      }
+      await rest(`outfit_items?outfit_id=eq.${d.id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      await rest(`outfits?id=eq.${d.id}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      merged++;
+    }
+  }
+  outfits = outfits.filter(o => {
+    const grp = groups.get((outfitItemMap.get(o.id) || []).slice().sort().join(",")) || [];
+    return grp.length < 2 || grp[0].id === o.id;
+  });
+  outfitItems = outfitItems.filter(oi => outfits.some(o => o.id === oi.outfit_id));
+  wears.forEach(w => { if (w.outfit_id && !outfits.find(o => o.id === w.outfit_id)) w.outfit_id = null; });
+  rebuildOutfitMap();
+  return { kept: groups.size, merged };
+}
+
 /* ---- outfit builder (new / edit) ---- */
 let builderSel = new Set();   // selected item ids
 let builderEditId = null;
@@ -2747,6 +2865,10 @@ function startOutfitBuilder(editId, preIds) {
     <h2 class="sec">Items <span class="muted" id="bCount" style="font-size:12.5px;font-weight:400"></span></h2>
     <input class="inp" id="bSearch" placeholder="Search your closet" style="margin-bottom:10px">
     <div class="pickgrid" id="bGrid"></div>
+    ${editId ? "" : `<h2 class="sec" style="margin-top:18px">When logged…</h2>
+    <div class="stack" id="bRatingSlot">
+      ${ratingControls("b")}
+    </div>`}
     <div class="stack" style="margin-top:18px">
       <button class="btn" id="bSave">${editId ? "Save changes" : "Save outfit"}</button>
       ${editId ? "" : `<button class="btn ghost" id="bSaveLog">Save &amp; log as worn</button>`}
@@ -2758,6 +2880,7 @@ function startOutfitBuilder(editId, preIds) {
 
   $("#modal").classList.add("open");
   renderBuilderGrid();
+  if (!editId) wireRating("b");
   $("#bSearch").oninput = (e) => { builderQuery = e.target.value; renderBuilderGrid(true); };
   $("#bCancel").onclick = closeModal;
   $("#bSave").onclick = () => saveOutfit(false);
@@ -2821,7 +2944,7 @@ async function saveOutfit(alsoLog) {
       outfits.unshift(created);
       ids.forEach(item_id => outfitItems.push({ outfit_id: created.id, item_id }));
       rebuildOutfitMap();
-      if (alsoLog) { const n = await logOutfitWear(created, date); toast(n ? `Saved · logged ${n} wear${n === 1 ? "" : "s"}` : "Saved"); }
+      if (alsoLog) { const n = await logOutfitWear(created, date, readRating("b")); toast(n ? `Saved · logged ${n} wear${n === 1 ? "" : "s"}` : "Saved"); }
       else toast("Outfit saved");
     }
     closeModal();
