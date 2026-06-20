@@ -591,7 +591,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v8";
+const APP_VERSION = "2026-06-20 v9";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1070,7 +1070,7 @@ async function loadPhotoNode(n) {
   if (n.dataset.photoDone) return;
   n.dataset.photoDone = "1";
   const url = await signedUrl(n.dataset.photo);
-  if (url) n.style.backgroundImage = `url("${url}")`;
+  if (url) { n.style.backgroundImage = `url("${url}")`; n.style.backgroundColor = "transparent"; }
 }
 function hydratePhotos(root = document) {
   $$("[data-photo]", root)
