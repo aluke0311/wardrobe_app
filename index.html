@@ -50,7 +50,7 @@
           font-size: 19px; line-height: 1; display: flex; align-items: center; justify-content: center; }
   .hadd[hidden] { display: none; }
   .fillpic { width: 100%; max-width: 280px; aspect-ratio: 1/1; margin: 0 auto 14px; border-radius: var(--radius);
-             background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center;
+             background: #eceae6 center/contain no-repeat; display: flex; align-items: center; justify-content: center;
              color: var(--muted); font-size: 40px; }
 
   main.tabbody { padding: 0 16px calc(var(--nav-h) + var(--safe-b) + 24px); }
@@ -83,6 +83,7 @@
   }
   textarea.inp { resize: vertical; min-height: 70px; }
   .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .row2 > * { min-width: 0; }
   .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
   .btn {
     width: 100%; padding: 13px; border: 0; border-radius: 12px;
@@ -118,6 +119,10 @@
   /* ---------- closet filter bar ---------- */
   .filterbar { display: flex; flex-direction: column; gap: 9px; margin: 2px 0 14px; }
   .filterbar .frow { display: flex; gap: 8px; }
+  /* drill / search sub-header: title on its own line, controls wrap below */
+  .subhead { margin: 0 2px 12px; }
+  .subhead .sh-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .subhead .sh-ctrls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .filterbar select.inp { padding: 9px 10px; border-radius: 999px; }
   .filterbar input.inp { border-radius: 999px; padding: 9px 14px; }
 
@@ -133,7 +138,10 @@
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
   @media (min-width: 520px) { .grid { grid-template-columns: repeat(3, 1fr); } }
   .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-  .tile .ph { aspect-ratio: 1/1; background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 28px; position: relative; }
+  .tile .ph { aspect-ratio: 1/1; background: #eceae6 center/contain no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 28px; position: relative; }
+  /* outfit collage thumbnail (mini grid of the outfit's item photos) */
+  .omos { aspect-ratio: 1/1; display: grid; grid-auto-rows: 1fr; gap: 1px; background: var(--line); }
+  .omos .oc { background: #eceae6 center/contain no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 16px; }
   .tile .meta { padding: 9px 10px 11px; }
   .tile .meta .nm { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
   .tile .meta .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
@@ -145,7 +153,7 @@
   .folders { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .folder { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-top: 1px solid var(--line); background: none; text-align: left; }
   .folder:first-child { border-top: 0; }
-  .folder .fthumb { width: 52px; height: 52px; border-radius: 10px; background: #eceae6 center/cover no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
+  .folder .fthumb { width: 52px; height: 52px; border-radius: 10px; background: #eceae6 center/contain no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
   .folder .fgrow { flex: 1; min-width: 0; }
   .folder .fname { font-size: 16px; font-weight: 600; line-height: 1.2; }
   .folder .fcount { font-size: 13px; color: var(--muted); margin-top: 1px; }
@@ -181,10 +189,10 @@
   .ofit .top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
   .ofit .dt { font-size: 13.5px; font-weight: 600; }
   .thumbs { display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .thumbs .th { width: 58px; height: 58px; border-radius: 9px; background: #eceae6 center/cover no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 20px; }
+  .thumbs .th { width: 58px; height: 58px; border-radius: 9px; background: #eceae6 center/contain no-repeat; flex: none; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 20px; }
   .pickgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .pickgrid .pk { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
-  .pickgrid .pk .ph { aspect-ratio: 1/1; background: #eceae6 center/cover no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
+  .pickgrid .pk .ph { aspect-ratio: 1/1; background: #eceae6 center/contain no-repeat; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 22px; }
   .pickgrid .pk .nm { font-size: 10.5px; padding: 3px 5px 5px; line-height: 1.2; }
   .pickgrid .pk.sel { border-color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); }
   .pickgrid .pk.sel::after { content: "✓"; position: absolute; top: 4px; right: 5px; background: var(--ink); color: #fff; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; display: flex; align-items: center; justify-content: center; }
@@ -198,7 +206,7 @@
   .lst { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .lst .li { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-top: 1px solid var(--line); }
   .lst .li:first-child { border-top: 0; }
-  .lst .li .thumb { width: 38px; height: 38px; border-radius: 9px; background: #eceae6 center/cover no-repeat; flex: none; }
+  .lst .li .thumb { width: 38px; height: 38px; border-radius: 9px; background: #eceae6 center/contain no-repeat; flex: none; }
   .lst .li .grow { flex: 1; min-width: 0; }
   .lst .li .t1 { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .lst .li .t2 { font-size: 12px; color: var(--muted); }
@@ -221,9 +229,16 @@
   .modal.open { display: flex; }
   .sheet { background: var(--bg); width: 100%; max-width: 640px; margin: 0 auto; max-height: 92vh; overflow: auto;
            border-radius: 18px 18px 0 0; padding: 16px 16px calc(24px + var(--safe-b)); }
-  .sheet .hero { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); background: #eceae6 center/cover no-repeat; }
+  .hero-wrap { position: relative; margin-bottom: 2px; }
+  .sheet .hero { width: 100%; aspect-ratio: 4/3; border-radius: var(--radius); background: #eceae6 center/contain no-repeat; }
+  .hero-back { position: absolute; top: 10px; left: 10px; z-index: 5; background: rgba(0,0,0,.42); border: 0; color: #fff; border-radius: 50%; width: 34px; height: 34px; font-size: 19px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .kv { font-size: 14px; }
   .kv > div { padding: 2px 0; }
+  .kv .kvrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .kv .kvrow:last-child { border-bottom: 0; }
+  .kv .kvrow .kvval { text-align: right; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+  .kv .kvrow .chev { color: var(--muted); }
+  .kv .addlnk { color: var(--accent); }
 
   /* ---------- toast + misc ---------- */
   #toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + var(--safe-b) + 16px); transform: translateX(-50%);
@@ -236,24 +251,25 @@
   .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #eceae6; color: var(--muted); }
   .err { color: var(--danger); font-size: 13px; }
   .field-prev { width: 100%; aspect-ratio: 1/1; border-radius: var(--radius); border: 1px dashed var(--line);
-                background: var(--surface) center/cover no-repeat; display: flex; align-items: center; justify-content: center;
+                background: var(--surface) center/contain no-repeat; display: flex; align-items: center; justify-content: center;
                 color: var(--muted); font-size: 14px; text-align: center; }
 
   /* ---------- calendar ---------- */
   .cal-nav { display:flex; align-items:center; justify-content:space-between; padding:4px 0 12px; }
   .cal-nav .cal-title { font-weight:600; font-size:16px; }
   .cal-nav .cal-arr { background:none; border:none; font-size:24px; color:var(--ink); padding:4px 12px; line-height:1; }
-  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; }
-  .cal-hdr { text-align:center; font-size:11px; color:var(--muted); font-weight:600; padding:4px 0 6px; }
-  .cal-cell { position:relative; aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; user-select:none; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; max-width:380px; margin:0 auto; }
+  .cal-hdr { text-align:center; font-size:10.5px; color:var(--muted); font-weight:600; padding:2px 0 4px; }
+  .cal-cell { position:relative; aspect-ratio:1 / 0.78; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:7px; cursor:pointer; user-select:none; }
   .cal-cell.empty { cursor:default; pointer-events:none; }
-  .cal-num { font-size:13px; font-weight:500; }
-  .cal-today .cal-num { background:var(--ink); color:#fff; border-radius:50%; width:26px; height:26px; display:flex; align-items:center; justify-content:center; font-size:12px; }
-  .cal-dot { position:absolute; bottom:3px; width:5px; height:5px; border-radius:50%; background:var(--accent); }
+  .cal-num { font-size:12.5px; font-weight:500; }
+  .cal-today .cal-num { background:var(--ink); color:#fff; border-radius:50%; width:23px; height:23px; display:flex; align-items:center; justify-content:center; font-size:11.5px; }
+  .cal-dot { position:absolute; bottom:2px; width:4px; height:4px; border-radius:50%; background:var(--accent); }
   /* day-sheet wear thumbnails */
   .day-thumbs { display:flex; gap:8px; flex-wrap:wrap; }
   .day-th { width:72px; }
-  .day-th .dp { width:72px; height:72px; border-radius:10px; background:#eceae6 center/cover no-repeat; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:24px; }
+  .day-th .dp { position:relative; width:72px; height:72px; border-radius:10px; background:#eceae6 center/contain no-repeat; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:24px; }
+  .day-th .th-x { position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%; background:var(--danger); color:#fff; border:0; font-size:11px; line-height:1; display:flex; align-items:center; justify-content:center; cursor:pointer; z-index:2; }
   .day-th .dn { font-size:11px; margin-top:4px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:center; }
 </style>
 </head>
@@ -475,15 +491,13 @@
           <label class="fld">Item</label>
           <select class="inp" id="w_item"></select>
         </div>
-        <div class="row2">
-          <div>
-            <label class="fld">Worn on</label>
-            <input class="inp" id="w_date" type="date">
-          </div>
-          <div>
-            <label class="fld">Context</label>
-            <input class="inp" id="w_context" type="text" list="ctxList" placeholder="e.g. dinner with friends" autocomplete="off">
-          </div>
+        <div>
+          <label class="fld">Worn on</label>
+          <input class="inp" id="w_date" type="date">
+        </div>
+        <div>
+          <label class="fld">Context</label>
+          <input class="inp" id="w_context" type="text" list="ctxList" placeholder="e.g. dinner with friends" autocomplete="off">
         </div>
         <div id="w_ratingSlot"></div>
         <button class="btn" id="wearBtn">Log wear</button>
@@ -571,7 +585,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-19 v10";
+const APP_VERSION = "2026-06-20 v4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -826,6 +840,7 @@ let dataReady = false;
 let insightsWindow = "all";   // time-window filter for wear-based Insights stats
 let insightsField  = "color"; // active donut field
 let insightsDonutIdx = 0;     // highlighted donut segment index
+let statsCatFilter = null;    // category filter on Insights main page (null = all)
 
 let outfits = [];          // loaded lazily on first Outfits-tab open
 let outfitItems = [];      // {outfit_id, item_id}
@@ -961,6 +976,17 @@ function costPerWear(item) {
 function daysSince(dateStr) {
   if (!dateStr) return null;
   return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
+}
+// Human-friendly relative phrasing from a day count (e.g. "yesterday", "3 months ago").
+function relTime(days) {
+  if (days == null) return "";
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return days + " days ago";
+  if (days < 60) return "1 month ago";
+  if (days < 365) return Math.round(days / 30) + " months ago";
+  const y = Math.floor(days / 365);
+  return y === 1 ? "1 year ago" : y + " years ago";
 }
 const itemStatus = (i) => i.status || "Available";
 function projectedCpw(item) {
@@ -1174,10 +1200,12 @@ const densitySeg = () => `<div class="seg" id="densitySeg">
   </div>`;
 function statusSegHtml() {
   const counts = statusCounts();
-  return ["Available", "Storage", "Archive", "Wishlist", "All"].map(s => {
-    const n = s === "All" ? items.length : (counts[s] || 0);
-    return `<button data-status="${s}" class="${closetStatus === s ? "on" : ""}">${s} ${n}</button>`;
-  }).join("");
+  return `<select class="inp" id="closetStatusSel" style="width:auto;padding:9px 30px 9px 14px;border-radius:999px;font-size:13.5px">
+    ${["Available", "Storage", "Archive", "Wishlist", "All"].map(s => {
+      const n = s === "All" ? items.length : (counts[s] || 0);
+      return `<option value="${s}" ${closetStatus === s ? "selected" : ""}>${s} · ${n}</option>`;
+    }).join("")}
+  </select>`;
 }
 
 function renderCloset() {
@@ -1217,16 +1245,16 @@ function renderCloset() {
   const rootHead = `
     <div class="filterbar">
       <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
-      <div class="seg wrap" id="closetStatusSeg" style="align-self:flex-start">${statusSegHtml()}</div>
+      <div class="frow">${statusSegHtml()}</div>
     </div>`;
 
   // --- search overrides drill-down: flat results across the status scope ---
   if (q) {
     const list = scoped.filter(i => searchMatch(i, q));
     if (list.length) {
-      const controls = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
-        <span class="muted" style="font-size:13px">${list.length} item${list.length === 1 ? "" : "s"}</span>
-        <div style="display:flex;gap:8px;align-items:center">${sortSelect()}${densitySeg()}${selStartBtn()}</div></div>`;
+      const controls = `<div class="subhead">
+        <div class="sh-title muted" style="font-size:13px;font-weight:400">${list.length} item${list.length === 1 ? "" : "s"}</div>
+        <div class="sh-ctrls">${sortSelect()}${densitySeg()}${selStartBtn()}</div></div>`;
       body.innerHTML = rootHead + controls + (selectMode ? selectBar() : "") + gridHtml(sortItems(list));
     } else {
       body.innerHTML = rootHead + `<div class="empty">No items match.</div>`;
@@ -1280,9 +1308,9 @@ function renderCloset() {
 
   body.innerHTML =
     `<button class="backrow" data-back="${backTarget}">‹ ${esc(backTarget === "root" ? "Closet" : drillCat)}</button>
-     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 2px 10px">
-       <span style="font-size:15px;font-weight:600">${esc(scopeLabel + leafLabel)} <span class="muted" style="font-weight:400">· ${list.length}</span></span>
-       <div style="display:flex;gap:8px;align-items:center">${neglectBtn()}${sortSelect()}${densitySeg()}${selStartBtn()}</div>
+     <div class="subhead">
+       <div class="sh-title">${esc(scopeLabel + leafLabel)} <span class="muted" style="font-weight:400">· ${list.length}</span></div>
+       <div class="sh-ctrls">${neglectBtn()}${sortSelect()}${densitySeg()}${selStartBtn()}</div>
      </div>` +
     (selectMode ? selectBar() : "") +
     (list.length ? gridHtml(sortItems(list)) : `<div class="empty">No items.</div>`);
@@ -1297,6 +1325,8 @@ function wireClosetControls() {
   if (search) search.oninput = (e) => { closetQuery = e.target.value; debouncedCloset(); };
   const sortSel = $("#sortSel");
   if (sortSel) sortSel.onchange = (e) => { closetSort = e.target.value; renderCloset(); };
+  const statusSel = $("#closetStatusSel");
+  if (statusSel) statusSel.onchange = (e) => { closetStatus = e.target.value; drillCat = null; drillSub = null; renderCloset(); };
 }
 
 // Debounce closet re-render while typing so we don't re-render per keystroke,
@@ -1457,9 +1487,18 @@ function openItem(id) {
   }
 
   const detailLine = (label, val) => val ? `<div><span class="muted">${label}:</span> ${val}</div>` : "";
+  // Tappable row that opens the single-field inline editor (Stylebook-style).
+  const editRow = (label, val, field) =>
+    `<div class="kvrow" data-edit="${field}">
+       <span class="muted">${esc(label)}</span>
+       <span class="kvval">${val ? esc(val) : `<span class="addlnk">Add</span>`}<span class="chev">›</span></span>
+     </div>`;
 
   $("#sheet").innerHTML = `
-    <div class="hero" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}></div>
+    <div class="hero-wrap">
+      <div class="hero" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}></div>
+      <button class="hero-back" id="sheetClose2">‹</button>
+    </div>
     <h2 style="margin:14px 2px 2px;font-size:20px">${esc(i.name)}</h2>
     <div class="muted" style="margin:0 2px 12px">
       ${esc([i.category, i.subcategory].filter(Boolean).join(" · ") || "—")}${i.brand ? " · " + esc(i.brand) : ""}
@@ -1473,29 +1512,31 @@ function openItem(id) {
       <div class="kpi"><div class="big">${daysOwned != null ? daysOwned + "d" : "—"}</div><div class="lbl">In wardrobe</div></div>
     </div>
 
-    ${occ ? `<h2 class="sec">Occasion</h2><div class="card"><div style="font-size:14px">${esc(occ)}</div>${ladderBar(i)}
-      ${ctxs.length ? `<div class="muted" style="font-size:12.5px;margin-top:9px">Works for: ${ctxs.map(c => esc(c.name)).join(", ")}</div>` : ""}</div>` : ""}
+    <h2 class="sec">Occasion</h2>
+    <div class="card kv"><div class="kvrow" data-edit="occasion"><span class="muted">${occ ? esc(occ) : `<span class="addlnk">Set occasion range</span>`}</span><span class="kvval"><span class="chev">›</span></span></div>
+      ${occ ? ladderBar(i) : ""}
+      ${ctxs.length ? `<div class="muted" style="font-size:12.5px;margin-top:9px">Works for: ${ctxs.map(c => esc(c.name)).join(", ")}</div>` : ""}</div>
 
-    ${colorChip ? `<h2 class="sec">Color</h2><div class="chips">${colorChip}</div>` : ""}
+    <h2 class="sec">Color</h2>
+    <div class="card kv"><div class="kvrow" data-edit="color"><span class="muted">Color</span><span class="kvval">${colorChip || `<span class="addlnk">Add</span>`}<span class="chev">›</span></span></div></div>
 
     <h2 class="sec">Details</h2>
-    <div class="card stack kv">
+    <div class="card kv">
+      ${editRow("Acquisition", i.acquisition, "acquisition")}
+      ${editRow("Size", i.size, "size")}
+      ${editRow("Fabric", (i.fabric && i.fabric.length) ? i.fabric.join(", ") : "", "fabric")}
+      ${editRow("Season", (i.season && i.season.length) ? i.season.join(", ") : "", "season")}
+      ${editRow("Care", (i.care && i.care.length) ? i.care.join(", ") : "", "care")}
+      ${editRow("Fit", i.fit, "fit")}
+      ${editRow("Length", i.length, "length")}
+      ${(i.category === "Bottoms" || i.rise) ? editRow("Rise", i.rise, "rise") : ""}
+      ${editRow("Stored in", i.storage_location, "storage_location")}
       ${detailLine("Retailer", i.retailer ? esc(i.retailer) : "")}
-      ${detailLine("Acquisition", i.acquisition ? esc(i.acquisition) : "")}
-      ${detailLine("Size", i.size ? esc(i.size) : "")}
-      ${detailLine("Fabric", (i.fabric && i.fabric.length) ? esc(i.fabric.join(", ")) : "")}
-      ${detailLine("Season", (i.season && i.season.length) ? esc(i.season.join(", ")) : "")}
       ${detailLine("Purchased", i.purchase_date ? esc(i.purchase_date) + (i.date_is_guess ? " (guess)" : "") : "")}
       ${detailLine("Retail price", i.price_original != null ? money(i.price_original) : "")}
-      ${detailLine("Last worn", lw ? esc(lw) : "Never")}
-      ${ds != null ? detailLine("Days since worn", ds + "d") : ""}
+      ${detailLine("Last worn", lw ? `${esc(relTime(ds))} · ${esc(lw)}` : "Never")}
       ${detailLine("Available", (i.availability && i.availability !== "Ready") ? esc(i.availability) : "")}
-      ${detailLine("Care", (i.care && i.care.length) ? esc(i.care.join(", ")) : "")}
       ${(i.needs_repair || i.needs_tailoring) ? `<div><span class="muted">Upkeep:</span> ${[i.needs_repair ? "needs repair" : "", i.needs_tailoring ? "needs tailoring" : ""].filter(Boolean).join(" · ")}</div>` : ""}
-      ${detailLine("Fit", i.fit ? esc(i.fit) : "")}
-      ${detailLine("Length", i.length ? esc(i.length) : "")}
-      ${detailLine("Rise", i.rise ? esc(i.rise) : "")}
-      ${detailLine("Stored in", i.storage_location ? esc(i.storage_location) : "")}
       ${detailLine("Tags", (i.tags && i.tags.length) ? esc(i.tags.join(", ")) : "")}
       ${i.url ? `<div><span class="muted">Link:</span> <a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.url)}</a></div>` : ""}
       ${detailLine("Notes", i.notes ? esc(i.notes) : "")}
@@ -1508,9 +1549,13 @@ function openItem(id) {
     <div class="grid" id="itemOutfitGrid">
       ${itemOutfitIds.slice(0, 8).map(oid => {
         const its2 = (outfitItemMap.get(oid) || []).map(pid => items.find(x => x.id === pid)).filter(Boolean);
-        const ph2 = its2.find(x => x.image_path);
+        // collage: photos first, up to 4, in a 2-col mini grid (1 col if a single item)
+        const cells = its2.slice().sort((a, b) => (b.image_path ? 1 : 0) - (a.image_path ? 1 : 0)).slice(0, 4);
+        const cols = cells.length <= 1 ? 1 : 2;
         return `<div class="tile" data-outfit="${oid}">
-          <div class="ph" ${ph2 ? `data-photo="${esc(ph2.image_path)}"` : ""}>👗</div>
+          <div class="omos" style="grid-template-columns:repeat(${cols},1fr)">
+            ${cells.map(it => `<div class="oc" ${it.image_path ? `data-photo="${esc(it.image_path)}"` : ""}>${it.image_path ? "" : "👕"}</div>`).join("")}
+          </div>
           <div class="meta"><div class="nm">${its2.length} items</div></div>
         </div>`;
       }).join("")}
@@ -1557,6 +1602,10 @@ function openItem(id) {
     const t = e.target.closest("[data-item]");
     if (t) { closeModal(); openItem(t.dataset.item); }
   });
+  // Tap an attribute row → inline single-field editor
+  $("#sheet").querySelectorAll("[data-edit]").forEach(el => {
+    el.addEventListener("click", () => editField(i.id, el.dataset.edit));
+  });
   $("#sheetNewOutfit").onclick = () => {
     closeModal();
     if (!outfitsLoaded) { ensureOutfits().then(() => startOutfitBuilder(null, [i.id])); }
@@ -1564,6 +1613,7 @@ function openItem(id) {
   };
 
   $("#sheetClose").onclick = closeModal;
+  $("#sheetClose2").onclick = closeModal;
   $("#sheetEdit").onclick = () => { closeModal(); startEdit(i.id); };
   if ($("#sheetWear")) $("#sheetWear").onclick = async () => {
     try { await logWear(i.id, todayStr(), null); toast("Wear logged"); closeModal(); refreshViews(); }
@@ -1614,6 +1664,10 @@ function openItem(id) {
       toast("Deleted"); closeModal(); refreshViews();
     } catch (e) { toast(e.message); }
   };
+  // Load outfits lazily so the mosaic + pairings appear even if Outfits tab was never opened
+  if (!outfitsLoaded) {
+    ensureOutfits().then(() => { if ($("#modal").classList.contains("open")) openItem(id); }).catch(() => {});
+  }
 }
 function closeModal() { $("#modal").classList.remove("open"); $("#sheet").onclick = null; }
 
@@ -1976,7 +2030,7 @@ function renderRecentWears() {
       <div class="thumb" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}></div>
       <div class="grow">
         <div class="t1">${esc(it ? it.name : "Deleted item")}</div>
-        <div class="t2">${esc(w.worn_on)}${w.context ? " · " + esc(w.context) : ""}${w.rating ? " · " + ratingEmoji(w.rating) : ""}${w.compliments ? " 👏" : ""}</div>
+        <div class="t2">${esc(w.worn_on)}${w.context ? " · " + esc(w.context) : ""}${w.rating ? " · " + ratingEmoji(w.rating) : ""}</div>
       </div>
       <button class="pill" data-delwear="${w.id}" style="border:0;cursor:pointer">remove</button>
     </div>`;
@@ -2091,7 +2145,7 @@ function openOutfit(id) {
 
     ${n ? `<h2 class="sec">Worn on</h2><div class="card"><div class="muted" style="font-size:13px">${wd.map(d => {
       const m = outfitDayMeta(o.id, d);
-      return esc(d) + (m && m.rating ? " " + ratingEmoji(m.rating) : "") + (m && m.compliments ? " 👏" : "");
+      return esc(d) + (m && m.rating ? " " + ratingEmoji(m.rating) : "");
     }).join(" · ")}</div></div>` : ""}
 
     <h2 class="sec">Log this outfit as worn</h2>
@@ -2827,8 +2881,14 @@ function showDrillDown(title, listFn, metricFn, opts = {}) {
 function renderStats() {
   const body = $("#statsBody");
   if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
-  const pool = iPool();
-  if (!pool.length) { body.innerHTML = `<div class="empty">Add items to see insights.</div>`; return; }
+  const allPool = iPool();
+  if (!allPool.length) { body.innerHTML = `<div class="empty">Add items to see insights.</div>`; return; }
+  const pool = statsCatFilter ? allPool.filter(i => i.category === statsCatFilter) : allPool;
+
+  // Category filter chips
+  const catChips = `<div class="chips" style="margin-bottom:14px" id="statsCatChips">
+    ${["All", ...Object.keys(TAXONOMY)].map(c => `<button type="button" class="chip${(!statsCatFilter && c==="All")||(statsCatFilter===c)?" sel":""}" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}
+  </div>`;
 
   const poolIds = new Set(pool.map(i=>i.id));
 
@@ -2851,10 +2911,10 @@ function renderStats() {
   const ninetyStr = ninetyCut.toISOString().slice(0,10);
   const velocityCount = new Set(wears.filter(w=>w.worn_on>=ninetyStr&&poolIds.has(w.item_id)).map(w=>w.item_id)).size;
   const bestBuyCount = pool.filter(i=>i.price>0&&wearCount(i.id)>0).length;
-  // Outfit potential: tops×bottoms + dresses
-  const tops = pool.filter(i=>i.category==="Tops").length;
-  const bottoms = pool.filter(i=>i.category==="Bottoms").length;
-  const dresses = pool.filter(i=>i.category==="Dresses").length;
+  // Outfit potential: always cross-category regardless of filter
+  const tops = allPool.filter(i=>i.category==="Tops").length;
+  const bottoms = allPool.filter(i=>i.category==="Bottoms").length;
+  const dresses = allPool.filter(i=>i.category==="Dresses").length;
   const outfitPotential = tops*bottoms + dresses;
 
   // Recency counts
@@ -2873,7 +2933,7 @@ function renderStats() {
       <div class="val">${val!=null?esc(String(val)):"?"} ›</div>
     </div>`;
 
-  body.innerHTML = `
+  body.innerHTML = catChips + `
     <div class="kpis" style="margin-bottom:16px">
       <div class="kpi"><div class="big">${pool.length}</div><div class="lbl">Items</div></div>
       <div class="kpi"><div class="big">${money(closetValue)}</div><div class="lbl">Closet value</div></div>
@@ -2928,6 +2988,11 @@ function renderStats() {
     <p class="muted" style="font-size:12px;margin:0 0 20px">Available items only.</p>`;
 
   body.onclick = (e) => {
+    const chip = e.target.closest("[data-cat]");
+    if (chip) {
+      statsCatFilter = chip.dataset.cat === "All" ? null : chip.dataset.cat;
+      renderStats(); return;
+    }
     const r = e.target.closest("[data-ikey]");
     if (!r) return;
     const key = r.dataset.ikey;
@@ -3211,7 +3276,7 @@ function openDay(dateStr) {
       const thumbs = g.wears.map(w => {
         const it = items.find(x => x.id === w.item_id);
         return `<div class="day-th" data-item="${w.item_id}">
-          <div class="dp" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}>${it?.image_path ? "" : "👕"}</div>
+          <div class="dp" ${it?.image_path ? `data-photo="${esc(it.image_path)}"` : ""}>${it?.image_path ? "" : "👕"}<button class="th-x" data-delwear="${esc(w.id)}" aria-label="Remove from this day">✕</button></div>
           <div class="dn">${esc(it ? it.name : "?")}</div>
         </div>`;
       }).join("");
@@ -3266,8 +3331,23 @@ function openDay(dateStr) {
     });
   }
 
-  // Wear blocks: item tap → openItem; note edit
+  // Wear blocks: remove a wear; item tap → openItem; note edit
   $("#dayWearBlocks").addEventListener("click", async (e) => {
+    const dx = e.target.closest("[data-delwear]");
+    if (dx) {
+      const wid = dx.dataset.delwear;
+      const wear = wears.find(w => w.id === wid);
+      const it = wear && items.find(x => x.id === wear.item_id);
+      if (!confirm(`Remove ${it ? it.name : "this item"} from ${label}?`)) return;
+      try {
+        await rest(`wears?id=eq.${wid}`, { method: "DELETE", headers: { Prefer: "return=minimal" } });
+        wears = wears.filter(w => w.id !== wid);
+        toast("Removed from this day");
+        renderCalendar();
+        openDay(dateStr);
+      } catch (err) { toast(err.message); }
+      return;
+    }
     const ni = e.target.closest("[data-editnote]");
     if (ni) {
       const wearId = ni.dataset.editnote;
@@ -3288,8 +3368,10 @@ function openDay(dateStr) {
     if (ti) { closeModal(); openItem(ti.dataset.item); }
   });
 
-  $("#dayLogWear").onclick = () => { closeModal(); logPresetDate = dateStr; setLogMode("wear"); switchTab("log"); };
-  $("#dayLogOutfit").onclick = () => { closeModal(); logPresetDate = dateStr; setLogMode("outfit"); switchTab("log"); };
+  // set mode + preset date, then let switchTab build the Log tab once (building
+  // twice would consume the preset and reset the field back to today)
+  $("#dayLogWear").onclick = () => { closeModal(); logMode = "wear"; logPresetDate = dateStr; switchTab("log"); };
+  $("#dayLogOutfit").onclick = () => { closeModal(); logMode = "outfit"; logPresetDate = dateStr; switchTab("log"); };
   $("#dayAddEvent").onclick = () => { closeModal(); openAddEvent(dateStr); };
   $("#dayClose").onclick = closeModal;
 }
@@ -3346,7 +3428,12 @@ function switchTab(name) {
   if (name === "log") buildLogTab();
   if (name === "fill") renderFill();
   if (name === "stats") ensureInsights();
-  if (name === "closet") renderCloset();
+  if (name === "closet") {
+    // tapping Closet always returns to the main (root) closet screen
+    drillCat = null; drillSub = null;
+    selectMode = false; selectedItems.clear();
+    renderCloset();
+  }
   if (name === "capsules") ensureCapsules();
   if (name === "calendar") ensureCalendar();
   // Tapping the Add screen fresh (not via Edit) should start a clean form.
@@ -3379,7 +3466,6 @@ function ratingControls(prefix) {
         ${RATINGS.map(([v, l, e]) => `<button type="button" data-rate="${v}">${e} ${l}</button>`).join("")}
       </div>
     </div>
-    <label class="checkrow"><input type="checkbox" id="${prefix}_compliments"> Got compliments 👏</label>
     <div><input class="inp" id="${prefix}_note" placeholder="Note (optional)"></div>`;
 }
 function wireRating(prefix) {
@@ -3396,7 +3482,6 @@ function readRating(prefix) {
   const on = $(`#${prefix}_rate button.on`);
   return {
     rating: on ? Number(on.dataset.rate) : null,
-    compliments: $(`#${prefix}_compliments`)?.checked || false,
     note: $(`#${prefix}_note`)?.value.trim() || null,
   };
 }
@@ -3524,7 +3609,16 @@ function renderFill() {
       <button class="btn ghost" id="fillEdit">Edit full item</button>
     </div>`;
 
-  // toggle behaviors for the chip/seg widgets
+  wireFillWidgets();
+  $("#fillSave").onclick = () => fillSave(item.id, field);
+  $("#fillSkip").onclick = () => renderFill();
+  $("#fillEdit").onclick = () => startEdit(item.id);
+  hydratePhotos(body);
+}
+
+// Toggle behaviors for the chip/seg widgets produced by fillWidget(). Reused by
+// the Fill tab and the item-detail single-field editor (editField).
+function wireFillWidgets() {
   const single = (wrapId, attr) => {
     const w = $(wrapId); if (!w) return;
     w.onclick = (e) => {
@@ -3540,7 +3634,6 @@ function renderFill() {
   if (seasonW) seasonW.onclick = (e) => { const b = e.target.closest("[data-season]"); if (b) b.classList.toggle("sel"); };
   const careW = $("#fill_care");
   if (careW) careW.onclick = (e) => { const b = e.target.closest("[data-care]"); if (b) b.classList.toggle("sel"); };
-  // single-select seg controls for slice 8 fields
   ["#fill_storage_loc", "#fill_fit", "#fill_length", "#fill_rise"].forEach(id => {
     const w = $(id); if (!w) return;
     w.onclick = (e) => {
@@ -3550,45 +3643,117 @@ function renderFill() {
       if (!wasOn) b.classList.add("on");
     };
   });
-
-  $("#fillSave").onclick = () => fillSave(item.id, field);
-  $("#fillSkip").onclick = () => renderFill();
-  $("#fillEdit").onclick = () => startEdit(item.id);
-  hydratePhotos(body);
 }
 
-async function fillSave(itemId, field) {
+// Pre-select an item's existing values in a freshly-rendered fillWidget so the
+// editor opens showing the current state (the Fill tab starts blank instead).
+function prefillFillWidget(item, field) {
+  const markSel = (sel) => { const el = sel && $(sel); if (el) el.classList.add("sel"); };
+  const markOn  = (sel) => { const el = sel && $(sel); if (el) el.classList.add("on"); };
+  if (field === "occasion") {
+    if (item.min_occasion != null && $("#fill_min")) $("#fill_min").value = item.min_occasion;
+    if (item.max_occasion != null && $("#fill_max")) $("#fill_max").value = item.max_occasion;
+  } else if (field === "color" && item.color_family) {
+    markSel(`#fill_color [data-color="${CSS.escape(item.color_family)}"]`);
+  } else if (field === "subcategory" && item.subcategory) {
+    markSel(`#fill_sub [data-subc="${CSS.escape(item.subcategory)}"]`);
+  } else if (field === "season") {
+    (item.season || []).forEach(s => markSel(`#fill_season [data-season="${CSS.escape(s)}"]`));
+  } else if (field === "care") {
+    (item.care || []).forEach(c => markSel(`#fill_care [data-care="${CSS.escape(c)}"]`));
+  } else if (field === "acquisition" && item.acquisition) {
+    markOn(`#fill_acq [data-acq="${CSS.escape(item.acquisition)}"]`);
+  } else if (field === "fabric" && item.fabric?.length) {
+    if ($("#fill_fabric")) $("#fill_fabric").value = item.fabric.join(", ");
+  } else if (field === "price" && item.price != null) {
+    if ($("#fill_price")) $("#fill_price").value = item.price;
+  } else if (field === "size" && item.size) {
+    if ($("#fill_size")) $("#fill_size").value = item.size;
+  } else if (field === "storage_location" && item.storage_location) {
+    markOn(`#fill_storage_loc [data-loc="${CSS.escape(item.storage_location)}"]`);
+  } else if (field === "fit" && item.fit) {
+    markOn(`#fill_fit [data-fit="${CSS.escape(item.fit)}"]`);
+  } else if (field === "length" && item.length) {
+    markOn(`#fill_length [data-length="${CSS.escape(item.length)}"]`);
+  } else if (field === "rise" && item.rise) {
+    markOn(`#fill_rise [data-rise="${CSS.escape(item.rise)}"]`);
+  }
+}
+
+// Single-field inline editor opened from the item-detail attribute rows.
+function editField(itemId, field) {
+  const item = items.find(x => x.id === itemId);
+  if (!item) return;
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 14px;font-size:19px">${esc(item.name)}</h2>
+    <div class="card stack">
+      <label class="fld" style="font-size:14px;color:var(--ink)">${esc(FILL_PROMPT[field] || field)}</label>
+      ${fillWidget(item, field)}
+    </div>
+    <div class="stack" style="margin-top:16px">
+      <button class="btn" id="efSave">Save</button>
+      <button class="btn ghost" id="efCancel">Cancel</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  wireFillWidgets();
+  prefillFillWidget(item, field);
+  $("#efCancel").onclick = () => openItem(itemId);
+  $("#efSave").onclick = async () => {
+    const patch = readFillPatch(field);
+    if (!patch) return;
+    const btn = $("#efSave"); btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const [u] = await rest(`items?id=eq.${itemId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(patch) });
+      const idx = items.findIndex(x => x.id === itemId); if (idx >= 0) items[idx] = u;
+      toast("Saved");
+      openItem(itemId);
+      refreshViews();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Save"; }
+  };
+}
+
+// Read the chosen value(s) out of the fillWidget DOM into a PATCH body.
+// Returns the patch object, or null (after toasting) if validation fails.
+function readFillPatch(field) {
   const patch = {};
   if (field === "occasion") {
     const mn = $("#fill_min").value, mx = $("#fill_max").value;
-    if (!mn || !mx) { toast("Pick both ends"); return; }
-    if (Number(mx) < Number(mn)) { toast("'To' must be ≥ 'From'"); return; }
+    if (!mn || !mx) { toast("Pick both ends"); return null; }
+    if (Number(mx) < Number(mn)) { toast("'To' must be ≥ 'From'"); return null; }
     patch.min_occasion = Number(mn); patch.max_occasion = Number(mx);
   } else if (field === "color") {
-    const s = $("#fill_color .sel"); if (!s) { toast("Pick a color"); return; } patch.color_family = s.dataset.color;
+    const s = $("#fill_color .sel"); if (!s) { toast("Pick a color"); return null; } patch.color_family = s.dataset.color;
   } else if (field === "subcategory") {
-    const s = $("#fill_sub .sel"); if (!s) { toast("Pick one"); return; } patch.subcategory = s.dataset.subc;
+    const s = $("#fill_sub .sel"); if (!s) { toast("Pick one"); return null; } patch.subcategory = s.dataset.subc;
   } else if (field === "season") {
-    const s = $$("#fill_season .sel").map(b => b.dataset.season); if (!s.length) { toast("Pick at least one"); return; } patch.season = s;
+    const s = $$("#fill_season .sel").map(b => b.dataset.season); if (!s.length) { toast("Pick at least one"); return null; } patch.season = s;
   } else if (field === "care") {
-    const s = $$("#fill_care .sel").map(b => b.dataset.care); if (!s.length) { toast("Pick at least one"); return; } patch.care = s;
+    const s = $$("#fill_care .sel").map(b => b.dataset.care); if (!s.length) { toast("Pick at least one"); return null; } patch.care = s;
   } else if (field === "acquisition") {
-    const s = $("#fill_acq button.on"); if (!s) { toast("Pick one"); return; } patch.acquisition = s.dataset.acq;
+    const s = $("#fill_acq button.on"); if (!s) { toast("Pick one"); return null; } patch.acquisition = s.dataset.acq;
   } else if (field === "fabric") {
-    const v = parseList($("#fill_fabric").value); if (!v.length) { toast("Type a fabric"); return; } patch.fabric = v;
+    const v = parseList($("#fill_fabric").value); if (!v.length) { toast("Type a fabric"); return null; } patch.fabric = v;
   } else if (field === "price") {
-    const v = $("#fill_price").value; if (v === "") { toast("Enter a price"); return; } patch.price = Number(v);
+    const v = $("#fill_price").value; if (v === "") { toast("Enter a price"); return null; } patch.price = Number(v);
   } else if (field === "size") {
-    const v = $("#fill_size").value.trim(); if (!v) { toast("Enter a size"); return; } patch.size = v;
+    const v = $("#fill_size").value.trim(); if (!v) { toast("Enter a size"); return null; } patch.size = v;
   } else if (field === "storage_location") {
-    const s = $("#fill_storage_loc button.on"); if (!s) { toast("Pick one"); return; } patch.storage_location = s.dataset.loc;
+    const s = $("#fill_storage_loc button.on"); if (!s) { toast("Pick one"); return null; } patch.storage_location = s.dataset.loc;
   } else if (field === "fit") {
-    const s = $("#fill_fit button.on"); if (!s) { toast("Pick one"); return; } patch.fit = s.dataset.fit;
+    const s = $("#fill_fit button.on"); if (!s) { toast("Pick one"); return null; } patch.fit = s.dataset.fit;
   } else if (field === "length") {
-    const s = $("#fill_length button.on"); if (!s) { toast("Pick one"); return; } patch.length = s.dataset.length;
+    const s = $("#fill_length button.on"); if (!s) { toast("Pick one"); return null; } patch.length = s.dataset.length;
   } else if (field === "rise") {
-    const s = $("#fill_rise button.on"); if (!s) { toast("Pick one"); return; } patch.rise = s.dataset.rise;
+    const s = $("#fill_rise button.on"); if (!s) { toast("Pick one"); return null; } patch.rise = s.dataset.rise;
   }
+  return patch;
+}
+
+async function fillSave(itemId, field) {
+  const patch = readFillPatch(field);
+  if (!patch) return;
   const btn = $("#fillSave"); btn.disabled = true; btn.textContent = "Saving…";
   try {
     const [u] = await rest(`items?id=eq.${itemId}`, {
