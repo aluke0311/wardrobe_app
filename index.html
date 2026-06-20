@@ -514,6 +514,7 @@
         <div style="margin-bottom:12px">
           <button class="btn ghost" id="suggestBtn" style="width:auto;padding:9px 16px;font-size:14px">✨ Outfit ideas</button>
         </div>
+        <div id="quickRewearSection"></div>
         <div id="outfitsBody"></div>
       </div>
     </section>
@@ -606,7 +607,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v15";
+const APP_VERSION = "2026-06-20 v16";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1228,6 +1229,8 @@ const SORTS = [
   ["recent", "Recently worn"], ["stale", "Longest unworn"],
 ];
 let closetSort = store.getItem("wardrobe.sort") || "added";
+let closetSeasonFilter = null;   // null = all, else "Summer" etc.
+let closetColorFilter = null;    // null = all, else a color family name
 
 function sortItems(list) {
   const arr = list.slice();
@@ -1293,6 +1296,13 @@ function applyNeglect(list) {
   if (!neglectMode) return list;
   return list.filter(i => { const ds = daysSince(lastWorn(i.id)); return ds === null || ds >= 30; });
 }
+function applyFacets(list) {
+  if (closetSeasonFilter) list = list.filter(i => (i.season || []).includes(closetSeasonFilter));
+  if (closetColorFilter) list = list.filter(i => i.color_family === closetColorFilter);
+  return list;
+}
+function closetFilterActive() { return closetSeasonFilter || closetColorFilter; }
+function clearClosetFacets() { closetSeasonFilter = null; closetColorFilter = null; }
 const itemCat = (i) => i.category || "Uncategorized";
 const itemSub = (i) => i.subcategory || null;
 function searchMatch(i, q) {
@@ -4090,6 +4100,71 @@ function readRating(prefix) {
   };
 }
 
+function renderQuickRewear() {
+  const el = $("#quickRewearSection");
+  if (!el) return;
+  const agg = wornOutfitMap();
+  const entries = [...agg.entries()]
+    .map(([key, v]) => {
+      const dates = [...v.dates].sort();
+      return { key, ids: v.ids, last: dates[dates.length - 1], count: dates.length };
+    })
+    .filter(e => e.ids.length > 1)
+    .sort((a, b) => (b.last || "").localeCompare(a.last || ""))
+    .slice(0, 6);
+
+  if (!entries.length) { el.innerHTML = ""; return; }
+
+  const today = logPresetDate || todayStr();
+  const cards = entries.map(e => {
+    const its = e.ids.map(id => items.find(i => i.id === id)).filter(Boolean);
+    return `
+      <div class="ofit" data-qkey="${esc(e.key)}" style="margin-bottom:10px">
+        <div class="top">
+          <span class="dt">${e.count}× · last ${esc(e.last)}</span>
+          <span class="muted" style="font-size:12.5px">${its.length} item${its.length === 1 ? "" : "s"}</span>
+        </div>
+        ${thumbsHtml(its)}
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+          <input class="inp qrw-date" type="date" value="${esc(today)}" style="flex:1;padding:8px 10px;font-size:13px;border-radius:999px">
+          <button class="btn qrw-log" style="width:auto;padding:9px 16px;font-size:13px">Log</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  el.innerHTML = `<h2 class="sec" style="margin-top:0">Recent outfits</h2>${cards}
+    <div class="muted" style="font-size:12px;margin:-4px 0 16px">Tap an outfit below to browse saved looks</div>`;
+  hydratePhotos(el);
+
+  el.querySelectorAll(".ofit[data-qkey]").forEach(card => {
+    card.querySelector(".qrw-log").onclick = async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true; btn.textContent = "Logging…";
+      const v = agg.get(card.dataset.qkey);
+      if (!v) { btn.disabled = false; btn.textContent = "Log"; return; }
+      const date = card.querySelector(".qrw-date").value || todayStr();
+      try {
+        const todays = new Map();
+        for (const w of wears) if (w.worn_on === date) todays.set(w.item_id, w);
+        const toCreate = v.ids.filter(id => !todays.has(id));
+        let n = 0;
+        if (toCreate.length) {
+          const rows = toCreate.map(item_id => ({ item_id, worn_on: date }));
+          const created = await rest("wears", {
+            method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+            body: JSON.stringify(rows),
+          });
+          (created || []).forEach(w => wears.unshift(w));
+          n = (created || []).length;
+        }
+        toast(n ? `Logged ${n} wear${n === 1 ? "" : "s"} for ${date}` : "Already logged that day");
+        refreshViews();
+        renderQuickRewear();
+      } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Log"; }
+    };
+  });
+}
+
 function buildLogTab() { setLogMode(logMode); }
 function setLogMode(mode) {
   logMode = mode;
@@ -4099,7 +4174,10 @@ function setLogMode(mode) {
   if (mode === "wear") {
     buildWearTab();
     if (logPresetDate) { $("#w_date").value = logPresetDate; logPresetDate = null; }
-  } else ensureOutfits();
+  } else {
+    renderQuickRewear();
+    ensureOutfits();
+  }
 }
 
 /* ===================================================================

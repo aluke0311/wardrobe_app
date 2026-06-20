@@ -186,6 +186,21 @@ season/temp match, −2 for Sandals in rain. Settings → Location card: ZIP inp
 **Worn outfits filter ✓ (v14 2026-06-20):** "Hide singles / Show singles (N)" pill
 in Worn view header. `outfitHideSingles` bool filters `wornOutfitMap()` entries
 where `ids.length === 1`.
+**D4 outfit power tools ✓ (v15 2026-06-20):** Clone outfit (`cloneOutfit`), Add to
+capsule from outfit detail (inline select + Add), Merge duplicate outfits
+(`mergeOutfitDuplicates` — groups by sorted item-set, keeps earliest, repoints wears,
+deletes dupes; "Merge dupes" button in Saved outfits header). `openOutfit` sheet now
+shows Duplicate + Add to capsule actions alongside Edit/Delete.
+**F3 — Rating in outfit builder ✓ (v15 2026-06-20):** `ratingControls("b")` added to
+the new-outfit builder form (hidden for edit mode); `wireRating("b")` called on open;
+`saveOutfit(true)` passes `readRating("b")` opts to `logOutfitWear`.
+**Quick re-wear in Log → Outfit ✓ (v16 2026-06-20):** `renderQuickRewear()` renders
+the top 6 most-recently-worn multi-item outfit combos (from `wornOutfitMap()`) at the
+top of the Outfit log tab. Each card shows thumbnails + "worn N× · last DATE" + an
+inline date picker + "Log" button. Logging creates individual wear rows (no
+`outfit_id`); refreshes on success. Saves navigating into the library for everyday
+re-wears. `#quickRewearSection` div inserted above `#outfitsBody` in `#logOutfitPanel`;
+rendered in `setLogMode("outfit")` path alongside `ensureOutfits()`.
 
 ---
 
@@ -443,7 +458,9 @@ is independent; do as one-off slices.
   leads with occasion; instead pick *any* empty open field for the shown item at
   random across `FILL_FIELDS` (occasion, color_family, fabric, season, fit, etc.),
   so each card prompts a different gap. Keep single-tap chip saves.
-- **F3 — Outfit builder "I liked it" affordance.** In the outfit create/edit flow
+- **F3 — Rating in outfit builder ✓ v15** — done; see §4.
+- **F3b — Quick re-wear in Log → Outfit ✓ v16** — done; see §4. *(Was implicit in F3 spirit.)*
+- **F3 (original spec, for reference) — Outfit builder "I liked it" affordance.** In the outfit create/edit flow
   the "liked"/rating control is hard to find. Surface a clear like/rating toggle
   inline in the builder near Save (and on "Save & log as worn"), so the user can
   mark a fresh outfit as liked during creation, not only after. *Reference: Indyx

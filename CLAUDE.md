@@ -177,7 +177,9 @@ writes a new column/table before its migration is confirmed.**
 - **UI polish (2026-06-20 session, v1–v7):** all item photos → `contain` (fit, never cover) everywhere · item detail: back button on hero, combined last-worn/KPI row, tap-to-edit attribute rows (shared `readFillPatch` / `wireFillWidgets`) · calendar compacted · status filter → `<select>` dropdown · log screen overlap fixed · "Got compliments" removed · calendar "Log a wear for this day" now presets date correctly · calendar day-detail: ✕ per item + "Remove outfit" button · **"Worn" outfit log** via `wornOutfitMap()`.
 - **Photo improvements (v9–v11 2026-06-20):** v9 transparent backgrounds — `loadPhotoNode` sets `backgroundColor="transparent"` on successful URL load so transparent PNG/WebP garments show cleanly on white tile surface. v11 batch URL signing — `signedUrlBatch(paths)` uses `POST /storage/v1/object/sign/{bucket}` (body `{ paths, expiresIn }`) to sign up to 100 URLs in one call; `prewarmUrlCache()` fires after `loadData()` so all item photos are cache-ready before IntersectionObserver fires (reduces ~476 round-trips to ~5).
 - **Worn outfits filter (v14 2026-06-20):** "Hide singles (N)" / "Show singles (N)" pill in the Worn outfits header. State: `outfitHideSingles` bool. Filters `wornOutfitMap()` entries where `ids.length === 1` before rendering; count badge shows how many singles exist. Resets `outfitsShown` on toggle.
-- **Still pending:** D3 (capsule auto-gen) · D4 (outfit dedup/merge, clone, action menu) · E (Home dashboard) · F3/F4/F6/F7/F9.
+- **v15 (2026-06-20):** F3 rating in outfit builder · D4 clone outfit, add-to-capsule from detail, merge duplicate outfits ("Merge dupes" button in Saved header).
+- **v16 (2026-06-20):** Quick re-wear section at top of Log → Outfit tab — shows top 6 recently-worn multi-item combos with inline date picker + Log button. `renderQuickRewear()` called in `setLogMode("outfit")`; uses `wornOutfitMap()`.
+- **Still pending:** D3 (capsule auto-gen) · E (Home dashboard) · F4/F6/F7/F9. D4 done except D4 one-tap re-wear (now covered by Quick re-wear in Log). F3 done.
 
 **Outfit dedup note (D4, NOT started):** the import created one outfit row per
 wear-day, so the ~1,543 outfits include many duplicates (same item set, different
@@ -223,6 +225,7 @@ merge script + in-app "merge duplicates" action would clean the `outfits` table 
 - **Weather is fire-and-forget** — `loadWeather()` is called without `await` in `bootApp` and `retryLoad` so it never blocks render. `weatherCache` starts null; the suggest sheet checks it at render time and simply omits the weather row if null. Don't await it in the boot path.
 - **`geoFromZip` uses zippopotam.us** — `GET https://api.zippopotam.us/us/{zip}` returns `{ places: [{ latitude, longitude }] }`. US-only, free, no key. Falls back gracefully (returns null) on bad ZIP or network error. Saves geo to `wardrobe.geo` same as `requestGeo`.
 - **`outfitHideSingles` filter state** — bool at module level, default false. Applied in `renderWornOutfits` before slicing for the "Show more" pagination, so the count and the "more" button reflect the filtered set, not the raw total.
+- **`renderQuickRewear()` is called in `setLogMode("outfit")`** — renders the top 6 recently-worn multi-item combos from `wornOutfitMap()` into `#quickRewearSection`. Uses `logPresetDate` if set for the default date. Log button creates bare wear rows (no `outfit_id`) and calls `refreshViews()` + re-renders the section.
 
 ## Deploy
 
