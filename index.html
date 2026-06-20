@@ -653,7 +653,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v23";
+const APP_VERSION = "2026-06-20 v24";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1478,24 +1478,16 @@ function renderCloset() {
       ${filterChips()}
     </div>`;
 
-  // --- search overrides drill-down: flat results across the status scope ---
-  if (q) {
-    const list = scoped.filter(i => searchMatch(i, q));
-    if (list.length) {
+  // --- root: category folders (or flat search at root) ---
+  if (drillCat === null) {
+    if (q) {
+      const list = scoped.filter(i => searchMatch(i, q));
       const controls = `<div class="subhead">
         <div class="sh-title muted" style="font-size:13px;font-weight:400">${list.length} item${list.length === 1 ? "" : "s"}</div>
         <div class="sh-ctrls">${sortSelect()}${densitySeg()}${selStartBtn()}</div></div>`;
-      body.innerHTML = rootHead + controls + (selectMode ? selectBar() : "") + gridHtml(sortItems(list));
-    } else {
-      body.innerHTML = rootHead + `<div class="empty">No items match.</div>`;
+      body.innerHTML = rootHead + (list.length ? controls + (selectMode ? selectBar() : "") + gridHtml(sortItems(list)) : `<div class="empty">No items match.</div>`);
+      wireClosetControls(); hydratePhotos(body); return;
     }
-    wireClosetControls();
-    hydratePhotos(body);
-    return;
-  }
-
-  // --- root: category folders ---
-  if (drillCat === null) {
     const rows = [...CATEGORIES, "Uncategorized"].map(c => {
       const list = scoped.filter(i => itemCat(i) === c);
       return list.length ? folderRow("data-cat", c, c, list) : "";
@@ -1511,8 +1503,23 @@ function renderCloset() {
   const scopeLabel = closetStatus === "Available" ? "" : `${closetStatus} · `;
   const hasSubs = (TAXONOMY[drillCat] || []).length > 0;
 
-  // --- category level: subcategory folders ---
+  const drillSearchBar = (backAttr, backLabel) =>
+    `<div class="filterbar"><div class="frow">
+       <button class="backrow" data-back="${backAttr}" style="flex:none;margin:0">‹ ${esc(backLabel)}</button>
+       <input class="inp" style="flex:1;min-width:0" id="closetSearch" placeholder="Search…" value="${esc(closetQuery)}">
+     </div></div>`;
+
+  // --- category level: subcategory folders (or search within category) ---
   if (drillSub === null && hasSubs) {
+    if (q) {
+      const filtered = inCat.filter(i => searchMatch(i, q));
+      body.innerHTML = drillSearchBar("root", "Closet") +
+        `<div class="subhead"><div class="sh-title">${esc(drillCat)} <span class="muted" style="font-weight:400">· ${filtered.length}</span></div>
+         <div class="sh-ctrls">${sortSelect()}${densitySeg()}${selStartBtn()}</div></div>` +
+        (selectMode ? selectBar() : "") +
+        (filtered.length ? gridHtml(sortItems(filtered)) : `<div class="empty">No items match.</div>`);
+      wireClosetControls(); hydratePhotos(body); return;
+    }
     const rows = [folderRow("data-sub", SUB_ALL, `All ${drillCat}`, inCat)];
     for (const s of TAXONOMY[drillCat]) {
       const list = inCat.filter(i => itemSub(i) === s);
@@ -1520,12 +1527,8 @@ function renderCloset() {
     }
     const none = inCat.filter(i => !itemSub(i));
     if (none.length) rows.push(folderRow("data-sub", SUB_NONE, "No subcategory", none));
-    body.innerHTML =
-      `<div class="filterbar"><div class="frow">
-        <button class="backrow" data-back="root" style="flex:none;margin:0">‹ Closet</button>
-        <input class="inp" style="flex:1;min-width:0" id="closetSearch" placeholder="Search…" value="${esc(closetQuery)}">
-       </div></div>
-       <h2 class="sec" style="margin-top:0">${esc(scopeLabel + drillCat)} <span class="muted" style="font-weight:400">· ${inCat.length}</span></h2>
+    body.innerHTML = drillSearchBar("root", "Closet") +
+      `<h2 class="sec" style="margin-top:0">${esc(scopeLabel + drillCat)} <span class="muted" style="font-weight:400">· ${inCat.length}</span></h2>
        <div class="folders">${rows.join("")}</div>`;
     wireClosetControls();
     hydratePhotos(body);
@@ -1537,6 +1540,7 @@ function renderCloset() {
   if (drillSub === SUB_NONE) { list = inCat.filter(i => !itemSub(i)); leafLabel = "No subcategory"; }
   else if (drillSub && drillSub !== SUB_ALL) { list = inCat.filter(i => itemSub(i) === drillSub); leafLabel = drillSub; }
   else { list = inCat; leafLabel = `All ${drillCat}`; }
+  if (q) list = list.filter(i => searchMatch(i, q));
   const backTarget = hasSubs ? "cat" : "root";
 
   body.innerHTML =
@@ -1550,7 +1554,7 @@ function renderCloset() {
        <div class="sh-ctrls">${neglectBtn()}</div>
      </div>` +
     (selectMode ? selectBar() : "") +
-    (list.length ? gridHtml(sortItems(list)) : `<div class="empty">No items.</div>`);
+    (list.length ? gridHtml(sortItems(list)) : `<div class="empty">No items${q ? " match" : ""}.</div>`);
   wireClosetControls();
   hydratePhotos(body);
 }
@@ -4746,7 +4750,7 @@ function renderHome() {
 
   // open item from neglect / attention strips
   body.querySelectorAll("[data-openitem]").forEach(el => {
-    el.onclick = () => { const it = items.find(x => x.id === el.dataset.openitem); if (it) openItem(it); };
+    el.onclick = () => openItem(el.dataset.openitem);
   });
 
   // neglect "View all" → neglect mode in closet
