@@ -509,6 +509,9 @@
       </div>
 
       <div id="logOutfitPanel" hidden>
+        <div style="margin-bottom:12px">
+          <button class="btn ghost" id="suggestBtn" style="width:auto;padding:9px 16px;font-size:14px">✨ Outfit ideas</button>
+        </div>
         <div id="outfitsBody"></div>
       </div>
     </section>
@@ -588,7 +591,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v7";
+const APP_VERSION = "2026-06-20 v8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2071,6 +2074,8 @@ async function submitWear() {
 let outfitsShown = 40;
 let outfitView = "worn";       // "worn" (derived accurate log) | "library" (raw template list)
 let _wornAgg = new Map();      // cache: item-set key -> { ids:[], dates:Set } from wornOutfitMap()
+let suggestCtx  = null;        // active context filter for outfit suggestions
+let suggestSeed = 0;           // incremented on Refresh to shuffle candidates differently
 
 // Derive the *actual* outfits worn from the wear history. The "worn together"
 // unit is the outfit_id on a given day (so two outfits on the same day stay
@@ -2115,6 +2120,208 @@ function thumbsHtml(its) {
   return `<div class="thumbs">` + its.map(i =>
     `<div class="th" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>`
   ).join("") + `</div>`;
+}
+
+/* ===================================================================
+   D1: OUTFIT SUGGESTIONS — heuristic scoring, no schema
+   =================================================================== */
+const _NEUTRALS = new Set(["White","Gray","Black","Beige","Brown","Metallic"]);
+
+function currentSeason() {
+  const m = new Date().getMonth();
+  if (m >= 2 && m <= 4) return "Spring";
+  if (m >= 5 && m <= 7) return "Summer";
+  if (m >= 8 && m <= 10) return "Fall";
+  return "Winter";
+}
+
+function colorHarmonyScore(its) {
+  const names = COLOR_FAMILIES.map(c => c[0]);
+  const nonNeutral = [...new Set(its.map(i => i.color_family).filter(c => c && !_NEUTRALS.has(c)))];
+  if (nonNeutral.length === 0) return 2;   // all neutrals
+  if (nonNeutral.length === 1) return 1;   // one accent
+  const idxs = nonNeutral.map(c => names.indexOf(c)).filter(i => i >= 0);
+  const spread = idxs.length > 1 ? Math.max(...idxs) - Math.min(...idxs) : 0;
+  return spread <= 2 ? 1 : -1;             // adjacent hues OK; distant = penalty
+}
+
+function formalityOverlaps(its) {
+  const c = its.filter(i => i.min_occasion && i.max_occasion);
+  if (c.length < 2) return true;
+  return Math.max(...c.map(i => i.min_occasion)) <= Math.min(...c.map(i => i.max_occasion));
+}
+
+function ctxFitsItem(ctxObj, item) {
+  if (!item.min_occasion || !item.max_occasion) return true;
+  return item.min_occasion <= ctxObj.max && item.max_occasion >= ctxObj.min;
+}
+
+function seededShuffle(arr, seed) {
+  let s = seed >>> 0;
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    const j = s % (i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function suggestOutfits(ctxName, n = 5) {
+  const season = currentSeason();
+  const ctxObj = CONTEXTS.find(c => c.name === ctxName) || null;
+  const now = Date.now();
+  const d7  = new Date(now -  7 * 864e5).toISOString().slice(0, 10);
+  const d30 = new Date(now - 30 * 864e5).toISOString().slice(0, 10);
+
+  const recentIds = new Set();
+  const coolIds   = new Set();
+  for (const w of wears) {
+    if (w.worn_on >= d7)        recentIds.add(w.item_id);
+    else if (w.worn_on >= d30)  coolIds.add(w.item_id);
+  }
+
+  const UNAVAIL_SET = new Set(["Laundry", "Cleaners", "Lent"]);
+  const pool = items.filter(i =>
+    itemStatus(i) === "Available" && !UNAVAIL_SET.has(i.availability)
+  );
+
+  function itemBaseScore(i) {
+    let s = 0;
+    const seas = i.season || [];
+    if (!seas.length || seas.includes(season)) s += 1;
+    if (recentIds.has(i.id)) s -= 3;
+    else if (coolIds.has(i.id)) s -= 1;
+    if (ctxObj && !ctxFitsItem(ctxObj, i)) s -= 10;
+    return s;
+  }
+
+  // Build co-occurrence pair set for bonus
+  const coPairs = new Set();
+  if (outfitsLoaded) {
+    for (const [, ids] of outfitItemMap) {
+      const arr = [...ids];
+      for (let a = 0; a < arr.length; a++)
+        for (let b = a + 1; b < arr.length; b++) {
+          const [lo, hi] = arr[a] < arr[b] ? [arr[a], arr[b]] : [arr[b], arr[a]];
+          coPairs.add(`${lo},${hi}`);
+        }
+    }
+  }
+  function coBonus(a, b) {
+    const [lo, hi] = a.id < b.id ? [a.id, b.id] : [b.id, a.id];
+    return coPairs.has(`${lo},${hi}`) ? 1 : 0;
+  }
+
+  function pickCand(cat, limit) {
+    const cands = pool.filter(i => i.category === cat)
+      .map(i => ({ i, s: itemBaseScore(i) }))
+      .sort((a, b) => b.s - a.s)
+      .slice(0, limit * 3);
+    return seededShuffle(cands, suggestSeed).slice(0, limit).map(x => x.i);
+  }
+
+  const tops    = pickCand("Tops",     14);
+  const bottoms = pickCand("Bottoms",  14);
+  const dresses = pickCand("Dresses",   8);
+  const shoes   = pickCand("Shoes",     8);
+
+  const combos = [];
+
+  for (const top of tops) {
+    for (const bot of bottoms) {
+      const core = [top, bot];
+      const shoe = shoes.find(sh =>
+        formalityOverlaps([top, sh]) && formalityOverlaps([bot, sh])
+      ) || null;
+      const outfit = shoe ? [...core, shoe] : core;
+      const score = colorHarmonyScore(outfit)
+        + coBonus(top, bot)
+        + (formalityOverlaps(core) ? 0.5 : -2);
+      combos.push({ ids: outfit.map(i => i.id), its: outfit, score });
+    }
+  }
+
+  for (const dress of dresses) {
+    const shoe = shoes.find(sh => formalityOverlaps([dress, sh])) || null;
+    const outfit = shoe ? [dress, shoe] : [dress];
+    const score = colorHarmonyScore(outfit) + 0.5;
+    combos.push({ ids: outfit.map(i => i.id), its: outfit, score });
+  }
+
+  const seen = new Set();
+  const uniq = combos.filter(c => {
+    const key = c.ids.slice().sort().join(",");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  uniq.sort((a, b) => b.score - a.score);
+  return uniq.slice(0, n);
+}
+
+function openSuggestSheet() {
+  ensureOutfits().then(_renderSuggestSheet).catch(_renderSuggestSheet);
+}
+
+function _renderSuggestSheet() {
+  const suggs = suggestOutfits(suggestCtx, 5);
+
+  const ctxChips = CONTEXTS.map(c =>
+    `<button class="pill${suggestCtx === c.name ? " on" : ""}" data-sugctx="${esc(c.name)}" style="margin:2px">${esc(c.name)}</button>`
+  ).join("");
+
+  const cards = suggs.length === 0
+    ? `<div class="empty" style="margin-top:12px">Not enough Available items to suggest a look.</div>`
+    : suggs.map(s => {
+        const ids = JSON.stringify(s.ids);
+        const label = s.its.map(i => esc(i.name)).join(" · ");
+        return `
+          <div class="card" style="padding:12px 14px;margin-bottom:10px">
+            ${thumbsHtml(s.its)}
+            <div style="font-size:12.5px;color:var(--muted);margin:6px 0 10px;line-height:1.35">${label}</div>
+            <button class="btn" style="width:auto;padding:8px 16px;font-size:13.5px" data-suguse="${esc(ids)}">Use this outfit</button>
+          </div>`;
+      }).join("");
+
+  const html = `
+    <div class="subhead" style="padding:16px 16px 10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="font-size:18px;font-weight:700">Outfit ideas</span>
+        <button id="sugClose" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;color:var(--muted)">✕</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:6px">Occasion (optional)</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">${ctxChips}</div>
+      <button class="btn ghost" id="sugRefresh" style="width:auto;padding:7px 14px;font-size:13px">🔄 Shuffle</button>
+    </div>
+    <div style="padding:8px 16px 32px" id="sugCards">${cards}</div>`;
+
+  $("#sheet").innerHTML = html;
+  $("#modal").classList.add("open");
+
+  $("#sugClose").onclick = closeModal;
+
+  $("#sugRefresh").onclick = () => {
+    suggestSeed = Date.now();
+    _renderSuggestSheet();
+  };
+
+  $$("#sheet [data-sugctx]").forEach(btn => {
+    btn.onclick = () => {
+      suggestCtx = suggestCtx === btn.dataset.sugctx ? null : btn.dataset.sugctx;
+      _renderSuggestSheet();
+    };
+  });
+
+  $$("#sheet [data-suguse]").forEach(btn => {
+    btn.onclick = () => {
+      const ids = JSON.parse(btn.dataset.suguse);
+      closeModal();
+      startOutfitBuilder(null, ids);
+    };
+  });
+
+  hydratePhotos($("#sheet"));
 }
 
 function viewToggle() {
@@ -3962,6 +4169,8 @@ function wireEvents() {
     const b = e.target.closest("[data-logmode]");
     if (b) setLogMode(b.dataset.logmode);
   });
+
+  $("#suggestBtn").addEventListener("click", openSuggestSheet);
 
   // closet: status switch, density, folder drill-down, back, and open-item
   // (the search box is wired per-render in wireClosetControls)
