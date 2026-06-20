@@ -593,7 +593,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v10";
+const APP_VERSION = "2026-06-20 v11";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -806,6 +806,40 @@ async function signedUrl(path) {
   // expire the cache a little before the URL itself does
   setTimeout(() => _urlCache.delete(path), (SIGNED_TTL - 60) * 1000);
   return full;
+}
+
+// Batch-sign up to `paths.length` URLs in a single API call (Supabase batch endpoint).
+// Populates _urlCache so subsequent signedUrl() calls return instantly from cache.
+async function signedUrlBatch(paths) {
+  if (!paths.length) return;
+  try {
+    const r = await api(`/storage/v1/object/sign/${BUCKET}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths, expiresIn: SIGNED_TTL }),
+    });
+    if (!r.ok) return;
+    const rows = await r.json();
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (row.signedURL && !row.error) {
+        const full = `${SUPABASE_URL}/storage/v1${row.signedURL}`;
+        _urlCache.set(row.path, full);
+        setTimeout(() => _urlCache.delete(row.path), (SIGNED_TTL - 60) * 1000);
+      }
+    }
+  } catch (_) { /* non-fatal — individual loads still work */ }
+}
+
+// Pre-warm the URL cache for all item photos right after data loads, so the
+// IntersectionObserver callbacks find URLs already cached and fire instantly.
+async function prewarmUrlCache() {
+  const paths = [...new Set(
+    items.filter(i => i.image_path && !_urlCache.has(i.image_path)).map(i => i.image_path)
+  )];
+  // Chunk into 100s to keep each request payload reasonable
+  for (let i = 0; i < paths.length; i += 100) {
+    signedUrlBatch(paths.slice(i, i + 100)); // fire and forget — don't block render
+  }
 }
 
 /* ===================================================================
@@ -4115,6 +4149,7 @@ async function bootApp() {
   renderCloset(); // shows spinner while loading
   try {
     await loadData();
+    prewarmUrlCache(); // fire-and-forget: batch-sign all photo URLs into cache
     await restoreLens();
     renderCloset();
   } catch (e) {
@@ -4123,7 +4158,7 @@ async function bootApp() {
 }
 async function retryLoad() {
   $("#closetBody").innerHTML = `<div class="spin"></div>`;
-  try { await loadData(); refreshViews(); } catch (e) { toast(e.message); }
+  try { await loadData(); prewarmUrlCache(); refreshViews(); } catch (e) { toast(e.message); }
 }
 window.retryLoad = retryLoad;
 
@@ -4249,7 +4284,7 @@ function wireEvents() {
   $("#refreshBtn").addEventListener("click", async () => {
     const b = $("#refreshBtn"); b.disabled = true; b.textContent = "Refreshing…";
     _urlCache.clear();
-    try { await loadData(); refreshViews(); toast("Synced"); }
+    try { await loadData(); prewarmUrlCache(); refreshViews(); toast("Synced"); }
     catch (e) { toast(e.message); }
     finally { b.disabled = false; b.textContent = "Refresh data"; }
   });
