@@ -84,10 +84,10 @@
   .home-day .hd-num  { font-size: 14px; font-weight: 600; line-height: 1; }
   .home-day .hd-thumb {
     width: 32px; height: 32px; border-radius: 8px; overflow: hidden;
-    background: var(--bg); display: flex; align-items: center; justify-content: center;
+    background: var(--bg) center/contain no-repeat; display: flex; align-items: center; justify-content: center;
     font-size: 16px; border: 1px solid var(--line);
   }
-  .home-day.today .hd-thumb { border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.15); }
+  .home-day.today .hd-thumb { border-color: rgba(255,255,255,.3); background-color: rgba(255,255,255,.15); }
   .home-day .hd-thumb img { width: 100%; height: 100%; object-fit: contain; }
   .home-day .hd-dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; opacity: .5; }
   .home-suggest { display: flex; flex-direction: column; gap: 10px; }
@@ -97,7 +97,7 @@
   .home-neglect::-webkit-scrollbar { display: none; }
   .home-neglect .hn-tile {
     flex: 0 0 72px; height: 72px; border-radius: 12px; overflow: hidden;
-    background: var(--bg); border: 1px solid var(--line);
+    background: var(--bg) center/contain no-repeat; border: 1px solid var(--line);
     display: flex; align-items: center; justify-content: center; font-size: 22px;
     cursor: pointer; position: relative;
   }
@@ -653,7 +653,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v22";
+const APP_VERSION = "2026-06-20 v23";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1521,7 +1521,10 @@ function renderCloset() {
     const none = inCat.filter(i => !itemSub(i));
     if (none.length) rows.push(folderRow("data-sub", SUB_NONE, "No subcategory", none));
     body.innerHTML =
-      `<button class="backrow" data-back="root">‹ Closet</button>
+      `<div class="filterbar"><div class="frow">
+        <button class="backrow" data-back="root" style="flex:none;margin:0">‹ Closet</button>
+        <input class="inp" style="flex:1;min-width:0" id="closetSearch" placeholder="Search…" value="${esc(closetQuery)}">
+       </div></div>
        <h2 class="sec" style="margin-top:0">${esc(scopeLabel + drillCat)} <span class="muted" style="font-weight:400">· ${inCat.length}</span></h2>
        <div class="folders">${rows.join("")}</div>`;
     wireClosetControls();
@@ -1537,10 +1540,14 @@ function renderCloset() {
   const backTarget = hasSubs ? "cat" : "root";
 
   body.innerHTML =
-    `<button class="backrow" data-back="${backTarget}">‹ ${esc(backTarget === "root" ? "Closet" : drillCat)}</button>
+    `<div class="filterbar"><div class="frow">
+       <button class="backrow" data-back="${backTarget}" style="flex:none;margin:0">‹ ${esc(backTarget === "root" ? "Closet" : drillCat)}</button>
+       <input class="inp" style="flex:1;min-width:0" id="closetSearch" placeholder="Search…" value="${esc(closetQuery)}">
+       <div style="display:flex;gap:4px;flex:none">${sortSelect()}${densitySeg()}${selStartBtn()}</div>
+     </div></div>
      <div class="subhead">
        <div class="sh-title">${esc(scopeLabel + leafLabel)} <span class="muted" style="font-weight:400">· ${list.length}</span></div>
-       <div class="sh-ctrls">${neglectBtn()}${sortSelect()}${densitySeg()}${selStartBtn()}</div>
+       <div class="sh-ctrls">${neglectBtn()}</div>
      </div>` +
     (selectMode ? selectBar() : "") +
     (list.length ? gridHtml(sortItems(list)) : `<div class="empty">No items.</div>`);
@@ -2628,7 +2635,7 @@ async function ensureOutfits() {
 function thumbsHtml(its) {
   if (!its.length) return `<div class="muted" style="font-size:12.5px">No items in the current set</div>`;
   return `<div class="thumbs">` + its.map(i =>
-    `<div class="th" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>`
+    `<div class="th" data-item="${esc(i.id)}" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>`
   ).join("") + `</div>`;
 }
 
@@ -4699,6 +4706,12 @@ function renderHome() {
   const body = $("#homeBody");
   body.innerHTML = html;
   hydratePhotos(body);
+
+  // today's picks + neglect thumbnails → open item detail
+  body.querySelectorAll("[data-item]").forEach(el => {
+    el.style.cursor = "pointer";
+    el.onclick = () => openItem(el.dataset.item);
+  });
 
   // week strip → log today (if empty) or open day detail
   body.querySelectorAll("[data-homeday]").forEach(el => {
