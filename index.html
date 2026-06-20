@@ -264,7 +264,7 @@
   #login h1 { font-size: 30px; margin: 0 0 4px; letter-spacing: -0.03em; }
 
   /* ---------- modal (item detail) ---------- */
-  .modal { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.45); display: none; align-items: flex-end; }
+  .modal { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: none; align-items: flex-end; }
   .modal.open { display: flex; }
   .sheet { background: var(--bg); width: 100%; max-width: 640px; margin: 0 auto; max-height: 92vh; overflow: auto;
            border-radius: 18px 18px 0 0; padding: 16px 16px calc(24px + var(--safe-b)); }
@@ -653,7 +653,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v21";
+const APP_VERSION = "2026-06-20 v22";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
