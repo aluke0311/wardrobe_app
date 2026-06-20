@@ -405,6 +405,7 @@
         <datalist id="dl_brand"></datalist>
         <datalist id="dl_retailer"></datalist>
         <datalist id="dl_size"></datalist>
+        <datalist id="dl_fabric"></datalist>
 
         <h2 class="sec">Season</h2>
         <div class="chips" id="f_season"></div>
@@ -515,6 +516,7 @@
           <button class="btn ghost" id="suggestBtn" style="width:auto;padding:9px 16px;font-size:14px">✨ Outfit ideas</button>
         </div>
         <div id="quickRewearSection"></div>
+        <div id="orphanCardSection"></div>
         <div id="outfitsBody"></div>
       </div>
     </section>
@@ -607,7 +609,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v16";
+const APP_VERSION = "2026-06-20 v17";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1231,6 +1233,7 @@ const SORTS = [
 let closetSort = store.getItem("wardrobe.sort") || "added";
 let closetSeasonFilter = null;   // null = all, else "Summer" etc.
 let closetColorFilter = null;    // null = all, else a color family name
+let closetRecentFilter = false;  // true = only items purchased in last 90 days
 
 function sortItems(list) {
   const arr = list.slice();
@@ -1269,6 +1272,8 @@ const selectBar = () => `
     <button data-batch="status">Move</button>
     <button data-batch="capsule">Capsule</button>
     <button data-batch="tags">Tag</button>
+    <button data-batch="season">Season</button>
+    <button data-batch="color">Color</button>
     <button data-batch="del">Delete</button>
   </div>`;
 const SUB_ALL = "__ALL__";     // "All <category>" leaf
@@ -1299,10 +1304,15 @@ function applyNeglect(list) {
 function applyFacets(list) {
   if (closetSeasonFilter) list = list.filter(i => (i.season || []).includes(closetSeasonFilter));
   if (closetColorFilter) list = list.filter(i => i.color_family === closetColorFilter);
+  if (closetRecentFilter) {
+    const cut = new Date(); cut.setDate(cut.getDate() - 90);
+    const cutStr = cut.toISOString().slice(0, 10);
+    list = list.filter(i => i.purchase_date && i.purchase_date >= cutStr);
+  }
   return list;
 }
-function closetFilterActive() { return closetSeasonFilter || closetColorFilter; }
-function clearClosetFacets() { closetSeasonFilter = null; closetColorFilter = null; }
+function closetFilterActive() { return closetSeasonFilter || closetColorFilter || closetRecentFilter; }
+function clearClosetFacets() { closetSeasonFilter = null; closetColorFilter = null; closetRecentFilter = false; }
 const itemCat = (i) => i.category || "Uncategorized";
 const itemSub = (i) => i.subcategory || null;
 function searchMatch(i, q) {
@@ -1386,11 +1396,20 @@ function renderCloset() {
     return;
   }
 
-  const scoped = applyNeglect(statusScoped());
+  const scoped = applyFacets(applyNeglect(statusScoped()));
+  const filterChips = () => {
+    const chips = [];
+    if (closetRecentFilter) chips.push(`<button class="chip sel" data-fclear="recent">New (90d) ✕</button>`);
+    else chips.push(`<button class="chip" data-fset="recent">New (90d)</button>`);
+    if (closetSeasonFilter) chips.push(`<button class="chip sel" data-fclear="season">${esc(closetSeasonFilter)} ✕</button>`);
+    if (closetColorFilter)  chips.push(`<button class="chip sel" data-fclear="color">${esc(closetColorFilter)} ✕</button>`);
+    return chips.length ? `<div class="chips" style="margin:-2px 0 0" id="closetFilterChips">${chips.join("")}</div>` : "";
+  };
   const rootHead = `
     <div class="filterbar">
       <input class="inp" id="closetSearch" placeholder="Search name, brand, color…" value="${esc(closetQuery)}">
       <div class="frow">${statusSegHtml()}</div>
+      ${filterChips()}
     </div>`;
 
   // --- search overrides drill-down: flat results across the status scope ---
@@ -1472,6 +1491,15 @@ function wireClosetControls() {
   if (sortSel) sortSel.onchange = (e) => { closetSort = e.target.value; renderCloset(); };
   const statusSel = $("#closetStatusSel");
   if (statusSel) statusSel.onchange = (e) => { closetStatus = e.target.value; drillCat = null; drillSub = null; renderCloset(); };
+  const chips = $("#closetFilterChips");
+  if (chips) chips.onclick = (e) => {
+    const s = e.target.closest("[data-fset]");
+    const c = e.target.closest("[data-fclear]");
+    if (s?.dataset.fset === "recent") { closetRecentFilter = true; renderCloset(); }
+    if (c?.dataset.fclear === "recent") { closetRecentFilter = false; renderCloset(); }
+    if (c?.dataset.fclear === "season") { closetSeasonFilter = null; renderCloset(); }
+    if (c?.dataset.fclear === "color")  { closetColorFilter = null;  renderCloset(); }
+  };
 }
 
 // Debounce closet re-render while typing so we don't re-render per keystroke,
@@ -1495,6 +1523,8 @@ function batchAction(type) {
   if (type === "status") batchStatus(ids);
   else if (type === "capsule") batchCapsule(ids);
   else if (type === "tags") batchTags(ids);
+  else if (type === "season") batchSeason(ids);
+  else if (type === "color") batchColor(ids);
   else if (type === "del") batchDelete(ids);
 }
 
@@ -1567,6 +1597,66 @@ async function batchTags(ids) {
     }));
     toast(`Tagged ${ids.length} item${ids.length === 1 ? "" : "s"}`); exitSelect();
   } catch (e) { toast(e.message); }
+}
+
+function batchSeason(ids) {
+  const n = ids.length;
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 12px;font-size:20px">Set season for ${n} item${n === 1 ? "" : "s"}</h2>
+    <p class="muted" style="font-size:13px;margin:-4px 0 14px">Adds the selected seasons (doesn't replace existing).</p>
+    <div class="chips" id="bSeasonPick">${SEASONS.map(s => `<button type="button" class="chip txt" data-bseason="${s}">${s}</button>`).join("")}</div>
+    <div class="stack" style="margin-top:16px">
+      <button class="btn" id="bSeasonSave">Save</button>
+      <button class="btn ghost" id="bCancel">Cancel</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  const sel = new Set();
+  $("#bSeasonPick").onclick = (e) => {
+    const b = e.target.closest("[data-bseason]");
+    if (!b) return;
+    if (sel.has(b.dataset.bseason)) { sel.delete(b.dataset.bseason); b.classList.remove("sel"); }
+    else { sel.add(b.dataset.bseason); b.classList.add("sel"); }
+  };
+  $("#bCancel").onclick = closeModal;
+  $("#bSeasonSave").onclick = async () => {
+    const add = [...sel];
+    if (!add.length) { toast("Pick at least one season"); return; }
+    try {
+      await Promise.all(ids.map(async id => {
+        const it = items.find(x => x.id === id); if (!it) return;
+        const merged = [...new Set([...(it.season || []), ...add])];
+        const [u] = await rest(`items?id=eq.${id}`, { method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify({ season: merged }) });
+        const idx = items.findIndex(x => x.id === id); if (idx >= 0) items[idx] = u;
+      }));
+      toast(`Season updated for ${ids.length} item${ids.length === 1 ? "" : "s"}`); closeModal(); exitSelect();
+    } catch (e) { toast(e.message); }
+  };
+}
+
+function batchColor(ids) {
+  const n = ids.length;
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 12px;font-size:20px">Set color for ${n} item${n === 1 ? "" : "s"}</h2>
+    <div class="chips" id="bColorPick">${COLOR_FAMILIES.map(([nm, hex]) =>
+      `<button type="button" class="chip" data-bcolor="${esc(nm)}"><span class="sw" style="background:${hex}"></span>${esc(nm)}</button>`).join("")}
+    </div>
+    <div class="stack" style="margin-top:16px">
+      <button class="btn ghost" id="bCancel">Cancel</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  $("#bCancel").onclick = closeModal;
+  $("#bColorPick").onclick = async (e) => {
+    const b = e.target.closest("[data-bcolor]");
+    if (!b) return;
+    const color = b.dataset.bcolor;
+    try {
+      await rest(`items?id=in.(${ids.join(",")})`, { method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify({ color_family: color }) });
+      ids.forEach(id => { const it = items.find(x => x.id === id); if (it) it.color_family = color; });
+      toast(`Color set to ${color} for ${ids.length} item${ids.length === 1 ? "" : "s"}`); closeModal(); exitSelect();
+    } catch (e) { toast(e.message); }
+  };
 }
 
 async function batchDelete(ids) {
@@ -1906,9 +1996,21 @@ function buildItemForm() {
     }).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
     el.innerHTML = vals.map(v => `<option value="${esc(v)}">`).join("");
   };
+  const fillDlArray = (id, field) => {
+    const el = $(id); if (!el) return;
+    const seen = new Set();
+    const vals = [];
+    for (const i of items) for (const v of (i[field] || [])) {
+      const k = v.trim().toLowerCase();
+      if (k && !seen.has(k)) { seen.add(k); vals.push(v.trim()); }
+    }
+    vals.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    el.innerHTML = vals.map(v => `<option value="${esc(v)}">`).join("");
+  };
   fillDl("#dl_brand",    "brand");
   fillDl("#dl_retailer", "retailer");
   fillDl("#dl_size",     "size");
+  fillDlArray("#dl_fabric", "fabric");
 }
 
 function syncSubcategories() {
@@ -2322,9 +2424,15 @@ function suggestOutfits(ctxName, n = 5) {
   }
 
   const UNAVAIL_SET = new Set(["Laundry", "Cleaners", "Lent"]);
-  const pool = items.filter(i =>
-    itemStatus(i) === "Available" && !UNAVAIL_SET.has(i.availability)
-  );
+  const isCold = weatherCache && weatherCache.temp_f < 50;
+  const isRainy = weatherCache && (weatherCache.precip || 0) > 0.1;
+  const pool = items.filter(i => {
+    if (itemStatus(i) !== "Available" || UNAVAIL_SET.has(i.availability)) return false;
+    if (isCold && i.subcategory === "Sandals") return false;
+    if (isCold && i.subcategory === "Shorts") return false;
+    if (isRainy && i.subcategory === "Sandals") return false;
+    return true;
+  });
 
   function itemBaseScore(i) {
     let s = 0;
@@ -2484,15 +2592,19 @@ function _renderSuggestSheet() {
   hydratePhotos($("#sheet"));
 }
 
+let outfitContextBrowse = null;  // null = all contexts, else context name
+
 function viewToggle() {
   return `<div class="seg" id="outfitViewSeg" style="margin:2px 0 14px">
     <button data-oview="worn" class="${outfitView === "worn" ? "on" : ""}">Worn</button>
     <button data-oview="library" class="${outfitView === "library" ? "on" : ""}">Library</button>
+    <button data-oview="context" class="${outfitView === "context" ? "on" : ""}">By Context</button>
   </div>`;
 }
 
 function renderOutfits() {
   if (outfitView === "worn") { renderWornOutfits(); return; }
+  if (outfitView === "context") { renderContextOutfits(); return; }
   const body = $("#outfitsBody");
   const header = viewToggle() + `
     <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 12px">
@@ -2593,6 +2705,92 @@ function renderWornOutfits() {
     const btn = $("#toggleSingles");
     if (btn) btn.onclick = () => { outfitHideSingles = !outfitHideSingles; outfitsShown = 40; renderOutfits(); };
   }
+}
+
+function renderContextOutfits() {
+  const body = $("#outfitsBody");
+  if (!outfitsLoaded) {
+    body.innerHTML = viewToggle() + `<div class="spin"></div>`;
+    ensureOutfits().then(() => renderContextOutfits()).catch(e => { body.innerHTML = viewToggle() + `<div class="empty">${esc(e.message)}</div>`; });
+    return;
+  }
+  // Derive context → outfit count from outfits.context (no schema needed)
+  const ctxMap = new Map();  // context name → outfit[]
+  for (const o of outfits) {
+    const ctx = o.context || "No context";
+    if (!ctxMap.has(ctx)) ctxMap.set(ctx, []);
+    ctxMap.get(ctx).push(o);
+  }
+  // Sort: known CONTEXTS order first, then unknowns, then "No context" last
+  const ctxOrder = CONTEXTS.map(c => c.name);
+  const sorted = [...ctxMap.entries()].sort(([a], [b]) => {
+    if (a === "No context") return 1;
+    if (b === "No context") return -1;
+    const ai = ctxOrder.indexOf(a), bi = ctxOrder.indexOf(b);
+    if (ai >= 0 && bi >= 0) return ai - bi;
+    if (ai >= 0) return -1;
+    if (bi >= 0) return 1;
+    return a.localeCompare(b);
+  });
+
+  const header = viewToggle();
+
+  if (!sorted.length) {
+    body.innerHTML = header + `<div class="empty">No outfits with a context set.<br>Log a wear with a context to browse here.</div>`;
+    return;
+  }
+
+  if (outfitContextBrowse) {
+    // Drill-down: show outfits for the chosen context
+    const list = ctxMap.get(outfitContextBrowse) || [];
+    const slice = list.slice(0, outfitsShown);
+    const cards = slice.map(o => {
+      const its = itemsForOutfit(o.id);
+      const n = outfitWearCount(o.id);
+      const m = n ? outfitDayMeta(o.id, outfitLastWorn(o)) : null;
+      const rate = m && m.rating ? ` ${ratingEmoji(m.rating)}` : "";
+      return `
+        <div class="ofit" data-outfit="${o.id}">
+          <div class="top">
+            <span class="dt">${esc(outfitLastWorn(o))}</span>
+            <span class="muted" style="font-size:12.5px">${n} wear${n === 1 ? "" : "s"}${rate}</span>
+          </div>
+          ${thumbsHtml(its)}
+        </div>`;
+    }).join("");
+    const more = list.length > outfitsShown
+      ? `<button class="btn ghost" id="moreOutfits" style="margin-top:12px">Show more (${list.length - outfitsShown} left)</button>` : "";
+    body.innerHTML = header +
+      `<button class="backrow" data-ctx-back style="margin-bottom:10px">‹ All contexts</button>
+       <h2 class="sec" style="margin-top:0">${esc(outfitContextBrowse)} <span class="muted" style="font-weight:400">· ${list.length} outfit${list.length === 1 ? "" : "s"}</span></h2>` +
+      (cards || `<div class="empty">No outfits.</div>`) + more;
+    body.querySelector("[data-ctx-back]").onclick = () => { outfitContextBrowse = null; outfitsShown = 40; renderContextOutfits(); };
+    const mo = $("#moreOutfits");
+    if (mo) mo.onclick = () => { outfitsShown += 40; renderContextOutfits(); };
+    hydratePhotos(body);
+    return;
+  }
+
+  // Root: context grid
+  const tiles = sorted.map(([ctx, list]) => {
+    const rep = list.find(o => {
+      const its = itemsForOutfit(o.id);
+      return its.find(i => i.image_path);
+    });
+    const repItem = rep ? itemsForOutfit(rep.id).find(i => i.image_path) : null;
+    return `
+      <button class="folder" data-ctx="${esc(ctx)}">
+        <div class="fthumb" ${repItem ? `data-photo="${esc(repItem.image_path)}"` : ""}>${repItem ? "" : "👗"}</div>
+        <div class="fgrow"><div class="fname">${esc(ctx)}</div><div class="fcount">${list.length} outfit${list.length === 1 ? "" : "s"}</div></div>
+        <span class="fchev">›</span>
+      </button>`;
+  }).join("");
+  body.innerHTML = header + `<div class="folders">${tiles}</div>`;
+  body.querySelector(".folders").onclick = (e) => {
+    const b = e.target.closest("[data-ctx]");
+    if (b) { outfitContextBrowse = b.dataset.ctx; outfitsShown = 40; renderContextOutfits(); }
+  };
+  hydratePhotos(body);
 }
 
 function openWornOutfit(key) {
@@ -4165,6 +4363,42 @@ function renderQuickRewear() {
   });
 }
 
+function renderOrphanCard() {
+  const el = $("#orphanCardSection");
+  if (!el || !outfitsLoaded) { if (el) el.innerHTML = ""; return; }
+  const inOutfits = new Set([...outfitItemMap.values()].flat());
+  const orphans = items.filter(i => itemStatus(i) === "Available" && !inOutfits.has(i.id));
+  if (!orphans.length) { el.innerHTML = ""; return; }
+  // pick a random one, prefer items with a photo
+  const withPhoto = orphans.filter(i => i.image_path);
+  const pick = (withPhoto.length ? withPhoto : orphans)[Math.floor(Math.random() * (withPhoto.length || orphans.length))];
+  el.innerHTML = `
+    <div class="card stack" style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--muted)">✨ Style this orphan</div>
+      <div style="display:flex;gap:12px;align-items:center">
+        <div class="ph" style="width:64px;height:80px;flex-shrink:0;border-radius:8px" ${pick.image_path ? `data-photo="${esc(pick.image_path)}"` : ""}>${pick.image_path ? "" : "👕"}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:500;font-size:15px">${esc(pick.name)}</div>
+          <div class="muted" style="font-size:13px">${esc([pick.category, pick.subcategory].filter(Boolean).join(" · ") || "—")} · Never in an outfit</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="orphanBuildBtn" style="flex:1">Build an outfit around this</button>
+        <button class="btn ghost" id="orphanSkipBtn" style="width:auto;padding:9px 14px">Skip</button>
+      </div>
+    </div>`;
+  hydratePhotos(el);
+  $("#orphanBuildBtn").onclick = () => {
+    if (!outfitsLoaded) { ensureOutfits().then(() => startOutfitBuilder(null, [pick.id])); }
+    else startOutfitBuilder(null, [pick.id]);
+  };
+  $("#orphanSkipBtn").onclick = () => {
+    // remove this item from candidates for this session and re-draw
+    inOutfits.add(pick.id);
+    renderOrphanCard();
+  };
+}
+
 function buildLogTab() { setLogMode(logMode); }
 function setLogMode(mode) {
   logMode = mode;
@@ -4176,7 +4410,7 @@ function setLogMode(mode) {
     if (logPresetDate) { $("#w_date").value = logPresetDate; logPresetDate = null; }
   } else {
     renderQuickRewear();
-    ensureOutfits();
+    ensureOutfits().then(renderOrphanCard).catch(() => {});
   }
 }
 
@@ -4246,9 +4480,9 @@ function fillWidget(item, field) {
     `<button type="button" class="chip txt" data-care="${esc(c)}">${esc(c)}</button>`).join("")}</div>`;
   if (field === "acquisition") return `<div class="seg wrap" id="fill_acq">${ACQUISITIONS.map(a =>
     `<button type="button" data-acq="${a}">${a}</button>`).join("")}</div>`;
-  if (field === "fabric") return `<input class="inp" id="fill_fabric" placeholder="e.g. Cotton, Wool">`;
+  if (field === "fabric") return `<input class="inp" id="fill_fabric" placeholder="e.g. Cotton, Wool" list="dl_fabric" autocomplete="off">`;
   if (field === "price") return `<input class="inp" id="fill_price" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00">`;
-  if (field === "size") return `<input class="inp" id="fill_size" placeholder="e.g. M, 8, 30">`;
+  if (field === "size") return `<input class="inp" id="fill_size" placeholder="e.g. M, 8, 30" list="dl_size" autocomplete="off">`;
   const segFill = (id, values, attr) =>
     `<div class="seg wrap" id="${id}">${values.map(v => `<button type="button" data-${attr}="${esc(v)}">${esc(v)}</button>`).join("")}</div>`;
   if (field === "storage_location") return segFill("fill_storage_loc", STORAGE_LOCATIONS, "loc");
@@ -4576,7 +4810,7 @@ function wireEvents() {
   $("#outfitsBody").addEventListener("click", (e) => {
     if (e.target.closest("#newOutfitBtn") || e.target.closest("#moreOutfits")) return;
     const ov = e.target.closest("[data-oview]");
-    if (ov) { outfitView = ov.dataset.oview; outfitsShown = 40; renderOutfits(); return; }
+    if (ov) { outfitView = ov.dataset.oview; outfitsShown = 40; outfitContextBrowse = null; renderOutfits(); return; }
     const worn = e.target.closest("[data-worn]");
     if (worn) { openWornOutfit(worn.dataset.worn); return; }
     const card = e.target.closest("[data-outfit]");

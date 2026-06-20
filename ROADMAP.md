@@ -569,6 +569,122 @@ gives a clean slate with properly enriched fields and better photos.
 
 ---
 
+## 8. Brainstorm — potential future features
+
+Ideas assessed against the hard constraints (single file, plain fetch, heuristics only, derive-first/capture-light, mobile-first). Organized by readiness, not category.
+
+---
+
+### Tier 1 — Strong fit, low complexity, high value (scope into next slices)
+
+**Laundry pop-up on boot.**
+`bootApp` checks: is this a new calendar day (compare stored last-open date with today)? If yes, fetch yesterday's `wears` and cross-reference `items.availability`. Any item still `Ready` that was worn yesterday → dismissible toast: "You logged 4 items yesterday. Move them to laundry?" One-tap bulk PATCH sets `availability='Laundry'`. Entirely client-side. Store last-open date in `wardrobe.lastOpen`. No schema.
+*Care routing:* if any of those items have `care` containing `"Dry clean"`, the pop-up routes them to `'Cleaners'` rather than `'Laundry'`.
+
+**"Mark all clean" action in laundry filter.**
+When closet is filtered to `availability=Laundry`, surface a sticky action bar button "Mark all clean" → batch PATCH to `Ready`. Already has the batch infrastructure. One-liner feature with real daily value.
+
+**One-Tap Unpack for Capsules.**
+`openCapsule` gets an "Unpack" action alongside "Pack". Prompts: *"Return to closet (Ready)"* or *"Send to Laundry"*. Fires a batch PATCH on all the capsule's items. Closes the loop on the packing checklist (B2) with a natural end-of-trip flow.
+
+**Batch attribute editing.**
+Upgrade the multi-select action bar to include `Season`, `Color Family`, `Care`, and `Availability` as batch-editable fields, not just status/tags/capsule/delete. Add an `openBatchEditSheet()` that renders chip selectors for these fields. Saves massive amounts of time during the upcoming Airtable data reset. Reuses the `items?id=in.(...)` PATCH pattern.
+
+**Strict weather hard-filter in Shuffle.**
+Currently D1 soft-scores weather (±0.5). During Shuffle (`🔄`), hard-filter the candidate pool to remove items that actively conflict with `weatherCache`: temp < 50°F → remove Sandals and Shorts from pool; `precip > 0` → remove Sandals entirely. Every shuffled result is actually wearable that day. Simple change to `suggestOutfits` when called from Shuffle.
+
+**"Style This Orphan" on Home / Log.**
+`outfitItemMap` already reveals items in 0 outfits. Surface one random orphan item on the Home dashboard (Phase E) or as a persistent card in Log → Outfit with "Build an outfit around this" → `startOutfitBuilder(null, [id])`. Pure derive; no schema. High leverage for under-used items.
+
+**Recently Purchased filter.**
+Add a "New (90d)" chip to the closet filter bar. Client-only: filters `items` where `purchase_date >= today - 90`. Useful during the reset period when many items are freshly added/re-tagged.
+
+**Seasonal Rotation Wizard.**
+Once per season transition (detectable by month or a "Review winter items" button in Settings), show a modal: "These 6 winter items were not worn last winter — archive, storage, or keep?" Lists them with wear count + last worn. Bulk action buttons apply status. Pure derive from `wears` + `season` + `purchase_date`. High ROI per tap.
+
+**Outfit Repeat Tracking surface.**
+Already fully derivable from `wornOutfitMap()`. Surface it explicitly in the outfit detail sheet (`openOutfit`): "Last worn: 38 days ago · Worn 7× this year · Last context: Campus." Currently those stats don't appear in the outfit view. No schema, no new data.
+
+---
+
+### Tier 2 — Good ideas, moderate effort or needs a decision first
+
+**Weekly Outfit Planning view.**
+A 7-day strip showing planned/logged outfits for Mon–Sun. Tap a day → log or assign an outfit. Days with `events` show the event title. Very close to Phase E's Home week strip — implement together, not separately. *Decision before building:* does planning live on Home, or does Calendar get a week-view mode? Don't build both.
+
+**Outfit Queue.**
+A short "wear next" list — outfits you've pre-built and marked to wear soon. Could piggyback on `events.planned_outfit_id` (already exists) rather than a new table: add an "unscheduled / wear soon" event type with no date. Avoids schema addition. *Confirm approach before building.*
+
+**Gap Analysis (actionable context coverage).**
+Phase C already plans a coverage matrix (contexts × eligible items). Extend it with the specific framing: *"Professional: only 2 summer-appropriate tops. Wedding guest: 3 eligible items."* Flag gaps where eligible item count < threshold (e.g. < 4) and link to a filtered closet + Wishlist add. Pure derive from `contextsForItem` + `season`.
+
+**CPW Projection.**
+Alongside the current CPW (`price / wearCount`), show *projected* CPW: `price / (wearCount * 365 / daysOwned)`. Makes newer purchases feel less alarming. "At your current pace: $12.50/wear after 1 year." Pure math, no schema. Respect the CPW $0 rule.
+
+**Utilization Heatmap by category.**
+A table in Insights: `| Category | Items | Worn this year | % |`. One row per category from `TAXONOMY`, derived from `wears` filtered to `worn_on >= today - 365`. Instantly surfaces dead categories (e.g. Heels: 18%). Very fast to build; slots naturally into Phase C.
+
+**Closet Aging metrics.**
+`purchase_date` is already on items. Derive: average item age in years (Available items), % of closet added in the last 12 months, oldest regularly-worn item (most wears among items > 5 years old). Fun, zero schema, add to Insights.
+
+**Packing Optimizer (Capsule coverage analysis).**
+When viewing a Capsule, show a coverage card: "18 possible outfits · Missing: no rain jacket · Overpacked: 5 black cardigans." Derives possible-outfit count from top×bottom combinations in the capsule. "Missing" = context required by trip events with no eligible capsule item. "Overpacked" = more than 2 items of the same subcategory. Phase D3 auto-gen can build on this.
+
+**Year in Wardrobe recap.**
+Available from the Stats/Insights tab (not a December-only feature — scope to a trailing 365d window). Cards: wears logged · unique items worn · new outfits created · best purchase (lowest CPW, priced items) · most worn item · most neglected. Pure derive. Keep it personal — no export/share (violates no-social stance).
+
+**Milestone items.**
+A simple `milestone bool` on items (or a reserved tag `"Memory item"`). Tag: "Dissertation defense dress, worn to 9 meaningful events." Using a tag avoids schema. Surfaces on item detail as a "milestone" badge. Tiny captured-data exception to derive-first — keep it optional and single-tap.
+
+**Purchase Success Score.**
+Composite rank of items by value delivered: weight `wearCount / price` (per-dollar wears) × avg wear `rating` (where rated). Filters to priced + rated items. Useful for future shopping decisions. Needs ratings to be well-populated first — build after the Airtable reset when data is richer.
+
+---
+
+### Tier 3 — Lower priority / waiting on dependencies
+
+**CPW Goal Celebrations.**
+A visual indicator (gold accent or label change) when an item's CPW crosses from "above goal" to "at or below goal." Depends on the Airtable Goal CPW / Total Score formulas (pending — see Phase C). Build this after those formulas are implemented.
+
+**Item Timeline.**
+Chronological view within item detail: Purchased → First wear → Outfit appearances by date. Most of the raw material is in F5 already (outfit mosaic, wear count, days owned). A true timeline scroll is a visual layer on top — nice polish for high-sentimental items.
+
+**"Wear Soon" / "Waiting for" micro-states.**
+Lightweight status annotations below `availability`: "Wear soon" (want to use this week) and "Waiting for" (tailoring / season / occasion). Could be a reserved tag rather than a new column. Useful but low urgency vs the laundry/repair tracking already in place.
+
+**Outfit Rotation Score.**
+Insights card: "45 outfits never worn · 18 not worn in 6 months · top 20 outfits = 60% of wears." Derive from `outfits` vs `wornOutfitMap()`. Good Phase C addition once the Insights tab is more built out.
+
+---
+
+### Already covered by existing phases (don't re-derive)
+
+| Idea | Where it lives |
+|---|---|
+| "What to Wear Today" filter view | D1 outfit suggestions (done v8) |
+| Random outfit / Shuffle | D1 🔄 Shuffle button (done v8) |
+| Laundry Basket view | Closet filter `availability=Laundry` (done v7) |
+| "I Need Inspiration" (item → pairings) | F5 item detail "Wear it with" (done v10) |
+| Orphan items list | Phase C orphans & declutter (planned) |
+| Repair Dashboard / queue | Phase C, `needs_repair` field exists |
+| Home dashboard + week strip | Phase E (planned last) |
+| Smart Collections / saved searches | Phase C (planned) |
+| Browse outfits by context | F9 (planned, decision required) |
+| Size Tracker | F7 (planned) |
+| User-editable categories | F4 (planned, decision required) |
+| Advanced filter sheet | F6 (planned) |
+
+---
+
+### Not doing from this batch (rationale)
+
+- **Shareable "Year in Wardrobe" infographic** — the recap itself is fine; the share/export framing is social-adjacent. Build the view for personal use only.
+- **Drag-drop weekly outfit planning** — drag on mobile is painful. Tap-to-assign is the right interaction.
+- **"Mood" per-item tag** — already rejected (per §7; subjective per-item chore, against capture-light).
+- **Social-adjacent features** (lookbooks, selfies, followers, avatar) — already rejected (§7).
+
+---
+
 ## 7. Explicitly NOT doing (by decision)
 AI auto-tagging / bg-removal · stylist chat · semantic/embedding search · server
 proxy / Edge Functions · outfit collage canvas · social sharing · multi-user /
