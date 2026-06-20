@@ -2404,7 +2404,8 @@ function renderLogGrid(q) {
     return;
   }
   if ($("#logGridEmpty")) $("#logGridEmpty").hidden = true;
-  grid.innerHTML = pool.map(i => {
+  const sorted = [...pool.filter(i => logPickedIds.has(i.id)), ...pool.filter(i => !logPickedIds.has(i.id))];
+  grid.innerHTML = sorted.map(i => {
     const picked = logPickedIds.has(i.id);
     return `<div class="tile selectable${picked ? " picked" : ""}" data-logitem="${i.id}">
       <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
@@ -2471,8 +2472,11 @@ function openGroupingSheet(ids, date, context) {
 
   const legend = `<div class="muted" style="font-size:12.5px;margin-bottom:12px">Assign items to outfit groups. Items can share groups (like the same shorts worn in two outfits).</div>`;
   $("#sheet").innerHTML = `
-    <div class="sheet-hd"><div class="sheet-title">Group into outfits</div><button class="sheet-x" id="gSheetClose">✕</button></div>
-    <div style="padding:0 16px 24px">
+    <div style="padding:16px 16px 0;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:18px;font-weight:700">Group into outfits</span>
+      <button id="gSheetClose" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;color:var(--muted)">✕</button>
+    </div>
+    <div style="padding:8px 16px 24px">
       ${legend}
       <div id="groupItemList"></div>
       <button class="btn ghost" id="addGroupBtn" style="margin-top:12px;width:auto;padding:7px 16px;font-size:13px">＋ Add outfit</button>
@@ -5364,7 +5368,7 @@ function wireEvents() {
     if (!t) return;
     const id = t.dataset.logitem;
     if (logPickedIds.has(id)) logPickedIds.delete(id); else logPickedIds.add(id);
-    t.classList.toggle("picked");
+    renderLogGrid($("#w_search")?.value || "");
     updateLogPickBar();
   });
 
