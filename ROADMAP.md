@@ -2,7 +2,7 @@
 
 > Single source of truth for what's next. Written so a **fresh session (any model)
 > can execute without re-deriving decisions**. Read `CLAUDE.md` (architecture +
-> hard constraints) and `schema.sql` (DB) alongside this. Status as of **v14**.
+> hard constraints) and `schema.sql` (DB) alongside this. Status as of **v17**.
 
 ---
 
@@ -201,6 +201,20 @@ inline date picker + "Log" button. Logging creates individual wear rows (no
 `outfit_id`); refreshes on success. Saves navigating into the library for everyday
 re-wears. `#quickRewearSection` div inserted above `#outfitsBody` in `#logOutfitPanel`;
 rendered in `setLogMode("outfit")` path alongside `ensureOutfits()`.
+
+**v17 (2026-06-20):** F8 type-ahead for fill_size + fill_fabric (shared dl_size datalist;
+new dl_fabric populated from text[] fabric arrays via `fillDlArray`). F9 "By Context"
+third view in Outfits tab — folders derived from `outfits.context`, drill into outfit list,
+no schema change; `outfitContextBrowse` state. "Style This Orphan" card in Log → Outfit —
+finds Available items with 0 outfit appearances, shows one randomly, "Build an outfit around
+this" + Skip; `renderOrphanCard()` called after `ensureOutfits()` resolves. Strict weather
+hard-filter in `suggestOutfits` — `isCold` (temp_f < 50) removes Sandals + Shorts from
+pool entirely; `isRainy` (precip > 0.1) removes Sandals (previously only soft-scored ±0.5).
+Batch Season + Color — two new buttons in multi-select bar; `batchSeason()` opens chip sheet
+(additive merge); `batchColor()` opens swatch sheet (sets color_family). New(90d) closet
+filter chip — "New (90d)" chip in root filterbar; `applyFacets` now actually wired into
+`renderCloset` via `applyFacets(applyNeglect(statusScoped()))` (was dead code before);
+chip clear wired in `wireClosetControls` via `#closetFilterChips`.
 
 ---
 
