@@ -588,7 +588,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v6";
+const APP_VERSION = "2026-06-20 v7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2069,6 +2069,36 @@ async function submitWear() {
    OUTFITS  (browse · build · log-as-wear)
    =================================================================== */
 let outfitsShown = 40;
+let outfitView = "worn";       // "worn" (derived accurate log) | "library" (raw template list)
+let _wornAgg = new Map();      // cache: item-set key -> { ids:[], dates:Set } from wornOutfitMap()
+
+// Derive the *actual* outfits worn from the wear history. The "worn together"
+// unit is the outfit_id on a given day (so two outfits on the same day stay
+// separate — a dress never merges with sweatpants); each untagged single-item
+// wear is its own one-item outfit. Instances are then aggregated by their exact
+// item-set, so duplicate outfit rows (the import made one per day) collapse into
+// one entry with an accurate worn-day count.
+function wornOutfitMap() {
+  const byGroup = new Map();   // (outfit_id|day) or (lone|wearId) -> { items:Set, date }
+  for (const w of wears) {
+    if (w.outfit_id) {
+      const k = w.outfit_id + "|" + w.worn_on;
+      if (!byGroup.has(k)) byGroup.set(k, { items: new Set(), date: w.worn_on });
+      byGroup.get(k).items.add(w.item_id);
+    } else {
+      byGroup.set("lone|" + w.id, { items: new Set([w.item_id]), date: w.worn_on });
+    }
+  }
+  const agg = new Map();       // sorted-item-ids -> { ids:[], dates:Set }
+  for (const g of byGroup.values()) {
+    const ids = [...g.items].sort();
+    if (!ids.length) continue;
+    const key = ids.join(",");
+    if (!agg.has(key)) agg.set(key, { ids, dates: new Set() });
+    agg.get(key).dates.add(g.date);
+  }
+  return agg;
+}
 
 async function ensureOutfits() {
   const body = $("#outfitsBody");
@@ -2087,9 +2117,17 @@ function thumbsHtml(its) {
   ).join("") + `</div>`;
 }
 
+function viewToggle() {
+  return `<div class="seg" id="outfitViewSeg" style="margin:2px 0 14px">
+    <button data-oview="worn" class="${outfitView === "worn" ? "on" : ""}">Worn</button>
+    <button data-oview="library" class="${outfitView === "library" ? "on" : ""}">Library</button>
+  </div>`;
+}
+
 function renderOutfits() {
+  if (outfitView === "worn") { renderWornOutfits(); return; }
   const body = $("#outfitsBody");
-  const header = `
+  const header = viewToggle() + `
     <div style="display:flex;justify-content:space-between;align-items:center;margin:2px 0 12px">
       <span class="muted" style="font-size:13px">${outfits.length} outfit${outfits.length === 1 ? "" : "s"}</span>
       <button class="btn" id="newOutfitBtn" style="width:auto;padding:9px 14px">＋ New outfit</button>
@@ -2125,6 +2163,69 @@ function renderOutfits() {
   const mo = $("#moreOutfits");
   if (mo) mo.onclick = () => { outfitsShown += 40; renderOutfits(); };
   hydratePhotos(body);
+}
+
+// The accurate log: distinct outfits actually worn (by exact item-set), each
+// with a real worn-day count. Sorted by times-worn, then most recent.
+function renderWornOutfits() {
+  const body = $("#outfitsBody");
+  _wornAgg = wornOutfitMap();
+  const entries = [..._wornAgg.entries()].map(([key, v]) => {
+    const dates = [...v.dates].sort();
+    return { key, ids: v.ids, dates, count: dates.length, last: dates[dates.length - 1] };
+  }).sort((a, b) => b.count - a.count || (b.last || "").localeCompare(a.last || ""));
+
+  const header = viewToggle() + `<div class="muted" style="font-size:13px;margin:0 2px 12px">${entries.length} distinct outfit${entries.length === 1 ? "" : "s"} worn</div>`;
+
+  if (!entries.length) { body.innerHTML = header + `<div class="empty">No wears logged yet.</div>`; return; }
+
+  const cards = entries.slice(0, outfitsShown).map(e => {
+    const its = e.ids.map(id => items.find(i => i.id === id)).filter(Boolean);
+    return `
+      <div class="ofit" data-worn="${esc(e.key)}">
+        <div class="top">
+          <span class="dt">Worn ${e.count}×</span>
+          <span class="muted" style="font-size:12.5px">last ${esc(e.last || "—")}</span>
+        </div>
+        ${thumbsHtml(its)}
+      </div>`;
+  }).join("");
+
+  const more = entries.length > outfitsShown
+    ? `<button class="btn ghost" id="moreOutfits" style="margin-top:12px">Show more (${entries.length - outfitsShown} left)</button>` : "";
+
+  body.innerHTML = header + cards + more;
+  const mo = $("#moreOutfits");
+  if (mo) mo.onclick = () => { outfitsShown += 40; renderOutfits(); };
+  hydratePhotos(body);
+}
+
+function openWornOutfit(key) {
+  const v = _wornAgg.get(key);
+  if (!v) return;
+  const its = v.ids.map(id => items.find(i => i.id === id)).filter(Boolean);
+  const dates = [...v.dates].sort().reverse();
+  const itemTiles = its.map(i => `
+    <div class="pk" data-item="${i.id}">
+      <div class="ph" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div class="nm">${esc(i.name)}</div>
+    </div>`).join("");
+  $("#sheet").innerHTML = `
+    <h2 style="margin:6px 2px 2px;font-size:20px">Worn ${dates.length}×</h2>
+    <div class="muted" style="margin:0 2px 12px;font-size:13px">${its.length} item${its.length === 1 ? "" : "s"} · worn together</div>
+    <div class="pickgrid">${itemTiles || `<div class="muted">Items no longer in your closet.</div>`}</div>
+    <h2 class="sec">Worn on</h2>
+    <div class="lst">${dates.map(d => `<div class="li" data-day="${esc(d)}" style="cursor:pointer"><div class="grow"><div class="t1">${esc(d)}</div></div><div class="val">›</div></div>`).join("")}</div>
+    <div class="stack" style="margin-top:16px"><button class="btn ghost" id="woClose">Close</button></div>`;
+  $("#modal").classList.add("open");
+  hydratePhotos($("#sheet"));
+  $("#sheet").querySelector(".pickgrid").onclick = (e) => {
+    const t = e.target.closest("[data-item]"); if (t) { closeModal(); openItem(t.dataset.item); }
+  };
+  $("#sheet").querySelector(".lst").onclick = (e) => {
+    const t = e.target.closest("[data-day]"); if (t) { closeModal(); openDay(t.dataset.day); }
+  };
+  $("#woClose").onclick = closeModal;
 }
 
 function openOutfit(id) {
@@ -2746,8 +2847,8 @@ function donutSvg(segs, hlIdx) {
   </svg>`;
 }
 
-function segmentsFor(field) {
-  const pool = field === "status" ? items : iPool();
+function segmentsFor(field, basePool) {
+  const pool = field === "status" ? items : (basePool || iPool());
   const gmap = new Map();
   const add = k => gmap.set(k, (gmap.get(k)||0)+1);
   if (field==="color")  for (const i of pool) add(i.color_family||"");
@@ -2766,30 +2867,6 @@ function segmentsFor(field) {
     label: label||"No value", n,
     color: field==="color" ? (label?colorHex(label):"#ccc") : DONUT_PALETTE[i%DONUT_PALETTE.length]
   }));
-}
-
-function showDrillDown(title, list, metricFn) {
-  const tiles = list.map(i => {
-    const m = metricFn ? metricFn(i) : "";
-    return `<div class="tile" data-item="${i.id}">
-      <div class="ph" ${i.image_path?`data-photo="${esc(i.image_path)}"`:""}>
-        ${i.image_path?"":"👕"}</div>
-      <div class="meta"><div class="nm">${esc(i.name)}</div>${m?`<div class="sub">${esc(m)}</div>`:""}</div>
-    </div>`;
-  }).join("");
-  $("#sheet").innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-      <button class="btn ghost" id="ddClose" style="padding:5px 14px;font-size:14px">‹</button>
-      <h2 style="margin:0;font-size:18px;flex:1">${esc(title)} <span class="muted" style="font-weight:400;font-size:13px">${list.length}</span></h2>
-    </div>
-    <div class="grid">${tiles||`<div class="empty">No items.</div>`}</div>`;
-  $("#modal").classList.add("open");
-  hydratePhotos($("#sheet"));
-  $("#ddClose").onclick = closeModal;
-  $("#sheet").querySelector(".grid")?.addEventListener("click", e => {
-    const t = e.target.closest("[data-item]");
-    if (t) { closeModal(); openItem(t.dataset.item); }
-  });
 }
 
 async function ensureInsights() {
@@ -3048,16 +3125,17 @@ function openInsightsDrill(key, pool, poolIds) {
       () => pool.filter(i=>ratio(i)!=null).sort((a,b)=>(ratio(b)||0)-(ratio(a)||0)),
       (i) => { const r=ratio(i); return r!=null?(r*100).toFixed(1)+" wears/$100":""; },
       { toggleLabels:["Best Value","Most Regret"],
-        toggleFn:()=>pool.filter(i=>i.price>0&&wearCount(i.id)===0||ratio(i)!=null&&ratio(i)<0.01)
+        toggleFn:()=>pool.filter(i=>(i.price>0&&wearCount(i.id)===0)||(ratio(i)!=null&&ratio(i)<0.01))
           .sort((a,b)=>b.price-a.price) });
 
   } else if (key === "velocity") {
     const ninetyCut = new Date(); ninetyCut.setDate(ninetyCut.getDate()-90);
     const nStr = ninetyCut.toISOString().slice(0,10);
     const vel = (i,cut) => wears.filter(w=>w.item_id===i.id&&w.worn_on>=(cut||nStr)).length;
+    const velLabel = (cut) => (!cut || cut===nStr) ? "× in 90d" : "×";
     showDrillDown("Wear Velocity (90 days)",
-      () => pool.filter(i=>vel(i)>0).sort((a,b)=>vel(b)-vel(a)),
-      (i) => vel(i)+"× in 90d",
+      (cutoff) => pool.filter(i=>vel(i,cutoff)>0).sort((a,b)=>vel(b,cutoff)-vel(a,cutoff)),
+      (i,cutoff) => vel(i,cutoff)+velLabel(cutoff),
       { canRange:true,
         toggleFn:(cutoff)=>pool.filter(i=>vel(i,cutoff)>0).sort((a,b)=>vel(a,cutoff)-vel(b,cutoff)),
         toggleLabels:["Most Active","Least Active"] });
@@ -3115,8 +3193,8 @@ function openInsightsDrill(key, pool, poolIds) {
 
   } else if (key.startsWith("by-")) {
     const field = key.slice(3);
-    const segs = segmentsFor(field);
     const segPool = field === "status" ? items : pool;
+    const segs = segmentsFor(field, segPool);
     const tiles = segs.map((s,i)=>`
       <div class="bar" style="cursor:pointer" data-byseg="${i}">
         <div class="blab"><span class="sw" style="display:inline-block;vertical-align:-2px;margin-right:4px;background:${s.color}"></span>${esc(s.label)}</div>
@@ -3292,7 +3370,8 @@ function openDay(dateStr) {
            </div>`
         : "";
       const noteHtml = note ? `<div class="muted" style="font-size:12.5px;margin-top:6px;padding-top:6px;border-top:1px solid var(--line)">${esc(note)}</div>` : "";
-      const wearId = g.wears[0]?.id;
+      // edit the wear that holds the note (so we don't write a 2nd note onto the first item)
+      const wearId = (g.wears.find(w => w.note) || g.wears[0])?.id;
       const editNoteHtml = `<div id="wn_${esc(wearId||"")}" style="font-size:12px;color:var(--accent);cursor:pointer;margin-top:4px" data-editnote="${esc(wearId||"")}">${note ? "Edit note" : "+ Add note"}</div>`;
       return `<div class="card" style="margin-bottom:10px">
         ${outfitLabel}
@@ -3446,6 +3525,10 @@ function openAddEvent(dateStr) {
 const TAB_TITLES = { closet: "Closet", add: "Add Item", log: "Log", fill: "Fill", capsules: "Capsules", calendar: "Calendar", stats: "Insights", settings: "Settings" };
 
 function switchTab(name) {
+  // A pending log-preset date is only meaningful inside the Log flow (and is
+  // consumed when an outfit is opened). Leaving without using it shouldn't leak
+  // the stale date into the next outfit opened elsewhere.
+  if (name !== "log") logPresetDate = null;
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   $("#title").textContent = name === "add" && editingId ? "Edit Item" : TAB_TITLES[name];
@@ -3915,6 +3998,10 @@ function wireEvents() {
   // outfit open (New-outfit / Show-more buttons are wired per-render)
   $("#outfitsBody").addEventListener("click", (e) => {
     if (e.target.closest("#newOutfitBtn") || e.target.closest("#moreOutfits")) return;
+    const ov = e.target.closest("[data-oview]");
+    if (ov) { outfitView = ov.dataset.oview; outfitsShown = 40; renderOutfits(); return; }
+    const worn = e.target.closest("[data-worn]");
+    if (worn) { openWornOutfit(worn.dataset.worn); return; }
     const card = e.target.closest("[data-outfit]");
     if (card) openOutfit(card.dataset.outfit);
   });
