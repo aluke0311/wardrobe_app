@@ -155,6 +155,20 @@ wear count, today circled, event dots, day detail sheet (wears + events + remove
 date, context, dress code, notes). New state: `events/eventsLoaded/calYear/calMonth/
 logPresetDate`. New functions: `loadEvents/ensureCalendar/renderCalendar/openDay/
 openAddEvent`. New constants: `STORAGE_LOCATIONS/FITS/LENGTHS/RISES`.
+**B1 day-detail refinement ✓ (v10 2026-06-19):** wears grouped by `outfit_id`
+in the day sheet; outfit blocks show label + context + rating emoji; lone wears
+listed individually; wear notes displayed inline with tap-to-edit "Add/Edit note"
+affordance (PATCHes `wears.note`).
+**F5 — Item detail enrichment ✓ (v10 2026-06-19):** "Used in N outfits" mosaic
+(thumbnails, tap to open outfit); "Wear it with" co-occurrence pairings (top
+co-occurring items from outfits, tap to open); "Create outfit with this item"
+button (`startOutfitBuilder(null,[id])`); KPI 4 now shows days in wardrobe
+(from `purchase_date`); "days since last worn" moved to Details card.
+**F2 — Fill page upgrades ✓ (v10 2026-06-19):** Available-only pool; random
+field selection across all empty fields; shuffled item order each card.
+**F8 — Type-ahead ✓ (v10 2026-06-19):** brand/retailer/size inputs in
+Add/Edit form show `<datalist>` of previously-entered values (case-deduped,
+sorted).
 
 ---
 

@@ -157,79 +157,30 @@ collage canvas)**, **derive-first/capture-light** data philosophy. The legacy
 `3d/3e/3f` items below are folded into ROADMAP's Phases B/C/D; this section keeps the
 *done* history.
 
-**Phase A (closet usability) COMPLETE (v9 / 2026-06-19 v3):** A1 hierarchical
-closet + density, nav→7 tabs (Add-in-Closet, merged **Log** tab, new **Fill** tab,
-**Calendar** tab), the random-item Fill page, sortable grids, multi-select + batch
-actions, upkeep fields (availability/care/needs-repair), one-tap wear ratings, and
-optional fit/storage fields (storage_location, fit, length, rise, price_original).
-**Phase B1 (Calendar) also complete (2026-06-19 v4).** Live DB has gained columns —
-see ROADMAP §2. Migrations are run by the user in the Supabase SQL editor;
-**never deploy UI that writes a new column/table before its migration is confirmed.**
+**Current state: v10 / 2026-06-19. All phases through B + partial C/F done.**
+Migrations are run by the user in the Supabase SQL editor; **never deploy UI that
+writes a new column/table before its migration is confirmed.**
 
-- **Phase 1 — schema** ✓ run in Supabase.
-- **Phase 2 — import** ✓ 476 items + photos live; ARCHIVE-prefix names cleaned.
-- **Phase 3 — rewrite `index.html` for the new schema** (3a/3b/3c DONE). Build in
-  verifiable slices, keeping the app fully working each step:
-  - 3a Core ✓ (2026-06-18): all new fields + subcategory picker (dependent on
-    category), `status` (Available/Storage/Archive) filter + search + category
-    filter replacing the archived toggle, single `color_family`, occasion range
-    + `CONTEXTS` (with item↔context overlap "Works for"), **item editing**,
-    **photo replace**, **back-dated wear logging** (Log Wear date picker allows
-    past; context select). Closet photos lazy-load via IntersectionObserver.
-    Stats adapted to the new fields but its full rebuild is 3e. NOT yet verified
-    against live data by the user / not yet deployed.
-  - 3b Capsules ✓ (2026-06-18): a **Capsules** tab (nav is now 7 tabs) — browse
-    capsule cards (name, kind pill, item count, date range, item-photo thumbnails),
-    capsule detail (tap an item to open it), and a **builder** (name, kind segmented
-    `capsule`/`packing`/`travel`, start/end dates, notes, searchable multi-select
-    item picker — pulls from any non-Archive item). The **active-capsule lens**:
-    "Use as closet lens" filters the Closet to just that capsule's items, shows a
-    dark lens banner with a Clear button, suppresses the status filter (capsule set
-    shown whole, all statuses), and **persists** via `store` (key `wardrobe.lens`,
-    re-applied on boot by `restoreLens`, which lazy-loads capsules if needed).
-    `CAPSULE_KINDS`/`kindLabel`/`dateRangeLabel` are the new constants/helpers.
-    Verified end-to-end against live data (create→lens→clear→delete). Not yet
-    deployed; user hasn't reviewed in the live app.
-  - 3c Outfits ✓ (2026-06-18): a 6th **Outfits** tab — browse (date + item-photo
-    thumbnails, "Show more" paging over ~1.5k), outfit detail (tap an item to open
-    it), **log-an-outfit-as-a-wear** (back-datable; one wear per item per day,
-    tagged with `outfit_id`), and a **builder** to create/edit outfits (searchable
-    multi-select item picker, context, date; "Save & log as worn"). Outfits +
-    outfit_items load lazily on first tab open. **Verified against live data.**
-    Note: added `restAll()` paging — `loadData` now pages `wears` (was capped at
-    1000, so the app had been undercounting; CPW/stats were silently wrong).
-  - 3d Calendar ✓ (2026-06-19 v4, see Phase B1 below).
-  - 3e Stats — rebuild around the user's Airtable CPW / score / alert formulas
-    (still TODO: read those formulas from the Airtable "Clothing" table fields like
-    Goal CPW, Total Score, Action Needed and reproduce the logic).
-  - 3f Outfit dedup + rewear (agreed 2026-06-18, NOT STARTED). The import made
-    **one outfit row per wear-day**, so the 1,543 outfits include many duplicates
-    (same item set, different days). Goal: an outfit is a *reusable* set that can
-    have **many wears** (the schema already supports this — `wears.outfit_id` is
-    many-to-one; nothing ties an outfit to a single date except the `created_at`
-    we set at import). Pieces:
-    1. **Merge identical outfits** — collapse outfits whose item set is identical
-       into one; repoint their wears' `outfit_id`; delete the now-empty dupes.
-       (Order-independent compare of `outfit_items`. Likely a `migration/` script
-       + an in-app "merge duplicates" action.) After merge, `created_at` ≈ first
-       worn; surface wear count + last-worn per outfit.
-    2. **Rewear** — "Log as worn" already creates a new dated wear on an existing
-       outfit; with merge this is the primary path (one outfit, growing wear list).
-    3. **Builder shows matching prior outfits** — as the user selects items in the
-       builder, surface existing outfits that match (subset/superset/exact) so they
-       can pick one to rewear instead of creating a duplicate.
-- **Backlog of agreed ideas** (not yet scheduled): one-tap re-wear, closet
-  utilization % (worn this month), declutter assistant (never-worn + high CPW +
-  old), laundry/available-now status, wishlist (pre-purchase, projected CPW),
-  export/backup JSON, color/category gap analysis. "What I wear by context"
-  analysis falls out once wears carry contexts.
+**What's done (condensed):**
+- **Phase 1–2:** schema ✓ (schema.sql), import ✓ (476 items + photos + 3,995 wears + 1,543 outfits).
+- **Phase 3a–3d core:** new schema, capsules+lens, outfits+builder, calendar (all ✓).
+- **Phase A complete:** hierarchical closet, 7 tabs, Fill page, sortable grids, multi-select+batch, upkeep fields, wear ratings, fit/storage/price_original fields.
+- **Phase B complete:** B1 Calendar (month grid, events, day-detail) + B1 refinement (wears grouped by outfit_id, inline notes) · B2 Capsule polish (packing checklist, outfit→capsule) · B3 Wishlist status + purchase-justification card · B4 Rotation/"Neglected" mode.
+- **Phase C (Insights) partially complete:** KPI cards (item count, closet value, CPW, utilization) · drill-downs with time-range filter + Best/Worst toggle (CPW, Most Worn, Velocity, Never Worn, Best Purchases, Recency) · View Closet By donut charts (color/brand/size/season/fabric/price) · Occasion Coverage. All Available-only scope. CPW $0 rule applied. *Airtable Goal CPW / Total Score formulas still pending — ask user for those formulas before implementing.*
+- **Phase F partial:** F2 fill upgrades (Available-only pool, random field, shuffled order) · F5 item detail enrichment (outfit mosaic, "Wear it with" pairings, "Create outfit" button, days-in-wardrobe KPI) · F8 type-ahead for brand/retailer/size.
+- **Still pending:** D1–D4 (outfit suggestions, weather, capsule auto-gen, outfit dedup/merge) · E (Home dashboard) · F1/F3/F4/F6/F7/F9.
+
+**Outfit dedup note (D4, NOT started):** the import created one outfit row per
+wear-day, so the ~1,543 outfits include many duplicates (same item set, different
+days). A merge script + in-app "merge duplicates" action is the plan — see
+ROADMAP §D4 for the approach.
 
 ## Conventions
 
 - **`APP_VERSION`** is shown in the UI as-is (no "v" prefix in markup). Format
   **`YYYY-MM-DD vN`**: on a new day use today's date + `v1`; for additional pushes
   the same day, increment `vN` (`v2`, `v3`, …) so same-day deploys differ.
-  Currently `2026-06-19 v2`.
+  Currently `2026-06-19 v10`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -246,6 +197,14 @@ see ROADMAP §2. Migrations are run by the user in the Supabase SQL editor;
   `blob.type === 'image/webp'` and falls back to JPEG. Keep that check.
 - **Private photos need signed URLs** — you can't use a public bucket URL.
 - GitHub Pages caches aggressively; hard-refresh after deploy.
+- **`outfitItemMap` is outfit_id → [item_id], not item_id → [outfit_id].** To find
+  all outfits an item appears in, iterate the map: `for (const [oid, ids] of outfitItemMap) { if (ids.includes(itemId)) … }`. Don't assume the reverse index exists.
+- **`outfits` is loaded lazily** — guard any outfit-dependent code (outfit mosaic,
+  pairings, etc.) with `if (outfitsLoaded)`. Use `ensureOutfits()` before
+  `startOutfitBuilder` when triggering from a context that may not have outfits loaded yet.
+- **Named functions vs aliases:** if a function is renamed, grep for all call sites —
+  e.g. `openOutfitDetail` was called in Insights but the real function was `openOutfit`
+  (silently undefined until fixed in v10).
 
 ## Deploy
 

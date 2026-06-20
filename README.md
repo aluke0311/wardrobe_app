@@ -1,90 +1,132 @@
 # Wardrobe App
 
-A personal wardrobe tracker (Stylebook-style) for one user. Upload photos of
-clothing items, track details (brand, colors, price, where/when purchased,
-category), log every wear, and see stats like cost-per-wear, most/least worn,
-and "haven't worn in a while."
+A personal, single-user wardrobe tracker. Photograph clothing, track details,
+log every wear, build outfits, plan capsules, and see stats like cost-per-wear,
+most/least worn, and occasion coverage.
 
-**Status:** Live and in use. Supabase backend (tables, RLS, Storage bucket +
-policies, login user) is set up. — _v2026-06-17_
+**Status:** Live and in active use. 476 items + 4,000 historical wears imported
+from Airtable. — _v2026-06-19 v10_
+
+Live: https://aluke0311.github.io/wardrobe_app/  
+Repo: https://github.com/aluke0311/wardrobe_app
+
+---
 
 ## Features
 
-- Email + password login; shows only a login screen when signed out.
-- **Closet** — photo grid; tap a tile for an item detail sheet.
-- **Add Item** — pick a photo from library/camera, auto-compressed to WebP
-  before upload; name, category, brand, multi-select colors, price, purchase
-  date/place, notes.
-- **Log Wear** — one tap to log a wear (today or a chosen date), optional
-  occasion; recent-wears list with remove.
-- **Stats** — cost-per-wear (headline), most/least/never worn, "haven't worn in
-  a while", total wardrobe value, wears by category and color.
-- **Settings** — account, manual refresh/sync, sign out.
-- Archive (donated/sold) keeps history without cluttering the active closet.
+**7 tabs:** Closet · Log · Capsules · Calendar · Fill · Insights · Settings
+
+- **Closet** — hierarchical category→subcategory folders with photo grid (2–4 col
+  density). Filters: status (Available/Storage/Archive/Wishlist), search, sort,
+  Neglected (not worn in 30d). Multi-select for batch status/tags/capsule/delete.
+  Closet lens from an active capsule. Add item via ＋ button.
+- **Add / Edit Item** — photo pick (camera or library, compressed to WebP), name,
+  category→subcategory, color family, brand, retailer (with type-ahead from existing
+  values), occasion range (1–7 formality ladder), purchase details, size, season,
+  fabric, care, fit, length, rise, storage location, status, availability, tags, notes.
+- **Log** — two modes (segmented): single-item wear (pick item, date, context,
+  rating, compliments, note) and outfit wear (pick an outfit, date, rating). Date
+  pre-fills from Calendar "log for this day" shortcut.
+- **Capsules** — named item sets (capsule / packing / travel). Packing checklist
+  (pack/✓ per item). Add-an-outfit-to-capsule. Active lens filters Closet to just
+  that capsule's items.
+- **Calendar** — month grid heat-shaded by wear count, event dots. Tap a day →
+  wears grouped by outfit, inline notes, "Log wear/outfit for this day" + "Add
+  event". Events (title, context, dress code, notes) stored in DB.
+- **Fill** — one-at-a-time data entry: shows a random Available item with a
+  randomly-chosen empty field; single-tap chip saves. Skip to get another item.
+- **Insights** (Stats tab) — KPIs: item count, closet value, overall CPW, 1-yr
+  utilization. Drill-downs with time-range filter + Best/Worst toggle: CPW, Most
+  Worn, Wear Velocity, Never Worn, Best Purchases, Recency states. View Closet By
+  (donut chart + bar list: color, brand, size, season, fabric, price). Occasion
+  Coverage per context. All stats: Available items only.
+- **Item detail sheet** — hero photo, KPIs (times worn / cost per wear / price
+  paid / days in wardrobe), occasion range, color, full details card, outfit
+  mosaic ("Used in N outfits"), "Wear it with" co-occurrence pairings, "Create
+  outfit from this item" button, status + availability switchers.
+- **Settings** — sign out, manual data refresh, app version.
+
+---
 
 ## Architecture
 
-- **Single file:** the entire app is `index.html` — HTML, CSS, and JavaScript in
-  one file. No build step, no framework, no bundler, no JS libraries / CDN scripts.
-- **Backend: Supabase (free tier).** Data and photos sync across devices.
-  - Talk to Supabase via its **REST API and Storage API using plain `fetch`** —
-    do **not** add the supabase-js library.
-  - **Project URL:** `https://ofwaxqrwbcixrnjkepuz.supabase.co`
-  - **Publishable key** (sent as the `apikey` header; Supabase's new name for the
-    anon key — safe to expose in public client code):
-    `sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy`
-  - The **secret key is never used here** and must never be committed.
-- **Auth:** single user, email + password via Supabase Auth. App stores the
-  session token and sends it on every request. Not logged in → login screen only.
-- **Security:** the project was created with automatic Row Level Security enabled,
-  so all data and photos are private to the logged-in account.
+**One file.** The entire app is `index.html` — HTML, CSS, and JS inline. No build
+step, no framework, no bundler, no CDN, no JS libraries. Plain `fetch` for all
+network calls.
+
+**Backend: Supabase (free tier).** Auth, REST (PostgREST), and Storage.
+
+- REST path: `https://ofwaxqrwbcixrnjkepuz.supabase.co/rest/v1/…`
+- Publishable (anon) key only in client code — safe because RLS scopes all rows
+  to `auth.uid()`. **Secret key must never be committed.**
+- `schema.sql` in the repo root is the canonical DB definition. Migrations are
+  run by the user in the Supabase SQL editor.
+
+**Session:** `store` wrapper over `localStorage` (in-memory fallback for `data:`
+URL contexts). Token refresh handled transparently in `api()`.
+
+**Photos:** private `wardrobe` bucket, path `<user_id>/<uuid>.<ext>`. Display via
+signed URLs (cached in `_urlCache`). Lazy-loaded in grids via IntersectionObserver.
+
+---
 
 ## Data model
 
-- **items:** `id`, `user_id`, `name`, `category`, `brand`, `colors` (text[]),
-  `price` (numeric), `purchase_date`, `purchase_place`, `notes`, `image_path`
-  (path in Storage), `archived` (bool), `created_at`.
-- **wears:** `id`, `user_id`, `item_id`, `worn_on`, `occasion`, `created_at`.
-  One row per wear. Cost-per-wear = item price ÷ wear count.
-- **Photos:** stored in the private `wardrobe` Storage bucket at
-  `<user_id>/<uuid>.webp` — one image per item; the item row holds the path, not
-  the bytes. Compressed client-side (canvas → 1200px max edge → WebP, JPEG
-  fallback) before upload to stay within the free 1 GB.
+Five tables, all RLS-scoped to `auth.uid()` (client never sends `user_id`).
+Full definition in `schema.sql`.
 
-### Fixed choices (decided with the user)
+| Table | Key columns |
+|---|---|
+| `items` | name, category, subcategory, brand, retailer, color_family, price, price_original, purchase_date, date_is_guess, acquisition, size, fabric[], season[], min_occasion, max_occasion, status, availability, care[], needs_repair, needs_tailoring, fit, length, rise, storage_location, tags[], url, notes, image_path |
+| `wears` | item_id, outfit_id (nullable), worn_on (date), context, rating (1–3), compliments, note |
+| `outfits` | name, context, notes, image_path; join: `outfit_items(outfit_id, item_id)` |
+| `capsules` | name, kind (capsule\|packing\|travel), start_date, end_date, notes; join: `capsule_items(capsule_id, item_id, packed bool)` |
+| `events` | title, event_date, context, dress_code, planned_outfit_id, backup_outfit_id, notes |
 
-- **Categories:** Tops, Bottoms, Dresses, Outerwear, Shoes, Activewear.
-- **Colors:** fixed 14-swatch palette, multi-select (Black, White, Grey, Navy,
-  Blue, Green, Red, Pink, Purple, Brown, Beige, Yellow, Orange, Multi).
-- **Headline stat:** cost-per-wear.
+**Fixed vocabularies (top-of-script constants):**
+- `TAXONOMY` — category → subcategory list
+- `COLOR_FAMILIES` — 15 named color families, each with a hex
+- `OCCASION_LADDER` — 1 At-home · 2 Relaxed · 3 Casual · 4 Smart casual · 5 Professional · 6 Cocktail · 7 Formal
+- `CONTEXTS` — 13 named wear occasions, each with a formality `min`/`max`
+- `STATUSES` — Available · Storage · Archive · Wishlist
+- `AVAILABILITY` — Ready · Laundry · Cleaners · Lent
+- `RATINGS` — 3 Loved · 2 Fine · 1 Didn't work
 
-These live as `CATEGORIES` / `PALETTE` constants near the top of the `<script>`
-in `index.html`. Edit there to change them.
+---
 
-## Backend setup (already done)
+## Product decisions (locked)
 
-The Supabase backend was configured by hand in the dashboard:
-1. Login user created (Authentication → Users, auto-confirmed).
-2. `items` + `wears` tables with RLS policies scoped to `auth.uid() = user_id`.
-3. Private `wardrobe` Storage bucket.
-4. Storage policies scoped to the `<user_id>/` first path segment.
+- **Personal, single-user only.** No social, no sharing, no multi-user.
+- **Heuristics only — no AI.** Client ships only the anon key; no server proxy / Edge Function. Open-meteo (keyless) is the only allowed external data call.
+- **Derive-first, capture-light.** Compute from logged data before adding new
+  captured fields. Subjective data at moment-of-use only (wear rating).
+- **Thumbnail outfits, no collage canvas.**
+- **Mobile-first AND web-comfortable.** Same `index.html`, fluid/responsive.
 
-The SQL for tables/RLS/storage is in the project's commit history / chat record.
-RLS makes the publishable key safe to ship: it can only ever read/write the
-signed-in user's own rows and files.
+---
 
 ## Deploy
 
-GitHub Pages. Edit `index.html` → commit → push to `origin/main` → it deploys
-(~1–2 min). Hard-refresh (`Cmd+Shift+R`) to bypass cache. The repo and Pages
-already exist — do not create new ones. See the `deploy-wardrobe` skill.
+```
+git add index.html && git commit -m "…" && git push origin main
+```
 
-- Repo: https://github.com/aluke0311/wardrobe_app
-- Live: https://aluke0311.github.io/wardrobe_app/
+GitHub Pages rebuilds in ~1–2 min. Hard-refresh (`Cmd+Shift+R`) to clear cache.
+Use the `deploy-wardrobe` skill from Claude Code.
 
-## Conventions
+**`APP_VERSION`** format: `YYYY-MM-DD vN` (same day → increment N). Shown in UI.
 
-- `APP_VERSION` is a date string near the top of the `<script>`, shown in the UI.
-  Bump it on each meaningful change (use the current date).
-- Mobile-first. Single file. No libraries, no CDN, plain `fetch`.
-- See `CLAUDE.md` for architecture details and known gotchas.
+---
+
+## Development
+
+No build step. Edit `index.html`, preview with:
+
+```
+python3 -m http.server 4173
+```
+
+The preview loses its auth session on restart. Verify UI client-side by injecting
+fixtures into the global `items`/`wears`/`outfits` arrays via `preview_eval`.
+
+See `CLAUDE.md` for full architecture details, code conventions, and known gotchas.
