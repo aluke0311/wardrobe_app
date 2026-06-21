@@ -167,6 +167,10 @@
   .kpi-val { font-size: 28px; font-weight: 700; color: var(--text); line-height: 1.1; }
   .kpi-lbl { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .stats-donut-row { display: flex; align-items: center; gap: 20px; padding: 20px 20px 16px; }
+  .stats-catbar { display: flex; gap: 8px; padding: 10px 14px 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .stats-catbar::-webkit-scrollbar { display: none; }
+  .stats-catbtn { flex-shrink: 0; padding: 6px 14px; border-radius: 20px; font-size: 13.5px; background: var(--surface); border: 1px solid var(--line); color: var(--text); white-space: nowrap; }
+  .stats-catbtn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
   /* ---------- item grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
@@ -595,7 +599,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r12";
+const APP_VERSION = "2026-06-21 r13";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3143,6 +3147,7 @@ let statsField = null;        // field key being browsed
 let statsGridItems = [];      // items in current grid view
 let statsGridTitle = "";      // title for current grid view
 let statsFromField = false;   // whether the current grid came from a field breakdown
+let statsCategory = null;     // null = all categories; else category name
 
 const PRICE_BRACKETS = [
   { label: "Less than $25",  min: 0,   max: 25 },
@@ -3159,6 +3164,33 @@ const DONUT_PALETTE = [
   "#2f6fd0","#3a7d44","#7d54a8","#e08a2b","#c0392b","#1f8f8f",
   "#e6c34a","#7a5230","#e88aa8","#9a9a9a","#1a1a1a","#d8c4a0",
 ];
+
+function statsPool() {
+  return items.filter(i => i.status !== "Archive" && (!statsCategory || i.category === statsCategory));
+}
+
+function statsCatBar() {
+  const all = items.filter(i => i.status !== "Archive");
+  const cats = CATEGORIES.filter(c => all.some(i => i.category === c));
+  return `<div class="stats-catbar">
+    <button class="stats-catbtn${!statsCategory ? " on" : ""}" data-scv="__all__">All</button>
+    ${cats.map(c => `<button class="stats-catbtn${statsCategory === c ? " on" : ""}" data-scv="${esc(c)}">${esc(c)}</button>`).join("")}
+  </div>`;
+}
+
+function wireStatsCatBar() {
+  $("#statsBody").querySelectorAll(".stats-catbtn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      statsCategory = btn.dataset.scv === "__all__" ? null : btn.dataset.scv;
+      if (statsView === "grid") {
+        // pop back to parent — can't re-derive the grid in place
+        if (statsFromField) { statsView = "field"; statsGridItems = []; statsGridTitle = ""; }
+        else { statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false; }
+      }
+      renderStats();
+    });
+  });
+}
 
 function renderStats() {
   if (statsView === "field") { renderStatsFieldPage(); return; }
@@ -3187,7 +3219,7 @@ function statsNavBack() {
 }
 
 function getFieldGroups(field) {
-  const avail = items.filter(i => i.status !== "Archive");
+  const avail = statsPool();
   const noValue = [];
   const groups = {};
 
@@ -3263,7 +3295,7 @@ function donutSvg(segments) {
 }
 
 function renderStatsMain() {
-  const avail = items.filter(i => i.status !== "Archive");
+  const avail = statsPool();
   const totalVal = avail.reduce((s, i) => s + (parseFloat(i.price) || 0), 0);
   const totalOutfitItems = [...outfitItemMap.values()].reduce((s, a) => s + a.length, 0);
   const avgItems = outfits.length ? (totalOutfitItems / outfits.length).toFixed(1) : "—";
@@ -3279,7 +3311,7 @@ function renderStatsMain() {
   })();
 
   const neverWorn = avail.filter(i => wearCount(i.id) === 0).length;
-  const notWorn1yr = avail.filter(i => { const d = daysSince(i.id); return d !== null && d >= 365; }).length;
+  const notWorn1yr = avail.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; }).length;
 
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
@@ -3289,6 +3321,7 @@ function renderStatsMain() {
 
   $("#statsBody").innerHTML = `
     ${statsToolbar("Style Stats", false)}
+    ${statsCatBar()}
     <div style="padding-bottom:32px">
       <div class="sec-hdr">Closet</div>
       <div class="card" style="margin:0 14px">
@@ -3332,6 +3365,7 @@ function renderStatsMain() {
       </div>
     </div>`;
 
+  wireStatsCatBar();
   $("#statsBody").querySelectorAll("[data-sa]").forEach(el => {
     el.addEventListener("click", () => {
       const action = el.dataset.sa;
@@ -3341,14 +3375,14 @@ function renderStatsMain() {
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
-        const av = items.filter(i => i.status !== "Archive");
+        const av = statsPool();
         let list, title;
         if (key === "never-worn") {
           list = av.filter(i => wearCount(i.id) === 0);
           title = "Never Worn";
         } else if (key === "not-worn-1yr") {
-          list = av.filter(i => { const d = daysSince(i.id); return d !== null && d >= 365; })
-            .sort((a, b) => (daysSince(b.id) || 0) - (daysSince(a.id) || 0));
+          list = av.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; })
+            .sort((a, b) => (daysSince(lastWorn(b.id)) || 0) - (daysSince(lastWorn(a.id)) || 0));
           title = "Not Worn in 12+ Months";
         } else if (key === "most-worn") {
           list = [...av].sort((a, b) => wearCount(b.id) - wearCount(a.id)).slice(0, 100);
@@ -3411,6 +3445,7 @@ function renderStatsFieldPage() {
 
   $("#statsBody").innerHTML = `
     ${statsToolbar(label, true)}
+    ${statsCatBar()}
     ${donut ? `<div class="stats-donut-row">
       ${donut}
       ${top ? `<div><div style="font-size:20px;font-weight:700;line-height:1.2">${esc(top.label)}</div>
@@ -3422,6 +3457,7 @@ function renderStatsFieldPage() {
     <div style="height:24px"></div>`;
 
   $("#stBack").addEventListener("click", statsNavBack);
+  wireStatsCatBar();
 
   $("#statsBody").querySelectorAll("[data-sv]").forEach(el => {
     el.addEventListener("click", () => {
@@ -3442,12 +3478,13 @@ function renderStatsFieldPage() {
 
 function renderStatsGridPage() {
   const body = $("#statsBody");
-  body.innerHTML = statsToolbar(statsGridTitle, true) + gridHtml(statsGridItems);
+  body.innerHTML = statsToolbar(statsGridTitle, true) + statsCatBar() + gridHtml(statsGridItems);
   $("#stBack").addEventListener("click", statsNavBack);
+  wireStatsCatBar();
   body.querySelectorAll(".gtile").forEach(btn => {
     btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
   });
-  body.querySelectorAll(".gphoto[data-path]").forEach(loadPhotoNode);
+  hydratePhotos(body);
 }
 
 function openItemFromStats(id) {
