@@ -188,7 +188,7 @@ was carried over verbatim; the UI was rebuilt from scratch, screen by screen.
 **v25-full** (git tag + `archive/index_v25_full.html`) preserves everything built
 through Phase G. The data, schema, and migration are all intact and untouched.
 
-**Current state: r4 / 2026-06-21.** Built across two sessions:
+**Current state: r5 / 2026-06-21.** Built across two sessions:
 - **r1 — Home launcher:** Stylebook-style calm tile grid (5 tiles: Closet · Looks ·
   Calendar · Capsules · Style Stats). Bottom nav (5 tabs), login, boot path.
   App boots to Home. Settings via ⚙ gear; Add Item via ＋ on Home header.
@@ -221,10 +221,38 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     before), turning accent-blue when items are selected; live count shown inline.
   - "All Items in [cat]" on the subcategory list is now a tappable blue row
     (`data-sub="__all__"`) that opens a flat grid of the whole category.
+- **r5 — Item detail redesign (two-view, full editing):**
+  - **Photo view** (`openItem`): full-height garment photo + item-nav (< subcategory |
+    Closet | shuffle + Add to Look). Tab bar hidden; 4-icon action bar at very
+    bottom (`#itemBar`, z-index 25): Edit (→details), Folder (→move sheet),
+    Calendar (→log wear), Trash (→delete). Class `detail-photo` on `#app` hides
+    the tabbar via CSS; `openItem()` adds it, `renderCloset()` / `closetBack()` /
+    `switchTab()` all remove it.
+  - **Details view** (`openItemDetails`): `detailView = "details"`. `closetBack()`
+    checks `detailView === "details"` first → returns to photo; then if `detailId`
+    → `renderCloset()`. Full scrollable section: header (thumbnail + name/brand),
+    notes textarea (auto-saves 900ms debounce), stats (outfits + wears/last worn),
+    0 Extra Images stub, attributes card (Color/Fabric/Size/Season/Brand/Status),
+    pricing card (Price + $/Wear computed), URL, Category. Sticky footer:
+    "Edit Image" / "Replace Image".
+  - **Field edit sheet** (`#fieldSheet`): single-field editing. `FIELD_CONFIGS`
+    const at top of detail section maps field key → `{label, type, opts?}`. Types:
+    `"color"` (circle swatches), `"multi"` (chip multi-select), `"single"` (chip
+    single-select), `"text"` / `"price"` (input). `saveField(id, field, value)`
+    does optimistic PATCH + re-renders details on success.
+  - **Action helpers**: `deleteItem(id)` (confirm → DELETE + renderCloset),
+    `openItemMoveSheet(id)` (sets `_moveItemId`, reuses existing move sheet;
+    `closeMoveSheet()` clears `_moveItemId`; `applyMove` returns to photo view
+    when `_moveItemId` set), `openLogWear(id)` (date picker → POST `/wears`).
+  - **New helpers**: `outfitCount(itemId)` counts distinct outfit_ids in wears.
 
-**▶ NEXT UP (screen-by-screen, in natural order):**
-1. **Add Item** — photo from camera/library, name, category/subcategory, key fields. Stylebook "Import Item" sheet is the reference.
-2. **Item edit** — same form, pre-filled, from the "Edit" link on item detail.
+**▶ NEXT UP (item detail, then screens):**
+1. **Item detail polish** — notes layout (textarea separate from thumbnail header;
+   show item name + brand in header), Fabric/Size/Brand edit: filter-as-you-type
+   text input + "PREVIOUSLY ENTERED" list from existing `items` values; Fabric
+   stays `text[]` multi-select. Add date purchased, time in closet to details.
+   Wear frequency display TBD (may belong in Style Stats).
+2. **Add Item** — photo from camera/library, name, category/subcategory, key fields.
 3. **Looks (Outfits)** — outfit grid, outfit detail.
 4. **Calendar** — month grid, day detail.
 5. **Capsules** — named item sets.
@@ -237,7 +265,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-21 r4`.
+  pushes the same day, increment `rN`. Currently `2026-06-21 r5`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -264,9 +292,9 @@ that writes a new column/table before its migration is confirmed.**
 - **Status is a lens, not a category** — a tee is always under Tops. `closetLens`
   (Available/Storage/Archive/All) scopes the category folder list. Status changes
   happen on the item detail (move bar with optimistic PATCH), nowhere else.
-- **`closetBack()` pops the navigation stack** — detail → grid → subcategory list
-  → category list → root. Check `detailId` first, then `searchResults`, then
-  `closetSub`, then `closetCat`.
+- **`closetBack()` pops the navigation stack** — now 3-level for item detail:
+  `detailView === "details"` → `openItem()` (photo view); `detailId` set →
+  `renderCloset()` (grid); then `searchResults` → `closetSub` → `closetCat` → root.
 - **`closetSub` special values**: `"__other__"` = items with no recognized subcategory;
   `"__all__"` = all items in the category (added r4). Handle both in `categoryGrid()`.
 - **`[hidden]` vs CSS specificity**: a CSS rule with `display: flex` on an ID selector
@@ -282,6 +310,16 @@ that writes a new column/table before its migration is confirmed.**
   updates all matching rows. IDs must be quoted strings inside the `in.()` list.
 - **`store.getItem` / `store.setItem`** (not `store.get/set`) — the `store` wrapper
   mirrors the `localStorage` API exactly.
+- **Item photo view hides the tab bar** via `#app.detail-photo .tabbar { display:none }`.
+  `#itemBar` (z-index 25, `bottom:0`) replaces it. Add `detail-photo` in `openItem()`;
+  remove it in `renderCloset()`, `closetBack()` (from photo), and `switchTab()`.
+- **`_moveItemId`** — set by `openItemMoveSheet(id)` before opening the shared move
+  sheet. `applyMove()` checks it to decide whether to `openItem()` or `renderCloset()`
+  after success. `closeMoveSheet()` always clears it.
+- **`FIELD_CONFIGS`** const maps field key → `{label, type, opts?}`. Always add new
+  editable fields here before wiring them in `openItemDetails`. Currently: color_family,
+  fabric, size, season, brand, status, price, url, retailer, acquisition.
+- **Currently `APP_VERSION`** is `2026-06-21 r5`.
 
 ## Deploy
 

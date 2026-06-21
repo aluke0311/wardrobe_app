@@ -218,21 +218,52 @@
   .mv-sub { width: 100%; padding: 12px 18px 12px 34px; border-bottom: 1px solid var(--line); font-size: 15px; text-align: left; }
   .mv-sub:hover, .mv-sub:active { background: var(--accent-soft); color: var(--accent); }
 
-  /* ---------- item detail ---------- */
-  .ide-hero { width: 100%; height: 340px; background: #faf9f8 center/contain no-repeat; border-bottom: 1px solid var(--line); }
-  .ide-pad { padding: 16px 18px 30px; }
-  .ide-name { font-size: 22px; font-weight: 600; }
-  .ide-brand { color: var(--muted); margin-top: 2px; }
-  .ide-attrs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; margin: 18px 0; }
-  .attr .lbl { font-size: 12px; color: var(--muted); }
-  .attr .val { font-size: 15px; margin-top: 2px; }
-  .swatch { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); vertical-align: -1px; margin-right: 5px; }
-  .ide-kpis { display: flex; gap: 26px; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .kpi .big { font-size: 21px; font-weight: 600; }
-  .kpi .lbl { font-size: 12px; color: var(--muted); }
-  .movebar { display: flex; gap: 8px; margin-top: 18px; }
-  .movebar button { flex: 1; padding: 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
-  .movebar button.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  /* ---------- item photo view ---------- */
+  .item-nav { display: flex; align-items: center; padding: 10px 10px 6px; gap: 6px; border-bottom: 1px solid var(--line); }
+  .item-back { display: flex; align-items: center; gap: 3px; color: var(--accent); font-size: 16px; font-weight: 500; padding: 4px 6px 4px 2px; flex-shrink: 0; }
+  .item-back svg { width: 18px; height: 18px; stroke: var(--accent); stroke-width: 2; fill: none; flex-shrink: 0; }
+  .item-nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
+  .item-nav-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .item-nav-btn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; }
+  .item-nav-btn svg { width: 20px; height: 20px; stroke: var(--accent); stroke-width: 1.8; fill: none; }
+  .item-add-look { color: var(--accent); font-size: 15px; font-weight: 500; padding: 4px; }
+  .item-photo { width: 100%; background: #fafafa center/contain no-repeat;
+    height: calc(100dvh - 52px - 48px - 58px - var(--safe-b)); min-height: 200px; }
+  .item-photo.empty { display: flex; align-items: center; justify-content: center; }
+
+  /* ---------- item action bar ---------- */
+  #itemBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
+    display: flex; align-items: center; justify-content: space-around;
+    padding: 10px 24px calc(10px + var(--safe-b)); background: rgba(255,255,255,.96);
+    backdrop-filter: blur(8px); border-top: 1px solid var(--line); }
+  #itemBar button { display: flex; align-items: center; justify-content: center; padding: 6px; }
+  #itemBar button svg { width: 25px; height: 25px; stroke: var(--ink); stroke-width: 1.7; fill: none; }
+  #itemBar button.danger svg { stroke: var(--danger); }
+  /* hide tab bar in photo view so item bar has the full bottom chrome */
+  #app.detail-photo .tabbar { display: none !important; }
+
+  /* ---------- details view ---------- */
+  .det-body { padding: 14px 16px calc(60px + var(--safe-b)); }
+  .det-header { display: flex; gap: 14px; background: #f3f4f8; border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+  .det-thumb { width: 74px; height: 90px; flex-shrink: 0; border-radius: 8px; background: #e8e8ed center/contain no-repeat; }
+  .det-thumb.empty { background: #e8e8ed; display: flex; align-items: center; justify-content: center; }
+  .det-notes { flex: 1; border: none; background: transparent; resize: none; font-size: 15px;
+    font-family: inherit; color: var(--ink); outline: none; min-height: 90px; padding: 0; }
+  .det-section-label { font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--muted);
+    text-transform: uppercase; margin: 16px 0 8px 4px; }
+  .det-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
+  .det-row { width: 100%; display: flex; align-items: center; padding: 14px 16px; text-align: left; gap: 8px; }
+  button.det-row:active { background: var(--accent-soft); }
+  .det-lbl { font-size: 15px; color: var(--muted); min-width: 70px; flex-shrink: 0; }
+  .det-val { flex: 1; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
+  .det-val.placeholder { color: var(--muted); }
+  .det-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .det-divider { height: 1px; background: var(--line); margin: 0 16px; }
+  .det-notes-val { font-size: 15px; color: var(--ink); line-height: 1.5; padding: 14px 16px; }
+  .det-footer { position: sticky; bottom: 0; background: rgba(255,255,255,.95);
+    backdrop-filter: blur(8px); display: flex; justify-content: space-between;
+    padding: 10px 24px calc(10px + var(--safe-b)); border-top: 1px solid var(--line); }
+  .swatch { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); vertical-align: -1px; flex-shrink: 0; }
 
   /* ---------- search ---------- */
   .schead { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; }
@@ -247,6 +278,11 @@
   .schip { padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; background: #fff; }
   .schip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .snote { color: var(--muted); font-size: 13px; margin: 12px 4px; }
+  /* ---------- field edit sheet (color chips) ---------- */
+  .fld-color-grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .fld-color-chip { width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(0,0,0,.1);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .fld-color-chip[title="White"] { border-color: var(--line); }
 </style>
 </head>
 <body>
@@ -396,6 +432,34 @@
   <div class="sheet" id="moveInner"></div>
 </div>
 
+<!-- ===== ITEM ACTION BAR (photo view) ===== -->
+<div id="itemBar" hidden>
+  <button id="ibEdit" title="Details">
+    <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+  </button>
+  <button id="ibMove" title="Move to folder">
+    <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+  </button>
+  <button id="ibLog" title="Log wear">
+    <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/><path d="M8 14h.01M12 14h.01M16 14h.01"/></svg>
+  </button>
+  <button id="ibDelete" class="danger" title="Delete">
+    <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+  </button>
+</div>
+
+<!-- ===== FIELD EDIT SHEET ===== -->
+<div id="fieldSheet" hidden>
+  <div class="sheet-bg" id="fieldBg"></div>
+  <div class="sheet" id="fieldInner"></div>
+</div>
+
+<!-- ===== LOG WEAR SHEET ===== -->
+<div id="logSheet" hidden>
+  <div class="sheet-bg" id="logBg"></div>
+  <div class="sheet" id="logInner"></div>
+</div>
+
 <script>
 /* ===================================================================
    CONFIG  (publishable key + URL are safe to ship in client code)
@@ -405,7 +469,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 r4";
+const APP_VERSION = "2026-06-21 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -689,6 +753,9 @@ function daysSince(dateStr) {
   if (!dateStr) return null;
   return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
 }
+function outfitCount(itemId) {
+  return new Set(wears.filter(w => w.item_id === itemId && w.outfit_id).map(w => w.outfit_id)).size;
+}
 const itemStatus = (i) => i.status || "Available";
 const money = (n) => (n == null ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -785,6 +852,7 @@ let closetCat = null;     // null = root | category name | "Other"
 let closetSub = null;     // null = subcategory list | subcategory | "__other__"
 let searchResults = null; // null = not in search-results mode; else array of items
 let detailId = null;      // item id currently shown in detail (null = none)
+let detailView = null;    // null = photo view | "details" = details view
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
 let selectMode = false;   // multi-select active
 let selectedIds = new Set();
@@ -887,6 +955,9 @@ function categoryGrid(cat, sub) {
 
 function renderCloset() {
   detailId = null;
+  detailView = null;
+  $("#itemBar").hidden = true;
+  $("#app").classList.remove("detail-photo");
   const body = $("#closetBody");
   if (searchResults) {
     body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(searchResults);
@@ -909,7 +980,13 @@ function renderCloset() {
 }
 
 function closetBack() {
-  if (detailId) { renderCloset(); return; }
+  if (detailId && detailView === "details") { openItem(detailId); return; }
+  if (detailId) {
+    detailId = null; detailView = null;
+    $("#itemBar").hidden = true;
+    $("#app").classList.remove("detail-photo");
+    renderCloset(); return;
+  }
   if (searchResults) { searchResults = null; }
   else if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }
@@ -917,67 +994,378 @@ function closetBack() {
 }
 
 /* ===================================================================
-   ITEM DETAIL  (read view + status move)
+   ITEM DETAIL  — photo view + details/edit view
    =================================================================== */
+
+// Field definitions for the edit sheet (used by openFieldEdit)
+const FIELD_CONFIGS = {
+  color_family: { label: "Color",  type: "color",  opts: COLOR_FAMILIES.map(c => c[0]) },
+  fabric:       { label: "Fabric", type: "multi",  opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
+  size:         { label: "Size",   type: "single", opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
+  season:       { label: "Season", type: "multi",  opts: SEASONS },
+  brand:        { label: "Brand",  type: "text" },
+  status:       { label: "Status", type: "single", opts: ["Available","Storage","Archive"] },
+  price:        { label: "Price",  type: "price" },
+  url:          { label: "URL",    type: "text" },
+  retailer:     { label: "Retailer", type: "text" },
+  acquisition:  { label: "Acquired", type: "single", opts: ["New","Secondhand","Gift"] },
+};
+
+// ---- Photo view ----
 function openItem(id) {
   const i = items.find(x => x.id === id);
   if (!i) return;
   detailId = id;
-  const n = wearCount(i.id), lw = lastWorn(i.id), cpw = costPerWear(i);
-  const colorVal = i.color_family
-    ? `<span class="swatch" style="background:${colorHex(i.color_family)}"></span>${esc(i.color_family)}` : "—";
-  const attr = (lbl, val) => `<div class="attr"><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`;
+  detailView = null;
+
+  const backLabel = closetSub
+    ? (closetSub === "__all__" ? closetCat : closetSub === "__other__" ? "Other" : closetSub)
+    : closetCat || "Closet";
+
+  const body = $("#closetBody");
+  body.innerHTML = `
+    <div class="item-nav">
+      <button class="item-back" id="clBack">
+        <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        <span>${esc(backLabel)}</span>
+      </button>
+      <div class="item-nav-title">Closet</div>
+      <div class="item-nav-right">
+        <button class="item-nav-btn" id="itemShuffle" title="Suggest outfit">
+          <svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+        </button>
+        <button class="item-add-look" id="itemAddLook">Add to Look</button>
+      </div>
+    </div>
+    ${i.image_path
+      ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
+      : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#ccc;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
+  `;
+
+  $("#gridBar").hidden = true;
+  $("#app").classList.remove("has-gridbar");
+  $("#itemBar").hidden = false;
+  $("#app").classList.add("detail-photo");
+
+  hydratePhotos(body);
+
+  $("#itemShuffle").onclick = () => toast("Outfit suggestions — coming soon");
+  $("#itemAddLook").onclick = () => toast("Add to Look — coming soon");
+}
+
+// ---- Details / edit view ----
+function openItemDetails(id) {
+  const i = items.find(x => x.id === id);
+  if (!i) return;
+  detailId = id;
+  detailView = "details";
+
+  const n = wearCount(i.id), lw = lastWorn(i.id), cpw = costPerWear(i), oc = outfitCount(i.id);
+  const ds = lw ? daysSince(lw) : null;
+  const lastWornText = lw ? (ds === 0 ? "Today" : `${ds} day${ds === 1 ? "" : "s"} ago`) : "Never";
+
+  const detRow = (lbl, val, field) => {
+    const cfg = FIELD_CONFIGS[field];
+    const display = val || `<span style="color:var(--muted)">${esc(lbl)}</span>`;
+    return `<button class="det-row" data-det-field="${field}">
+      <span class="det-lbl">${esc(lbl)}</span>
+      <span class="det-val">${display}</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  };
+
+  const colorDisplay = i.color_family
+    ? `<span class="swatch" style="background:${colorHex(i.color_family)}"></span>${esc(i.color_family)}`
+    : "";
+
   const body = $("#closetBody");
   body.innerHTML = `
     <div class="cltoolbar">
       <button class="clback" id="clBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
-      <div class="cltitle">Item</div>
-      <button class="lnk" id="idEdit" style="font-size:15px">Edit</button>
+      <div class="cltitle">Details</div>
+      <span style="width:34px"></span>
     </div>
-    ${i.image_path ? `<div class="ide-hero" data-photo="${esc(i.image_path)}"></div>`
-                   : `<div class="ide-hero"></div>`}
-    <div class="ide-pad">
-      <div class="ide-name">${esc(i.name || "Untitled")}</div>
-      <div class="ide-brand">${esc([i.brand, i.category && i.subcategory ? `${i.category} · ${i.subcategory}` : i.category].filter(Boolean).join("  ·  ")) || "&nbsp;"}</div>
-      <div class="ide-attrs">
-        ${attr("Color", colorVal)}
-        ${attr("Size", esc(i.size || "—"))}
-        ${attr("Price", money(i.price))}
-        ${attr("Retailer", esc(i.retailer || "—"))}
-        ${attr("Season", esc((i.season || []).join(", ") || "—"))}
-        ${attr("Acquired", esc(i.acquisition || "—"))}
+    <div class="det-body">
+      <div class="det-header">
+        <div class="det-thumb${i.image_path ? "" : " empty"}"${i.image_path ? ` data-photo="${esc(i.image_path)}"` : ""}></div>
+        <textarea class="det-notes" id="detNotes" placeholder="Enter notes about your item">${esc(i.notes || "")}</textarea>
       </div>
-      <div class="ide-kpis">
-        <div class="kpi"><div class="big">${n}</div><div class="lbl">Wear${n === 1 ? "" : "s"}</div></div>
-        <div class="kpi"><div class="big">${lw ? (daysSince(lw) === 0 ? "Today" : daysSince(lw) + "d") : "—"}</div><div class="lbl">Last worn</div></div>
-        <div class="kpi"><div class="big">${cpw != null ? money(cpw) : "—"}</div><div class="lbl">Cost / wear</div></div>
+
+      ${i.notes ? `
+        <div class="det-section-label">NOTES AND TAGS</div>
+        <div class="det-card"><div class="det-notes-val">${esc(i.notes)}</div></div>
+      ` : ""}
+
+      <div class="det-card">
+        <button class="det-row" id="detOutfits">
+          <span class="det-val">Used in ${oc} outfit${oc === 1 ? "" : "s"}</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="det-divider"></div>
+        <button class="det-row" id="detWears">
+          <div>
+            <div>Worn ${n} day${n === 1 ? "" : "s"}</div>
+            <div class="det-sub">Last worn ${lastWornText}</div>
+          </div>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
       </div>
-      <div class="movebar" id="moveBar">
-        ${["Available", "Storage", "Archive"].map(s =>
-          `<button data-move="${s}" class="${itemStatus(i) === s ? "on" : ""}">${s}</button>`).join("")}
+
+      <div class="det-card">
+        <button class="det-row">
+          <span class="det-val">0 Extra Images</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
       </div>
-    </div>`;
+
+      <div class="det-card">
+        ${detRow("Color", colorDisplay, "color_family")}
+        <div class="det-divider"></div>
+        ${detRow("Fabric", esc((i.fabric || []).join(", ")), "fabric")}
+        <div class="det-divider"></div>
+        ${detRow("Size", esc(i.size || ""), "size")}
+        <div class="det-divider"></div>
+        ${detRow("Season", esc((i.season || []).join(", ")), "season")}
+        <div class="det-divider"></div>
+        ${detRow("Brand", esc(i.brand || ""), "brand")}
+        <div class="det-divider"></div>
+        ${detRow("Status", esc(itemStatus(i)), "status")}
+      </div>
+
+      <div class="det-card">
+        ${detRow("Price", money(i.price) !== "—" ? esc(money(i.price)) : "", "price")}
+        <div class="det-divider"></div>
+        <div class="det-row">
+          <span class="det-lbl">$ / Wear</span>
+          <span class="det-val">${cpw != null ? esc(money(cpw)) : "—"}</span>
+        </div>
+      </div>
+
+      <div class="det-card">
+        ${detRow("URL", esc(i.url || ""), "url")}
+      </div>
+
+      <div class="det-card">
+        <div class="det-row">
+          <span class="det-lbl">Category</span>
+          <span class="det-val">${esc(i.category || "—")}${i.subcategory ? ` › ${esc(i.subcategory)}` : ""}</span>
+        </div>
+      </div>
+    </div>
+    <div class="det-footer">
+      <button class="lnk" id="detEditImg">Edit Image</button>
+      <button class="lnk" id="detReplaceImg">Replace Image</button>
+    </div>
+  `;
+
+  $("#itemBar").hidden = true;
   hydratePhotos(body);
-  $("#idEdit").onclick = () => toast("Editing — building this next");
-  $("#moveBar").onclick = (e) => {
-    const b = e.target.closest("[data-move]");
-    if (b) changeStatus(id, b.dataset.move);
-  };
+
+  $("#detEditImg").onclick = () => toast("Image editing — coming soon");
+  $("#detReplaceImg").onclick = () => toast("Image replacement — coming soon");
+  $("#detOutfits").onclick = () => toast("Outfit history — coming soon");
+  $("#detWears").onclick = () => toast("Wear history — coming soon");
+
+  // Notes auto-save
+  const ta = $("#detNotes");
+  let noteTimer;
+  ta.addEventListener("input", () => {
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(async () => {
+      const val = ta.value.trim();
+      await saveField(id, "notes", val || null);
+      i.notes = val;
+    }, 900);
+  });
+
+  // Attribute rows → field edit sheet
+  body.querySelectorAll("[data-det-field]").forEach(btn => {
+    btn.onclick = () => openFieldEdit(id, btn.dataset.detField);
+  });
 }
 
-async function changeStatus(id, status) {
+// ---- Save a single field to Supabase ----
+async function saveField(id, field, value) {
   const i = items.find(x => x.id === id);
-  if (!i || itemStatus(i) === status) return;
-  const prev = i.status;
-  i.status = status; openItem(id); // optimistic
+  if (!i) return;
+  const prev = i[field];
+  i[field] = value; // optimistic
   try {
-    await rest(`items?id=eq.${id}`, {
+    await rest(`/items?id=eq.${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ [field]: value }),
     });
-    toast(`Moved to ${status}`);
-  } catch (e) { i.status = prev; openItem(id); toast(e.message); }
+    // refresh details if still in details view for this item
+    if (detailId === id && detailView === "details") openItemDetails(id);
+  } catch (e) {
+    i[field] = prev;
+    toast(e.message);
+  }
+}
+
+// ---- Field edit sheet ----
+let _fieldEditId = null;
+let _fieldEditKey = null;
+let _fieldPending = undefined; // current pending value in sheet
+
+function openFieldEdit(id, field) {
+  const cfg = FIELD_CONFIGS[field];
+  if (!cfg) return;
+  const i = items.find(x => x.id === id);
+  if (!i) return;
+  _fieldEditId = id;
+  _fieldEditKey = field;
+  _fieldPending = i[field];
+  renderFieldSheet(i, field, cfg);
+  $("#fieldSheet").hidden = false;
+}
+
+function closeFieldSheet() {
+  $("#fieldSheet").hidden = true;
+  _fieldEditId = null;
+  _fieldEditKey = null;
+  _fieldPending = undefined;
+}
+
+function renderFieldSheet(i, field, cfg) {
+  const curVal = _fieldPending !== undefined ? _fieldPending : i[field];
+  let content = "";
+  if (cfg.type === "text" || cfg.type === "price") {
+    const isPrice = cfg.type === "price";
+    content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
+      <input class="${isPrice ? "inp" : "inp"}" id="fieldTextInp" type="${isPrice ? "number" : "text"}"
+        inputmode="${isPrice ? "decimal" : "text"}"
+        value="${esc(curVal != null ? String(curVal) : "")}"
+        placeholder="${esc(cfg.label)}…" style="width:100%;font-size:16px">
+    </div>`;
+  } else if (cfg.type === "color") {
+    const chips = cfg.opts.map(o => {
+      const on = curVal === o;
+      const hex = colorHex(o);
+      const isMetallic = o === "Metallic";
+      return `<button class="fld-color-chip${on ? " on" : ""}" data-fv="${esc(o)}" title="${esc(o)}"
+        style="background:${isMetallic ? hex : hex};${on ? "outline:3px solid var(--accent);outline-offset:2px;" : ""}">
+        ${on ? `<svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:#fff;stroke-width:3;fill:none"><path d="M5 12l5 5L19 7"/></svg>` : ""}
+      </button>`;
+    }).join("");
+    content = `<div style="padding:16px 18px"><div class="fld-color-grid">${chips}</div></div>`;
+  } else {
+    // single or multi chips
+    const isMulti = cfg.type === "multi";
+    const selected = isMulti ? (Array.isArray(curVal) ? curVal : []) : (curVal ? [curVal] : []);
+    const chips = cfg.opts.map(o => {
+      const on = selected.includes(o);
+      return `<button class="sheet-chip${on ? " on" : ""}" data-fv="${esc(o)}">${esc(o)}</button>`;
+    }).join("");
+    content = `<div class="sheet-expand" style="border:none"><div class="sheet-chips">${chips}</div></div>`;
+  }
+
+  const hasVal = curVal != null && curVal !== "" && !(Array.isArray(curVal) && curVal.length === 0);
+
+  $("#fieldInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="fldCancel">Cancel</button>
+      <h2>${esc(cfg.label)}</h2>
+      <button class="lnk" id="fldSave" style="font-weight:700">Save</button>
+    </div>
+    ${content}
+    ${hasVal ? `<div style="padding:0 18px 8px"><button class="lnk" id="fldClear" style="color:var(--danger);font-size:14px">Clear</button></div>` : ""}
+  `;
+
+  // wire
+  $("#fldCancel").onclick = closeFieldSheet;
+  $("#fldSave").onclick = async () => {
+    let val = _fieldPending;
+    if (cfg.type === "text" || cfg.type === "price") {
+      const inp = $("#fieldTextInp");
+      val = inp ? (cfg.type === "price" ? (inp.value ? parseFloat(inp.value) : null) : (inp.value.trim() || null)) : val;
+    }
+    await saveField(_fieldEditId, _fieldEditKey, val);
+    closeFieldSheet();
+  };
+  if ($("#fldClear")) {
+    $("#fldClear").onclick = async () => {
+      _fieldPending = Array.isArray(curVal) ? [] : null;
+      await saveField(_fieldEditId, _fieldEditKey, _fieldPending);
+      closeFieldSheet();
+    };
+  }
+
+  // text input live update
+  const ti = $("#fieldTextInp");
+  if (ti) { ti.oninput = () => { _fieldPending = ti.value; }; setTimeout(() => ti.focus(), 80); }
+
+  // chip clicks
+  $("#fieldInner").querySelectorAll("[data-fv]").forEach(btn => {
+    btn.onclick = () => {
+      const v = btn.dataset.fv;
+      if (cfg.type === "multi") {
+        const cur = Array.isArray(_fieldPending) ? _fieldPending : (Array.isArray(i[field]) ? [...i[field]] : []);
+        _fieldPending = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v];
+      } else if (cfg.type === "color" || cfg.type === "single") {
+        _fieldPending = (_fieldPending === v) ? null : v;
+      }
+      renderFieldSheet(items.find(x => x.id === _fieldEditId), _fieldEditKey, cfg);
+    };
+  });
+}
+
+// ---- Delete single item ----
+async function deleteItem(id) {
+  if (!confirm("Delete this item? This cannot be undone.")) return;
+  try {
+    await rest(`/items?id=eq.${id}`, { method: "DELETE" });
+    items = items.filter(i => i.id !== id);
+    detailId = null; detailView = null;
+    $("#itemBar").hidden = true;
+    renderCloset();
+    toast("Item deleted");
+  } catch (e) { toast(e.message); }
+}
+
+// ---- Move single item (reuses move sheet with a single-item override) ----
+let _moveItemId = null;
+
+function openItemMoveSheet(id) {
+  _moveItemId = id;
+  selectedIds = new Set([id]);
+  moveCatOpen = null;
+  renderMoveSheet();
+  $("#moveSheet").hidden = false;
+}
+
+// ---- Log wear ----
+function openLogWear(id) {
+  const today = new Date().toISOString().slice(0, 10);
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="logCancel">Cancel</button>
+      <h2>Log Wear</h2>
+      <button class="lnk" id="logSave" style="font-weight:700">Log</button>
+    </div>
+    <div style="padding:20px 18px 30px">
+      <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Date worn</label>
+      <input class="inp" id="logDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
+    </div>
+  `;
+  $("#logSheet").hidden = false;
+  $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logSave").onclick = async () => {
+    const date = $("#logDate").value;
+    if (!date) return;
+    try {
+      const row = await rest("/wears", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ item_id: id, worn_on: date }),
+      });
+      if (Array.isArray(row) && row[0]) wears.push(row[0]);
+      else wears.push({ item_id: id, worn_on: date, outfit_id: null });
+      $("#logSheet").hidden = true;
+      toast(`Wear logged for ${date}`);
+    } catch (e) { toast(e.message); }
+  };
 }
 
 /* ===================================================================
@@ -1268,6 +1656,7 @@ function openMoveSheet() {
 function closeMoveSheet() {
   $("#moveSheet").hidden = true;
   moveCatOpen = null;
+  _moveItemId = null;
 }
 
 function renderMoveSheet() {
@@ -1304,12 +1693,20 @@ async function applyMove(cat, sub) {
   const ids = [...selectedIds];
   const inList = `(${ids.map(id => `"${id}"`).join(",")})`;
   const patch = { category: cat, subcategory: sub };
+  const isSingleItem = _moveItemId != null;
   try {
     await rest(`/items?id=in.${inList}`, { method: "PATCH", body: JSON.stringify(patch) });
     items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
     closeMoveSheet();
-    exitSelectMode();
-    renderCloset();
+    if (isSingleItem) {
+      const sid = _moveItemId;
+      _moveItemId = null;
+      exitSelectMode();
+      openItem(sid);
+    } else {
+      exitSelectMode();
+      renderCloset();
+    }
     toast(`Moved ${ids.length} item${ids.length === 1 ? "" : "s"} to ${cat} › ${sub}`);
   } catch (e) { toast(e.message); }
 }
@@ -1332,6 +1729,9 @@ function switchTab(name) {
     $("#app").classList.remove("has-gridbar");
     exitSelectMode();
     $("#gridPickerPop").hidden = true;
+    $("#itemBar").hidden = true;
+    $("#app").classList.remove("detail-photo");
+    detailId = null; detailView = null;
   }
 
   if (name === "home") renderHome();
@@ -1423,6 +1823,18 @@ function wireEvents() {
   $("#bulkBg").addEventListener("click", closeBulkEdit);
   // move sheet
   $("#moveBg").addEventListener("click", closeMoveSheet);
+
+  // item action bar (photo view)
+  $("#ibEdit").addEventListener("click", () => { if (detailId) openItemDetails(detailId); });
+  $("#ibMove").addEventListener("click", () => { if (detailId) openItemMoveSheet(detailId); });
+  $("#ibLog").addEventListener("click", () => { if (detailId) openLogWear(detailId); });
+  $("#ibDelete").addEventListener("click", () => { if (detailId) deleteItem(detailId); });
+
+  // field edit sheet
+  $("#fieldBg").addEventListener("click", closeFieldSheet);
+
+  // log wear sheet
+  $("#logBg").addEventListener("click", () => { $("#logSheet").hidden = true; });
 
   // header ＋ (home only) -> add item
   $("#headerAdd").addEventListener("click", () => switchTab("add"));
