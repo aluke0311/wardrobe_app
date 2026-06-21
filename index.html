@@ -323,18 +323,22 @@
   .ogrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 10px 14px 24px; }
   .otile { display: flex; flex-direction: column; gap: 6px; text-align: left; }
   .ocollage { width: 100%; aspect-ratio: 3/4; border: 1px solid var(--line); border-radius: 12px;
-    background: #fff; overflow: hidden; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 2px; padding: 9px; }
-  .ocollage.empty { background: #f4f4f7; }
+    background: #fff; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: 1fr; gap: 4px; padding: 9px; }
+  .ocollage.solo { grid-template-columns: 1fr; }
+  .ocollage.empty { display: flex; align-items: center; justify-content: center; background: #f4f4f7; }
   .ocollage.empty svg { width: 34px; height: 34px; stroke: var(--line); stroke-width: 1.5; fill: none; }
-  .opiece { width: 100%; flex: 1 1 0; min-height: 0; background: #fff center/contain no-repeat; }
-  .ocollage.omini { width: 64px; height: 64px; flex: none; border-radius: 10px; padding: 4px; gap: 1px; }
+  .opiece { width: 100%; height: 100%; min-width: 0; min-height: 0; background: #fff center/contain no-repeat; }
+  .opiece.span2 { grid-column: span 2; }
+  .ocollage.omini { width: 64px; height: 64px; flex: none; aspect-ratio: auto; border-radius: 10px; padding: 4px; gap: 2px; }
   .oname { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.25;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ometa { font-size: 12px; color: var(--muted); margin-top: -3px; }
   /* looks detail */
-  .lk-hero { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 16px 4px; }
-  .lk-heropiece { width: min(72%, 300px); height: 150px; background: #fff center/contain no-repeat; }
+  .lk-hero { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding: 10px 16px 4px; }
+  .lk-hero.solo { grid-template-columns: 1fr; max-width: 280px; margin: 0 auto; }
+  .lk-heropiece { width: 100%; height: 150px; background: #fff center/contain no-repeat; }
+  .lk-heropiece.span2 { grid-column: span 2; }
   .lk-chip { display: inline-block; padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; color: var(--ink); }
 </style>
 </head>
@@ -522,7 +526,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r7";
+const APP_VERSION = "2026-06-21 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1236,6 +1240,12 @@ function openItemDetails(id) {
         ${detRow("Status", esc(itemStatus(i)), "status")}
         <div class="det-divider"></div>
         ${detRow("Acquired", esc(i.acquisition || ""), "acquisition")}
+        <div class="det-divider"></div>
+        <button class="det-row" data-occ-item="${esc(i.id)}">
+          <span class="det-lbl">Occasion</span>
+          <span class="det-val${i.min_occasion ? "" : " placeholder"}">${i.min_occasion ? esc(pieceFormalityLabel(i)) : "Occasion"}</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
       </div>
 
       <div class="det-section-label">PRICING</div>
@@ -1293,6 +1303,10 @@ function openItemDetails(id) {
   // Attribute rows → field edit sheet
   body.querySelectorAll("[data-det-field]").forEach(btn => {
     btn.onclick = () => openFieldEdit(id, btn.dataset.detField);
+  });
+  // Occasion row → custom range editor (edits min/max_occasion)
+  body.querySelectorAll("[data-occ-item]").forEach(btn => {
+    btn.onclick = () => openOccasionEdit(btn.dataset.occItem, () => openItemDetails(id));
   });
 }
 
@@ -1987,9 +2001,24 @@ function relDate(d) {
 // ---- collage building ----
 function outfitCollageHtml(o, max, mini) {
   const pieces = outfitPieces(o).slice(0, max);
-  const cls = "ocollage" + (mini ? " omini" : "");
+  let cls = "ocollage" + (mini ? " omini" : "");
   if (!pieces.length) return `<div class="${cls} empty"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>`;
-  return `<div class="${cls}">${pieces.map(p => `<div class="opiece" data-photo="${esc(p.image_path)}"></div>`).join("")}</div>`;
+  if (pieces.length === 1) cls += " solo";
+  const cells = pieces.map((p, idx) => {
+    const span = (pieces.length === 3 && idx === 2) ? " span2" : "";  // wide bottom for 3-piece looks
+    return `<div class="opiece${span}" data-photo="${esc(p.image_path)}"></div>`;
+  }).join("");
+  return `<div class="${cls}">${cells}</div>`;
+}
+
+// Formality label for a piece: explicit range if set, else the estimated level.
+function pieceFormalityLabel(it) {
+  if (it.min_occasion && it.max_occasion) {
+    return it.min_occasion === it.max_occasion
+      ? occLabel(it.min_occasion)
+      : `${occLabel(it.min_occasion)} – ${occLabel(it.max_occasion)}`;
+  }
+  return "auto · " + occLabel(Math.max(1, Math.min(7, Math.round(itemFormality(it)))));
 }
 
 function emptyLooks() {
@@ -2119,15 +2148,26 @@ function openLook(id) {
   const seasons = outfitSeasons(o);
   const bucket = FORMALITY_BUCKETS.find(b => b.key === outfitBucket(o));
 
-  const hero = pieces.length
-    ? pieces.map(p => `<div class="lk-heropiece" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path)}"></div>`).join("")
+  const heroBlock = pieces.length
+    ? `<div class="lk-hero${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) => {
+        const span = (pieces.length === 3 && idx === 2) ? " span2" : "";
+        return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path)}"></div>`;
+      }).join("")}</div>`
     : `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
+
+  const pieceRows = its.map((it, idx) => `
+    ${idx > 0 ? '<div class="det-divider"></div>' : ""}
+    <button class="det-row" data-occ-item="${esc(it.id)}">
+      <span class="det-val" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
+      <span class="det-lbl" style="min-width:0;flex:none">${esc(pieceFormalityLabel(it))}</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`).join("");
 
   const body = $("#looksBody");
   body.innerHTML = `
     ${looksToolbar(esc(outfitName(o)), true, false)}
     <div class="det-body">
-      <div class="lk-hero">${hero}</div>
+      ${heroBlock}
       <div class="center muted" style="font-size:12.5px;margin-bottom:8px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it</div>
 
       <div class="det-section-label">WEAR</div>
@@ -2145,6 +2185,9 @@ function openLook(id) {
         <div class="det-divider"></div>
         <div class="det-row"><span class="det-lbl">Season</span><span class="det-val">${seasons.length ? seasons.map(s => `<span class="lk-chip">${esc(s)}</span>`).join(" ") : "—"}</span></div>
       </div>
+
+      <div class="det-section-label">PIECE FORMALITY</div>
+      <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
@@ -2229,6 +2272,68 @@ async function deleteLook(id) {
     renderLooks();
     toast("Look deleted");
   } catch (e) { toast(e.message); }
+}
+
+// ---- correct a piece's formality (edits its occasion range on the item) ----
+// Works on any item (called from a look's piece list and the item details card).
+// Clears every outfit's cached bucket so looks re-derive after a change.
+function openOccasionEdit(itemId, onSaved) {
+  const it = itemById.get(itemId) || items.find(x => x.id === itemId);
+  if (!it) return;
+  let lo = it.min_occasion || null, hi = it.max_occasion || null;
+
+  const render = () => {
+    const chips = OCCASION_LADDER.map((lbl, idx) => {
+      const lvl = idx + 1, on = lo != null && lvl >= lo && lvl <= hi;
+      return `<button class="sheet-chip${on ? " on" : ""}" data-occ="${lvl}" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+    }).join("");
+    const rangeTxt = lo == null ? "Not set" : (lo === hi ? occLabel(lo) : `${occLabel(lo)} – ${occLabel(hi)}`);
+    $("#logInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="occCancel">Cancel</button>
+        <h2>How formal?</h2>
+        <button class="lnk" id="occSave" style="font-weight:700">Save</button>
+      </div>
+      <div style="padding:14px 18px 24px">
+        <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(it.name || "Item")} — tap the lowest and highest occasions it works for.</div>
+        <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div>
+        <div style="margin-top:14px;font-size:14px">Works for: <b>${esc(rangeTxt)}</b></div>
+        ${lo != null ? `<button class="lnk" id="occClear" style="color:var(--danger);font-size:14px;margin-top:10px">Clear</button>` : ""}
+      </div>`;
+    $("#occCancel").onclick = () => { $("#logSheet").hidden = true; };
+    $("#occSave").onclick = async () => {
+      const prevLo = it.min_occasion, prevHi = it.max_occasion;
+      it.min_occasion = lo; it.max_occasion = hi;
+      outfits.forEach(o => { o._bucket = null; });
+      $("#logSheet").hidden = true;
+      try {
+        await rest(`/items?id=eq.${it.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ min_occasion: lo, max_occasion: hi }),
+        });
+        toast("Formality updated");
+        if (onSaved) onSaved();
+      } catch (e) {
+        it.min_occasion = prevLo; it.max_occasion = prevHi;
+        outfits.forEach(o => { o._bucket = null; });
+        toast(e.message);
+      }
+    };
+    const oc = $("#occClear");
+    if (oc) oc.onclick = () => { lo = null; hi = null; render(); };
+    $("#logInner").querySelectorAll("[data-occ]").forEach(b => {
+      b.onclick = () => {
+        const v = +b.dataset.occ;
+        if (lo == null) { lo = hi = v; }              // first tap: single level
+        else if (lo === hi) { lo = Math.min(lo, v); hi = Math.max(hi, v); }  // second: extend to range
+        else { lo = hi = v; }                          // third: reset to single
+        render();
+      };
+    });
+  };
+  render();
+  $("#logSheet").hidden = false;
 }
 
 /* ===================================================================
@@ -2582,6 +2687,8 @@ function wireEvents() {
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
     const folder = e.target.closest("[data-lfolder]");
     if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
+    const occItem = e.target.closest("[data-occ-item]");
+    if (occItem) { openOccasionEdit(occItem.dataset.occItem, () => { if (lookId) openLook(lookId); }); return; }
     const piece = e.target.closest("[data-look-item]");
     if (piece) {
       const it = itemById.get(piece.dataset.lookItem);
