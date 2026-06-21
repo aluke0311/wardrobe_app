@@ -526,7 +526,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r8";
+const APP_VERSION = "2026-06-21 r9";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1922,6 +1922,15 @@ const FORMALITY_BUCKETS = [
   { key: "formal",  label: "Formal"  },  // ladder 7
 ];
 
+// Bucket → item occasion range used when nudging pieces to match a look's formality.
+const BUCKET_RANGES = {
+  lounge:  { min: 1, max: 2 },
+  casual:  { min: 2, max: 3 },
+  smart:   { min: 4, max: 5 },
+  dressy:  { min: 5, max: 6 },
+  formal:  { min: 6, max: 7 },
+};
+
 // Per-subcategory / category formality estimate on the 1–7 ladder. Used only when
 // an item has no explicit min/max_occasion set (most don't yet).
 const SUBCAT_FORMALITY = {
@@ -1973,6 +1982,7 @@ function itemFormality(i) {
 }
 function outfitBucket(o) {
   if (o._bucket) return o._bucket;
+  if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
   const its = outfitItems(o);
   let key = "casual";
   if (its.length) {
@@ -2181,7 +2191,7 @@ function openLook(id) {
 
       <div class="det-section-label">CLASSIFICATION</div>
       <div class="det-card">
-        <div class="det-row"><span class="det-lbl">Formality</span><span class="det-val">${esc(bucket ? bucket.label : "—")}</span></div>
+        <button class="det-row" data-look-formality="1"><span class="det-lbl">Formality</span><span class="det-val">${esc(bucket ? bucket.label : "—")}${o.formality_override ? ' <span style="font-size:11px;color:var(--muted)">(set)</span>' : ""}</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
         <div class="det-divider"></div>
         <div class="det-row"><span class="det-lbl">Season</span><span class="det-val">${seasons.length ? seasons.map(s => `<span class="lk-chip">${esc(s)}</span>`).join(" ") : "—"}</span></div>
       </div>
@@ -2272,6 +2282,137 @@ async function deleteLook(id) {
     renderLooks();
     toast("Look deleted");
   } catch (e) { toast(e.message); }
+}
+
+// ---- override the whole look's formality bucket ----
+function openLookFormalityEdit(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  let selected = o.formality_override || outfitBucket(o);
+
+  const chips = FORMALITY_BUCKETS.map(b =>
+    `<button class="sheet-chip${b.key === selected ? " on" : ""}" data-fbucket="${esc(b.key)}">${esc(b.label)}</button>`
+  ).join("");
+
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="fmlCancel">Cancel</button>
+      <h2>Look formality</h2>
+      <button class="lnk" id="fmlSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:14px 18px 30px">
+      <div class="muted" style="font-size:13px;margin-bottom:14px">Override the derived formality for this look.</div>
+      <div class="sheet-chips">${chips}</div>
+      ${o.formality_override ? `<button class="lnk" id="fmlClear" style="color:var(--danger);font-size:14px;margin-top:16px">Remove override (use auto)</button>` : ""}
+    </div>`;
+
+  const syncChips = () => {
+    $("#logInner").querySelectorAll("[data-fbucket]").forEach(b =>
+      b.classList.toggle("on", b.dataset.fbucket === selected));
+  };
+  $("#logInner").querySelectorAll("[data-fbucket]").forEach(b => {
+    b.onclick = () => { selected = b.dataset.fbucket; syncChips(); };
+  });
+
+  const fmlClear = $("#fmlClear");
+  if (fmlClear) fmlClear.onclick = async () => {
+    o.formality_override = null; o._bucket = null;
+    try {
+      await rest(`/outfits?id=eq.${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ formality_override: null }),
+      });
+      toast("Auto formality restored");
+    } catch (e) { o._bucket = null; toast(e.message); }
+    $("#logSheet").hidden = true;
+    openLook(id);
+  };
+
+  $("#fmlCancel").onclick = () => { $("#logSheet").hidden = true; };
+
+  $("#fmlSave").onclick = async () => {
+    const prev = o.formality_override;
+    o.formality_override = selected; o._bucket = selected;
+    try {
+      await rest(`/outfits?id=eq.${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ formality_override: selected }),
+      });
+      if (selected === "workout") {
+        toast("Formality saved");
+        $("#logSheet").hidden = true;
+        openLook(id);
+      } else {
+        showNudgePiecesSheet(id, selected);
+      }
+    } catch (e) {
+      o.formality_override = prev; o._bucket = null;
+      toast(e.message);
+      $("#logSheet").hidden = true;
+    }
+  };
+
+  $("#logSheet").hidden = false;
+}
+
+// ---- offer to nudge pieces to match the look's new formality ----
+function showNudgePiecesSheet(outfitId, bucketKey) {
+  const o = outfitById.get(outfitId);
+  if (!o) { $("#logSheet").hidden = true; return; }
+  const its = outfitItems(o).filter(it => it.category !== "Workout");
+  const r = BUCKET_RANGES[bucketKey];
+  if (!r || !its.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
+
+  const bucketLabel = FORMALITY_BUCKETS.find(b => b.key === bucketKey)?.label || bucketKey;
+  const rangeLabel = `${occLabel(r.min)} – ${occLabel(r.max)}`;
+
+  const pieceRows = its.map(it => {
+    const f = itemFormality(it);
+    const matches = f >= r.min - 0.5 && f <= r.max + 0.5;
+    return `<label style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <input type="checkbox" data-nudge="${esc(it.id)}" ${!matches ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
+      <span style="flex:1;min-width:0">
+        <span style="display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.name || "Untitled")}</span>
+        <span style="display:block;font-size:12px;color:var(--muted)">${esc(pieceFormalityLabel(it))}</span>
+      </span>
+    </label>`;
+  }).join("");
+
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="nudgeSkip">Skip</button>
+      <h2>Nudge pieces?</h2>
+      <button class="lnk" id="nudgeApply" style="font-weight:700">Apply</button>
+    </div>
+    <div style="padding:14px 18px 30px">
+      <div class="muted" style="font-size:13px;margin-bottom:6px">Set checked pieces to <b>${esc(bucketLabel)}</b> (${esc(rangeLabel)}).</div>
+      <div>${pieceRows}</div>
+    </div>`;
+
+  $("#nudgeSkip").onclick = () => { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); };
+
+  $("#nudgeApply").onclick = async () => {
+    const toNudge = [...$("#logInner").querySelectorAll("[data-nudge]:checked")].map(x => x.dataset.nudge);
+    if (!toNudge.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
+    try {
+      const idList = toNudge.map(iid => `"${iid}"`).join(",");
+      await rest(`/items?id=in.(${idList})`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ min_occasion: r.min, max_occasion: r.max }),
+      });
+      toNudge.forEach(iid => {
+        const it = itemById.get(iid) || items.find(x => x.id === iid);
+        if (it) { it.min_occasion = r.min; it.max_occasion = r.max; }
+      });
+      outfits.forEach(o => { o._bucket = null; });
+      toast(`Formality saved · ${toNudge.length} piece${toNudge.length === 1 ? "" : "s"} updated`);
+    } catch (e) { toast(e.message); }
+    $("#logSheet").hidden = true;
+    openLook(outfitId);
+  };
 }
 
 // ---- correct a piece's formality (edits its occasion range on the item) ----
@@ -2687,6 +2828,7 @@ function wireEvents() {
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
     const folder = e.target.closest("[data-lfolder]");
     if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
+    if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
     const occItem = e.target.closest("[data-occ-item]");
     if (occItem) { openOccasionEdit(occItem.dataset.occItem, () => { if (lookId) openLook(lookId); }); return; }
     const piece = e.target.closest("[data-look-item]");
