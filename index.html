@@ -55,6 +55,7 @@
   .err { color: var(--danger); font-size: 13.5px; }
 
   /* ---------- app shell ---------- */
+  [hidden] { display: none !important; }
   #app[hidden] { display: none; }
   .bar {
     position: sticky; top: 0; z-index: 10;
@@ -157,13 +158,62 @@
   .seclabel { font-style: italic; color: var(--muted); font-size: 15px; padding: 10px 16px 4px; }
 
   /* ---------- item grid ---------- */
-  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; padding: 4px 14px 20px; }
-  .gtile { display: flex; flex-direction: column; gap: 5px; }
+  .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
+  .gtile { position: relative; display: flex; flex-direction: column; gap: 5px; }
   .gphoto { width: 100%; aspect-ratio: 1; border-radius: 10px; background: #faf9f8 center/contain no-repeat; border: 1px solid var(--line); }
   .gphoto.empty { display: flex; align-items: center; justify-content: center; background: #f4f4f7; }
   .gphoto.empty svg { width: 28px; height: 28px; stroke: var(--line); stroke-width: 1.5; fill: none; }
   .gname { font-size: 11.5px; color: var(--muted); line-height: 1.25; overflow: hidden;
     text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  /* select mode overlay */
+  .sel-dot { position: absolute; top: 5px; left: 5px; width: 21px; height: 21px; border-radius: 50%;
+    border: 2px solid var(--accent); background: #fff; display: flex; align-items: center;
+    justify-content: center; z-index: 2; pointer-events: none; }
+  .sel-dot.on { background: var(--accent); }
+  .sel-dot svg { display: none; width: 11px; height: 11px; stroke: #fff; stroke-width: 3; fill: none; }
+  .sel-dot.on svg { display: block; }
+  .gtile.selected .gphoto { outline: 2.5px solid var(--accent); border-color: var(--accent); }
+
+  /* ---------- grid action bar ---------- */
+  #gridBar { position: fixed; left: 0; right: 0; bottom: calc(var(--nav-h) + var(--safe-b)); z-index: 15;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 20px 9px; background: #fff; border-top: 1px solid var(--line); }
+  /* extra bottom padding when grid bar is visible so content isn't hidden behind it */
+  .has-gridbar .tabbody { padding-bottom: calc(var(--nav-h) + var(--safe-b) + 58px); }
+  .gb-acts { display: flex; gap: 24px; }
+  .gb-acts button { padding: 5px; }
+  .gb-acts button svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.8; fill: none; opacity: .35; transition: opacity .15s; }
+  .gb-acts button.active svg { opacity: 1; stroke: var(--fg); }
+  .gb-right { display: flex; align-items: center; gap: 14px; position: relative; }
+  #gbGrid svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
+  #gbSelect { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px; }
+  #gridPickerPop { position: absolute; bottom: calc(100% + 6px); right: 40px;
+    background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.13); overflow: hidden; z-index: 200; min-width: 150px; }
+  #gridPickerPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
+  #gridPickerPop button.on { color: var(--accent); font-weight: 600; }
+  #gridPickerPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
+
+  /* ---------- bottom sheets ---------- */
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 300; touch-action: none; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
+    border-radius: 18px 18px 0 0; max-height: 88vh; overflow-y: auto; z-index: 301; }
+  .sheet-hdr { display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 18px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #fff; }
+  .sheet-hdr h2 { font-size: 17px; font-weight: 600; }
+  .sheet-row { width: 100%; display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 18px; border-bottom: 1px solid var(--line); text-align: left; font-size: 16px; }
+  .sheet-row .rt { color: var(--muted); display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  .sheet-expand { padding: 10px 16px 16px; background: #fafafb; border-bottom: 1px solid var(--line); }
+  .sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .sheet-chip { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; background: #fff; }
+  .sheet-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .sheet-note { color: var(--muted); font-size: 13px; padding: 12px 18px 24px; }
+  /* move sheet */
+  .mv-cat { width: 100%; padding: 14px 18px; border-bottom: 1px solid var(--line);
+    font-size: 16px; font-weight: 500; text-align: left; display: flex; align-items: center; justify-content: space-between; }
+  .mv-sub { width: 100%; padding: 12px 18px 12px 34px; border-bottom: 1px solid var(--line); font-size: 15px; text-align: left; }
+  .mv-sub:hover, .mv-sub:active { background: var(--accent-soft); color: var(--accent); }
 
   /* ---------- item detail ---------- */
   .ide-hero { width: 100%; height: 340px; background: #faf9f8 center/contain no-repeat; border-bottom: 1px solid var(--line); }
@@ -276,6 +326,33 @@
     </section>
   </main>
 
+  <!-- grid action bar (shown only when a grid is visible in closet) -->
+  <div id="gridBar" hidden>
+    <div class="gb-acts">
+      <button id="gbMove" title="Move to folder">
+        <svg viewBox="0 0 24 24"><path d="M3 7h4l2-3h6l2 3h4v13H3z"/><path d="M3 7v13"/></svg>
+      </button>
+      <button id="gbEdit" title="Bulk edit">
+        <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </button>
+      <button id="gbDelete" title="Delete selected">
+        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      </button>
+    </div>
+    <div class="gb-right">
+      <button id="gbGrid" title="Grid density">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </button>
+      <div id="gridPickerPop" hidden>
+        <button data-cols="2">2 per row</button>
+        <button data-cols="3">3 per row</button>
+        <button data-cols="4">4 per row</button>
+        <button data-cols="5">5 per row</button>
+      </div>
+      <button id="gbSelect">Select</button>
+    </div>
+  </div>
+
   <!-- bottom nav -->
   <nav class="tabbar" id="tabbar">
     <button data-tab="home" class="on">
@@ -303,6 +380,18 @@
 
 <div id="toast"></div>
 
+<!-- ===== BULK EDIT SHEET ===== -->
+<div id="bulkSheet" hidden>
+  <div class="sheet-bg" id="bulkBg"></div>
+  <div class="sheet" id="bulkInner"></div>
+</div>
+
+<!-- ===== MOVE-TO-FOLDER SHEET ===== -->
+<div id="moveSheet" hidden>
+  <div class="sheet-bg" id="moveBg"></div>
+  <div class="sheet" id="moveInner"></div>
+</div>
+
 <script>
 /* ===================================================================
    CONFIG  (publishable key + URL are safe to ship in client code)
@@ -312,7 +401,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 r2";
+const APP_VERSION = "2026-06-20 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -692,6 +781,11 @@ let closetCat = null;     // null = root | category name | "Other"
 let closetSub = null;     // null = subcategory list | subcategory | "__other__"
 let searchResults = null; // null = not in search-results mode; else array of items
 let detailId = null;      // item id currently shown in detail (null = none)
+let gridCols = 3;         // items per row (2–5), persisted to localStorage
+let selectMode = false;   // multi-select active
+let selectedIds = new Set();
+let bulkPending = {};     // bulk edit: field -> pending value
+let bulkOpenField = null; // which field row is expanded in bulk edit sheet
 
 // Items in the current lens.
 function lensItems() {
@@ -715,20 +809,27 @@ function rowHtml(thumb, name, count, attrs = "") {
 }
 function gridHtml(list) {
   if (!list.length) return `<div class="placeholder"><b>No items here</b></div>`;
-  return `<div class="grid">${list.map(i => `
-    <button class="gtile" data-item="${esc(i.id)}">
+  const chk = `<div class="sel-dot"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
+  return `<div class="grid" style="--grid-cols:${gridCols}">${list.map(i => {
+    const sel = selectMode && selectedIds.has(i.id);
+    return `<button class="gtile${sel ? " selected" : ""}" data-item="${esc(i.id)}">
+      ${selectMode ? chk.replace("sel-dot", "sel-dot" + (sel ? " on" : "")) : ""}
       ${thumbHtml(i.image_path, "gphoto")}
       <div class="gname">${esc(i.name || "Untitled")}</div>
-    </button>`).join("")}</div>`;
+    </button>`;
+  }).join("")}</div>`;
 }
 
-function clToolbar(title, showBack) {
+function clToolbar(title, showBack, showPlus) {
+  const right = showPlus
+    ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>`
+    : `<button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>`;
   return `<div class="cltoolbar">
     ${showBack
       ? `<button class="clback" id="clBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
       : `<span style="width:34px"></span>`}
     <div class="cltitle">${esc(title)}</div>
-    <button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+    ${right}
   </div>`;
 }
 function lensHtml() {
@@ -783,13 +884,20 @@ function renderCloset() {
     body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(searchResults);
   } else if (closetCat && closetSub) {
     const label = closetSub === "__other__" ? "Other" : closetSub;
-    body.innerHTML = clToolbar(`${closetCat} · ${label}`, true) + gridHtml(categoryGrid(closetCat, closetSub));
+    body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub));
   } else if (closetCat) {
     body.innerHTML = renderClosetCategory(closetCat);
   } else {
     body.innerHTML = renderClosetRoot();
   }
   hydratePhotos(body);
+  const hasGrid = !!body.querySelector(".grid");
+  $("#gridBar").hidden = !hasGrid;
+  $("#app").classList.toggle("has-gridbar", hasGrid);
+  updateGridBar();
+  // wire "+" add button (pre-fills category context)
+  const clPlus = $("#clPlus");
+  if (clPlus) clPlus.onclick = () => switchTab("add");
 }
 
 function closetBack() {
@@ -957,6 +1065,245 @@ function renderAdd() {
 }
 
 /* ===================================================================
+   GRID BAR  (density picker + select mode + bulk actions)
+   =================================================================== */
+function updateGridBar() {
+  const has = selectMode && selectedIds.size > 0;
+  ["#gbMove", "#gbEdit", "#gbDelete"].forEach(id => $(id).classList.toggle("active", has));
+  $("#gbSelect").textContent = selectMode ? "Done" : "Select";
+}
+
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  if (!selectMode) { selectedIds.clear(); }
+  renderCloset();
+}
+
+function exitSelectMode() {
+  if (!selectMode) return;
+  selectMode = false;
+  selectedIds.clear();
+}
+
+function toggleSelect(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  // update just the affected tile + bar without full re-render
+  const tile = $(`[data-item="${id}"]`);
+  if (tile) {
+    const sel = selectedIds.has(id);
+    tile.classList.toggle("selected", sel);
+    const dot = tile.querySelector(".sel-dot");
+    if (dot) dot.classList.toggle("on", sel);
+  }
+  updateGridBar();
+}
+
+// ---- grid density picker ----
+function openGridPicker() {
+  const pop = $("#gridPickerPop");
+  pop.hidden = !pop.hidden;
+  if (!pop.hidden) {
+    pop.querySelectorAll("[data-cols]").forEach(b => b.classList.toggle("on", +b.dataset.cols === gridCols));
+  }
+}
+
+function setGridCols(n) {
+  gridCols = n;
+  store.setItem("wardrobe.gridCols", String(n));
+  $("#gridPickerPop").hidden = true;
+  // update all grids on screen without full re-render
+  $$(".grid").forEach(g => g.style.setProperty("--grid-cols", n));
+}
+
+// ---- delete selected ----
+async function deleteSelected() {
+  if (!selectedIds.size) return;
+  const n = selectedIds.size;
+  if (!confirm(`Delete ${n} item${n === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  const ids = [...selectedIds];
+  const inList = `(${ids.map(id => `"${id}"`).join(",")})`;
+  try {
+    await rest(`/items?id=in.${inList}`, { method: "DELETE" });
+    items = items.filter(i => !ids.includes(i.id));
+    exitSelectMode();
+    renderCloset();
+    toast(`${n} item${n === 1 ? "" : "s"} deleted`);
+  } catch (e) { toast(e.message); }
+}
+
+// ---- bulk edit sheet ----
+const BULK_FIELDS = [
+  { key: "color_family", label: "Color",  type: "single", opts: COLOR_FAMILIES.map(c => c[0]) },
+  { key: "fabric",       label: "Fabric", type: "multi",  opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet"] },
+  { key: "size",         label: "Size",   type: "single", opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
+  { key: "season",       label: "Season", type: "multi",  opts: SEASONS },
+  { key: "brand",        label: "Brand",  type: "text" },
+  { key: "status",       label: "Status", type: "single", opts: ["Available","Storage","Archive"] },
+];
+
+function openBulkEdit() {
+  if (!selectedIds.size) return;
+  bulkPending = {};
+  bulkOpenField = null;
+  renderBulkSheet();
+  $("#bulkSheet").hidden = false;
+}
+
+function closeBulkEdit() {
+  $("#bulkSheet").hidden = true;
+  bulkPending = {};
+  bulkOpenField = null;
+}
+
+function renderBulkSheet() {
+  const rows = BULK_FIELDS.map(f => {
+    const isOpen = bulkOpenField === f.key;
+    const val = bulkPending[f.key];
+    const hasVal = val !== undefined && (Array.isArray(val) ? val.length > 0 : val !== "");
+    const valHtml = hasVal
+      ? `<span style="color:var(--accent);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Array.isArray(val) ? val.join(", ") : esc(val)}</span>`
+      : "";
+    let expansion = "";
+    if (isOpen) {
+      if (f.type === "single" || f.type === "multi") {
+        const chips = f.opts.map(o => {
+          const on = Array.isArray(val) ? val.includes(o) : val === o;
+          return `<button class="sheet-chip${on ? " on" : ""}" data-bc-field="${f.key}" data-bc-val="${esc(o)}" data-bc-multi="${f.type === "multi"}">${esc(o)}</button>`;
+        }).join("");
+        expansion = `<div class="sheet-expand"><div class="sheet-chips">${chips}</div></div>`;
+      } else {
+        expansion = `<div class="sheet-expand"><input class="inp" id="bulkTextInp" value="${esc(val || "")}" placeholder="${esc(f.label)}…" style="width:100%"></div>`;
+      }
+    }
+    return `<button class="sheet-row" data-bf="${f.key}">
+      <span>${esc(f.label)}</span>
+      <span class="rt">${valHtml}<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;fill:none;flex-shrink:0"><path d="M${isOpen ? "6 15l6-6 6 6" : "6 9l6 6 6-6"}"/></svg></span>
+    </button>${expansion}`;
+  }).join("");
+  const n = selectedIds.size;
+  $("#bulkInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="bulkCancel">Cancel</button>
+      <h2>Bulk Edit</h2>
+      <button class="lnk" id="bulkSave" style="font-weight:700">Save</button>
+    </div>
+    ${rows}
+    <div class="sheet-note">Changes apply to ${n} selected item${n === 1 ? "" : "s"}.</div>`;
+  $("#bulkCancel").onclick = closeBulkEdit;
+  $("#bulkSave").onclick = saveBulkEdit;
+  // field row toggle
+  $("#bulkInner").querySelectorAll("[data-bf]").forEach(btn => {
+    btn.onclick = () => {
+      saveBulkTextField();
+      bulkOpenField = bulkOpenField === btn.dataset.bf ? null : btn.dataset.bf;
+      renderBulkSheet();
+    };
+  });
+  // chip toggles
+  $("#bulkInner").querySelectorAll("[data-bc-field]").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const field = btn.dataset.bcField, val = btn.dataset.bcVal, isMulti = btn.dataset.bcMulti === "true";
+      if (isMulti) {
+        const cur = bulkPending[field] || [];
+        bulkPending[field] = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val];
+      } else {
+        bulkPending[field] = bulkPending[field] === val ? undefined : val;
+        if (bulkPending[field] === undefined) delete bulkPending[field];
+      }
+      renderBulkSheet();
+    };
+  });
+  // text input live save
+  const ti = $("#bulkTextInp");
+  if (ti) { ti.oninput = () => { bulkPending[bulkOpenField] = ti.value; }; ti.focus(); }
+}
+
+function saveBulkTextField() {
+  const ti = $("#bulkTextInp");
+  if (ti && bulkOpenField) bulkPending[bulkOpenField] = ti.value;
+}
+
+async function saveBulkEdit() {
+  saveBulkTextField();
+  const patch = {};
+  for (const [k, v] of Object.entries(bulkPending)) {
+    if (v !== undefined && v !== "") patch[k] = v;
+  }
+  if (!Object.keys(patch).length) { closeBulkEdit(); return; }
+  const ids = [...selectedIds];
+  const inList = `(${ids.map(id => `"${id}"`).join(",")})`;
+  try {
+    await rest(`/items?id=in.${inList}`, { method: "PATCH", body: JSON.stringify(patch) });
+    // update local state
+    items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
+    closeBulkEdit();
+    exitSelectMode();
+    renderCloset();
+    toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`);
+  } catch (e) { toast(e.message); }
+}
+
+// ---- move-to-folder sheet ----
+let moveCatOpen = null;
+
+function openMoveSheet() {
+  if (!selectedIds.size) return;
+  moveCatOpen = null;
+  renderMoveSheet();
+  $("#moveSheet").hidden = false;
+}
+
+function closeMoveSheet() {
+  $("#moveSheet").hidden = true;
+  moveCatOpen = null;
+}
+
+function renderMoveSheet() {
+  const rows = CATEGORIES.map(cat => {
+    const isOpen = moveCatOpen === cat;
+    const subs = TAXONOMY[cat] || [];
+    const subRows = isOpen ? subs.map(s =>
+      `<button class="mv-sub" data-mv-cat="${esc(cat)}" data-mv-sub="${esc(s)}">${esc(s)}</button>`
+    ).join("") : "";
+    return `<button class="mv-cat" data-mv-toggle="${esc(cat)}">
+      <span>${esc(cat)}</span>
+      <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex-shrink:0"><path d="${isOpen ? "6 15l6-6 6 6" : "6 9l6 6 6-6"}"/></svg>
+    </button>${subRows}`;
+  }).join("");
+  const n = selectedIds.size;
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="moveCancel">Cancel</button>
+      <h2>Move to Folder</h2>
+      <span style="width:60px"></span>
+    </div>
+    ${rows}
+    <div class="sheet-note">Moving ${n} item${n === 1 ? "" : "s"} to a new category.</div>`;
+  $("#moveCancel").onclick = closeMoveSheet;
+  $("#moveInner").querySelectorAll("[data-mv-toggle]").forEach(b => {
+    b.onclick = () => { moveCatOpen = moveCatOpen === b.dataset.mvToggle ? null : b.dataset.mvToggle; renderMoveSheet(); };
+  });
+  $("#moveInner").querySelectorAll("[data-mv-cat]").forEach(b => {
+    b.onclick = () => applyMove(b.dataset.mvCat, b.dataset.mvSub);
+  });
+}
+
+async function applyMove(cat, sub) {
+  const ids = [...selectedIds];
+  const inList = `(${ids.map(id => `"${id}"`).join(",")})`;
+  const patch = { category: cat, subcategory: sub };
+  try {
+    await rest(`/items?id=in.${inList}`, { method: "PATCH", body: JSON.stringify(patch) });
+    items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
+    closeMoveSheet();
+    exitSelectMode();
+    renderCloset();
+    toast(`Moved ${ids.length} item${ids.length === 1 ? "" : "s"} to ${cat} › ${sub}`);
+  } catch (e) { toast(e.message); }
+}
+
+/* ===================================================================
    TABS + WIRING
    =================================================================== */
 const TAB_TITLES = {
@@ -969,6 +1316,12 @@ function switchTab(name) {
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   $("#title").textContent = TAB_TITLES[name] || "Wardrobe";
   $("#headerAdd").hidden = name !== "home";
+  if (name !== "closet") {
+    $("#gridBar").hidden = true;
+    $("#app").classList.remove("has-gridbar");
+    exitSelectMode();
+    $("#gridPickerPop").hidden = true;
+  }
 
   if (name === "home") renderHome();
   else if (name === "closet")   renderCloset();
@@ -1033,8 +1386,32 @@ function wireEvents() {
     const sub = e.target.closest("[data-sub]");
     if (sub) { closetSub = sub.dataset.sub; return renderCloset(); }
     const it = e.target.closest("[data-item]");
-    if (it) return openItem(it.dataset.item);
+    if (it) {
+      if (selectMode) { toggleSelect(it.dataset.item); return; }
+      return openItem(it.dataset.item);
+    }
   });
+
+  // grid action bar
+  $("#gbSelect").addEventListener("click", toggleSelectMode);
+  $("#gbGrid").addEventListener("click", openGridPicker);
+  $("#gbEdit").addEventListener("click", () => { if (selectedIds.size) openBulkEdit(); });
+  $("#gbDelete").addEventListener("click", () => { if (selectedIds.size) deleteSelected(); });
+  $("#gbMove").addEventListener("click", () => { if (selectedIds.size) openMoveSheet(); });
+  $("#gridPickerPop").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-cols]");
+    if (b) setGridCols(+b.dataset.cols);
+  });
+  // close grid picker on outside tap
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#gbGrid") && !e.target.closest("#gridPickerPop")) {
+      $("#gridPickerPop").hidden = true;
+    }
+  }, true);
+  // bulk edit sheet
+  $("#bulkBg").addEventListener("click", closeBulkEdit);
+  // move sheet
+  $("#moveBg").addEventListener("click", closeMoveSheet);
 
   // header ＋ (home only) -> add item
   $("#headerAdd").addEventListener("click", () => switchTab("add"));
@@ -1084,6 +1461,8 @@ window.retryLoad = retryLoad;
    =================================================================== */
 (function init() {
   $$(".appver").forEach(el => el.textContent = APP_VERSION);
+  const savedCols = parseInt(store.getItem("wardrobe.gridCols") || "0");
+  if (savedCols >= 2 && savedCols <= 5) gridCols = savedCols;
   wireEvents();
   loadSession();
   if (session?.access_token) bootApp();
