@@ -340,6 +340,64 @@
   .lk-heropiece { width: 100%; height: 150px; background: #fff center/contain no-repeat; }
   .lk-heropiece.span2 { grid-column: span 2; }
   .lk-chip { display: inline-block; padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; color: var(--ink); }
+
+  /* ===== CALENDAR ===== */
+  .cal-nav { display: flex; align-items: center; padding: 8px 6px 4px; }
+  .cal-nav-btn { color: var(--accent); padding: 8px 10px; }
+  .cal-nav-btn svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; fill: none; }
+  .cal-month-lbl { flex: 1; text-align: center; font-size: 27px; line-height: 1.15; }
+  .cal-month-lbl strong { font-weight: 700; }
+  .cal-month-lbl em { color: var(--muted); font-style: normal; font-weight: 400; }
+  .cal-dow { display: grid; grid-template-columns: repeat(7, 1fr); padding: 2px 2px 6px; }
+  .cal-dow-h { text-align: center; font-size: 10.5px; color: var(--muted); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); margin: 0 2px; }
+  .cal-cell { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); min-height: 68px; padding: 2px 2px 4px; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+  .cal-cell.today-cell { background: #f4f4f7; }
+  .cal-cell.other-month { background: #fafafa; }
+  .cal-cell-btn { display: flex; flex-direction: column; align-items: center; width: 100%; background: none; border: none; padding: 0; cursor: pointer; }
+  .cal-daynum { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 500; margin-bottom: 2px; flex-shrink: 0; }
+  .cal-daynum.is-today { background: var(--accent); color: #fff; font-weight: 700; }
+  .cal-ccoll { width: calc(100% - 4px); aspect-ratio: 3/4; border-radius: 4px; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: #ececf1; }
+  .cal-ccoll.solo { grid-template-columns: 1fr; }
+  .cal-cp { background: #fff center/contain no-repeat; }
+  .cal-cp.span2 { grid-column: span 2; }
+  .cal-stats { padding: 20px 14px 8px; }
+  .cal-stat { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .cal-stat:last-child { border-bottom: none; }
+  .cal-stat-img { width: 52px; height: 52px; border-radius: 8px; background: #f4f4f7 center/contain no-repeat; flex: none; }
+  .cal-stat-ico { width: 42px; height: 42px; border-radius: 50%; background: #f4f4f7; display: flex; align-items: center; justify-content: center; flex: none; }
+  .cal-stat-ico svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.6; fill: none; }
+  .cal-stat-lbl { font-size: 15px; font-weight: 600; }
+  .cal-stat-sub { font-size: 13px; color: var(--muted); }
+  .cal-stat-chev { margin-left: auto; color: var(--muted); }
+  .cal-stat-chev svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
+  /* day view */
+  .cal-day-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .cal-day-nav { display: flex; align-items: center; padding: 4px 6px; }
+  .cal-day-nav-btn { color: var(--accent); padding: 8px 10px; }
+  .cal-day-nav-btn svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; fill: none; }
+  .cal-day-title { flex: 1; text-align: center; font-size: 22px; font-weight: 700; }
+  .cal-outfit-card { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); }
+  .cal-outfit-inner { display: flex; align-items: center; gap: 14px; padding: 14px; background: var(--bg); will-change: transform; transition: transform .25s ease; }
+  .cal-outfit-collage { width: 88px; height: 88px; border-radius: 10px; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: #ececf1; flex: none; }
+  .cal-outfit-collage.solo { grid-template-columns: 1fr; }
+  .cal-outfit-piece { background: #fff center/contain no-repeat; }
+  .cal-outfit-notes-btn { flex: 1; display: flex; align-items: center; justify-content: space-between; background: none; border: none; text-align: left; padding: 0; cursor: pointer; }
+  .cal-outfit-notes-btn span { color: var(--muted); font-size: 14.5px; }
+  .cal-outfit-notes-btn.has-notes span { color: var(--ink); }
+  .cal-outfit-notes-btn svg { width: 16px; height: 16px; stroke: var(--muted); stroke-width: 2; fill: none; flex: none; }
+  .cal-swipe-acts { position: absolute; right: 0; top: 0; bottom: 0; display: flex; transform: translateX(100%); transition: transform .25s ease; }
+  .cal-act { width: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #fff; font-size: 12px; font-weight: 600; border: none; cursor: pointer; }
+  .cal-act-copy { background: #636363; }
+  .cal-act-move { background: #a0a0a0; }
+  .cal-act-del  { background: var(--danger); }
+  .cal-act svg { width: 18px; height: 18px; stroke: #fff; stroke-width: 2; fill: none; }
+  .cal-day-foot { position: sticky; bottom: calc(var(--nav-h) + var(--safe-b)); background: var(--bg); border-top: 1px solid var(--line); padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
+  .cal-day-foot-ico svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.6; fill: none; }
+  .cal-day-foot-add { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+  .cal-day-foot-add span { color: var(--muted); font-size: 13px; }
+  .cal-day-foot-add button { color: var(--accent); font-size: 15px; font-weight: 600; padding: 6px 8px; }
+  .cal-day-empty { padding: 48px 14px; text-align: center; color: var(--muted); font-size: 15px; }
 </style>
 </head>
 <body>
@@ -526,7 +584,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r10";
+const APP_VERSION = "2026-06-21 r11";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2727,6 +2785,332 @@ async function applyMove(cat, sub) {
 }
 
 /* ===================================================================
+   CALENDAR
+   =================================================================== */
+let calendarYear  = new Date().getFullYear();
+let calendarMonth = new Date().getMonth(); // 0-based
+let calendarDay   = null; // null = month view | "YYYY-MM-DD" = day view
+
+const CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const CAL_DOW    = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+// Build: date-string → [wear]
+function wearDayMap() {
+  const m = new Map();
+  for (const w of wears) {
+    if (!w.worn_on) continue;
+    let a = m.get(w.worn_on); if (!a) { a = []; m.set(w.worn_on, a); }
+    a.push(w);
+  }
+  return m;
+}
+
+// For one date: [{outfitId, itemIds, wearIds}] grouped by outfit_id (null = solo per item)
+function dayGroups(dateStr) {
+  const byKey = new Map();
+  for (const w of wears) {
+    if (w.worn_on !== dateStr) continue;
+    const key = w.outfit_id || `__${w.item_id}`;
+    if (!byKey.has(key)) byKey.set(key, { outfitId: w.outfit_id, itemIds: [], wearIds: [] });
+    const g = byKey.get(key);
+    if (!g.itemIds.includes(w.item_id)) g.itemIds.push(w.item_id);
+    g.wearIds.push(w.id);
+  }
+  return [...byKey.values()];
+}
+
+// Mini calendar-cell collage (aspect-ratio 3/4, 2-col grid)
+function calCellCollageHtml(itemIds) {
+  const pieces = itemIds.map(id => itemById.get(id)).filter(Boolean).slice(0, 4);
+  if (!pieces.length) return '';
+  const cells = pieces.map((p, i) => {
+    const span = pieces.length === 3 && i === 2 ? ' span2' : '';
+    return `<div class="cal-cp${span}" data-photo="${esc(p.image_path || '')}"></div>`;
+  }).join('');
+  return `<div class="cal-ccoll${pieces.length === 1 ? ' solo' : ''}">${cells}</div>`;
+}
+
+// Day-view outfit collage (88×88 square, 2-col grid)
+function calOutfitCollageHtml(itemIds) {
+  const pieces = itemIds.map(id => itemById.get(id)).filter(Boolean).slice(0, 4);
+  if (!pieces.length) return '<div class="cal-outfit-collage" style="background:#f4f4f7"></div>';
+  const cells = pieces.map(p =>
+    `<div class="cal-outfit-piece" data-photo="${esc(p.image_path || '')}"></div>`).join('');
+  return `<div class="cal-outfit-collage${pieces.length === 1 ? ' solo' : ''}">${cells}</div>`;
+}
+
+// Most-worn item in current calendar month
+function calMostWorn() {
+  const prefix = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}`;
+  const counts = new Map();
+  for (const w of wears) {
+    if (!w.worn_on || !w.worn_on.startsWith(prefix)) continue;
+    counts.set(w.item_id, (counts.get(w.item_id) || 0) + 1);
+  }
+  if (!counts.size) return null;
+  const [topId, topCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  return { item: itemById.get(topId), count: topCount };
+}
+
+// Consecutive-day wear streak ending today
+function calStreak() {
+  const worn = new Set(wears.map(w => w.worn_on));
+  const d = new Date(); let streak = 0;
+  while (worn.has(d.toISOString().slice(0, 10))) { streak++; d.setDate(d.getDate() - 1); }
+  return streak;
+}
+
+function renderCalendar() {
+  const body = $('#calendarBody');
+  if (calendarDay) renderCalendarDay(body);
+  else renderCalendarMonth(body);
+}
+
+function renderCalendarMonth(body) {
+  const todayStr    = new Date().toISOString().slice(0, 10);
+  const year        = calendarYear, month = calendarMonth;
+  const firstDoW    = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const dayMap      = wearDayMap();
+
+  // Build grid cells
+  let cells = '';
+  for (let i = 0; i < firstDoW; i++) cells += `<div class="cal-cell other-month"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const ds       = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayWears = dayMap.get(ds) || [];
+    const isToday  = ds === todayStr;
+    let collage = '';
+    if (dayWears.length) {
+      const firstOutfitId = dayWears.find(w => w.outfit_id)?.outfit_id;
+      const itemIds = firstOutfitId
+        ? (outfitItemMap.get(firstOutfitId) || [])
+        : [...new Set(dayWears.map(w => w.item_id))];
+      collage = calCellCollageHtml(itemIds.slice(0, 4));
+    }
+    cells += `<div class="cal-cell${isToday ? ' today-cell' : ''}">
+      <button class="cal-cell-btn" data-calday="${esc(ds)}">
+        <div class="cal-daynum${isToday ? ' is-today' : ''}">${d}</div>
+        ${collage}
+      </button>
+    </div>`;
+  }
+  const trailing = (7 - ((firstDoW + daysInMonth) % 7)) % 7;
+  for (let i = 0; i < trailing; i++) cells += `<div class="cal-cell other-month"></div>`;
+
+  // Stats
+  const mw     = calMostWorn();
+  const streak = calStreak();
+  const mwHtml = mw?.item ? `
+    <div class="cal-stat">
+      <div class="cal-stat-img"${mw.item.image_path ? ` data-photo="${esc(mw.item.image_path)}"` : ''}></div>
+      <div>
+        <div class="cal-stat-lbl">Most Worn This Month</div>
+        <div class="cal-stat-sub">${mw.count} day${mw.count !== 1 ? 's' : ''}</div>
+      </div>
+    </div>` : '';
+  const streakHtml = `
+    <div class="cal-stat">
+      <div class="cal-stat-ico"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+      <div>
+        <div class="cal-stat-lbl">${streak} Day Streak</div>
+        <div class="cal-stat-sub">Continuous calendar recording</div>
+      </div>
+      ${streak ? `<div class="cal-stat-chev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>` : ''}
+    </div>`;
+
+  body.innerHTML = `<div class="tabbody">
+    <div class="cal-nav">
+      <button class="cal-nav-btn" id="calPrev"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cal-month-lbl"><strong>${CAL_MONTHS[month]}</strong> <em>${year}</em></div>
+      <button class="cal-nav-btn" id="calNext"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    </div>
+    <div class="cal-dow">${CAL_DOW.map(h => `<div class="cal-dow-h">${h}</div>`).join('')}</div>
+    <div class="cal-grid">${cells}</div>
+    <div class="cal-stats">${mwHtml}${streakHtml}</div>
+  </div>`;
+
+  body.onclick = e => {
+    if (e.target.closest('#calPrev')) {
+      calendarMonth--; if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
+      renderCalendarMonth(body); return;
+    }
+    if (e.target.closest('#calNext')) {
+      calendarMonth++; if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
+      renderCalendarMonth(body); return;
+    }
+    const btn = e.target.closest('[data-calday]');
+    if (btn) { calendarDay = btn.dataset.calday; renderCalendarDay(body); }
+  };
+
+  hydratePhotos(body);
+}
+
+function renderCalendarDay(body) {
+  const dateStr = calendarDay;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const title   = `${CAL_MONTHS[m - 1]} ${d}, ${y}`;
+  const groups  = dayGroups(dateStr);
+
+  const cardsHtml = groups.length ? groups.map(g => {
+    const collage = calOutfitCollageHtml(g.itemIds);
+    const outfit  = g.outfitId ? outfitById.get(g.outfitId) : null;
+    const notes   = outfit?.notes || '';
+    const wearIdsStr = g.wearIds.join(',');
+    return `<div class="cal-outfit-card">
+      <div class="cal-outfit-inner">
+        ${collage}
+        <button class="cal-outfit-notes-btn${notes ? ' has-notes' : ''}" data-cal-notes="${esc(g.outfitId || '')}">
+          <span>${esc(notes || 'Tap to add notes')}</span>
+          <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <div class="cal-swipe-acts">
+        <button class="cal-act cal-act-copy" data-calact="copy">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy
+        </button>
+        <button class="cal-act cal-act-move" data-calact="move">
+          <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+          Move
+        </button>
+        <button class="cal-act cal-act-del" data-wear-ids="${esc(wearIdsStr)}">
+          <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+          Delete
+        </button>
+      </div>
+    </div>`;
+  }).join('')
+  : `<div class="cal-day-empty">Nothing logged for this day.</div>`;
+
+  const prevD    = new Date(y, m - 1, d - 1).toISOString().slice(0, 10);
+  const nextD    = new Date(y, m - 1, d + 1).toISOString().slice(0, 10);
+  const isFuture = new Date(y, m - 1, d + 1) > new Date();
+
+  body.innerHTML = `<div class="tabbody">
+    <div class="cal-day-header">
+      <button id="calDayBack" style="color:var(--accent);font-size:15px;font-weight:500">Back</button>
+      <div style="font-size:16px;font-weight:600">Day View</div>
+      <button id="calDayEdit" style="color:var(--accent);font-size:15px;font-weight:500;opacity:.4">Edit</button>
+    </div>
+    <div class="cal-day-nav">
+      <button class="cal-day-nav-btn" id="calDayPrev"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cal-day-title">${esc(title)}</div>
+      <button class="cal-day-nav-btn" id="calDayNext"${isFuture ? ' disabled style="opacity:.4"' : ''}><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    </div>
+    ${cardsHtml}
+    <div class="cal-day-foot">
+      <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
+      <div class="cal-day-foot-add">
+        <span>add more items:</span>
+        <button id="calAddClothing">+ Clothing</button>
+        <button id="calAddLook">+ Look</button>
+      </div>
+    </div>
+  </div>`;
+
+  $('#calDayBack').onclick = () => { calendarDay = null; renderCalendarMonth(body); };
+  $('#calDayPrev').onclick = () => { calendarDay = prevD; renderCalendarDay(body); };
+  if (!isFuture) $('#calDayNext').onclick = () => { calendarDay = nextD; renderCalendarDay(body); };
+  $('#calAddClothing').onclick = () => toast('Coming soon: log clothing for this day');
+  $('#calAddLook').onclick     = () => toast('Coming soon: log a look for this day');
+
+  body.querySelectorAll('.cal-outfit-card').forEach(wireCalSwipe);
+
+  body.querySelectorAll('.cal-act-del').forEach(btn => {
+    btn.onclick = async () => {
+      const ids = btn.dataset.wearIds.split(',').filter(Boolean);
+      if (!ids.length) return;
+      if (!confirm(`Remove ${ids.length} wear record${ids.length !== 1 ? 's' : ''}?`)) return;
+      try {
+        await rest(`wears?id=in.(${ids.map(id => `"${id}"`).join(',')})`, { method: 'DELETE' });
+        wears = wears.filter(w => !ids.includes(w.id));
+        buildOutfitWearMap();
+        renderCalendarDay(body);
+        toast('Removed');
+      } catch (e) { toast(e.message); }
+    };
+  });
+
+  body.querySelectorAll('[data-calact]').forEach(btn => {
+    btn.onclick = () => toast('Coming soon');
+  });
+
+  body.querySelectorAll('[data-cal-notes]').forEach(el => {
+    el.onclick = () => {
+      const outfitId = el.dataset.calNotes;
+      if (!outfitId) { toast('Notes are only available for saved looks'); return; }
+      openCalNotes(outfitId, () => renderCalendarDay(body));
+    };
+  });
+
+  hydratePhotos(body);
+}
+
+function wireCalSwipe(card) {
+  const inner = card.querySelector('.cal-outfit-inner');
+  const acts  = card.querySelector('.cal-swipe-acts');
+  const W = 210;
+  let startX = 0, opened = false, tracking = false;
+
+  card.addEventListener('touchstart', e => {
+    startX = e.touches[0].clientX;
+    tracking = true;
+    inner.style.transition = 'none';
+    acts.style.transition   = 'none';
+  }, { passive: true });
+
+  card.addEventListener('touchmove', e => {
+    if (!tracking) return;
+    const dx  = e.touches[0].clientX - startX;
+    const off = Math.max(-W, Math.min(0, (opened ? -W : 0) + dx));
+    inner.style.transform = `translateX(${off}px)`;
+    acts.style.transform  = `translateX(${100 + (off / W * 100)}%)`;
+  }, { passive: true });
+
+  card.addEventListener('touchend', e => {
+    if (!tracking) return;
+    tracking = false;
+    const dx = e.changedTouches[0].clientX - startX;
+    inner.style.transition = 'transform .25s ease';
+    acts.style.transition   = 'transform .25s ease';
+    opened = opened ? dx < 30 : dx < -50;
+    inner.style.transform = opened ? `translateX(-${W}px)` : 'translateX(0)';
+    acts.style.transform  = opened ? 'translateX(0)' : 'translateX(100%)';
+  }, { passive: true });
+}
+
+function openCalNotes(outfitId, onSaved) {
+  const outfit = outfitById.get(outfitId);
+  if (!outfit) return;
+  $('#logInner').innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="calNotesCancel">Cancel</button>
+      <h2>Notes</h2>
+      <button class="lnk" id="calNotesSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:16px 18px 30px">
+      <textarea id="calNotesInput" class="inp" rows="5"
+        style="resize:none;width:100%;min-height:100px;font-size:15px">${esc(outfit.notes || '')}</textarea>
+    </div>`;
+  $('#logSheet').hidden = false;
+  $('#calNotesCancel').onclick = () => { $('#logSheet').hidden = true; };
+  $('#calNotesSave').onclick = async () => {
+    const notes = $('#calNotesInput').value;
+    try {
+      await rest(`outfits?id=eq.${outfitId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes }),
+      });
+      outfit.notes = notes;
+      $('#logSheet').hidden = true;
+      onSaved();
+    } catch (e) { toast(e.message); }
+  };
+}
+
+/* ===================================================================
    TABS + WIRING
    =================================================================== */
 const TAB_TITLES = {
@@ -2754,7 +3138,7 @@ function switchTab(name) {
   else if (name === "search")   renderSearch();
   else if (name === "add")      renderAdd();
   else if (name === "looks")    renderLooks();
-  else if (name === "calendar") $("#calendarBody").innerHTML = placeholder("Calendar");
+  else if (name === "calendar") renderCalendar();
   else if (name === "capsules") $("#capsulesBody").innerHTML = placeholder("Capsules");
   else if (name === "stats")    $("#statsBody").innerHTML    = placeholder("Style Stats");
   else if (name === "settings") renderSettings();

@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r10 / 2026-06-21. Full rework from v25. ~1,900 lines.**
+**Current state: r11 / 2026-06-21. Full rework from v25. ~2,100 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -204,7 +204,7 @@ was carried over verbatim; the UI was rebuilt from scratch, screen by screen.
 **v25-full** (git tag + `archive/index_v25_full.html`) preserves everything built
 through Phase G. The data, schema, and migration are all intact and untouched.
 
-**Current state: r10 / 2026-06-21.** Built across two sessions:
+**Current state: r11 / 2026-06-21.** Built across two sessions:
 - **r1 — Home launcher:** Stylebook-style calm tile grid (5 tiles: Closet · Looks ·
   Calendar · Capsules · Style Stats). Bottom nav (5 tabs), login, boot path.
   App boots to Home. Settings via ⚙ gear; Add Item via ＋ on Home header.
@@ -326,10 +326,27 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   - `BUCKET_RANGES` targets updated to single-level values (1–5).
   - Required DB migration: drop old `CHECK 1–7` constraints, remap ~34 existing
     item values, add new `CHECK 1–5` constraints.
+- **r11 — Calendar tab:**
+  - Month grid: 7-col calendar grid with mini outfit collages per day, today
+    highlighted (accent circle on date number), `#f4f4f7` background for today's
+    cell. Prev/next month navigation. Leading/trailing blank cells for alignment.
+  - Day view: outfit groups for the selected date (items grouped by `outfit_id`;
+    null outfit_id = solo per-item). Each group shows an 88×88 collage + "Tap to
+    add notes" (notes stored on `outfits.notes` via PATCH). Swipe-left reveals
+    Copy/Move/Delete actions; Delete removes wear rows and rebuilds `outfitWearMap`.
+    Copy/Move are stubbed (toast "Coming soon"). Prev/next day navigation.
+  - Stats strip below the month grid: "Most Worn This Month" (item with most wears
+    in the month, shown with photo + count) + "X Day Streak" (consecutive days with
+    any wear logged, counting back from today).
+  - State: `calendarYear`, `calendarMonth` (0-based), `calendarDay` (null = month
+    view, "YYYY-MM-DD" = day view). `renderCalendar()` dispatches between views.
+  - Helpers: `wearDayMap()`, `dayGroups(dateStr)`, `calCellCollageHtml()`,
+    `calOutfitCollageHtml()`, `calMostWorn()`, `calStreak()`, `wireCalSwipe()`,
+    `openCalNotes()`. No new DB migrations needed.
 
 **▶ NEXT UP:**
-1. **Calendar** — month grid, day detail (show what was worn).
-2. **Capsules** — named item sets, packing lists.
+1. **Capsules** — named item sets, packing lists.
+2. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
 3. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
 4. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
 5. **Image replace** — currently "coming soon" stub on the details footer.
@@ -341,7 +358,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-21 r6`.
+  pushes the same day, increment `rN`. Currently `2026-06-21 r11`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -405,7 +422,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-21 r10`.
+- **Currently `APP_VERSION`** is `2026-06-21 r11`.
 - **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
   Items (`min_occasion`/`max_occasion`) and outfit buckets now use the same vocabulary.
   `BUCKET_RANGES` maps each bucket key to its target `{min, max}` for nudging pieces.
