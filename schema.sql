@@ -40,8 +40,8 @@ create table if not exists items (
   size          text,
   fabric        text[] not null default '{}',
   season        text[] not null default '{}',
-  min_occasion  smallint check (min_occasion between 1 and 7),
-  max_occasion  smallint check (max_occasion between 1 and 7),
+  min_occasion  smallint check (min_occasion between 1 and 5),
+  max_occasion  smallint check (max_occasion between 1 and 5),
   status        text not null default 'Available'
                   check (status in ('Available','Storage','Archive')),
   -- upkeep (slice 6): where the item is right now + how to care for it

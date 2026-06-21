@@ -526,7 +526,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r9";
+const APP_VERSION = "2026-06-21 r10";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -549,11 +549,9 @@ const COLOR_FAMILIES = [
 ];
 const colorHex = (name) => (COLOR_FAMILIES.find(c => c[0] === name) || [])[1] || "#ccc";
 
-// Formality ladder 1-7 (index 0 = level 1).
-const OCCASION_LADDER = [
-  "At-home", "Relaxed", "Casual", "Smart casual", "Professional", "Cocktail", "Formal",
-];
-const occLabel = (n) => (n >= 1 && n <= 7) ? OCCASION_LADDER[n - 1] : null;
+// Formality ladder 1-5 (index 0 = level 1). Matches outfit bucket labels.
+const OCCASION_LADDER = ["Lounge", "Casual", "Smart", "Dressy", "Formal"];
+const occLabel = (n) => (n >= 1 && n <= 5) ? OCCASION_LADDER[n - 1] : null;
 
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
 const STATUSES = ["Available", "Storage", "Archive", "Wishlist"];
@@ -1924,25 +1922,25 @@ const FORMALITY_BUCKETS = [
 
 // Bucket → item occasion range used when nudging pieces to match a look's formality.
 const BUCKET_RANGES = {
-  lounge:  { min: 1, max: 2 },
-  casual:  { min: 2, max: 3 },
-  smart:   { min: 4, max: 5 },
-  dressy:  { min: 5, max: 6 },
-  formal:  { min: 6, max: 7 },
+  lounge:  { min: 1, max: 1 },
+  casual:  { min: 2, max: 2 },
+  smart:   { min: 3, max: 3 },
+  dressy:  { min: 4, max: 4 },
+  formal:  { min: 5, max: 5 },
 };
 
 // Per-subcategory / category formality estimate on the 1–7 ladder. Used only when
 // an item has no explicit min/max_occasion set (most don't yet).
 const SUBCAT_FORMALITY = {
-  "Tee shirts": 3, "Graphic tees": 2, "Long-sleeve tees": 3, "Sleeveless": 3,
-  "Blouses": 5, "Sweaters": 4, "Cardigans": 4, "Sweatshirts": 2,
-  "Jeans": 3, "Pants": 4, "Shorts": 3, "Skirts": 4, "Leggings/Joggers": 2, "Tights": 3,
-  "Casual dresses": 3, "Work dresses": 5, "Cocktail dresses": 6,
-  "Blazers": 5, "Jackets": 3, "Coats": 4,
-  "Boots": 4, "Sandals": 3, "Flats": 3, "Heels": 6, "Sneakers": 3,
+  "Tee shirts": 2, "Graphic tees": 1, "Long-sleeve tees": 2, "Sleeveless": 2,
+  "Blouses": 3, "Sweaters": 3, "Cardigans": 3, "Sweatshirts": 1,
+  "Jeans": 2, "Pants": 3, "Shorts": 2, "Skirts": 3, "Leggings/Joggers": 1, "Tights": 2,
+  "Casual dresses": 2, "Work dresses": 3, "Cocktail dresses": 4,
+  "Blazers": 3, "Jackets": 2, "Coats": 3,
+  "Boots": 3, "Sandals": 2, "Flats": 2, "Heels": 4, "Sneakers": 2,
   "Workout tops": 1, "Active shorts": 1, "Sports bras": 1,
 };
-const CAT_FORMALITY = { Tops: 3, Bottoms: 3, Dresses: 4, Outerwear: 4, Shoes: 3, Workout: 1 };
+const CAT_FORMALITY = { Tops: 2, Bottoms: 2, Dresses: 3, Outerwear: 3, Shoes: 2, Workout: 1 };
 
 // Vertical stacking order for collages: outerwear/tops up top, bottoms, then shoes.
 const LAYER_ORDER = { Outerwear: 0, Tops: 1, Dresses: 1, Workout: 1, Bottoms: 2, Shoes: 3 };
@@ -1991,8 +1989,8 @@ function outfitBucket(o) {
     if (workoutN >= 1 && workoutN >= (nonShoe.length || its.length) / 2) {
       key = "workout";
     } else {
-      const c = Math.max(1, Math.min(7, Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length)));
-      key = c <= 2 ? "lounge" : c === 3 ? "casual" : c <= 5 ? "smart" : c === 6 ? "dressy" : "formal";
+      const c = Math.max(1, Math.min(5, Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length)));
+      key = ["lounge", "casual", "smart", "dressy", "formal"][c - 1];
     }
   }
   o._bucket = key;
@@ -2028,7 +2026,7 @@ function pieceFormalityLabel(it) {
       ? occLabel(it.min_occasion)
       : `${occLabel(it.min_occasion)} – ${occLabel(it.max_occasion)}`;
   }
-  return "auto · " + occLabel(Math.max(1, Math.min(7, Math.round(itemFormality(it)))));
+  return "auto · " + occLabel(Math.max(1, Math.min(5, Math.round(itemFormality(it)))));
 }
 
 function emptyLooks() {
