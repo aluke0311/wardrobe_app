@@ -318,6 +318,24 @@
     display: flex; align-items: center; gap: 6px;
   }
   .add-photo-label svg { width: 15px; height: 15px; stroke: #fff; stroke-width: 2; fill: none; flex-shrink: 0; }
+
+  /* ---------- looks (outfit grid + collage) ---------- */
+  .ogrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 10px 14px 24px; }
+  .otile { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+  .ocollage { width: 100%; aspect-ratio: 3/4; border: 1px solid var(--line); border-radius: 12px;
+    background: #fff; overflow: hidden; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px; padding: 9px; }
+  .ocollage.empty { background: #f4f4f7; }
+  .ocollage.empty svg { width: 34px; height: 34px; stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .opiece { width: 100%; flex: 1 1 0; min-height: 0; background: #fff center/contain no-repeat; }
+  .ocollage.omini { width: 64px; height: 64px; flex: none; border-radius: 10px; padding: 4px; gap: 1px; }
+  .oname { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ometa { font-size: 12px; color: var(--muted); margin-top: -3px; }
+  /* looks detail */
+  .lk-hero { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 16px 4px; }
+  .lk-heropiece { width: min(72%, 300px); height: 150px; background: #fff center/contain no-repeat; }
+  .lk-chip { display: inline-block; padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 12.5px; color: var(--ink); }
 </style>
 </head>
 <body>
@@ -504,7 +522,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r6";
+const APP_VERSION = "2026-06-21 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -745,7 +763,15 @@ function compressImage(file) {
    =================================================================== */
 let items = [];   // all items (every status)
 let wears = [];   // all wears
+let outfits = [];      // all outfits (saved sets of items worn together)
+let outfitLinks = [];  // outfit_items join rows {outfit_id, item_id}
 let dataReady = false;
+
+// Derived indexes (rebuilt by buildOutfitIndexes after each load).
+let itemById = new Map();        // item id -> item
+let outfitById = new Map();      // outfit id -> outfit
+let outfitItemMap = new Map();   // outfit id -> [item id]
+let outfitWearMap = new Map();   // outfit id -> Set(worn_on)
 
 // PostgREST/Supabase caps a single response at 1000 rows; page through the rest.
 async function restAll(path) {
@@ -764,13 +790,44 @@ async function restAll(path) {
 
 async function loadData() {
   dataReady = false;
-  const [it, wr] = await Promise.all([
+  const [it, wr, of, oi] = await Promise.all([
     restAll("items?select=*&order=created_at.desc"),
     restAll("wears?select=*&order=worn_on.desc"),
+    restAll("outfits?select=*&order=created_at.desc"),
+    restAll("outfit_items?select=outfit_id,item_id"),
   ]);
   items = it || [];
   wears = wr || [];
+  outfits = of || [];
+  outfitLinks = oi || [];
+  buildOutfitIndexes();
   dataReady = true;
+}
+
+// Rebuild the lookup maps + per-outfit derived caches. Called after each load.
+function buildOutfitIndexes() {
+  itemById = new Map(items.map(i => [i.id, i]));
+  outfitById = new Map(outfits.map(o => [o.id, o]));
+  outfitItemMap = new Map();
+  for (const l of outfitLinks) {
+    let a = outfitItemMap.get(l.outfit_id);
+    if (!a) { a = []; outfitItemMap.set(l.outfit_id, a); }
+    a.push(l.item_id);
+  }
+  // Stable display number: oldest outfit = #1 (Stylebook-style "Look #N").
+  outfits.slice()
+    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
+    .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; });
+  buildOutfitWearMap();
+}
+function buildOutfitWearMap() {
+  outfitWearMap = new Map();
+  for (const w of wears) {
+    if (!w.outfit_id) continue;
+    let s = outfitWearMap.get(w.outfit_id);
+    if (!s) { s = new Set(); outfitWearMap.set(w.outfit_id, s); }
+    s.add(w.worn_on);
+  }
 }
 
 // ---- derived helpers ----
@@ -841,7 +898,7 @@ function hydratePhotos(root = document) {
 const HOME_TILES = [
   { tab: "closet",   label: "Closet",     sub: () => `${availableCount()} items`,
     icon: `<path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/>` },
-  { tab: "looks",    label: "Looks",      sub: () => "Outfits",
+  { tab: "looks",    label: "Looks",      sub: () => `${displayOutfits().length} looks`,
     icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
   { tab: "calendar", label: "Calendar",   sub: () => "What you wore",
     icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>` },
@@ -1825,6 +1882,356 @@ async function saveNewItem() {
 }
 
 /* ===================================================================
+   LOOKS  (outfit library — lens switcher · folders · grid · detail)
+   =================================================================== *
+
+   Status of imported data: 1,543 outfits = a date + a set of items, almost no
+   name/context/notes. So everything here is DERIVED, not filed by hand:
+   - formality: estimated per item (occasion range if set, else a taxonomy
+     heuristic), averaged across the outfit, bucketed into 6 coarse folders.
+   - season: from the dates the look was worn (multiple seasons => multiple
+     folders), falling back to the outfit's own date.
+   The user can browse by Formality / Season / Recent / All. Most looks were
+   worn once, so this reads as a library where it's useful and a log otherwise. */
+
+const LOOK_LENSES = ["Formality", "Season", "Recent", "All"];
+const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phone)
+
+// Coarse formality folders — mirror the user's old Stylebook buckets, mapped onto
+// the 1–7 ladder. "workout" is off-ladder (handled specially).
+const FORMALITY_BUCKETS = [
+  { key: "workout", label: "Workout" },
+  { key: "lounge",  label: "Lounge"  },  // ladder 1–2
+  { key: "casual",  label: "Casual"  },  // ladder 3
+  { key: "smart",   label: "Smart"   },  // ladder 4–5
+  { key: "dressy",  label: "Dressy"  },  // ladder 6
+  { key: "formal",  label: "Formal"  },  // ladder 7
+];
+
+// Per-subcategory / category formality estimate on the 1–7 ladder. Used only when
+// an item has no explicit min/max_occasion set (most don't yet).
+const SUBCAT_FORMALITY = {
+  "Tee shirts": 3, "Graphic tees": 2, "Long-sleeve tees": 3, "Sleeveless": 3,
+  "Blouses": 5, "Sweaters": 4, "Cardigans": 4, "Sweatshirts": 2,
+  "Jeans": 3, "Pants": 4, "Shorts": 3, "Skirts": 4, "Leggings/Joggers": 2, "Tights": 3,
+  "Casual dresses": 3, "Work dresses": 5, "Cocktail dresses": 6,
+  "Blazers": 5, "Jackets": 3, "Coats": 4,
+  "Boots": 4, "Sandals": 3, "Flats": 3, "Heels": 6, "Sneakers": 3,
+  "Workout tops": 1, "Active shorts": 1, "Sports bras": 1,
+};
+const CAT_FORMALITY = { Tops: 3, Bottoms: 3, Dresses: 4, Outerwear: 4, Shoes: 3, Workout: 1 };
+
+// Vertical stacking order for collages: outerwear/tops up top, bottoms, then shoes.
+const LAYER_ORDER = { Outerwear: 0, Tops: 1, Dresses: 1, Workout: 1, Bottoms: 2, Shoes: 3 };
+
+let looksLens = "Formality";
+let looksFolder = null;   // null = folder list (Formality/Season) | bucket key | season
+let lookId = null;        // outfit id in detail (null = none)
+
+// ---- derived helpers ----
+function outfitItems(o) { return (outfitItemMap.get(o.id) || []).map(id => itemById.get(id)).filter(Boolean); }
+function displayOutfits() { return outfits.filter(o => (outfitItemMap.get(o.id) || []).some(id => itemById.has(id))); }
+function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
+function outfitPieces(o) {
+  return outfitItems(o).filter(i => i.image_path)
+    .sort((a, b) => (LAYER_ORDER[a.category] ?? 1.5) - (LAYER_ORDER[b.category] ?? 1.5));
+}
+
+const seasonOf = (dateStr) => {
+  const m = +String(dateStr).slice(5, 7);
+  return (m <= 2 || m === 12) ? "Winter" : m <= 5 ? "Spring" : m <= 8 ? "Summer" : "Fall";
+};
+function effectiveWearDays(o) {
+  const s = outfitWearMap.get(o.id);
+  if (s && s.size) return [...s];
+  return o.created_at ? [String(o.created_at).slice(0, 10)] : [];
+}
+function outfitSeasons(o) { return [...new Set(effectiveWearDays(o).map(seasonOf))]; }
+function outfitWornCount(o) { return effectiveWearDays(o).length; }
+function outfitLastWorn(o) { const d = effectiveWearDays(o).sort(); return d.length ? d[d.length - 1] : null; }
+function outfitCost(o) { return outfitItems(o).reduce((s, i) => s + (i.price ? Number(i.price) : 0), 0); }
+
+function itemFormality(i) {
+  if (i.min_occasion && i.max_occasion) return (i.min_occasion + i.max_occasion) / 2;
+  if (i.min_occasion) return i.min_occasion;
+  if (i.max_occasion) return i.max_occasion;
+  return SUBCAT_FORMALITY[i.subcategory] ?? CAT_FORMALITY[i.category] ?? 3;
+}
+function outfitBucket(o) {
+  if (o._bucket) return o._bucket;
+  const its = outfitItems(o);
+  let key = "casual";
+  if (its.length) {
+    const nonShoe = its.filter(i => i.category !== "Shoes");
+    const workoutN = its.filter(i => i.category === "Workout").length;
+    if (workoutN >= 1 && workoutN >= (nonShoe.length || its.length) / 2) {
+      key = "workout";
+    } else {
+      const c = Math.max(1, Math.min(7, Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length)));
+      key = c <= 2 ? "lounge" : c === 3 ? "casual" : c <= 5 ? "smart" : c === 6 ? "dressy" : "formal";
+    }
+  }
+  o._bucket = key;
+  return key;
+}
+
+function relDate(d) {
+  const ds = daysSince(d);
+  if (ds == null) return "";
+  if (ds <= 0) return "today";
+  if (ds < 30) return `${ds}d ago`;
+  if (ds < 365) return `${Math.floor(ds / 30)}mo ago`;
+  return `${Math.floor(ds / 365)}y ago`;
+}
+
+// ---- collage building ----
+function outfitCollageHtml(o, max, mini) {
+  const pieces = outfitPieces(o).slice(0, max);
+  const cls = "ocollage" + (mini ? " omini" : "");
+  if (!pieces.length) return `<div class="${cls} empty"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>`;
+  return `<div class="${cls}">${pieces.map(p => `<div class="opiece" data-photo="${esc(p.image_path)}"></div>`).join("")}</div>`;
+}
+
+function emptyLooks() {
+  return `<div class="placeholder">
+    <svg class="pi" viewBox="0 0 24 24"><path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/></svg>
+    <b>No looks here</b><div>Outfits you build or log will show up here.</div></div>`;
+}
+
+// ---- toolbar / lens row ----
+function looksToolbar(title, showBack, showShuffle) {
+  return `<div class="cltoolbar">
+    ${showBack
+      ? `<button class="clback" id="looksBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
+      : `<span style="width:34px"></span>`}
+    <div class="cltitle">${esc(title)}</div>
+    ${showShuffle
+      ? `<button class="clsearch" id="looksShuffle" title="Random look"><svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></button>`
+      : `<span style="width:34px"></span>`}
+  </div>`;
+}
+function looksLensHtml() {
+  return `<div class="lens">${LOOK_LENSES.map(l =>
+    `<button data-llens="${l}" class="${looksLens === l ? "on" : ""}">${l}</button>`).join("")}</div>`;
+}
+
+// ---- folder list (Formality / Season) ----
+function looksFolderRow(label, count, rep, attrs) {
+  const thumb = rep ? outfitCollageHtml(rep, 4, true)
+    : `<div class="cthumb empty"><svg viewBox="0 0 24 24"><path d="M5 9l7-5 7 5"/><path d="M5 9c0 2.2 14 2.2 14 0"/></svg></div>`;
+  return `<button class="frow" ${attrs}>
+    ${thumb}
+    <div class="fmeta"><div class="fname">${esc(label)}</div><div class="fcount">${count} look${count === 1 ? "" : "s"}</div></div>
+    <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </button>`;
+}
+const repByRecency = (list) =>
+  list.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")))[0];
+
+function folderRowsHtml(lens) {
+  const all = displayOutfits();
+  let rows = "";
+  if (lens === "Formality") {
+    for (const b of FORMALITY_BUCKETS) {
+      const list = all.filter(o => outfitBucket(o) === b.key);
+      if (!list.length) continue;
+      rows += looksFolderRow(b.label, list.length, repByRecency(list), `data-lfolder="${b.key}"`);
+    }
+  } else {
+    for (const s of SEASONS) {
+      const list = all.filter(o => outfitSeasons(o).includes(s));
+      if (!list.length) continue;
+      rows += looksFolderRow(s, list.length, repByRecency(list), `data-lfolder="${s}"`);
+    }
+  }
+  return rows ? `<div class="frows">${rows}</div>` : emptyLooks();
+}
+function folderOutfits(lens, folder) {
+  const all = displayOutfits();
+  const list = lens === "Formality"
+    ? all.filter(o => outfitBucket(o) === folder)
+    : all.filter(o => outfitSeasons(o).includes(folder));
+  return list.sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
+}
+function folderLabel(lens, folder) {
+  return lens === "Formality" ? (FORMALITY_BUCKETS.find(b => b.key === folder)?.label || folder) : folder;
+}
+function lensOutfitsSorted() {
+  const all = displayOutfits();
+  if (looksLens === "Recent") return all.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
+  return all.slice().sort((a, b) => (b._num || 0) - (a._num || 0)); // All: newest created first
+}
+
+// ---- grid of outfit tiles ----
+function outfitGridHtml(list) {
+  if (!list.length) return emptyLooks();
+  return `<div class="ogrid">${list.map(o => {
+    const n = outfitItems(o).length, lw = outfitLastWorn(o);
+    return `<button class="otile" data-look="${esc(o.id)}">
+      ${outfitCollageHtml(o, 4)}
+      <div class="oname">${esc(outfitName(o))}</div>
+      <div class="ometa">${n} piece${n === 1 ? "" : "s"}${lw ? " · " + esc(relDate(lw)) : ""}</div>
+    </button>`;
+  }).join("")}</div>`;
+}
+
+function renderLooks() {
+  lookId = null;
+  $("#itemBar").hidden = true;
+  const body = $("#looksBody");
+  if (looksLens === "Recent" || looksLens === "All") {
+    const full = lensOutfitsSorted();
+    const list = full.slice(0, LOOKS_FLAT_CAP);
+    const more = full.length > list.length
+      ? `<div class="snote center" style="padding:0 16px 24px">Showing ${list.length} of ${full.length}. Narrow with Formality or Season.</div>` : "";
+    body.innerHTML = looksToolbar("Looks", false, true) + looksLensHtml() + outfitGridHtml(list) + more;
+  } else if (looksFolder) {
+    const list = folderOutfits(looksLens, looksFolder);
+    body.innerHTML = looksToolbar(`${folderLabel(looksLens, looksFolder)} · ${list.length}`, true, true) + outfitGridHtml(list);
+  } else {
+    body.innerHTML = looksToolbar("Looks", false, true) + looksLensHtml() + folderRowsHtml(looksLens);
+  }
+  hydratePhotos(body);
+}
+
+function looksBack() {
+  if (lookId) { lookId = null; return renderLooks(); }
+  if (looksFolder) { looksFolder = null; return renderLooks(); }
+  renderLooks();
+}
+
+function openRandomLook() {
+  const all = displayOutfits();
+  if (all.length) openLook(all[Math.floor(Math.random() * all.length)].id);
+}
+
+// ---- outfit detail ----
+function openLook(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  lookId = id;
+
+  const its = outfitItems(o);
+  const pieces = outfitPieces(o);
+  const n = outfitWornCount(o), lw = outfitLastWorn(o);
+  const lastTxt = lw ? (daysSince(lw) <= 0 ? "Today" : relDate(lw)) : "Never";
+  const cost = outfitCost(o);
+  const seasons = outfitSeasons(o);
+  const bucket = FORMALITY_BUCKETS.find(b => b.key === outfitBucket(o));
+
+  const hero = pieces.length
+    ? pieces.map(p => `<div class="lk-heropiece" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path)}"></div>`).join("")
+    : `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
+
+  const body = $("#looksBody");
+  body.innerHTML = `
+    ${looksToolbar(esc(outfitName(o)), true, false)}
+    <div class="det-body">
+      <div class="lk-hero">${hero}</div>
+      <div class="center muted" style="font-size:12.5px;margin-bottom:8px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it</div>
+
+      <div class="det-section-label">WEAR</div>
+      <div class="det-card">
+        <div class="det-row"><span class="det-lbl">Worn</span><span class="det-val">${n} time${n === 1 ? "" : "s"}</span></div>
+        <div class="det-divider"></div>
+        <div class="det-row"><span class="det-lbl">Last</span><span class="det-val">${esc(lastTxt)}</span></div>
+        <div class="det-divider"></div>
+        <div class="det-row"><span class="det-lbl">Total</span><span class="det-val">${cost > 0 ? esc(money(cost)) : "—"}</span></div>
+      </div>
+
+      <div class="det-section-label">CLASSIFICATION</div>
+      <div class="det-card">
+        <div class="det-row"><span class="det-lbl">Formality</span><span class="det-val">${esc(bucket ? bucket.label : "—")}</span></div>
+        <div class="det-divider"></div>
+        <div class="det-row"><span class="det-lbl">Season</span><span class="det-val">${seasons.length ? seasons.map(s => `<span class="lk-chip">${esc(s)}</span>`).join(" ") : "—"}</span></div>
+      </div>
+
+      <div class="det-section-label">NOTES</div>
+      <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
+    </div>
+    <div class="det-footer">
+      <button class="lnk" id="lookWear" style="font-weight:600">Wear this look</button>
+      <button class="lnk" id="lookDelete" style="color:var(--danger)">Delete</button>
+    </div>
+  `;
+  $("#itemBar").hidden = true;
+  hydratePhotos(body);
+  window.scrollTo(0, 0);
+
+  // notes auto-save (direct PATCH; skip re-render so typing isn't interrupted)
+  const ta = $("#lookNotes");
+  let noteTimer;
+  ta.addEventListener("input", () => {
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(async () => {
+      const val = ta.value.trim() || null, prev = o.notes;
+      o.notes = val;
+      try {
+        await rest(`/outfits?id=eq.${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ notes: val }),
+        });
+      } catch (e) { o.notes = prev; toast(e.message); }
+    }, 900);
+  });
+}
+
+// ---- wear this look (one wear row per piece, linked to the outfit) ----
+function openWearLook(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  const its = outfitItems(o);
+  const today = todayStr();
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="logCancel">Cancel</button>
+      <h2>Wear This Look</h2>
+      <button class="lnk" id="logSave" style="font-weight:700">Log</button>
+    </div>
+    <div style="padding:20px 18px 30px">
+      <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Date worn</label>
+      <input class="inp" id="logDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
+      <div class="muted" style="font-size:13px;margin-top:12px">Logs a wear for all ${its.length} piece${its.length === 1 ? "" : "s"} in this look.</div>
+    </div>`;
+  $("#logSheet").hidden = false;
+  $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logSave").onclick = async () => {
+    const date = $("#logDate").value;
+    if (!date || !its.length) { $("#logSheet").hidden = true; return; }
+    try {
+      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id }));
+      const rows = await rest("/wears", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(payload),
+      });
+      if (Array.isArray(rows)) wears.push(...rows);
+      buildOutfitWearMap();
+      $("#logSheet").hidden = true;
+      toast(`Logged ${its.length} wear${its.length === 1 ? "" : "s"} for ${date}`);
+      if (lookId === id) openLook(id);
+    } catch (e) { toast(e.message); }
+  };
+}
+
+// ---- delete a look (history is preserved: wears.outfit_id is SET NULL) ----
+async function deleteLook(id) {
+  if (!confirm("Delete this look? Your wear history is kept — only the saved outfit is removed.")) return;
+  try {
+    await rest(`/outfits?id=eq.${id}`, { method: "DELETE" });
+    outfits = outfits.filter(o => o.id !== id);
+    outfitById.delete(id);
+    outfitItemMap.delete(id);
+    wears.forEach(w => { if (w.outfit_id === id) w.outfit_id = null; });
+    buildOutfitWearMap();
+    lookId = null;
+    renderLooks();
+    toast("Look deleted");
+  } catch (e) { toast(e.message); }
+}
+
+/* ===================================================================
    GRID BAR  (density picker + select mode + bulk actions)
    =================================================================== */
 function updateGridBar() {
@@ -2102,7 +2509,7 @@ function switchTab(name) {
   else if (name === "closet")   renderCloset();
   else if (name === "search")   renderSearch();
   else if (name === "add")      renderAdd();
-  else if (name === "looks")    $("#looksBody").innerHTML    = placeholder("Looks");
+  else if (name === "looks")    renderLooks();
   else if (name === "calendar") $("#calendarBody").innerHTML = placeholder("Calendar");
   else if (name === "capsules") $("#capsulesBody").innerHTML = placeholder("Capsules");
   else if (name === "stats")    $("#statsBody").innerHTML    = placeholder("Style Stats");
@@ -2167,6 +2574,26 @@ function wireEvents() {
     }
   });
 
+  // looks: lens / folders / outfit tiles / detail actions
+  $("#looksBody").addEventListener("click", (e) => {
+    if (e.target.closest("#looksBack")) return looksBack();
+    if (e.target.closest("#looksShuffle")) return openRandomLook();
+    const lens = e.target.closest("[data-llens]");
+    if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
+    const folder = e.target.closest("[data-lfolder]");
+    if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
+    const piece = e.target.closest("[data-look-item]");
+    if (piece) {
+      const it = itemById.get(piece.dataset.lookItem);
+      if (it) { closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null; switchTab("closet"); openItem(it.id); }
+      return;
+    }
+    const look = e.target.closest("[data-look]");
+    if (look) return openLook(look.dataset.look);
+    if (e.target.closest("#lookWear")) { if (lookId) openWearLook(lookId); return; }
+    if (e.target.closest("#lookDelete")) { if (lookId) deleteLook(lookId); return; }
+  });
+
   // grid action bar
   $("#gbSelect").addEventListener("click", toggleSelectMode);
   $("#gbGrid").addEventListener("click", openGridPicker);
@@ -2229,7 +2656,8 @@ function showApp() {
 }
 function handleSignedOut() {
   saveSession(null);
-  items = []; wears = []; dataReady = false; _urlCache.clear();
+  items = []; wears = []; outfits = []; outfitLinks = []; dataReady = false; _urlCache.clear();
+  itemById = new Map(); outfitById = new Map(); outfitItemMap = new Map(); outfitWearMap = new Map();
   showLogin();
 }
 
