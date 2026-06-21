@@ -2,7 +2,11 @@
 
 > Single source of truth for what's next. Written so a **fresh session (any model)
 > can execute without re-deriving decisions**. Read `CLAUDE.md` (architecture +
-> hard constraints) and `schema.sql` (DB) alongside this. Status as of **v17**.
+> hard constraints) and `schema.sql` (DB) alongside this. Status as of **v19**.
+>
+> **▶ NEXT UP: Phase G — Daily-use UX overhaul** (product review 2026-06-20). Decisions
+> are locked; **resolve the one open data-model question at the top of Phase G before
+> building G1.** Start there.
 
 ---
 
@@ -558,6 +562,179 @@ is independent; do as one-off slices.
   deliberate exception to derive-first — keep it tiny and optional. Likely a single
   `profile`/`sizes` row or a small `sizes` table (RLS-scoped). Confirm scope before
   building.
+
+---
+
+## Phase G — Daily-use UX overhaul (product/behavioral review 2026-06-20)
+
+> Output of a deep product review of the **daily loop**. The thesis: **logging a
+> wear is the #1 daily action and it is currently the highest-friction thing in
+> the app** (buried in the Log tab behind a native `<select>` of every Available
+> item — `populateWearItems` → `#w_item`). Every analytic (CPW, utilization,
+> neglected, Insights, suggestions) is downstream of faithful wear-logging, so if
+> logging isn't a ≤1-gesture reflex the whole dataset decays. Evidence the loop is
+> already breaking: only ~34/476 items have occasion ranges; **all imported
+> `context` is null**; the user logs in bursts then lapses. The full mental-model +
+> behavioral predictions are saved in memory (`wardrobe-product-decisions.md`).
+
+**This phase supersedes two earlier defaults:** the "predict context" idea (see
+E1 below — context is now *parked by design*) and any assumption that single-item
+logging is the primary path (it is not — see A1/G1).
+
+### Locked decisions (user, 2026-06-20)
+
+- **A1 — log granularity = MULTI-SELECT (default).** You pick the day's worn items
+  as a flat multi-select photo grid, then an **optional grouping step** carves the
+  selected set into **one or more outfits, with overlap allowed**.
+  - *User's own example:* in one day you wore shorts + shirt A, shorts + shirt B,
+    and a dress + shoes → that should become **three outfits, two of them sharing
+    the shorts.**
+- **B2 — laundry self-clears after 7 days + a checkbox bulk-reset.** `availability
+  != 'Ready'` auto-returns to `Ready` after **7 days**; PLUS a **bulk-reset screen
+  with per-item checkboxes** (choose *which* items to mark clean — not all-or-
+  nothing). Fold in the Tier-1 brainstorm items "Laundry pop-up on boot" + "Mark
+  all clean". Pure client, no schema. Track last-open date in `wardrobe.lastOpen`.
+- **E1 — context is PARKED BY DESIGN (do not build prediction/rules yet).** Context
+  was never filled because it is *new*, not because it's unwanted — the user sees it
+  as potentially "extraordinarily useful" but wants to **rethink the formality
+  ladder (`OCCASION_LADDER`, 1–7) AND the `CONTEXTS` set together**, letting the
+  real model emerge from usage. For now: keep `context` a **frictionless OPTIONAL
+  free-text** on logging — never required, never on the fast path — so strings
+  accumulate. **Revisit task (next design session):** review captured
+  `wears.context` + `outfits.context` strings alongside the `OCCASION_LADDER` /
+  `CONTEXTS` constants and redesign formality+context as one system. Until then, do
+  NOT add context prediction, hard rules, or new context schema.
+- **Defaults accepted for everything else** (G2 long-press log + Undo, G3 Home CTA,
+  recency-decayed suggestions + one "stretch" pick, season derive-and-confirm,
+  tidy-up nudge).
+
+### ⚠️ OPEN data-model question — RESOLVE BEFORE BUILDING G1
+
+Overlapping same-day outfits break the current "≈ one wear row per (item, day)"
+assumption. In the example the **shorts belong to two outfits on the same day**,
+but `wears.outfit_id` is a single FK (`references outfits(id)`) — one wear row can
+point at only one outfit. Options:
+
+- **(a) Allow multiple wear rows per item/day (one per outfit). ← RECOMMENDED.**
+  Only option that truthfully records "these went together" for *every* outfit.
+  `wornOutfitMap()` already groups by `outfit_id|day`, so the Worn view handles it.
+  **Cost:** `wearCount` (and any stat using `wears.length`) must count **distinct
+  worn days, not rows**, or the shared shorts double-count. Audit every consumer of
+  `wearCount` / row counts (Insights CPW via `costPerWear`→`wearCount`, velocity,
+  KPIs, item detail "Times worn").
+- **(b) One wear row per item/day + outfit membership tracked separately.** Create
+  both outfit rows + their `outfit_items`, but only one wear row carries an
+  `outfit_id`. Keeps wear counts simple; **loses** precise per-day attribution of
+  the shared item to both outfits.
+- **(c) outfit_id null on wears; outfits as pure templates.** Weakest; can't derive
+  "worn together today" cleanly. Rejected.
+
+→ **Decide (a) vs (b) first thing next session.** Lean (a).
+
+### G1 — Multi-select fast logger (keystone; build first after resolving the open Q)
+
+Replace the `#w_item` `<select>` path with a tap-to-select photo grid:
+1. Searchable photo grid of **Available + Ready** items (reuse `tileHtml` /
+   `thumbsHtml`; the existing `#w_search` already filters). Tap a tile to toggle a
+   `picked` state (reuse closet multi-select styles).
+2. A date field (default today) + the **optional** free-text context (E1).
+3. Sticky "Log N item(s)" action (disabled at 0).
+4. **Grouping step** (only if ≥2 picked and user opts in): assign picked items into
+   one or more outfit buckets, **overlap allowed**; unassigned picked items log as
+   lone wears. "Skip grouping" = log everything as lone wears.
+5. **Reuse-or-create outfits:** for each bucket, if its exact item-set already
+   exists in `outfitItemMap`, **reuse that outfit's id** (don't spawn a duplicate —
+   honors D4). Else create an `outfits` row + `outfit_items` (mirror `saveOutfit`).
+   Then create/retag wear rows for the date (`logOutfitWear` already retags orphan
+   same-day wears). **FK reminder:** you cannot fabricate an `outfit_id` — a grouped
+   set needs a real `outfits` row.
+6. **Undo toast** after logging (delete the just-created wear rows; `logWear`/the
+   insert return the created rows). Build the Undo toast helper first — it's the
+   prerequisite that makes fast/instant logging safe (G1+G2 depend on it).
+
+Surfaces: the Log tab "wear" mode becomes this grid; also reachable from G3 (Home)
+and G2 (closet long-press, single-item path).
+
+### G2 — One-tap log from the closet grid
+Long-press a closet tile → instant `logWear(id, todayStr(), null)` + Undo toast
+(normal tap still opens `openItem`). No tab switch, no dropdown, for the common
+"I wore this" case.
+
+### G3 — Home "log today" as the primary capture action
+Today's cell in the `renderHome` week strip becomes the main CTA: empty → "＋ Log
+today's outfit" (opens G1 multi-select logger); already-logged → thumbnails of
+what's logged + "add another." Closes the capture loop where the user lands on open.
+
+### G6 — Season derive-and-confirm
+Per-item wear-month histogram from `wears`; if ≥~80% of an item's wears fall in ≤2
+contiguous seasons, surface a Fill-style card "Looks like a Winter piece —
+confirm?" (one tap to write `i.season`). **Never silent-write.** This fills the
+mostly-empty `i.season` that `suggestOutfits` + weather nudges already lean on —
+the purest derive-first win (the data already exists in `wears`).
+
+### G7 — Laundry self-clearing + checkbox bulk reset (B2)
+- At boot (`bootApp`): if a new calendar day vs `wardrobe.lastOpen`, auto-PATCH any
+  item with `availability != 'Ready'` whose flag is ≥7 days old back to `Ready`
+  (track when the flag was set, or approximate from last wear). Optional boot toast
+  "You wore 4 items yesterday — move to laundry?" (one-tap bulk PATCH; route
+  `care` containing "Dry clean" → `Cleaners`).
+- **Bulk-reset screen:** list everything currently not `Ready` with per-item
+  **checkboxes**; "Mark selected clean" → batch PATCH to `Ready` (reuse batch infra
+  `batchAction`/`batchStatus`). Reachable from the closet laundry filter and/or the
+  Home "needs attention" card.
+
+### Suggestion tuning (defaults)
+- **Recency-decay co-occurrence** in `suggestOutfits`: `coPairs` currently weights a
+  2017 pairing identically to last week, and the 1,543 imported outfit rows dominate.
+  Build `coPairs` only from outfits worn in the last ~18 months (use
+  `outfitWearDates`), or weight `coBonus` by recency.
+- **Stretch pick:** inject one suggestion that deliberately surfaces a neglected
+  Available item (worn >30d/never), so suggestions aren't only "proven."
+
+### G-meta — Tidy-up nudge (finite Fill batches)
+On Home, a small dismissible chip: "8 items missing color → knock out 5 →" opening a
+**focused, finite** Fill run of just those items with a progress bar — instead of the
+infinite random shuffle. Behavioral lever: completable batches close the metadata gap
+that the passive Fill never will (34/476 occasion coverage won't move on its own).
+
+### Build order (locked, reordered 2026-06-20) — ALL COMPLETE as of v25
+**Undo toast ✓ → G2 ✓ → data-model Q resolved ✓ → G1 ✓ → G3 ✓ →
+suggestion recency-decay + stretch pick ✓ → G7 laundry ✓ → G6 season ✓ → G-meta nudge ✓**
+
+Rationale for putting **G2 before G1**: G2 is S-cost and **not** blocked on the open
+data-model question (single-item log is always a lone wear, `outfit_id` null), so it
+ships the "I wore this" reflex immediately and exercises the Undo toast before the
+heavy G1 work depends on it. G1 stays gated on the data-model decision; G3 depends on
+G1 (it opens the multi-select logger). The suggestion fix is bumped up next to G3
+because Home's "today's picks" becomes the primary surface once G3 lands.
+
+### G-prune — drop dead captured fields (do alongside G1/Fill work)
+Low-value *captured* (non-derivable, never-maintained) fields the user confirmed
+dropping 2026-06-20: **`storage_location`, `fit`, `length`, `rise`.** Scope of the
+drop:
+- Remove all four from `FILL_FIELDS` (+ their `FILL_PROMPT` entries). Leaves the
+  9 that drive features or are quick wins: occasion, color, subcategory, season,
+  fabric, price, acquisition, size, care.
+- Remove their controls from the add/edit item form — the `makeSeg(...)` segmented
+  controls for `f_fit` / `f_length` / `f_rise` / `f_storage_loc` (`buildItemForm`)
+  and their reads in `readItemForm` — and the tap-to-edit rows in `openItem` /
+  `editField` / `readFillPatch`. Grep `fit|length|rise|storage_location` to catch
+  every site.
+- **Keep the DB columns** (`schema.sql` unchanged) — non-destructive; existing
+  values just stop surfacing, and re-adding later is trivial. (`context` is already
+  off the fast path per E1.)
+Revisit the rest of `FILL_FIELDS` for other noise as usage shows what stays empty.
+
+### Executor file-map pointers
+- Log-wear markup: `index.html` ~531–556 (`#logModeSeg`, `#logWearPanel`,
+  `#w_search`, the `#w_item` select to replace, `#w_date`, `#w_context`, `#wearBtn`).
+- Functions: `populateWearItems` ~2381 · `submitWear` ~2419 · `logWear` ~2349 ·
+  `wornOutfitMap` ~2449 · `saveOutfit` ~3245 · `logOutfitWear` ~3058 ·
+  `suggestOutfits` ~2533 · `renderHome` week strip ~4354 · `tileHtml` ~1375 ·
+  `openItem` (long-press target) ~1813 · batch infra `batchAction`/`batchStatus`
+  ~1641 · `wearCount` ~1148 · `costPerWear` ~1153.
+- Schema: `wears.outfit_id uuid references outfits(id) on delete set null`
+  (`schema.sql` ~144) — confirms a grouped set needs a real outfit row.
 
 ---
 
