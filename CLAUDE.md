@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r6 / 2026-06-21. Full rework from v25. ~1,500 lines.**
+**Current state: r10 / 2026-06-21. Full rework from v25. ~1,900 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -63,8 +63,13 @@ Top-of-`<script>` config, then logically grouped sections:
   `openAddCatSheet()` which reuses `#moveSheet` (guarded by `_addCatMode` flag).
 - **SEARCH** — `openSearch()` / `renderSearch()` / `runSearch()`. Keyword +
   6 filter rows (Color/Fabric/Size/Season/Brand/Status), each expanding to chips.
+- **LOOKS** — `renderLooks()` / `openLook()` / `openLookFormalityEdit()` /
+  `showNudgePiecesSheet()`. Lens switcher (Formality/Season/Recent/All); derived
+  organization (no manual filing). Nav state: `looksLens`/`looksFolder`/`lookId`.
+  Outfit collages via `outfitCollageHtml()`. Formality derived from piece heuristics
+  (`outfitBucket`), overridable via `formality_override` on the outfit row.
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE at bottom.
-  Currently active tabs: home · closet · looks (stub) · calendar (stub) ·
+  Currently active tabs: home · closet · looks · calendar (stub) ·
   capsules (stub) · stats (stub). Search and Add live as non-tab screens
   (`#tab-search`, `#tab-add`) navigated to by `switchTab`.
 
@@ -93,14 +98,15 @@ first. Five tables, all RLS-scoped to `auth.uid()` (client never sends `user_id`
 - `items`: id, user_id, name, **category**, **subcategory**, brand, **retailer**,
   **color_family** (single, not an array), price, purchase_date, **date_is_guess**,
   **acquisition** (New|Secondhand|Gift), **size**, **fabric** (text[]),
-  **season** (text[]), **min_occasion**/**max_occasion** (smallint 1–7),
+  **season** (text[]), **min_occasion**/**max_occasion** (smallint 1–5),
   **status** (Available|Storage|Archive — replaces the old `archived` bool),
   tags (text[]), url, order_no, receipt_url, official_name, notes, image_path,
   created_at.
 - `wears`: id, user_id, item_id, **outfit_id** (nullable), worn_on (date — any
   past date allowed, so historical back-fill is normal), **context** (text),
   created_at. One row per item per day worn.
-- `outfits`: id, user_id, name, context, notes, image_path, created_at.
+- `outfits`: id, user_id, name, context, notes, image_path, **formality_override**
+  (text — one of the 5 bucket keys, nullable), created_at.
   Join table `outfit_items(outfit_id, item_id, user_id)`.
 - `capsules`: id, user_id, name, kind (capsule|packing|travel), start_date,
   end_date, notes, created_at. Join table `capsule_items(capsule_id, item_id,
@@ -117,18 +123,19 @@ this schema in **Phase 3a** (2026-06-18) and now matches the live DB; later phas
 
 Worked out with the user; encode these as CONFIG constants in `index.html`.
 
-**Formality ladder (1–7)** — a `min_occasion`/`max_occasion` *range* on each item:
-1 At-home · 2 Relaxed · 3 Casual · 4 Smart casual · 5 Professional · 6 Cocktail · 7 Formal.
-(Imported Airtable values were on an old 1–6 scale and were shifted +1; only ~34
-active items have ranges set — the user fills the rest in over time.)
+**Formality ladder (1–5)** — a `min_occasion`/`max_occasion` *range* on each item.
+The 5 levels match the outfit bucket names exactly:
+1 Lounge · 2 Casual · 3 Smart · 4 Dressy · 5 Formal.
+(Migrated from an old 1–7 scale; ~34 items have ranges set, the user fills the rest
+over time. DB constraint: `smallint CHECK BETWEEN 1 AND 5`.)
 
 **Contexts** — a named occasion stamped on each *wear/outfit* (not on items). Each
 context has a default formality range and may carry a hard rule. An item is
-eligible for a context when their formality ranges overlap. The 13 contexts:
-Lounge/garden (1) · WFH (1–2) · Errands (2–3) · Friends/rehearsal (3) ·
-Campus (4–5, 2×/wk) · Conference/job talk (5) · Date night (3–6) · Symphony (4–6) ·
-Church service (4–6) · Shower/holiday party (6) · Funeral (6, *rule: darker tones*) ·
-Wedding guest (6–7) · Gala/chorus concert (7, *rule: chorus concert = all black*).
+eligible for a context when their formality ranges overlap. The 13 contexts (in new
+1–5 scale): Lounge/garden (1) · WFH (1) · Errands (1–2) · Friends/rehearsal (2) ·
+Campus (3, 2×/wk) · Conference/job talk (3) · Date night (2–4) · Symphony (3–4) ·
+Church service (3–4) · Shower/holiday party (4) · Funeral (4, *rule: darker tones*) ·
+Wedding guest (4–5) · Gala/chorus concert (5, *rule: chorus concert = all black*).
 **Gym** = its own category (off-ladder). **Travel** = a capsule (not a formality).
 
 **Outfits vs capsules:** capsule/packing = a named set of items with an
@@ -197,7 +204,7 @@ was carried over verbatim; the UI was rebuilt from scratch, screen by screen.
 **v25-full** (git tag + `archive/index_v25_full.html`) preserves everything built
 through Phase G. The data, schema, and migration are all intact and untouched.
 
-**Current state: r6 / 2026-06-21.** Built across two sessions:
+**Current state: r10 / 2026-06-21.** Built across two sessions:
 - **r1 — Home launcher:** Stylebook-style calm tile grid (5 tiles: Closet · Looks ·
   Calendar · Capsules · Style Stats). Bottom nav (5 tabs), login, boot path.
   App boots to Home. Settings via ⚙ gear; Add Item via ＋ on Home header.
@@ -279,12 +286,52 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     Season, Status. PRICING card: Price, Acquired. NOTES textarea. Save → POST
     `/items` (return=representation to get ID), optional photo upload + PATCH, adds
     to local `items[]`, navigates to new item's photo view.
+- **r7 — Looks tab (outfit library, direction "C" lens switcher):**
+  - Loads `outfits` + `outfit_items` in `loadData`; `buildOutfitIndexes()` builds
+    `itemById` / `outfitById` / `outfitItemMap` / `outfitWearMap` + assigns stable
+    `_num` (oldest = #1, shown as "Look #N").
+  - Lens switcher (`looksLens`): **Formality · Season · Recent · All**. Formality /
+    Season show folder list → outfit grid → detail; Recent/All go straight to a flat
+    grid (capped at `LOOKS_FLAT_CAP`=400 for perf).
+  - All organization derived (imported outfits = date + items only). Formality from
+    per-item heuristic averaged → `outfitBucket()`; season from wear dates.
+  - Collage = member photos stacked by `LAYER_ORDER` (outerwear→tops→bottoms→shoes);
+    2-col CSS grid; `solo` / `span2` classes for 1- and 3-piece looks.
+  - Detail (`openLook`): collage hero, Wear stats, Formality+Season (Classification
+    card), Piece Formality card (each piece tappable → `openOccasionEdit`), Notes
+    auto-save, "Wear this look" / "Delete" footer.
+  - `openWearLook(id)`: logs one wear row per piece with `outfit_id`.
+  - `deleteLook(id)`: DELETE /outfits — wears preserved (FK is ON DELETE SET NULL).
+- **r8 — Grid collages + per-piece formality correction:**
+  - Collage layout changed from vertical flex-column to 2-col CSS grid.
+  - `openOccasionEdit(itemId, onSaved)`: reuses `#logSheet`; tap-lo-then-hi for
+    range selection; third tap resets. PATCHes `/items?id=eq.{id}`. Clears all
+    `o._bucket` caches so looks re-derive after a change.
+  - Added Occasion row to item details Attributes card (`[data-occ-item]`).
+  - Required DB migration: `ALTER TABLE outfits ADD COLUMN formality_override text;`
+- **r9 — Whole-look formality override + nudge pieces:**
+  - `outfitBucket()` now checks `o.formality_override` before deriving from pieces.
+  - Formality row in look detail is a tappable `<button>` → `openLookFormalityEdit()`.
+  - `openLookFormalityEdit(id)`: 6-bucket picker in `#logSheet`; PATCHes
+    `formality_override` on the outfit; "(set)" badge shows when override is active;
+    "Remove override" restores auto-derive.
+  - `showNudgePiecesSheet(outfitId, bucketKey)`: follow-up sheet listing each
+    non-Workout piece, pre-checking those that don't match the bucket's range.
+    Apply bulk-PATCHes `min/max_occasion` on checked items via PostgREST `in.(...)`.
+  - `BUCKET_RANGES` const maps bucket key → `{min, max}` for nudge targets.
+- **r10 — Collapse formality to 5 levels matching outfit buckets:**
+  - `OCCASION_LADDER` changed from 7 labels to 5: Lounge/Casual/Smart/Dressy/Formal.
+  - `SUBCAT_FORMALITY` and `CAT_FORMALITY` remapped to 1–5 scale.
+  - `outfitBucket()` binning simplified to direct array index lookup.
+  - `BUCKET_RANGES` targets updated to single-level values (1–5).
+  - Required DB migration: drop old `CHECK 1–7` constraints, remap ~34 existing
+    item values, add new `CHECK 1–5` constraints.
 
 **▶ NEXT UP:**
-1. **Looks (Outfits)** — outfit grid, outfit detail, log outfit.
-2. **Calendar** — month grid, day detail (show what was worn).
-3. **Capsules** — named item sets, packing lists.
-4. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
+1. **Calendar** — month grid, day detail (show what was worn).
+2. **Capsules** — named item sets, packing lists.
+3. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
+4. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
 5. **Image replace** — currently "coming soon" stub on the details footer.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
@@ -358,7 +405,17 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-21 r6`.
+- **Currently `APP_VERSION`** is `2026-06-21 r10`.
+- **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
+  Items (`min_occasion`/`max_occasion`) and outfit buckets now use the same vocabulary.
+  `BUCKET_RANGES` maps each bucket key to its target `{min, max}` for nudging pieces.
+- **`outfitBucket(o)`**: checks `o.formality_override` first, then derives from piece
+  averages. `o._bucket` is a session cache; clear it (set null) when any piece's
+  occasion changes. `openLookFormalityEdit()` PATCHes `formality_override` and offers
+  `showNudgePiecesSheet()` to align pieces.
+- **`openOccasionEdit(itemId, onSaved)`**: reuses `#logSheet`; tap-lo-then-hi for
+  range selection (third tap resets to single). Always clears all `o._bucket` caches
+  so looks re-derive correctly after a change.
 
 ## Deploy
 
