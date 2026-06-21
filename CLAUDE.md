@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r11 / 2026-06-21. Full rework from v25. ~2,100 lines.**
+**Current state: r12 / 2026-06-21. Full rework from v25. ~2,400 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -344,12 +344,28 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     `calOutfitCollageHtml()`, `calMostWorn()`, `calStreak()`, `wireCalSwipe()`,
     `openCalNotes()`. No new DB migrations needed.
 
+- **r12 — Style Stats tab:**
+  - Main page: CLOSET section (item count + total value KPI pair, color bar → Color breakdown),
+    Browse by field rows (Color/Category/Brand/Price/Size/Season/Fabric/Acquisition), WEAR INSIGHTS
+    rows (Never Worn/Not Worn 12+ Mo/Most Worn/Worst CPW/Recently Added), LOOKS section
+    (outfit count + avg items/look KPI pair).
+  - Field breakdown pages: donut SVG chart (pure math, no library; actual hex colors for Color,
+    palette for other fields) showing largest segment label + %; "No value" card; scrollable
+    value list with counts + chevrons.
+  - Item grid pages: standard closet grid, taps open item detail.
+  - Item detail from stats: `openItemFromStats()` switches to closet tab without calling
+    `renderCloset()`; `_fromStats` flag in `closetBack()` returns to the stats grid instead of
+    the closet. Three-level back stack: detail → grid → field breakdown → main.
+  - State: `statsView`, `statsField`, `statsGridItems`, `statsGridTitle`, `statsFromField`,
+    `_fromStats`. `switchTab("stats")` resets to main; returning from item detail uses direct
+    screen-switch to preserve `statsView`.
+  - Price field uses `PRICE_BRACKETS` constant for bucketed grouping.
+  - Season/Fabric multi-value fields count item once per value (item may appear in multiple groups).
+
 **▶ NEXT UP:**
 1. **Capsules** — named item sets, packing lists.
-2. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
-3. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
-4. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
-5. **Image replace** — currently "coming soon" stub on the details footer.
+2. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
+3. **Image replace** — currently "coming soon" stub on the details footer.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -422,7 +438,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-21 r11`.
+- **Currently `APP_VERSION`** is `2026-06-21 r12`.
 - **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
   Items (`min_occasion`/`max_occasion`) and outfit buckets now use the same vocabulary.
   `BUCKET_RANGES` maps each bucket key to its target `{min, max}` for nudging pieces.
