@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r4 / 2026-06-21. Full rework from v25. ~1,160 lines.**
+**Current state: r6 / 2026-06-21. Full rework from v25. ~1,500 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -50,8 +50,17 @@ Top-of-`<script>` config, then logically grouped sections:
   helpers `wearCount`, `lastWorn`, `costPerWear`, `daysSince`, `money`, `esc`.
 - **HOME LAUNCHER** — `renderHome()`: Stylebook-style calm tile grid (5 tiles).
   Boots here; asks nothing of the user on open.
-- **CLOSET** — `renderCloset()` / `openItem()` / `changeStatus()`. Status-lens
+- **CLOSET** — `renderCloset()` / `openItem()` / `openItemDetails()`. Status-lens
   switcher scopes the category folder list. See "Closet model" below.
+- **ITEM DETAIL** — two-view: `openItem()` (photo view) → `openItemDetails()` (edit
+  view). Field edit sheet (`#fieldSheet`) driven by `FIELD_CONFIGS` + `openFieldEdit()`.
+  `_fieldEditItem` holds the item being edited; `_fieldOnSave` is null for DB saves
+  or a callback fn when editing the Add form.
+- **ADD ITEM** — `renderAdd()` / `_renderAddBody()` / `saveNewItem()`. State in
+  `_addState` (plain object); `_addPhotoBlob` + `_addPhotoUrl` track the pending
+  photo. Field edits use `openAddFieldEdit(field)` which sets `_fieldOnSave` to write
+  into `_addState` and call `updateAddFieldDisplay(field)`. Category picked via
+  `openAddCatSheet()` which reuses `#moveSheet` (guarded by `_addCatMode` flag).
 - **SEARCH** — `openSearch()` / `renderSearch()` / `runSearch()`. Keyword +
   6 filter rows (Color/Fabric/Size/Season/Brand/Status), each expanding to chips.
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE at bottom.
@@ -188,7 +197,7 @@ was carried over verbatim; the UI was rebuilt from scratch, screen by screen.
 **v25-full** (git tag + `archive/index_v25_full.html`) preserves everything built
 through Phase G. The data, schema, and migration are all intact and untouched.
 
-**Current state: r5 / 2026-06-21.** Built across two sessions:
+**Current state: r6 / 2026-06-21.** Built across two sessions:
 - **r1 — Home launcher:** Stylebook-style calm tile grid (5 tiles: Closet · Looks ·
   Calendar · Capsules · Style Stats). Bottom nav (5 tabs), login, boot path.
   App boots to Home. Settings via ⚙ gear; Add Item via ＋ on Home header.
@@ -245,18 +254,38 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     `closeMoveSheet()` clears `_moveItemId`; `applyMove` returns to photo view
     when `_moveItemId` set), `openLogWear(id)` (date picker → POST `/wears`).
   - **New helpers**: `outfitCount(itemId)` counts distinct outfit_ids in wears.
+- **r6 — Item detail polish + Add Item:**
+  - **Details view header**: thumbnail (lazy-loaded) + name / brand / category path.
+    No more textarea embedded in the header card.
+  - **Notes**: standalone `<textarea class="det-notes-ta">` below the stats card.
+    Auto-saves with 900ms debounce via direct REST PATCH (skips `openItemDetails`
+    re-render so typing isn't interrupted).
+  - **Purchase date + time in closet**: shown in Pricing card as "Purchased Jun 2023
+    · 3y in closet". Respects `date_is_guess` flag (shows "Jun 2023" vs exact date).
+    Display-only for now (edit not wired).
+  - **Acquisition field** added to Attributes card.
+  - **Brand typeahead** (`type: "typeahead"` in FIELD_CONFIGS): text input + scrollable
+    "Previously entered" chip list pulled from `distinctScalar("brand")`. Typing
+    filters the list in-DOM (no re-render). Clicking a chip fills the input.
+  - **Fabric filter**: `filter: true` on the fabric FIELD_CONFIGS entry adds a filter
+    input above the chip list. Typing hides non-matching chips in-DOM.
+  - **Field sheet dual-mode**: `_fieldEditItem` holds the item being edited (real item
+    or `_addState`). `_fieldOnSave` is null → saves to DB; function → custom callback
+    (used by Add form). `closeFieldSheet()` clears both.
+  - **Add Item screen** (`renderAdd` / `_renderAddBody`): large 3:4 photo placeholder
+    with "Photo" button (file input, `accept="image/*"`, no forced camera capture —
+    iOS shows Camera/Library picker). Name (required) + Category/subcategory picker
+    (reuses `#moveSheet` with `_addCatMode` flag). DETAILS card: Color, Size, Brand,
+    Season, Status. PRICING card: Price, Acquired. NOTES textarea. Save → POST
+    `/items` (return=representation to get ID), optional photo upload + PATCH, adds
+    to local `items[]`, navigates to new item's photo view.
 
-**▶ NEXT UP (item detail, then screens):**
-1. **Item detail polish** — notes layout (textarea separate from thumbnail header;
-   show item name + brand in header), Fabric/Size/Brand edit: filter-as-you-type
-   text input + "PREVIOUSLY ENTERED" list from existing `items` values; Fabric
-   stays `text[]` multi-select. Add date purchased, time in closet to details.
-   Wear frequency display TBD (may belong in Style Stats).
-2. **Add Item** — photo from camera/library, name, category/subcategory, key fields.
-3. **Looks (Outfits)** — outfit grid, outfit detail.
-4. **Calendar** — month grid, day detail.
-5. **Capsules** — named item sets.
-6. **Style Stats** — wear counts, cost-per-wear, coverage.
+**▶ NEXT UP:**
+1. **Looks (Outfits)** — outfit grid, outfit detail, log outfit.
+2. **Calendar** — month grid, day detail (show what was worn).
+3. **Capsules** — named item sets, packing lists.
+4. **Style Stats** — wear counts, cost-per-wear, coverage gaps.
+5. **Image replace** — currently "coming soon" stub on the details footer.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -265,7 +294,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-21 r5`.
+  pushes the same day, increment `rN`. Currently `2026-06-21 r6`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -316,10 +345,20 @@ that writes a new column/table before its migration is confirmed.**
 - **`_moveItemId`** — set by `openItemMoveSheet(id)` before opening the shared move
   sheet. `applyMove()` checks it to decide whether to `openItem()` or `renderCloset()`
   after success. `closeMoveSheet()` always clears it.
-- **`FIELD_CONFIGS`** const maps field key → `{label, type, opts?}`. Always add new
-  editable fields here before wiring them in `openItemDetails`. Currently: color_family,
-  fabric, size, season, brand, status, price, url, retailer, acquisition.
-- **Currently `APP_VERSION`** is `2026-06-21 r5`.
+- **`FIELD_CONFIGS`** const maps field key → `{label, type, opts?, filter?}`. Always
+  add new editable fields here before wiring them in `openItemDetails`. Types: `color`,
+  `multi`, `single`, `text`, `price`, `typeahead`. `filter: true` adds a filter input
+  above chip lists. Currently: color_family, fabric (filter), size, season, brand
+  (typeahead), status, price, url, retailer, acquisition.
+- **Field sheet dual-mode**: `_fieldEditItem` = item being edited (real item OR
+  `_addState`). `_fieldOnSave` = null means save to DB via `saveField()`; a function
+  means call it with the value instead (Add form uses this). Always clear both in
+  `closeFieldSheet()`.
+- **Add Item state**: `_addState` (plain obj), `_addPhotoBlob` ({blob, ext}),
+  `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
+  `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
+  correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
+- **Currently `APP_VERSION`** is `2026-06-21 r6`.
 
 ## Deploy
 

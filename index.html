@@ -283,6 +283,41 @@
   .fld-color-chip { width: 42px; height: 42px; border-radius: 50%; border: 2px solid rgba(0,0,0,.1);
     display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .fld-color-chip[title="White"] { border-color: var(--line); }
+
+  /* ---------- detail header info (replaces textarea-in-header) ---------- */
+  .det-hinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+  .det-hname { font-size: 17px; font-weight: 600; line-height: 1.3; }
+  .det-hbrand { font-size: 13.5px; color: var(--muted); }
+  .det-hpath { font-size: 12px; color: var(--muted); }
+  /* standalone notes textarea (below header) */
+  .det-notes-ta {
+    display: block; width: 100%; min-height: 76px; box-sizing: border-box;
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; font: inherit; font-size: 15px; color: var(--ink);
+    background: #fff; resize: none; outline: none; margin-bottom: 14px; line-height: 1.5;
+  }
+  .det-notes-ta:focus { border-color: var(--accent); }
+
+  /* ---------- field sheet typeahead suggestions ---------- */
+  .fld-sugg-lbl { font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; padding: 12px 18px 4px; }
+  .fld-suggestions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 18px 20px; }
+
+  /* ---------- add item photo area ---------- */
+  .add-photo-wrap { position: relative; margin: 0 16px 16px; }
+  .add-photo-area {
+    width: 100%; aspect-ratio: 3/4; border-radius: 16px;
+    background: #f4f4f7 center/contain no-repeat;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .add-photo-area.has-photo { background-color: #fff; }
+  .add-photo-area > svg { width: 56px; height: 56px; stroke: #ccc; stroke-width: 1.2; fill: none; }
+  .add-photo-label {
+    position: absolute; bottom: 14px; right: 14px; cursor: pointer;
+    background: rgba(0,0,0,.52); color: #fff; border-radius: 999px;
+    padding: 9px 18px; font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .add-photo-label svg { width: 15px; height: 15px; stroke: #fff; stroke-width: 2; fill: none; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -469,7 +504,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r5";
+const APP_VERSION = "2026-06-21 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1000,10 +1035,10 @@ function closetBack() {
 // Field definitions for the edit sheet (used by openFieldEdit)
 const FIELD_CONFIGS = {
   color_family: { label: "Color",  type: "color",  opts: COLOR_FAMILIES.map(c => c[0]) },
-  fabric:       { label: "Fabric", type: "multi",  opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
+  fabric:       { label: "Fabric", type: "multi",  filter: true, opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
   size:         { label: "Size",   type: "single", opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
   season:       { label: "Season", type: "multi",  opts: SEASONS },
-  brand:        { label: "Brand",  type: "text" },
+  brand:        { label: "Brand",  type: "typeahead" },
   status:       { label: "Status", type: "single", opts: ["Available","Storage","Archive"] },
   price:        { label: "Price",  type: "price" },
   url:          { label: "URL",    type: "text" },
@@ -1064,9 +1099,26 @@ function openItemDetails(id) {
   const ds = lw ? daysSince(lw) : null;
   const lastWornText = lw ? (ds === 0 ? "Today" : `${ds} day${ds === 1 ? "" : "s"} ago`) : "Never";
 
+  // Purchase date + time in closet
+  let purchasedText = null, timeInClosetText = null;
+  if (i.purchase_date) {
+    const pd = new Date(i.purchase_date + "T00:00:00");
+    purchasedText = i.date_is_guess
+      ? pd.toLocaleDateString(undefined, { year: "numeric", month: "short" })
+      : pd.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    const d = daysSince(i.purchase_date);
+    if (d < 30) timeInClosetText = `${d}d`;
+    else if (d < 365) timeInClosetText = `${Math.floor(d / 30)}mo`;
+    else {
+      const y = Math.floor(d / 365), m = Math.floor((d % 365) / 30);
+      timeInClosetText = m > 0 ? `${y}y ${m}mo` : `${y}y`;
+    }
+  }
+
+  // Row builders
   const detRow = (lbl, val, field) => {
-    const cfg = FIELD_CONFIGS[field];
     const display = val || `<span style="color:var(--muted)">${esc(lbl)}</span>`;
+    if (!field) return `<div class="det-row"><span class="det-lbl">${esc(lbl)}</span><span class="det-val">${display}</span></div>`;
     return `<button class="det-row" data-det-field="${field}">
       <span class="det-lbl">${esc(lbl)}</span>
       <span class="det-val">${display}</span>
@@ -1086,38 +1138,33 @@ function openItemDetails(id) {
       <span style="width:34px"></span>
     </div>
     <div class="det-body">
+
       <div class="det-header">
         <div class="det-thumb${i.image_path ? "" : " empty"}"${i.image_path ? ` data-photo="${esc(i.image_path)}"` : ""}></div>
-        <textarea class="det-notes" id="detNotes" placeholder="Enter notes about your item">${esc(i.notes || "")}</textarea>
+        <div class="det-hinfo">
+          <div class="det-hname">${esc(i.name || "Untitled")}</div>
+          ${i.brand ? `<div class="det-hbrand">${esc(i.brand)}</div>` : ""}
+          ${i.category ? `<div class="det-hpath">${esc(i.category)}${i.subcategory ? ` › ${esc(i.subcategory)}` : ""}</div>` : ""}
+        </div>
       </div>
 
-      ${i.notes ? `
-        <div class="det-section-label">NOTES AND TAGS</div>
-        <div class="det-card"><div class="det-notes-val">${esc(i.notes)}</div></div>
-      ` : ""}
-
-      <div class="det-card">
-        <button class="det-row" id="detOutfits">
-          <span class="det-val">Used in ${oc} outfit${oc === 1 ? "" : "s"}</span>
-          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
+      <div class="det-card" style="margin-bottom:14px">
+        <div class="det-row">
+          <span class="det-val" style="color:var(--muted)">Used in ${oc} outfit${oc === 1 ? "" : "s"}</span>
+        </div>
         <div class="det-divider"></div>
-        <button class="det-row" id="detWears">
+        <div class="det-row">
           <div>
             <div>Worn ${n} day${n === 1 ? "" : "s"}</div>
-            <div class="det-sub">Last worn ${lastWornText}</div>
+            <div class="det-sub">Last: ${lastWornText}</div>
           </div>
-          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
+        </div>
       </div>
 
-      <div class="det-card">
-        <button class="det-row">
-          <span class="det-val">0 Extra Images</span>
-          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
-      </div>
+      <div class="det-section-label">NOTES</div>
+      <textarea class="det-notes-ta" id="detNotes" placeholder="Notes about this item…">${esc(i.notes || "")}</textarea>
 
+      <div class="det-section-label">ATTRIBUTES</div>
       <div class="det-card">
         ${detRow("Color", colorDisplay, "color_family")}
         <div class="det-divider"></div>
@@ -1130,27 +1177,30 @@ function openItemDetails(id) {
         ${detRow("Brand", esc(i.brand || ""), "brand")}
         <div class="det-divider"></div>
         ${detRow("Status", esc(itemStatus(i)), "status")}
+        <div class="det-divider"></div>
+        ${detRow("Acquired", esc(i.acquisition || ""), "acquisition")}
       </div>
 
+      <div class="det-section-label">PRICING</div>
       <div class="det-card">
         ${detRow("Price", money(i.price) !== "—" ? esc(money(i.price)) : "", "price")}
         <div class="det-divider"></div>
         <div class="det-row">
-          <span class="det-lbl">$ / Wear</span>
+          <span class="det-lbl">$/Wear</span>
           <span class="det-val">${cpw != null ? esc(money(cpw)) : "—"}</span>
         </div>
-      </div>
-
-      <div class="det-card">
-        ${detRow("URL", esc(i.url || ""), "url")}
-      </div>
-
-      <div class="det-card">
+        ${purchasedText ? `<div class="det-divider"></div>
         <div class="det-row">
-          <span class="det-lbl">Category</span>
-          <span class="det-val">${esc(i.category || "—")}${i.subcategory ? ` › ${esc(i.subcategory)}` : ""}</span>
-        </div>
+          <span class="det-lbl">Purchased</span>
+          <span class="det-val">${esc(purchasedText)}<span class="det-sub" style="margin-left:6px">· ${esc(timeInClosetText)} in closet</span></span>
+        </div>` : ""}
+        <div class="det-divider"></div>
+        ${detRow("Retailer", esc(i.retailer || ""), "retailer")}
       </div>
+
+      <div class="det-section-label">LINK</div>
+      <div class="det-card">${detRow("URL", esc(i.url || ""), "url")}</div>
+
     </div>
     <div class="det-footer">
       <button class="lnk" id="detEditImg">Edit Image</button>
@@ -1163,18 +1213,23 @@ function openItemDetails(id) {
 
   $("#detEditImg").onclick = () => toast("Image editing — coming soon");
   $("#detReplaceImg").onclick = () => toast("Image replacement — coming soon");
-  $("#detOutfits").onclick = () => toast("Outfit history — coming soon");
-  $("#detWears").onclick = () => toast("Wear history — coming soon");
 
-  // Notes auto-save
+  // Notes auto-save (direct REST call so we skip the openItemDetails re-render)
   const ta = $("#detNotes");
   let noteTimer;
   ta.addEventListener("input", () => {
     clearTimeout(noteTimer);
     noteTimer = setTimeout(async () => {
-      const val = ta.value.trim();
-      await saveField(id, "notes", val || null);
+      const val = ta.value.trim() || null;
+      const prev = i.notes;
       i.notes = val;
+      try {
+        await rest(`/items?id=eq.${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ notes: val }),
+        });
+      } catch (e) { i.notes = prev; toast(e.message); }
     }, 900);
   });
 
@@ -1208,6 +1263,8 @@ async function saveField(id, field, value) {
 let _fieldEditId = null;
 let _fieldEditKey = null;
 let _fieldPending = undefined; // current pending value in sheet
+let _fieldEditItem = null;    // the item object being edited (real item or _addState)
+let _fieldOnSave = null;      // null = save to DB; fn(val) = custom save (used by Add form)
 
 function openFieldEdit(id, field) {
   const cfg = FIELD_CONFIGS[field];
@@ -1217,6 +1274,8 @@ function openFieldEdit(id, field) {
   _fieldEditId = id;
   _fieldEditKey = field;
   _fieldPending = i[field];
+  _fieldEditItem = i;
+  _fieldOnSave = null;
   renderFieldSheet(i, field, cfg);
   $("#fieldSheet").hidden = false;
 }
@@ -1226,6 +1285,8 @@ function closeFieldSheet() {
   _fieldEditId = null;
   _fieldEditKey = null;
   _fieldPending = undefined;
+  _fieldEditItem = null;
+  _fieldOnSave = null;
 }
 
 function renderFieldSheet(i, field, cfg) {
@@ -1234,18 +1295,29 @@ function renderFieldSheet(i, field, cfg) {
   if (cfg.type === "text" || cfg.type === "price") {
     const isPrice = cfg.type === "price";
     content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
-      <input class="${isPrice ? "inp" : "inp"}" id="fieldTextInp" type="${isPrice ? "number" : "text"}"
+      <input class="inp" id="fieldTextInp" type="${isPrice ? "number" : "text"}"
         inputmode="${isPrice ? "decimal" : "text"}"
         value="${esc(curVal != null ? String(curVal) : "")}"
         placeholder="${esc(cfg.label)}…" style="width:100%;font-size:16px">
     </div>`;
+  } else if (cfg.type === "typeahead") {
+    const suggestions = distinctScalar(field).filter(Boolean);
+    const suggestHtml = suggestions.length
+      ? `<div class="fld-sugg-lbl">Previously entered</div>
+         <div class="fld-suggestions">${suggestions.map(s =>
+           `<button class="sheet-chip" data-fv="${esc(s)}">${esc(s)}</button>`).join("")}</div>`
+      : "";
+    content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
+      <input class="inp" id="fieldTextInp" type="text" inputmode="text"
+        value="${esc(curVal != null ? String(curVal) : "")}"
+        placeholder="${esc(cfg.label)}…" style="width:100%;font-size:16px">
+    </div>${suggestHtml}`;
   } else if (cfg.type === "color") {
     const chips = cfg.opts.map(o => {
       const on = curVal === o;
       const hex = colorHex(o);
-      const isMetallic = o === "Metallic";
       return `<button class="fld-color-chip${on ? " on" : ""}" data-fv="${esc(o)}" title="${esc(o)}"
-        style="background:${isMetallic ? hex : hex};${on ? "outline:3px solid var(--accent);outline-offset:2px;" : ""}">
+        style="background:${hex};${on ? "outline:3px solid var(--accent);outline-offset:2px;" : ""}">
         ${on ? `<svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:#fff;stroke-width:3;fill:none"><path d="M5 12l5 5L19 7"/></svg>` : ""}
       </button>`;
     }).join("");
@@ -1258,7 +1330,10 @@ function renderFieldSheet(i, field, cfg) {
       const on = selected.includes(o);
       return `<button class="sheet-chip${on ? " on" : ""}" data-fv="${esc(o)}">${esc(o)}</button>`;
     }).join("");
-    content = `<div class="sheet-expand" style="border:none"><div class="sheet-chips">${chips}</div></div>`;
+    const filterHtml = (isMulti && cfg.filter)
+      ? `<div style="padding:12px 18px 4px"><input id="multiFilter" class="inp" placeholder="Filter…" style="width:100%;font-size:15px"></div>`
+      : "";
+    content = `${filterHtml}<div class="sheet-expand" style="border:none"><div class="sheet-chips">${chips}</div></div>`;
   }
 
   const hasVal = curVal != null && curVal !== "" && !(Array.isArray(curVal) && curVal.length === 0);
@@ -1273,40 +1348,75 @@ function renderFieldSheet(i, field, cfg) {
     ${hasVal ? `<div style="padding:0 18px 8px"><button class="lnk" id="fldClear" style="color:var(--danger);font-size:14px">Clear</button></div>` : ""}
   `;
 
-  // wire
+  // wire cancel
   $("#fldCancel").onclick = closeFieldSheet;
+
+  // wire save — respects _fieldOnSave for Add form
   $("#fldSave").onclick = async () => {
     let val = _fieldPending;
-    if (cfg.type === "text" || cfg.type === "price") {
+    if (cfg.type === "text" || cfg.type === "price" || cfg.type === "typeahead") {
       const inp = $("#fieldTextInp");
       val = inp ? (cfg.type === "price" ? (inp.value ? parseFloat(inp.value) : null) : (inp.value.trim() || null)) : val;
     }
-    await saveField(_fieldEditId, _fieldEditKey, val);
-    closeFieldSheet();
+    if (_fieldOnSave) { _fieldOnSave(val); closeFieldSheet(); }
+    else { await saveField(_fieldEditId, _fieldEditKey, val); closeFieldSheet(); }
   };
-  if ($("#fldClear")) {
-    $("#fldClear").onclick = async () => {
-      _fieldPending = Array.isArray(curVal) ? [] : null;
-      await saveField(_fieldEditId, _fieldEditKey, _fieldPending);
-      closeFieldSheet();
+
+  // wire clear
+  const clearBtn = $("#fldClear");
+  if (clearBtn) {
+    clearBtn.onclick = async () => {
+      const cleared = Array.isArray(curVal) ? [] : null;
+      if (_fieldOnSave) { _fieldOnSave(cleared); closeFieldSheet(); }
+      else { await saveField(_fieldEditId, _fieldEditKey, cleared); closeFieldSheet(); }
     };
   }
 
-  // text input live update
+  // text / typeahead input live update + suggestion filtering
   const ti = $("#fieldTextInp");
-  if (ti) { ti.oninput = () => { _fieldPending = ti.value; }; setTimeout(() => ti.focus(), 80); }
+  if (ti) {
+    ti.oninput = () => {
+      _fieldPending = ti.value;
+      if (cfg.type === "typeahead") {
+        const q = ti.value.trim().toLowerCase();
+        $("#fieldInner").querySelectorAll(".fld-suggestions .sheet-chip").forEach(chip => {
+          chip.hidden = q.length > 0 && !chip.textContent.toLowerCase().includes(q);
+        });
+      }
+    };
+    setTimeout(() => ti.focus(), 80);
+  }
+
+  // multi filter input (e.g. fabric)
+  const mf = $("#multiFilter");
+  if (mf) {
+    mf.oninput = () => {
+      const q = mf.value.trim().toLowerCase();
+      $("#fieldInner").querySelectorAll(".sheet-chips .sheet-chip").forEach(chip => {
+        chip.hidden = q.length > 0 && !chip.textContent.toLowerCase().includes(q);
+      });
+    };
+    setTimeout(() => mf.focus(), 80);
+  }
 
   // chip clicks
   $("#fieldInner").querySelectorAll("[data-fv]").forEach(btn => {
     btn.onclick = () => {
       const v = btn.dataset.fv;
+      if (cfg.type === "typeahead") {
+        // fill text input, don't re-render
+        _fieldPending = v;
+        const inp = $("#fieldTextInp");
+        if (inp) { inp.value = v; inp.focus(); }
+        return;
+      }
       if (cfg.type === "multi") {
-        const cur = Array.isArray(_fieldPending) ? _fieldPending : (Array.isArray(i[field]) ? [...i[field]] : []);
+        const cur = Array.isArray(_fieldPending) ? _fieldPending : (Array.isArray((i || {})[field]) ? [...(i || {})[field]] : []);
         _fieldPending = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v];
       } else if (cfg.type === "color" || cfg.type === "single") {
         _fieldPending = (_fieldPending === v) ? null : v;
       }
-      renderFieldSheet(items.find(x => x.id === _fieldEditId), _fieldEditKey, cfg);
+      renderFieldSheet(_fieldEditItem, _fieldEditKey, cfg);
     };
   });
 }
@@ -1447,17 +1557,271 @@ function runSearch() {
 }
 
 /* ===================================================================
-   ADD ITEM  (stub — built next slice)
+   ADD ITEM
    =================================================================== */
+let _addState = {};
+let _addPhotoBlob = null;
+let _addPhotoUrl = null; // object URL for preview (revoke on reset)
+
+function addFieldRow(lbl, val, field) {
+  const display = val || `<span style="color:var(--muted)">${esc(lbl)}</span>`;
+  return `<button class="det-row" data-add-field="${field}">
+    <span class="det-lbl" style="min-width:80px">${esc(lbl)}</span>
+    <span class="det-val">${display}</span>
+    <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </button>`;
+}
+
 function renderAdd() {
+  // reset state on fresh open
+  if (_addPhotoUrl) { URL.revokeObjectURL(_addPhotoUrl); _addPhotoUrl = null; }
+  _addState = { status: "Available" };
+  _addPhotoBlob = null;
+  _renderAddBody();
+}
+
+function _renderAddBody() {
+  const s = _addState;
+  const colorDisplay = s.color_family
+    ? `<span class="swatch" style="background:${colorHex(s.color_family)}"></span>${esc(s.color_family)}`
+    : "";
+
   $("#addBody").innerHTML = `
     <div class="schead">
       <button class="lnk" id="addCancel">Cancel</button>
       <span style="font-weight:600">Add Item</span>
-      <span style="width:54px"></span>
+      <button class="lnk" id="addSave" style="font-weight:700">Save</button>
     </div>
-    ${placeholder("Add an item")}`;
+
+    <div class="add-photo-wrap">
+      <div class="add-photo-area" id="addPhotoArea">
+        <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/><path d="M8 6l1.5-2h5L16 6"/></svg>
+      </div>
+      <label class="add-photo-label" for="addPhotoInput">
+        <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg>
+        Photo
+      </label>
+      <input type="file" id="addPhotoInput" accept="image/*" style="display:none">
+    </div>
+
+    <div style="padding:0 16px 100px">
+      <div class="det-card" style="margin-bottom:14px">
+        <div class="det-row" style="gap:0">
+          <span class="det-lbl" style="min-width:80px;flex-shrink:0">Name</span>
+          <input id="addName" value="${esc(s.name || "")}" placeholder="Item name"
+            style="flex:1;border:none;outline:none;font:inherit;font-size:15px;color:var(--ink);padding:0;background:transparent;min-width:0">
+        </div>
+        <div class="det-divider"></div>
+        <button class="det-row" id="addCatBtn">
+          <span class="det-lbl" style="min-width:80px;flex-shrink:0">Category</span>
+          <span class="det-val" id="addCatVal" ${!s.category ? 'style="color:var(--muted)"' : ""}>
+            ${s.category ? esc(s.category) + (s.subcategory ? ` › ${esc(s.subcategory)}` : "") : "Select category"}
+          </span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+
+      <div class="det-section-label">DETAILS</div>
+      <div class="det-card" style="margin-bottom:14px">
+        ${addFieldRow("Color", colorDisplay, "color_family")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Size", esc(s.size || ""), "size")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Brand", esc(s.brand || ""), "brand")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Season", esc((s.season || []).join(", ")), "season")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Status", esc(s.status || "Available"), "status")}
+      </div>
+
+      <div class="det-section-label">PRICING</div>
+      <div class="det-card" style="margin-bottom:14px">
+        ${addFieldRow("Price", s.price != null ? esc(money(s.price)) : "", "price")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Acquired", esc(s.acquisition || ""), "acquisition")}
+      </div>
+
+      <div class="det-section-label">NOTES</div>
+      <textarea class="det-notes-ta" id="addNotes" placeholder="Notes about this item…">${esc(s.notes || "")}</textarea>
+    </div>
+  `;
+
+  // restore photo preview if we have one
+  if (_addPhotoUrl) {
+    const area = $("#addPhotoArea");
+    area.style.backgroundImage = `url("${_addPhotoUrl}")`;
+    area.classList.add("has-photo");
+    area.innerHTML = "";
+  }
+
   $("#addCancel").onclick = () => switchTab("home");
+  $("#addSave").onclick = saveNewItem;
+  $("#addCatBtn").onclick = openAddCatSheet;
+
+  const nameInp = $("#addName");
+  nameInp.oninput = () => { _addState.name = nameInp.value; };
+
+  const notesEl = $("#addNotes");
+  notesEl.oninput = () => { _addState.notes = notesEl.value.trim() || null; };
+
+  const photoInput = $("#addPhotoInput");
+  photoInput.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const { blob, ext } = await compressImage(file);
+      _addPhotoBlob = { blob, ext };
+      if (_addPhotoUrl) URL.revokeObjectURL(_addPhotoUrl);
+      _addPhotoUrl = URL.createObjectURL(blob);
+      const area = $("#addPhotoArea");
+      area.style.backgroundImage = `url("${_addPhotoUrl}")`;
+      area.classList.add("has-photo");
+      area.innerHTML = "";
+    } catch { toast("Couldn't process that image"); }
+  };
+}
+
+// Open field sheet wired to _addState instead of a DB item
+function openAddFieldEdit(field) {
+  const cfg = FIELD_CONFIGS[field];
+  if (!cfg) return;
+  _fieldEditId = null;
+  _fieldEditKey = field;
+  _fieldPending = _addState[field] !== undefined ? _addState[field] : (cfg.type === "multi" ? [] : null);
+  _fieldEditItem = _addState;
+  _fieldOnSave = (val) => {
+    _addState[field] = val;
+    updateAddFieldDisplay(field);
+  };
+  renderFieldSheet(_addState, field, cfg);
+  $("#fieldSheet").hidden = false;
+}
+
+function updateAddFieldDisplay(field) {
+  const btn = $(`[data-add-field="${field}"]`);
+  if (!btn) return;
+  const valEl = btn.querySelector(".det-val");
+  if (!valEl) return;
+  const s = _addState;
+  let display = "";
+  if (field === "color_family" && s.color_family) {
+    display = `<span class="swatch" style="background:${colorHex(s.color_family)}"></span>${esc(s.color_family)}`;
+  } else if (Array.isArray(s[field]) && s[field].length) {
+    display = esc(s[field].join(", "));
+  } else if (s[field] != null && s[field] !== "") {
+    display = field === "price" ? esc(money(s[field])) : esc(String(s[field]));
+  }
+  if (display) { valEl.innerHTML = display; valEl.style.color = ""; }
+  else { valEl.innerHTML = `<span style="color:var(--muted)">${esc(FIELD_CONFIGS[field]?.label || field)}</span>`; }
+}
+
+// Category picker for Add Item (reuses #moveSheet container)
+let _addCatMode = false;
+
+function openAddCatSheet() {
+  _addCatMode = true;
+  moveCatOpen = null;
+  renderAddCatSheet();
+  $("#moveSheet").hidden = false;
+}
+
+function renderAddCatSheet() {
+  const rows = CATEGORIES.map(cat => {
+    const isOpen = moveCatOpen === cat;
+    const subs = TAXONOMY[cat] || [];
+    const subRows = isOpen ? subs.map(s =>
+      `<button class="mv-sub" data-acat="${esc(cat)}" data-asub="${esc(s)}">${esc(s)}</button>`
+    ).join("") : "";
+    return `<button class="mv-cat" data-mv-toggle="${esc(cat)}">
+      <span>${esc(cat)}</span>
+      <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex-shrink:0"><path d="${isOpen ? "6 15l6-6 6 6" : "6 9l6 6 6-6"}"/></svg>
+    </button>${subRows}`;
+  }).join("");
+
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="addCatClose">Cancel</button>
+      <h2>Category</h2>
+      <span style="width:60px"></span>
+    </div>
+    ${rows}
+  `;
+  $("#addCatClose").onclick = () => { _addCatMode = false; moveCatOpen = null; $("#moveSheet").hidden = true; };
+  $("#moveInner").querySelectorAll("[data-mv-toggle]").forEach(b => {
+    b.onclick = () => { moveCatOpen = moveCatOpen === b.dataset.mvToggle ? null : b.dataset.mvToggle; renderAddCatSheet(); };
+  });
+  $("#moveInner").querySelectorAll("[data-acat]").forEach(b => {
+    b.onclick = () => {
+      _addState.category = b.dataset.acat;
+      _addState.subcategory = b.dataset.asub;
+      _addCatMode = false; moveCatOpen = null;
+      $("#moveSheet").hidden = true;
+      // update the category display row in the add form
+      const valEl = $("#addCatVal");
+      if (valEl) {
+        valEl.textContent = _addState.category + (_addState.subcategory ? ` › ${_addState.subcategory}` : "");
+        valEl.style.color = "";
+      }
+    };
+  });
+}
+
+async function saveNewItem() {
+  const nameInp = $("#addName");
+  const name = (nameInp?.value || _addState.name || "").trim();
+  if (!name) { toast("Item name is required"); nameInp?.focus(); return; }
+
+  const saveBtn = $("#addSave");
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "Saving…"; }
+
+  try {
+    const payload = { name };
+    if (_addState.category)    payload.category    = _addState.category;
+    if (_addState.subcategory) payload.subcategory = _addState.subcategory;
+    if (_addState.color_family) payload.color_family = _addState.color_family;
+    if (_addState.size)        payload.size        = _addState.size;
+    if (_addState.brand)       payload.brand       = _addState.brand;
+    if (_addState.season?.length) payload.season   = _addState.season;
+    if (_addState.status)      payload.status      = _addState.status;
+    if (_addState.price != null) payload.price     = _addState.price;
+    if (_addState.acquisition) payload.acquisition = _addState.acquisition;
+    if (_addState.notes)       payload.notes       = _addState.notes;
+
+    const rows = await rest("/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    const newItem = Array.isArray(rows) ? rows[0] : rows;
+    if (!newItem?.id) throw new Error("Item created but no ID returned");
+
+    // upload photo and patch
+    if (_addPhotoBlob) {
+      const { blob, ext } = _addPhotoBlob;
+      const filename = `${(crypto.randomUUID ? crypto.randomUUID() : Date.now())}.${ext}`;
+      const path = await uploadPhoto(blob, filename);
+      await rest(`/items?id=eq.${newItem.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ image_path: path }),
+      });
+      newItem.image_path = path;
+      if (_addPhotoUrl) { URL.revokeObjectURL(_addPhotoUrl); _addPhotoUrl = null; }
+    }
+
+    items.unshift(newItem);
+    if (newItem.image_path) signedUrlBatch([newItem.image_path]);
+
+    toast("Item added!");
+    // navigate to the new item photo view
+    closetCat = newItem.category || null;
+    closetSub = newItem.subcategory || null;
+    switchTab("closet");
+    openItem(newItem.id);
+  } catch (e) {
+    toast(e.message);
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "Save"; }
+  }
 }
 
 /* ===================================================================
@@ -1821,8 +2185,11 @@ function wireEvents() {
   }, true);
   // bulk edit sheet
   $("#bulkBg").addEventListener("click", closeBulkEdit);
-  // move sheet
-  $("#moveBg").addEventListener("click", closeMoveSheet);
+  // move sheet (also covers add-cat sheet which reuses the same container)
+  $("#moveBg").addEventListener("click", () => {
+    if (_addCatMode) { _addCatMode = false; moveCatOpen = null; $("#moveSheet").hidden = true; }
+    else closeMoveSheet();
+  });
 
   // item action bar (photo view)
   $("#ibEdit").addEventListener("click", () => { if (detailId) openItemDetails(detailId); });
@@ -1835,6 +2202,12 @@ function wireEvents() {
 
   // log wear sheet
   $("#logBg").addEventListener("click", () => { $("#logSheet").hidden = true; });
+
+  // add item: field rows + category picker
+  document.getElementById("tab-add").addEventListener("click", (e) => {
+    const addField = e.target.closest("[data-add-field]");
+    if (addField) { openAddFieldEdit(addField.dataset.addField); return; }
+  });
 
   // header ＋ (home only) -> add item
   $("#headerAdd").addEventListener("click", () => switchTab("add"));
