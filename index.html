@@ -180,10 +180,13 @@
     padding: 9px 20px 9px; background: #fff; border-top: 1px solid var(--line); }
   /* extra bottom padding when grid bar is visible so content isn't hidden behind it */
   .has-gridbar .tabbody { padding-bottom: calc(var(--nav-h) + var(--safe-b) + 58px); }
-  .gb-acts { display: flex; gap: 24px; }
-  .gb-acts button { padding: 5px; }
-  .gb-acts button svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.8; fill: none; opacity: .35; transition: opacity .15s; }
-  .gb-acts button.active svg { opacity: 1; stroke: var(--fg); }
+  /* action icons: hidden until select mode is active */
+  .gb-acts { display: none; gap: 24px; align-items: center; }
+  #gridBar.selecting .gb-acts { display: flex; }
+  .gb-acts button { padding: 6px; display: flex; align-items: center; }
+  .gb-acts button svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
+  .gb-acts button.active svg { stroke: var(--accent); }
+  .gb-count { font-size: 13px; color: var(--muted); padding-left: 4px; }
   .gb-right { display: flex; align-items: center; gap: 14px; position: relative; }
   #gbGrid svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   #gbSelect { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px; }
@@ -338,8 +341,9 @@
       <button id="gbDelete" title="Delete selected">
         <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
       </button>
+      <span id="gbCount" class="gb-count"></span>
     </div>
-    <div class="gb-right">
+    <div class="gb-right" style="margin-left:auto">
       <button id="gbGrid" title="Grid density">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       </button>
@@ -401,7 +405,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 r3";
+const APP_VERSION = "2026-06-20 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -866,13 +870,17 @@ function renderClosetCategory(cat) {
   const hdr = `<div class="fhdr">${thumbHtml(folderThumb(inCat))}
     <div class="fmeta"><div class="fname big">${esc(cat)}</div>
     <div class="fcount">${inCat.length} item${inCat.length === 1 ? "" : "s"}</div></div></div>
-    <div class="seclabel">All Items in ${esc(cat)}</div>`;
+    <button class="frow" data-sub="__all__" style="color:var(--accent);font-weight:600">
+      <span>All Items in ${esc(cat)}</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
   // categories with no subcategory taxonomy (Other) jump straight to a grid
   return clToolbar(cat, true) + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(inCat));
 }
 
 function categoryGrid(cat, sub) {
   const inCat = cat === "Other" ? lensItems().filter(isOtherCat) : lensItems().filter(i => i.category === cat);
+  if (sub === "__all__") return inCat;
   if (sub === "__other__") { const subs = TAXONOMY[cat] || []; return inCat.filter(i => !i.subcategory || !subs.includes(i.subcategory)); }
   return inCat.filter(i => i.subcategory === sub);
 }
@@ -883,7 +891,7 @@ function renderCloset() {
   if (searchResults) {
     body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(searchResults);
   } else if (closetCat && closetSub) {
-    const label = closetSub === "__other__" ? "Other" : closetSub;
+    const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub));
   } else if (closetCat) {
     body.innerHTML = renderClosetCategory(closetCat);
@@ -1068,8 +1076,11 @@ function renderAdd() {
    GRID BAR  (density picker + select mode + bulk actions)
    =================================================================== */
 function updateGridBar() {
-  const has = selectMode && selectedIds.size > 0;
+  const n = selectedIds.size;
+  const has = selectMode && n > 0;
+  $("#gridBar").classList.toggle("selecting", selectMode);
   ["#gbMove", "#gbEdit", "#gbDelete"].forEach(id => $(id).classList.toggle("active", has));
+  $("#gbCount").textContent = n ? `${n} selected` : "";
   $("#gbSelect").textContent = selectMode ? "Done" : "Select";
 }
 
