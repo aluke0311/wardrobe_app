@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r2 / 2026-06-20. Full rework from v25. ~760 lines.**
+**Current state: r4 / 2026-06-21. Full rework from v25. ~1,160 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -68,7 +68,7 @@ by moving items between folders.
 
 - `closetLens` — current lens, default "Available"
 - `closetCat` — null = root | category name | "Other"
-- `closetSub` — null = subcategory list | subcategory name | "__other__"
+- `closetSub` — null = subcategory list | subcategory name | "__other__" | "__all__"
 - `searchResults` — null = normal browsing | array = search-result grid
 - `detailId` — item id in detail view (null = none)
 
@@ -188,7 +188,7 @@ was carried over verbatim; the UI was rebuilt from scratch, screen by screen.
 **v25-full** (git tag + `archive/index_v25_full.html`) preserves everything built
 through Phase G. The data, schema, and migration are all intact and untouched.
 
-**Current state: r2 / 2026-06-20.** Built this session:
+**Current state: r4 / 2026-06-21.** Built across two sessions:
 - **r1 — Home launcher:** Stylebook-style calm tile grid (5 tiles: Closet · Looks ·
   Calendar · Capsules · Style Stats). Bottom nav (5 tabs), login, boot path.
   App boots to Home. Settings via ⚙ gear; Add Item via ＋ on Home header.
@@ -203,6 +203,24 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   - Search screen: keyword + Color/Fabric/Size/Season/Brand/Status filter rows
     that expand to chip multi-selects. Results show as a grid in Closet.
   - ＋ header button on Home → Add Item stub (built next).
+- **r3 — Grid toolbar (density + select + bulk actions):**
+  - Fixed action bar above the tab bar, visible only when a `.grid` is on screen.
+  - Grid density picker: 2/3/4/5 per row, persisted to `wardrobe.gridCols` in
+    `localStorage`. Updates grid via CSS `--grid-cols` variable without re-render.
+  - Select mode: tap Select → circle checkboxes on tiles; tile taps toggle
+    selection; `toggleSelect()` does surgical DOM update (no full re-render).
+  - Bulk edit sheet: Color/Fabric/Size/Season/Brand/Status chip pickers;
+    only changed fields are PATCHed (`/items?id=in.(...)` PostgREST syntax).
+  - Delete selected: confirm → REST DELETE.
+  - Move-to-folder sheet: category tree → PATCH `category` + `subcategory`.
+  - "+" in grid toolbar header → Add Item stub.
+  - Global `[hidden] { display: none !important }` rule to prevent CSS
+    specificity from overriding the HTML `hidden` attribute.
+- **r4 — Select mode fixes + "All Items in [cat]":**
+  - Action icons now only appear when select mode is active (not faded/invisible
+    before), turning accent-blue when items are selected; live count shown inline.
+  - "All Items in [cat]" on the subcategory list is now a tappable blue row
+    (`data-sub="__all__"`) that opens a flat grid of the whole category.
 
 **▶ NEXT UP (screen-by-screen, in natural order):**
 1. **Add Item** — photo from camera/library, name, category/subcategory, key fields. Stylebook "Import Item" sheet is the reference.
@@ -219,7 +237,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-20 r2`.
+  pushes the same day, increment `rN`. Currently `2026-06-21 r4`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -249,6 +267,21 @@ that writes a new column/table before its migration is confirmed.**
 - **`closetBack()` pops the navigation stack** — detail → grid → subcategory list
   → category list → root. Check `detailId` first, then `searchResults`, then
   `closetSub`, then `closetCat`.
+- **`closetSub` special values**: `"__other__"` = items with no recognized subcategory;
+  `"__all__"` = all items in the category (added r4). Handle both in `categoryGrid()`.
+- **`[hidden]` vs CSS specificity**: a CSS rule with `display: flex` on an ID selector
+  beats the browser's built-in `[hidden] { display: none }`. Always include
+  `[hidden] { display: none !important }` in the global styles.
+- **Grid bar is `position: fixed`** above the tab bar (`bottom: calc(var(--nav-h) + var(--safe-b))`).
+  When visible, add class `has-gridbar` to `#app` so `.tabbody` gets extra bottom
+  padding (else the bottom of the grid is hidden behind the bar).
+- **Select mode DOM surgery**: `toggleSelect(id)` updates just the affected tile
+  and calls `updateGridBar()` directly — no full `renderCloset()` re-render — to
+  avoid photo-URL flicker. Bulk edit / delete / move DO call `renderCloset()` after.
+- **Bulk PATCH via PostgREST**: `PATCH /items?id=in.("id1","id2")` with a JSON body
+  updates all matching rows. IDs must be quoted strings inside the `in.()` list.
+- **`store.getItem` / `store.setItem`** (not `store.get/set`) — the `store` wrapper
+  mirrors the `localStorage` API exactly.
 
 ## Deploy
 
