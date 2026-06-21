@@ -653,7 +653,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-20 v24";
+const APP_VERSION = "2026-06-20 v25";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1238,6 +1238,15 @@ function toastUndo(msg, fn) {
   toastUndoFn = fn;
   t.style.pointerEvents = "auto";
   t.innerHTML = `${esc(msg)} <span style="margin-left:8px;background:rgba(255,255,255,.25);padding:2px 8px;border-radius:999px;font-size:12.5px;cursor:pointer">Undo</span>`;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove("show"); toastUndoFn = null; }, 8000);
+}
+function toastAction(msg, label, fn) {
+  const t = $("#toast");
+  toastUndoFn = fn;
+  t.style.pointerEvents = "auto";
+  t.innerHTML = `${esc(msg)} <span style="margin-left:8px;background:rgba(255,255,255,.25);padding:2px 8px;border-radius:999px;font-size:12.5px;cursor:pointer">${esc(label)}</span>`;
   t.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.classList.remove("show"); toastUndoFn = null; }, 8000);
@@ -2736,10 +2745,13 @@ function suggestOutfits(ctxName, n = 5) {
     return s;
   }
 
-  // Build co-occurrence pair set for bonus
+  // Build co-occurrence pair set (recent outfits only — last 18 months)
+  const d18mo = new Date(now - 548 * 864e5).toISOString().slice(0, 10);
   const coPairs = new Set();
   if (outfitsLoaded) {
-    for (const [, ids] of outfitItemMap) {
+    for (const [oid, ids] of outfitItemMap) {
+      const dates = outfitWearDates(oid);
+      if (!dates.some(d => d >= d18mo)) continue; // only recent outfits
       const arr = [...ids];
       for (let a = 0; a < arr.length; a++)
         for (let b = a + 1; b < arr.length; b++) {
@@ -2797,7 +2809,22 @@ function suggestOutfits(ctxName, n = 5) {
     return true;
   });
   uniq.sort((a, b) => b.score - a.score);
-  return uniq.slice(0, n);
+  const results = uniq.slice(0, n);
+
+  // Stretch pick: inject one neglected item (unworn 30d+ or never) at slot 3
+  if (n > 2) {
+    const usedIds = new Set(results.flatMap(c => c.ids));
+    const stretch = pool.find(i =>
+      !usedIds.has(i.id) &&
+      (lastWorn(i.id) == null || daysSince(lastWorn(i.id)) > 30)
+    );
+    if (stretch) {
+      const slot = { ids: [stretch.id], its: [stretch], score: -99, stretch: true };
+      results.splice(Math.min(2, results.length), 0, slot);
+      if (results.length > n) results.pop();
+    }
+  }
+  return results;
 }
 
 function openSuggestSheet() {
@@ -2816,9 +2843,11 @@ function _renderSuggestSheet() {
     : suggs.map(s => {
         const ids = JSON.stringify(s.ids);
         const label = s.its.map(i => esc(i.name)).join(" · ");
+        const stretchBadge = s.stretch
+          ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">✨ Try something different</div>` : "";
         return `
           <div class="card" style="padding:12px 14px;margin-bottom:10px">
-            ${thumbsHtml(s.its)}
+            ${stretchBadge}${thumbsHtml(s.its)}
             <div style="font-size:12.5px;color:var(--muted);margin:6px 0 10px;line-height:1.35">${label}</div>
             <button class="btn" style="width:auto;padding:8px 16px;font-size:13.5px" data-suguse="${esc(ids)}">Use this outfit</button>
           </div>`;
@@ -4581,8 +4610,9 @@ function renderHome() {
       suggestHtml = suggs.map(s => {
         const ids = JSON.stringify(s.ids);
         const label = s.its.map(i => esc(i.name)).join(" · ");
+        const stretchBadge = s.stretch ? `<div style="font-size:11px;color:var(--muted);margin-bottom:3px">✨ Try something different</div>` : "";
         return `<div class="card" style="padding:10px 12px">
-          ${thumbsHtml(s.its)}
+          ${stretchBadge}${thumbsHtml(s.its)}
           <div style="font-size:11.5px;color:var(--muted);margin:5px 0 8px;line-height:1.35">${label}</div>
           <button class="btn ghost" style="width:auto;padding:7px 14px;font-size:12.5px" data-homeuse="${esc(ids)}">Use this outfit</button>
         </div>`;
@@ -4629,8 +4659,31 @@ function renderHome() {
           </div>
         </div>`
       ).join("") +
+      (inLaundry.length ? `<button style="width:100%;text-align:center;padding:8px 0;background:none;border:none;font-size:13px;color:var(--muted);cursor:pointer" id="homeLaundryMgr">Manage laundry →</button>` : "") +
       `</div>`
     : "";
+
+  // --- G-meta: tidy-up nudge ---
+  const metaDismiss = store.getItem("wardrobe.metaDismiss");
+  const nudgeTodayStr = new Date().toISOString().slice(0, 10);
+  let nudgeHtml = "";
+  if (metaDismiss !== nudgeTodayStr) {
+    const availPool = items.filter(i => itemStatus(i) === "Available");
+    let bestField = null, bestCount = 0;
+    for (const f of FILL_FIELDS) {
+      const n = availPool.filter(i => fillFieldEmpty(i, f)).length;
+      if (n > bestCount) { bestCount = n; bestField = f; }
+    }
+    if (bestField && bestCount >= 5) {
+      const label = { occasion: "occasion range", color: "color", subcategory: "subcategory",
+        season: "season", fabric: "fabric", price: "price", acquisition: "acquisition",
+        size: "size", care: "care" }[bestField] || bestField;
+      nudgeHtml = `<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 12px;cursor:pointer" id="homeNudgeChip">
+        <span style="flex:1;font-size:13px">${bestCount} items need <strong>${label}</strong> — knock out 5?</span>
+        <button style="background:none;border:none;font-size:16px;color:var(--muted);cursor:pointer;padding:0 0 0 4px;line-height:1" id="homeNudgeDismiss">✕</button>
+      </div>`;
+    }
+  }
 
   // --- upcoming events ---
   let eventsHtml = "";
@@ -4680,6 +4733,8 @@ function renderHome() {
             <button class="btn ghost home-qa" data-hometab="closet">Browse closet</button>
           </div>
         </div>
+
+        ${nudgeHtml ? `<div>${nudgeHtml}</div>` : ""}
 
         ${eventsHtml ? `
         <!-- upcoming events -->
@@ -4756,6 +4811,30 @@ function renderHome() {
   // neglect "View all" → neglect mode in closet
   const neglMore = body.querySelector("#homeNeglectMore");
   if (neglMore) neglMore.onclick = () => { neglectMode = true; switchTab("closet"); };
+
+  // laundry manager
+  const laundryMgr = body.querySelector("#homeLaundryMgr");
+  if (laundryMgr) laundryMgr.onclick = (e) => { e.stopPropagation(); openLaundryManager(); };
+
+  // G-meta nudge chip
+  const nudgeChip = body.querySelector("#homeNudgeChip");
+  const nudgeDismiss = body.querySelector("#homeNudgeDismiss");
+  if (nudgeDismiss) nudgeDismiss.onclick = (e) => {
+    e.stopPropagation();
+    store.setItem("wardrobe.metaDismiss", new Date().toISOString().slice(0, 10));
+    nudgeChip?.closest("div[style]")?.remove();
+  };
+  if (nudgeChip) nudgeChip.onclick = (e) => {
+    if (e.target === nudgeDismiss || nudgeDismiss?.contains(e.target)) return;
+    // find the best field again and open focused fill
+    const availPool = items.filter(i => itemStatus(i) === "Available");
+    let bestField = null, bestCount = 0;
+    for (const f of FILL_FIELDS) {
+      const n = availPool.filter(i => fillFieldEmpty(i, f)).length;
+      if (n > bestCount) { bestCount = n; bestField = f; }
+    }
+    if (bestField) openFocusedFill(bestField, 5);
+  };
 
   // load events lazily for upcoming section (re-render once done)
   if (!eventsLoaded) {
@@ -4978,6 +5057,32 @@ const FILL_PROMPT = {
   care: "How do you care for it?",
 };
 let fillCurrentId = null;
+let fillFocusField = null;   // G-meta: field locked for focused run
+let fillFocusIds = null;     // G-meta: item IDs for focused run
+let fillFocusDone = 0;       // G-meta: count saved in this run
+
+// G6: derive season suggestion from wear history
+// Returns {seasons, pct} if ≥80% of wears fall in ≤2 adjacent seasons (≥3 wears total), else null.
+function deriveSeasonSuggestion(itemId) {
+  const MONTH_SEASON = [null,"Winter","Winter","Spring","Spring","Spring","Summer","Summer","Summer","Fall","Fall","Fall","Winter"];
+  const ws = wears.filter(w => w.item_id === itemId);
+  if (ws.length < 3) return null;
+  const counts = { Spring: 0, Summer: 0, Fall: 0, Winter: 0 };
+  for (const w of ws) { const m = parseInt(w.worn_on.slice(5, 7), 10); counts[MONTH_SEASON[m]]++; }
+  const total = ws.length;
+  const ORDER = ["Spring","Summer","Fall","Winter"];
+  // Check every window of 1 or 2 adjacent seasons
+  let best = null, bestPct = 0;
+  for (let w = 1; w <= 2; w++) {
+    for (let s = 0; s < 4; s++) {
+      const window = Array.from({length: w}, (_, k) => ORDER[(s + k) % 4]);
+      const n = window.reduce((a, x) => a + counts[x], 0);
+      const pct = n / total;
+      if (pct > bestPct) { bestPct = pct; best = window; }
+    }
+  }
+  return (bestPct >= 0.8 && best) ? { seasons: best, pct: Math.round(bestPct * 100) } : null;
+}
 
 function fillFieldEmpty(i, f) {
   switch (f) {
@@ -5035,9 +5140,63 @@ function fillWidget(item, field) {
   return "";
 }
 
+function openFocusedFill(field, n) {
+  const pool = items.filter(i => itemStatus(i) === "Available" && fillFieldEmpty(i, field));
+  fillFocusField = field;
+  fillFocusIds = pool.slice(0, n).map(i => i.id);
+  fillFocusDone = 0;
+  switchTab("fill");
+}
+
 function renderFill() {
   const body = $("#fillBody");
   if (!dataReady) { body.innerHTML = `<div class="spin"></div>`; return; }
+
+  // G-meta focused fill mode
+  if (fillFocusField && fillFocusIds) {
+    const remaining = fillFocusIds.filter(id => {
+      const it = items.find(x => x.id === id);
+      return it && fillFieldEmpty(it, fillFocusField);
+    });
+    if (!remaining.length) {
+      body.innerHTML = `<div class="empty">✅ Done! All ${fillFocusIds.length} filled in.<br><button class="btn ghost" id="fillFocusExit" style="margin-top:16px;max-width:200px">Back to fill</button></div>`;
+      $("#fillFocusExit").onclick = () => { fillFocusField = null; fillFocusIds = null; fillFocusDone = 0; renderFill(); };
+      return;
+    }
+    const done = fillFocusIds.length - remaining.length;
+    const total = fillFocusIds.length;
+    const item = items.find(x => x.id === remaining[0]);
+    const field = fillFocusField;
+    const seasonHint = field === "season" ? deriveSeasonSuggestion(item.id) : null;
+    body.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12.5px;color:var(--muted)">Filling: <strong>${esc(FILL_PROMPT[field] ? field : field)}</strong> · ${done} of ${total} done</div>
+        <button style="background:none;border:none;font-size:12.5px;color:var(--muted);cursor:pointer" id="fillFocusExit">Exit</button>
+      </div>
+      <div style="height:4px;background:var(--line);border-radius:2px;margin-bottom:14px">
+        <div style="height:4px;background:var(--ink);border-radius:2px;width:${Math.round(done/total*100)}%"></div>
+      </div>
+      <div class="fillpic" ${item.image_path ? `data-photo="${esc(item.image_path)}"` : ""}>${item.image_path ? "" : "👕"}</div>
+      <h2 style="text-align:center;margin:0 2px 2px;font-size:19px">${esc(item.name)}</h2>
+      <div class="muted center" style="margin-bottom:14px">${esc([item.category, item.subcategory].filter(Boolean).join(" · ") || "—")}</div>
+      <div class="card stack">
+        <label class="fld" style="font-size:14px;color:var(--ink)">${esc(FILL_PROMPT[field])}</label>
+        ${seasonHint ? `<div style="font-size:12px;color:var(--muted);margin:-4px 0 6px">Based on ${seasonHint.pct}% of wears — looks like ${seasonHint.seasons.join(" & ")}. Confirm or adjust:</div>` : ""}
+        ${fillWidget(item, field)}
+      </div>
+      <div class="stack" style="margin-top:16px">
+        <button class="btn" id="fillSave">Save &amp; next</button>
+        <button class="btn ghost" id="fillSkip">Skip</button>
+      </div>`;
+    wireFillWidgets();
+    if (seasonHint) seasonHint.seasons.forEach(s => { const b = $(`#fill_season [data-season="${s}"]`); if (b) b.classList.add("sel"); });
+    $("#fillFocusExit").onclick = () => { fillFocusField = null; fillFocusIds = null; fillFocusDone = 0; renderFill(); };
+    $("#fillSave").onclick = () => fillSave(item.id, field);
+    $("#fillSkip").onclick = () => { fillFocusIds = fillFocusIds.filter(x => x !== item.id); renderFill(); };
+    hydratePhotos(body);
+    return;
+  }
+
   const pool = fillPool();
   if (pool.length === 0) {
     body.innerHTML = `<div class="empty">🎉 Every available item has its key fields filled in.<br>Nothing to tidy right now.</div>`;
@@ -5050,8 +5209,11 @@ function renderFill() {
   if (!pick.length) pick = shuffled;
   const item = pick[0];
   fillCurrentId = item.id;
-  // F2: random empty field (not always the first one)
-  const field = randomEmptyField(item) || firstEmptyField(item);
+  // F2: random empty field (not always the first one); G6: bias toward season if derivable
+  let field = randomEmptyField(item) || firstEmptyField(item);
+  // G6: if season is empty and we have a strong derivation, prefer it
+  if (fillFieldEmpty(item, "season") && deriveSeasonSuggestion(item.id)) field = "season";
+  const seasonHint = field === "season" ? deriveSeasonSuggestion(item.id) : null;
 
   body.innerHTML = `
     <div class="muted center" style="font-size:13px;margin:2px 0 12px">${pool.length} item${pool.length === 1 ? "" : "s"} still need a field</div>
@@ -5060,6 +5222,7 @@ function renderFill() {
     <div class="muted center" style="margin-bottom:14px">${esc([item.category, item.subcategory].filter(Boolean).join(" · ") || "—")}</div>
     <div class="card stack">
       <label class="fld" style="font-size:14px;color:var(--ink)">${esc(FILL_PROMPT[field])}</label>
+      ${seasonHint ? `<div style="font-size:12px;color:var(--muted);margin:-4px 0 6px">Based on ${seasonHint.pct}% of wears — looks like ${seasonHint.seasons.join(" & ")}. Confirm or adjust:</div>` : ""}
       ${fillWidget(item, field)}
     </div>
     <div class="stack" style="margin-top:16px">
@@ -5069,6 +5232,7 @@ function renderFill() {
     </div>`;
 
   wireFillWidgets();
+  if (seasonHint) seasonHint.seasons.forEach(s => { const b = $(`#fill_season [data-season="${s}"]`); if (b) b.classList.add("sel"); });
   $("#fillSave").onclick = () => fillSave(item.id, field);
   $("#fillSkip").onclick = () => renderFill();
   $("#fillEdit").onclick = () => startEdit(item.id);
@@ -5257,6 +5421,7 @@ async function bootApp() {
     await loadData();
     prewarmUrlCache(); // fire-and-forget: batch-sign all photo URLs into cache
     loadWeather();     // fire-and-forget: fetch weather for outfit suggestions
+    laundryBoot();     // fire-and-forget: auto-clear stale laundry + yesterday toast
     await restoreLens();
     renderHome();
     renderCloset();
@@ -5270,6 +5435,112 @@ async function retryLoad() {
   try { await loadData(); prewarmUrlCache(); refreshViews(); } catch (e) { toast(e.message); }
 }
 window.retryLoad = retryLoad;
+
+// G7: boot-time laundry self-clear + yesterday's wear → laundry toast
+async function laundryBoot() {
+  const today = todayStr();
+  const lastOpen = store.getItem("wardrobe.lastOpen");
+  store.setItem("wardrobe.lastOpen", today);
+  if (!lastOpen || lastOpen >= today) return; // same day or first run
+
+  // Auto-clear Laundry items worn 7+ days ago (clean by now)
+  const autoClear = items.filter(i =>
+    (i.availability === "Laundry") && daysSince(lastWorn(i.id)) >= 7
+  );
+  // Auto-clear Cleaners items worn 14+ days ago
+  const autoClearDry = items.filter(i =>
+    i.availability === "Cleaners" && daysSince(lastWorn(i.id)) >= 14
+  );
+  const allClear = [...autoClear, ...autoClearDry];
+  if (allClear.length) {
+    try {
+      await rest(`items?id=in.(${allClear.map(i => i.id).join(",")})`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ availability: "Ready" }),
+      });
+      allClear.forEach(i => { i.availability = "Ready"; });
+    } catch { /* non-fatal */ }
+  }
+
+  // Toast: items worn yesterday but still Ready → offer to mark Laundry
+  const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  const yesterIds = new Set(wears.filter(w => w.worn_on === yesterday).map(w => w.item_id));
+  const wornReady = items.filter(i => yesterIds.has(i.id) && (!i.availability || i.availability === "Ready"));
+  if (wornReady.length) {
+    toastAction(
+      `You wore ${wornReady.length} item${wornReady.length === 1 ? "" : "s"} yesterday`,
+      "Move to laundry",
+      async () => {
+        const dryClean = wornReady.filter(i => (i.care || []).includes("Dry clean"));
+        const regular = wornReady.filter(i => !(i.care || []).includes("Dry clean"));
+        const patches = [];
+        if (regular.length) patches.push(rest(`items?id=in.(${regular.map(i=>i.id).join(",")})`, { method:"PATCH", headers:{"Content-Type":"application/json",Prefer:"return=minimal"}, body: JSON.stringify({availability:"Laundry"}) }));
+        if (dryClean.length) patches.push(rest(`items?id=in.(${dryClean.map(i=>i.id).join(",")})`, { method:"PATCH", headers:{"Content-Type":"application/json",Prefer:"return=minimal"}, body: JSON.stringify({availability:"Cleaners"}) }));
+        try {
+          await Promise.all(patches);
+          regular.forEach(i => { i.availability = "Laundry"; });
+          dryClean.forEach(i => { i.availability = "Cleaners"; });
+          toast(`Marked ${wornReady.length} item${wornReady.length===1?"":"s"} as laundry`);
+          refreshViews();
+        } catch (e) { toast(e.message); }
+      }
+    );
+  }
+}
+
+// G7: bulk laundry manager sheet
+function openLaundryManager() {
+  const notReady = items.filter(i => i.availability && i.availability !== "Ready");
+  if (!notReady.length) { toast("Nothing in laundry right now"); return; }
+
+  const checked = new Set(notReady.map(i => i.id)); // all pre-checked
+
+  const renderRows = () => notReady.map(i => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer">
+      <input type="checkbox" data-ldrychk="${esc(i.id)}" ${checked.has(i.id) ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0">
+      <div style="width:36px;height:36px;border-radius:8px;background:var(--bg);border:1px solid var(--line);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px" ${i.image_path ? `data-photo="${esc(i.image_path)}"` : ""}>${i.image_path ? "" : "👕"}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.name)}</div>
+        <div style="font-size:11.5px;color:var(--muted)">${esc(i.availability)}</div>
+      </div>
+    </label>`).join("");
+
+  const sheet = $("#sheet");
+  sheet.innerHTML = `
+    <h2 style="margin:6px 2px 14px;font-size:19px">Laundry (${notReady.length})</h2>
+    <div id="laundryList">${renderRows()}</div>
+    <div class="stack" style="margin-top:16px">
+      <button class="btn" id="laundryMarkClean">Mark selected clean</button>
+      <button class="btn ghost" id="laundryClose">Done</button>
+    </div>`;
+  $("#modal").classList.add("open");
+  hydratePhotos(sheet);
+
+  sheet.addEventListener("change", (e) => {
+    const cb = e.target.closest("[data-ldrychk]");
+    if (!cb) return;
+    cb.checked ? checked.add(cb.dataset.ldrychk) : checked.delete(cb.dataset.ldrychk);
+  });
+
+  $("#laundryClose").onclick = closeModal;
+  $("#laundryMarkClean").onclick = async () => {
+    const ids = [...checked];
+    if (!ids.length) { toast("Nothing selected"); return; }
+    const btn = $("#laundryMarkClean"); btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      await rest(`items?id=in.(${ids.join(",")})`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ availability: "Ready" }),
+      });
+      ids.forEach(id => { const it = items.find(x => x.id === id); if (it) it.availability = "Ready"; });
+      toast(`${ids.length} item${ids.length===1?"":"s"} marked clean`);
+      closeModal();
+      refreshViews();
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Mark selected clean"; }
+  };
+}
 
 // If a capsule lens was active last session, load capsules and re-apply it
 // (the closet filter needs the capsule's item map). Silently clears if gone.
