@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r6. Full rework from v25. ~3,100 lines.**
+**Current state: 2026-06-22 r7. Full rework from v25. ~3,200 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -68,9 +68,20 @@ Top-of-`<script>` config, then logically grouped sections:
   organization (no manual filing). Nav state: `looksLens`/`looksFolder`/`lookId`.
   Outfit collages via `outfitCollageHtml()`. Formality derived from piece heuristics
   (`outfitBucket`), overridable via `formality_override` on the outfit row.
+- **CAPSULES** (r7) — `renderCapsules()` dispatches by `capsuleView`
+  (list/detail/form/pick). Two modes: **Capsule** (`kind:"capsule"`, undated) and
+  **Trip** (`kind:"packing"`, dates + packing checklist). `loadData()` loads
+  `capsules` + `capsule_items`; `buildCapsuleIndexes()` builds `capsuleById` /
+  `capsuleLinkMap`. Detail shows a derive-first insight strip (count · value ·
+  formality coverage · ≈outfit combos), a packing progress bar (Trip), the item grid,
+  and **"Plan outfits from this"** which sets `activeCapsuleId` (scopes the Closet via
+  `lensItems()` + a clear-able banner). Add items two ways: in-capsule picker
+  (`openCapsulePicker`, membership editor) + closet Select-mode "Add to capsule"
+  (`gbCapsule` → `openCapsuleSheet`). Nav state: `capsuleId`/`capsuleView`/
+  `activeCapsuleId`; items opened from a capsule set `_fromCapsule` (closetBack returns).
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE at bottom.
   Currently active tabs: home · closet · looks · calendar · stats.
-  Capsules is a Home-tile stub (removed from nav in r16 to make room for Stats).
+  Capsules is a Home-tile screen (full tab; not in the bottom nav — Stats took its slot).
   Search and Add live as non-tab screens
   (`#tab-search`, `#tab-add`) navigated to by `switchTab`.
 
@@ -437,11 +448,28 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     and a minimal date input (`openReviewDateEdit`). Scans all non-archived items (ignores
     the stats funnel filters).
 
+- **r7 — Capsules & Trips (2026-06-22):** full Capsules tab (was a placeholder). Two
+  modes — **Capsule** (undated style set) and **Trip** (`kind:"packing"`, start/end dates
+  + packing checklist). List → detail → add-items picker / create form. Detail insight
+  strip (count · value · formality-coverage chips · ≈outfit combos), packing progress bar
+  (Trip), **"Plan outfits from this"** → `activeCapsuleId` scopes the Closet (`lensItems()`
+  override + clear-able `cap-banner`). Add items two ways: in-capsule membership picker
+  (`openCapsulePicker` → `saveCapsulePicker` diffs add/remove) and closet Select-mode
+  `gbCapsule` → `openCapsuleSheet` (reuses `#moveSheet`). Items opened from a capsule set
+  `_fromCapsule` so `closetBack()` returns to the capsule. **Gotcha caught & fixed:** the
+  packing tick was a `<button>` nested inside the `.gtile` `<button>` — invalid HTML, so the
+  parser re-parents it as a sibling and `.gtile .pack-tick` never matches; it must be a
+  `<div>` (like `.sel-dot`). **Migration required for the checklist:**
+  `migration/capsule_items_packed.sql` (`ALTER TABLE capsule_items ADD COLUMN packed boolean
+  NOT NULL DEFAULT false`). Load + insert deliberately omit `packed` so everything works
+  pre-migration; only the tick needs the column. **Do not deploy r7 before running it.**
+
 **▶ NEXT UP:**
-1. **Capsules** — named item sets, packing lists (accessible from Home tile).
-2. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
-3. **Image replace** — currently "coming soon" stub on the details footer.
-4. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
+1. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
+2. **Image replace** — currently "coming soon" stub on the details footer.
+3. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
+4. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
+   reorder/rename capsules; share/duplicate a packing list.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -450,7 +478,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-22 r6`.
+  pushes the same day, increment `rN`. Currently `2026-06-22 r7`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -518,7 +546,16 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r5`.
+- **Currently `APP_VERSION`** is `2026-06-22 r7`.
+- **Capsules: nested-button gotcha** — tiles in a capsule grid are `<button class="gtile">`;
+  any tap target rendered *inside* a tile (the packing tick) must be a `<div>`/`<span>`, not a
+  `<button>`. Nested `<button>` is invalid HTML and the parser hoists it out, breaking
+  `.gtile .pack-tick` selectors. Use `data-*` + `closest()` + `stopPropagation` for the inner tap.
+- **`activeCapsuleId`** scopes the Closet: when set, `lensItems()` returns only that capsule's
+  members (ignoring the status lens) and `renderCloset()` injects a clear-able `.cap-banner`.
+  Cleared by the banner ✕ (`[data-cap-clear]`) or any tab switch.
+- **`capsule_items.packed`** is loaded via `select=*` and inserts omit it, so capsules work
+  before the migration; only `togglePack()` PATCHes `packed` (needs `capsule_items_packed.sql`).
 - **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
   Items (`min_occasion`/`max_occasion`) and outfit buckets now use the same vocabulary.
   `BUCKET_RANGES` maps each bucket key to its target `{min, max}` for nudging pieces.

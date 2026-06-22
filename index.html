@@ -221,6 +221,80 @@
   .rv-done b { display: block; font-size: 18px; color: var(--text); margin-bottom: 6px; }
   .rv-fieldrow .fcount.rv-cnt { color: var(--accent); font-weight: 600; }
 
+  /* ---------- capsules ---------- */
+  .cap-list { padding: 6px 14px 24px; display: flex; flex-direction: column; gap: 12px; }
+  .cap-card { display: flex; gap: 13px; align-items: center; text-align: left;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
+  .cap-card:active { background: var(--accent-soft); }
+  .cap-collage { width: 64px; height: 64px; flex: none; border-radius: 10px; overflow: hidden;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: #f4f4f7; }
+  .cap-collage .cc-cell { background: #faf9f8 center/contain no-repeat; }
+  .cap-collage.solo { grid-template-columns: 1fr; }
+  .cap-collage.empty { display: flex; align-items: center; justify-content: center; }
+  .cap-collage.empty svg { width: 26px; height: 26px; stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .cap-meta { flex: 1; min-width: 0; }
+  .cap-name { font-size: 16.5px; font-weight: 600; color: var(--text); }
+  .cap-sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .cap-badge { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .03em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 6px; background: var(--accent-soft);
+    color: var(--accent); margin-bottom: 4px; }
+  .cap-badge.trip { background: #eaf6ef; color: #2f9e5e; }
+  .cap-empty { text-align: center; padding: 64px 32px; color: var(--muted); }
+  .cap-empty svg { width: 50px; height: 50px; stroke: var(--line); stroke-width: 1.5; fill: none; margin-bottom: 12px; }
+  .cap-empty b { display: block; font-size: 17px; color: var(--text); margin-bottom: 6px; }
+  .cap-newbtn { margin: 8px 14px 0; width: calc(100% - 28px); padding: 14px; border-radius: 12px;
+    background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
+  /* create / edit form */
+  .cap-form { padding: 16px 14px 24px; display: flex; flex-direction: column; gap: 16px; }
+  .cap-modebar { display: flex; gap: 8px; }
+  .cap-modebar button { flex: 1; padding: 12px; border-radius: 11px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--muted); font-weight: 600; font-size: 14.5px; }
+  .cap-modebar button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .cap-dates { display: flex; gap: 10px; }
+  .cap-dates > div { flex: 1; }
+  /* detail */
+  .cap-hdr { padding: 14px 16px 4px; }
+  .cap-hdr .ch-name { font-size: 22px; font-weight: 700; }
+  .cap-hdr .ch-sub { font-size: 13.5px; color: var(--muted); margin-top: 3px; }
+  .cap-insight { margin: 12px 14px 0; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 16px; }
+  .cap-cov { margin-top: 12px; }
+  .cap-cov-lbl { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .cap-cov-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .cap-cov-chip { font-size: 12px; padding: 4px 9px; border-radius: 8px; background: #f4f4f7; color: var(--muted); }
+  .cap-cov-chip.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .cap-plan { margin: 14px 14px 0; width: calc(100% - 28px); padding: 14px; border-radius: 12px;
+    background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; display: flex;
+    align-items: center; justify-content: center; gap: 9px; }
+  .cap-plan svg { width: 19px; height: 19px; stroke: #fff; stroke-width: 1.9; fill: none; }
+  .cap-secrow { display: flex; align-items: center; justify-content: space-between;
+    padding: 22px 16px 6px; }
+  .cap-secrow .t { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .cap-secrow .a { font-size: 14.5px; color: var(--accent); font-weight: 600; }
+  .cap-footer { padding: 24px 14px 30px; }
+  .cap-del { width: 100%; padding: 13px; border-radius: 12px; background: var(--surface);
+    border: 1px solid var(--line); color: var(--danger); font-weight: 600; font-size: 15px; }
+  /* packing progress + tick */
+  .cap-pack { margin: 12px 14px 0; }
+  .cap-pack-bar { height: 8px; border-radius: 5px; background: #ececf1; overflow: hidden; }
+  .cap-pack-fill { height: 100%; background: #2f9e5e; border-radius: 5px; transition: width .25s; }
+  .cap-pack-lbl { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .gtile .pack-tick { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
+    border-radius: 50%; background: rgba(255,255,255,.92); border: 1.5px solid var(--line);
+    display: flex; align-items: center; justify-content: center; z-index: 2; }
+  .gtile .pack-tick svg { width: 14px; height: 14px; stroke: transparent; stroke-width: 3; fill: none; }
+  .gtile.packed .pack-tick { background: #2f9e5e; border-color: #2f9e5e; }
+  .gtile.packed .pack-tick svg { stroke: #fff; }
+  .gtile.packed .gphoto { opacity: .55; }
+  /* active-capsule banner in closet */
+  .cap-banner { display: flex; align-items: center; gap: 10px; margin: 4px 14px 8px;
+    padding: 10px 14px; border-radius: 11px; background: var(--accent-soft); }
+  .cap-banner .cb-t { flex: 1; font-size: 14px; color: var(--accent); font-weight: 600; }
+  .cap-banner .cb-x { width: 26px; height: 26px; flex: none; display: flex; align-items: center;
+    justify-content: center; border-radius: 50%; color: var(--accent); font-size: 18px; line-height: 1; }
+  /* in-grid "Add to capsule" bar button */
+  #gbCapsule.active svg { stroke: var(--accent); }
+
   /* ---------- item grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
   .gtile { position: relative; display: flex; flex-direction: column; gap: 5px; }
@@ -556,6 +630,9 @@
       <button id="gbDelete" title="Delete selected">
         <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
       </button>
+      <button id="gbCapsule" title="Add to capsule">
+        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/><path d="M12 11v6M9 14h6"/></svg>
+      </button>
       <span id="gbCount" class="gb-count"></span>
     </div>
     <div class="gb-right" style="margin-left:auto">
@@ -659,7 +736,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r6";
+const APP_VERSION = "2026-06-22 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -900,6 +977,8 @@ let items = [];   // all items (every status)
 let wears = [];   // all wears
 let outfits = [];      // all outfits (saved sets of items worn together)
 let outfitLinks = [];  // outfit_items join rows {outfit_id, item_id}
+let capsules = [];     // capsule rows {id,name,kind,start_date,end_date,notes,...}
+let capsuleLinks = []; // capsule_items join rows {capsule_id, item_id, packed}
 let dataReady = false;
 
 // Derived indexes (rebuilt by buildOutfitIndexes after each load).
@@ -907,6 +986,8 @@ let itemById = new Map();        // item id -> item
 let outfitById = new Map();      // outfit id -> outfit
 let outfitItemMap = new Map();   // outfit id -> [item id]
 let outfitWearMap = new Map();   // outfit id -> Set(worn_on)
+let capsuleById = new Map();     // capsule id -> capsule
+let capsuleLinkMap = new Map();  // capsule id -> [link rows {item_id, packed}]
 
 // PostgREST/Supabase caps a single response at 1000 rows; page through the rest.
 async function restAll(path) {
@@ -925,19 +1006,40 @@ async function restAll(path) {
 
 async function loadData() {
   dataReady = false;
-  const [it, wr, of, oi] = await Promise.all([
+  const [it, wr, of, oi, cp, ci] = await Promise.all([
     restAll("items?select=*&order=created_at.desc"),
     restAll("wears?select=*&order=worn_on.desc"),
     restAll("outfits?select=*&order=created_at.desc"),
     restAll("outfit_items?select=outfit_id,item_id"),
+    restAll("capsules?select=*&order=created_at.desc"),
+    restAll("capsule_items?select=*"),  // includes `packed` once that column exists
   ]);
   items = it || [];
   wears = wr || [];
   outfits = of || [];
   outfitLinks = oi || [];
+  capsules = cp || [];
+  capsuleLinks = ci || [];
   buildOutfitIndexes();
+  buildCapsuleIndexes();
   dataReady = true;
 }
+
+// Rebuild capsule lookup maps. Called after each load + after any mutation.
+function buildCapsuleIndexes() {
+  capsuleById = new Map(capsules.map(c => [c.id, c]));
+  capsuleLinkMap = new Map();
+  for (const l of capsuleLinks) {
+    let a = capsuleLinkMap.get(l.capsule_id);
+    if (!a) { a = []; capsuleLinkMap.set(l.capsule_id, a); }
+    a.push(l);
+  }
+}
+// Item objects belonging to a capsule (skips dangling links).
+function capsuleItems(cid) {
+  return (capsuleLinkMap.get(cid) || []).map(l => itemById.get(l.item_id)).filter(Boolean);
+}
+function capsuleItemCount(cid) { return capsuleItems(cid).length; }
 
 // Rebuild the lookup maps + per-outfit derived caches. Called after each load.
 function buildOutfitIndexes() {
@@ -1037,7 +1139,7 @@ const HOME_TILES = [
     icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
   { tab: "calendar", label: "Calendar",   sub: () => "What you wore",
     icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>` },
-  { tab: "capsules", label: "Capsules",   sub: () => "Sets & packing",
+  { tab: "capsules", label: "Capsules",   sub: () => capsules.length ? `${capsules.length} set${capsules.length === 1 ? "" : "s"}` : "Sets & packing",
     icon: `<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/>` },
   { tab: "stats",    label: "Style Stats", sub: () => "Insights", wide: true,
     icon: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>` },
@@ -1088,8 +1190,15 @@ let selectedIds = new Set();
 let bulkPending = {};     // bulk edit: field -> pending value
 let bulkOpenField = null; // which field row is expanded in bulk edit sheet
 
-// Items in the current lens.
+let activeCapsuleId = null; // when set, Closet is scoped to this capsule's items
+
+// Items in the current lens. An active capsule overrides the status lens entirely
+// (you want to see everything you packed, regardless of Available/Storage).
 function lensItems() {
+  if (activeCapsuleId) {
+    const ids = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
+    return items.filter(i => ids.has(i.id));
+  }
   return closetLens === "All" ? items : items.filter(i => itemStatus(i) === closetLens);
 }
 const isOtherCat = (i) => !i.category || !CATEGORIES.includes(i.category);
@@ -1157,8 +1266,19 @@ function renderClosetRoot() {
   }
   const other = av.filter(isOtherCat);
   if (other.length) rows += rowHtml(folderThumb(other), "Other", other.length, `data-cat="Other"`);
-  if (!rows) rows = `<div class="placeholder"><b>Nothing in ${esc(closetLens)}</b></div>`;
-  return clToolbar("Closet", false) + lensHtml() + `<div class="frows">${rows}</div>`;
+  if (!rows) rows = `<div class="placeholder"><b>Nothing here</b></div>`;
+  const top = activeCapsuleId ? "" : lensHtml();
+  return clToolbar(activeCapsuleId ? "Closet" : "Closet", false) + top + `<div class="frows">${rows}</div>`;
+}
+
+// Banner shown across Closet screens while a capsule scopes the view.
+function capsuleBanner() {
+  const c = capsuleById.get(activeCapsuleId);
+  if (!c) return "";
+  return `<div class="cap-banner">
+    <div class="cb-t">Planning · ${esc(c.name)}</div>
+    <button class="cb-x" data-cap-clear>✕</button>
+  </div>`;
 }
 
 function renderClosetCategory(cat) {
@@ -1207,6 +1327,15 @@ function renderCloset() {
   } else {
     body.innerHTML = renderClosetRoot();
   }
+  // While a capsule scopes the closet, show a clear-able banner under the toolbar
+  // on every screen (root already omits the lens row).
+  if (activeCapsuleId && closetCat) {
+    const tb = body.querySelector(".cltoolbar");
+    if (tb) tb.insertAdjacentHTML("afterend", capsuleBanner());
+  } else if (activeCapsuleId && !closetCat && !searchResults) {
+    const lens = body.querySelector(".cltoolbar");
+    if (lens) lens.insertAdjacentHTML("afterend", capsuleBanner());
+  }
   hydratePhotos(body);
   const hasGrid = !!body.querySelector(".grid");
   $("#gridBar").hidden = !hasGrid;
@@ -1243,6 +1372,18 @@ function closetBack() {
     $("#title").textContent = "Style Stats";
     $("#headerAdd").hidden = true;
     renderStats(); return;
+  }
+  if (detailId && _fromCapsule) {
+    const cid = _fromCapsule; _fromCapsule = null;
+    detailId = null; detailView = null;
+    $("#itemBar").hidden = true;
+    $("#app").classList.remove("detail-photo");
+    $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-capsules"));
+    $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "capsules"));
+    $("#title").textContent = "Capsules";
+    $("#headerAdd").hidden = true;
+    capsuleId = cid; capsuleView = "detail";
+    renderCapsules(); return;
   }
   if (detailId) {
     detailId = null; detailView = null;
@@ -2677,7 +2818,7 @@ function updateGridBar() {
   const n = selectedIds.size;
   const has = selectMode && n > 0;
   $("#gridBar").classList.toggle("selecting", selectMode);
-  ["#gbMove", "#gbEdit", "#gbDelete"].forEach(id => $(id).classList.toggle("active", has));
+  ["#gbMove", "#gbEdit", "#gbDelete", "#gbCapsule"].forEach(id => $(id).classList.toggle("active", has));
   $("#gbCount").textContent = n ? `${n} selected` : "";
   $("#gbSelect").textContent = selectMode ? "Done" : "Select";
 }
@@ -4202,6 +4343,478 @@ function openItemFromReview(itemId) {
 }
 
 /* ===================================================================
+   CAPSULES + TRIPS  (named item sets; trips add dates + packing checklist)
+   =================================================================== */
+let capsuleId = null;            // detail / picker target
+let capsuleView = "list";        // "list" | "detail" | "form" | "pick"
+let _capForm = null;             // {name, kind, start_date, end_date, notes} during create
+let _capPick = new Set();        // selected item ids in the add-items picker
+let _capPickFilter = "";         // keyword filter in the picker
+let _capSheetMode = false;       // bulk "add to capsule" sheet open (reuses #moveSheet)
+let _fromCapsule = null;         // item opened from a capsule (closetBack returns here)
+let _pendingAddIds = null;       // items to fold into a capsule right after creation
+let _capNotesTimer = null;
+
+const isTrip = (c) => c && c.kind !== "capsule";
+const capModeLabel = (c) => isTrip(c) ? "Trip" : "Capsule";
+
+function capValue(cid) {
+  return capsuleItems(cid).reduce((s, i) => s + (Number(i.price) || 0), 0);
+}
+function fmtDate(d) {
+  if (!d) return "";
+  const dt = new Date(d + "T00:00:00");
+  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function capDateLabel(c) {
+  if (!c.start_date && !c.end_date) return "";
+  if (c.start_date && c.end_date) return `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`;
+  return fmtDate(c.start_date || c.end_date);
+}
+
+// small 2×2 collage thumbnail for a capsule card
+function capCollageHtml(cid) {
+  const paths = capsuleItems(cid).filter(i => i.image_path).slice(0, 4).map(i => i.image_path);
+  if (!paths.length) return `<div class="cap-collage empty"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg></div>`;
+  const cls = paths.length === 1 ? "cap-collage solo" : "cap-collage";
+  return `<div class="${cls}">${paths.map(p => `<div class="cc-cell" data-photo="${esc(p)}"></div>`).join("")}</div>`;
+}
+
+function renderCapsules() {
+  const body = $("#capsulesBody");
+  if (capsuleView === "form")      body.innerHTML = renderCapsuleForm();
+  else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
+  else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
+  else { capsuleView = "list"; body.innerHTML = renderCapsuleList(); }
+  hydratePhotos(body);
+  wireCapsules();
+}
+
+function capToolbar(title, showBack, right = "") {
+  return `<div class="cltoolbar">
+    ${showBack
+      ? `<button class="clback" id="capBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
+      : `<span style="width:34px"></span>`}
+    <div class="cltitle">${esc(title)}</div>
+    ${right || `<span style="width:34px"></span>`}
+  </div>`;
+}
+
+function renderCapsuleList() {
+  if (!capsules.length) {
+    return capToolbar("Capsules", false) + `
+      <div class="cap-empty">
+        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg>
+        <b>No capsules yet</b>
+        <div>Build a style capsule or a packing list for a trip — a named set of pieces you can plan outfits from.</div>
+      </div>
+      <button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
+  }
+  const cards = capsules.map(c => {
+    const n = capsuleItemCount(c.id);
+    const dates = capDateLabel(c);
+    const bits = [`${n} item${n === 1 ? "" : "s"}`];
+    if (capValue(c.id)) bits.push(money(capValue(c.id)));
+    if (dates) bits.unshift(dates);
+    return `<button class="cap-card" data-cap="${esc(c.id)}">
+      ${capCollageHtml(c.id)}
+      <div class="cap-meta">
+        <div class="cap-badge${isTrip(c) ? " trip" : ""}">${capModeLabel(c)}</div>
+        <div class="cap-name">${esc(c.name)}</div>
+        <div class="cap-sub">${esc(bits.join(" · "))}</div>
+      </div>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join("");
+  return capToolbar("Capsules", false) +
+    `<div class="cap-list">${cards}</div>` +
+    `<button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
+}
+
+// ---- create form ----
+function openCapsuleNew() {
+  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "" };
+  capsuleView = "form";
+  renderCapsules();
+}
+
+function renderCapsuleForm() {
+  const f = _capForm;
+  const trip = f.kind !== "capsule";
+  return capToolbar("New capsule", true) + `
+    <div class="cap-form">
+      <div>
+        <label class="fld">Name</label>
+        <input class="inp" id="capName" placeholder="e.g. Spain trip, Fall capsule" value="${esc(f.name)}">
+      </div>
+      <div>
+        <label class="fld">Type</label>
+        <div class="cap-modebar">
+          <button data-capmode="capsule" class="${!trip ? "on" : ""}">Capsule</button>
+          <button data-capmode="packing" class="${trip ? "on" : ""}">Trip</button>
+        </div>
+      </div>
+      ${trip ? `<div class="cap-dates">
+        <div><label class="fld">Start</label><input class="inp" type="date" id="capStart" value="${esc(f.start_date)}"></div>
+        <div><label class="fld">End</label><input class="inp" type="date" id="capEnd" value="${esc(f.end_date)}"></div>
+      </div>` : ""}
+      <div>
+        <label class="fld">Notes (optional)</label>
+        <textarea class="inp" id="capNotes" rows="3" placeholder="Anything to remember…">${esc(f.notes)}</textarea>
+      </div>
+      <button class="btn" id="capCreate">Create capsule</button>
+    </div>`;
+}
+
+async function saveNewCapsule() {
+  syncCapForm();
+  const f = _capForm;
+  if (!f.name.trim()) { toast("Give it a name"); return; }
+  const payload = { name: f.name.trim(), kind: f.kind, notes: f.notes || null };
+  if (isTripKind(f.kind)) { payload.start_date = f.start_date || null; payload.end_date = f.end_date || null; }
+  try {
+    const rows = await rest("/capsules?select=*", {
+      method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload),
+    });
+    const c = rows[0];
+    capsules.unshift(c);
+    buildCapsuleIndexes();
+    // fold in any items queued from a closet bulk "add to capsule"
+    if (_pendingAddIds && _pendingAddIds.length) {
+      await addItemsToCapsule(c.id, _pendingAddIds);
+      _pendingAddIds = null;
+    }
+    _capForm = null;
+    capsuleId = c.id;
+    capsuleView = "detail";
+    renderCapsules();
+    toast("Capsule created");
+  } catch (e) { toast(e.message); }
+}
+const isTripKind = (k) => k !== "capsule";
+
+function syncCapForm() {
+  if (!_capForm) return;
+  const name = $("#capName"); if (name) _capForm.name = name.value;
+  const notes = $("#capNotes"); if (notes) _capForm.notes = notes.value;
+  const s = $("#capStart"); if (s) _capForm.start_date = s.value;
+  const e = $("#capEnd"); if (e) _capForm.end_date = e.value;
+}
+
+// ---- detail ----
+function openCapsule(id) {
+  capsuleId = id;
+  capsuleView = "detail";
+  renderCapsules();
+}
+
+function renderCapsuleDetail() {
+  const c = capsuleById.get(capsuleId);
+  const list = capsuleItems(capsuleId);
+  const trip = isTrip(c);
+  const dates = capDateLabel(c);
+  const sub = [capModeLabel(c)];
+  if (dates) sub.push(dates);
+
+  // formality coverage across the 5 levels
+  const covered = new Set();
+  for (const i of list) {
+    if (i.min_occasion && i.max_occasion) {
+      for (let n = i.min_occasion; n <= i.max_occasion; n++) covered.add(n);
+    } else {
+      covered.add(Math.max(1, Math.min(5, Math.round(itemFormality(i)))));
+    }
+  }
+  const covChips = OCCASION_LADDER.map((lbl, idx) =>
+    `<span class="cap-cov-chip${covered.has(idx + 1) ? " on" : ""}">${esc(lbl)}</span>`).join("");
+
+  // rough outfit-combination estimate
+  const byCat = (cat) => list.filter(i => i.category === cat).length;
+  const combos = (byCat("Tops") * byCat("Bottoms") + byCat("Dresses")) * Math.max(1, byCat("Shoes"));
+
+  let packHtml = "";
+  if (trip && list.length) {
+    const links = capsuleLinkMap.get(capsuleId) || [];
+    const packed = links.filter(l => l.packed).length;
+    const pct = Math.round((packed / list.length) * 100);
+    packHtml = `<div class="cap-pack">
+      <div class="cap-pack-bar"><div class="cap-pack-fill" style="width:${pct}%"></div></div>
+      <div class="cap-pack-lbl">${packed} of ${list.length} packed · tap the circle on a piece to check it off</div>
+    </div>`;
+  }
+
+  const grid = list.length
+    ? `<div class="grid" style="--grid-cols:${gridCols}">${list.map(i => {
+        const isPacked = trip && (capsuleLinkMap.get(capsuleId) || []).some(l => l.item_id === i.id && l.packed);
+        const tick = trip ? `<div class="pack-tick" data-pack="${esc(i.id)}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>` : "";
+        return `<button class="gtile${isPacked ? " packed" : ""}" data-cap-item="${esc(i.id)}">
+          ${tick}
+          ${thumbHtml(i.image_path, "gphoto")}
+          <div class="gname">${esc(i.name || "Untitled")}</div>
+        </button>`;
+      }).join("")}</div>`
+    : `<div class="placeholder" style="padding:40px 32px"><b>No items yet</b><div>Add pieces to start planning.</div></div>`;
+
+  return capToolbar(c.name, true) + `
+    <div class="cap-hdr">
+      <div class="ch-name">${esc(c.name)}</div>
+      <div class="ch-sub">${esc(sub.join(" · "))}</div>
+    </div>
+    <div class="cap-insight">
+      <div class="kpi-row">
+        <div class="kpi-cell"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">item${list.length === 1 ? "" : "s"}</div></div>
+        <div class="kpi-cell"><div class="kpi-val">${list.length ? money(capValue(capsuleId)) : "—"}</div><div class="kpi-lbl">total value</div></div>
+      </div>
+      ${combos > 1 ? `<div class="cap-cov-lbl" style="margin-top:12px">≈ ${combos} outfit${combos === 1 ? "" : "s"} possible from these pieces</div>` : ""}
+      <div class="cap-cov">
+        <div class="cap-cov-lbl">Formality covered</div>
+        <div class="cap-cov-chips">${covChips}</div>
+      </div>
+    </div>
+    ${packHtml}
+    <button class="cap-plan" data-cap-plan>
+      <svg viewBox="0 0 24 24"><path d="M12 3l-1.5 3L4 9v11h16V9l-6.5-3z"/><path d="M12 6v14"/></svg>
+      Plan outfits from this
+    </button>
+    <textarea class="inp" id="capDetNotes" rows="2" style="margin:16px 14px 0;width:calc(100% - 28px)" placeholder="Notes…">${esc(c.notes || "")}</textarea>
+    <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
+    ${grid}
+    <div class="cap-footer"><button class="cap-del" data-cap-del>Delete capsule</button></div>`;
+}
+
+function planFromCapsule(id) {
+  activeCapsuleId = id;
+  closetCat = null; closetSub = null; searchResults = null;
+  switchTab("closet");
+  const c = capsuleById.get(id);
+  toast(c ? `Planning from ${c.name}` : "Capsule active");
+}
+
+async function deleteCapsule(id) {
+  const c = capsuleById.get(id);
+  if (!confirm(`Delete "${c ? c.name : "this capsule"}"? Your items are not affected.`)) return;
+  try {
+    await rest(`/capsules?id=eq.${id}`, { method: "DELETE" });
+    capsules = capsules.filter(x => x.id !== id);
+    capsuleLinks = capsuleLinks.filter(l => l.capsule_id !== id);
+    if (activeCapsuleId === id) activeCapsuleId = null;
+    buildCapsuleIndexes();
+    capsuleView = "list"; capsuleId = null;
+    renderCapsules();
+    toast("Capsule deleted");
+  } catch (e) { toast(e.message); }
+}
+
+function saveCapsuleNotes(id, value) {
+  clearTimeout(_capNotesTimer);
+  _capNotesTimer = setTimeout(async () => {
+    try {
+      await rest(`/capsules?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ notes: value || null }) });
+      const c = capsuleById.get(id); if (c) c.notes = value;
+    } catch (e) { /* silent */ }
+  }, 900);
+}
+
+// ---- packing tick ----
+async function togglePack(itemId) {
+  const links = capsuleLinkMap.get(capsuleId) || [];
+  const link = links.find(l => l.item_id === itemId);
+  if (!link) return;
+  const next = !link.packed;
+  link.packed = next; // optimistic
+  // surgical tile update + progress refresh
+  const tile = $(`[data-cap-item="${itemId}"]`);
+  if (tile) tile.classList.toggle("packed", next);
+  refreshPackProgress();
+  try {
+    await rest(`/capsule_items?capsule_id=eq.${capsuleId}&item_id=eq.${itemId}`,
+      { method: "PATCH", body: JSON.stringify({ packed: next }) });
+  } catch (e) { link.packed = !next; toast(e.message); renderCapsules(); }
+}
+function refreshPackProgress() {
+  const fill = $(".cap-pack-fill"), lbl = $(".cap-pack-lbl");
+  if (!fill) return;
+  const links = capsuleLinkMap.get(capsuleId) || [];
+  const total = capsuleItems(capsuleId).length;
+  const packed = links.filter(l => l.packed && itemById.has(l.item_id)).length;
+  fill.style.width = (total ? Math.round((packed / total) * 100) : 0) + "%";
+  if (lbl) lbl.textContent = `${packed} of ${total} packed · tap the circle on a piece to check it off`;
+}
+
+// ---- add-items picker (membership editor) ----
+function openCapsulePicker(id) {
+  capsuleId = id;
+  _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
+  _capPickFilter = "";
+  capsuleView = "pick";
+  renderCapsules();
+}
+
+function pickerPool() {
+  let pool = items.filter(i => itemStatus(i) !== "Archive");
+  const q = _capPickFilter.trim().toLowerCase();
+  if (q) pool = pool.filter(i =>
+    (i.name || "").toLowerCase().includes(q) ||
+    (i.brand || "").toLowerCase().includes(q) ||
+    (i.category || "").toLowerCase().includes(q) ||
+    (i.subcategory || "").toLowerCase().includes(q));
+  return pool;
+}
+
+function renderCapsulePicker() {
+  const c = capsuleById.get(capsuleId);
+  const pool = pickerPool();
+  const grid = pool.length
+    ? `<div class="grid" style="--grid-cols:${gridCols}">${pool.map(i => {
+        const on = _capPick.has(i.id);
+        const chk = `<div class="sel-dot${on ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
+        return `<button class="gtile${on ? " selected" : ""}" data-pick="${esc(i.id)}">
+          ${chk}
+          ${thumbHtml(i.image_path, "gphoto")}
+          <div class="gname">${esc(i.name || "Untitled")}</div>
+        </button>`;
+      }).join("")}</div>`
+    : `<div class="placeholder"><b>No matches</b></div>`;
+  const right = `<button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>`;
+  return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
+    <div style="padding:10px 14px 0"><input class="inp" id="capPickSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
+    <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
+    ${grid}`;
+}
+
+function togglePick(id) {
+  if (_capPick.has(id)) _capPick.delete(id); else _capPick.add(id);
+  const tile = $(`[data-pick="${id}"]`);
+  if (tile) {
+    const on = _capPick.has(id);
+    tile.classList.toggle("selected", on);
+    const dot = tile.querySelector(".sel-dot"); if (dot) dot.classList.toggle("on", on);
+  }
+  const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
+}
+
+async function saveCapsulePicker() {
+  const cid = capsuleId;
+  const current = new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
+  const selected = _capPick;
+  const toAdd = [...selected].filter(id => !current.has(id));
+  const toRemove = [...current].filter(id => !selected.has(id));
+  try {
+    if (toAdd.length) await addItemsToCapsule(cid, toAdd, true);
+    if (toRemove.length) {
+      const inList = `(${toRemove.map(id => `"${id}"`).join(",")})`;
+      await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=in.${inList}`, { method: "DELETE" });
+      capsuleLinks = capsuleLinks.filter(l => !(l.capsule_id === cid && toRemove.includes(l.item_id)));
+      buildCapsuleIndexes();
+    }
+    capsuleView = "detail";
+    renderCapsules();
+    toast("Items updated");
+  } catch (e) { toast(e.message); }
+}
+
+// Insert membership rows; `skipBuild` avoids a double rebuild when caller rebuilds.
+async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
+  const fresh = itemIds.filter(id => !(capsuleLinkMap.get(cid) || []).some(l => l.item_id === id));
+  if (!fresh.length) return;
+  // `packed` is omitted so this works before the column migration; DB default fills it after.
+  const payload = fresh.map(id => ({ capsule_id: cid, item_id: id }));
+  const rows = await rest("/capsule_items?select=*", {
+    method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload),
+  });
+  capsuleLinks = capsuleLinks.concat(rows && rows.length ? rows : payload);
+  buildCapsuleIndexes();
+}
+
+// ---- bulk "add to capsule" from closet select mode (reuses #moveSheet) ----
+function openCapsuleSheet() {
+  if (!selectedIds.size) return;
+  _capSheetMode = true;
+  const rows = capsules.map(c =>
+    `<button class="sheet-row" data-cap-target="${esc(c.id)}">
+      <span>${esc(c.name)}</span>
+      <span class="rt" style="color:var(--muted);font-size:13px">${capModeLabel(c)} · ${capsuleItemCount(c.id)}</span>
+    </button>`).join("");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="capSheetCancel">Cancel</button>
+      <h2>Add to capsule</h2>
+      <span style="width:54px"></span>
+    </div>
+    ${rows || `<div class="sheet-note">No capsules yet.</div>`}
+    <button class="sheet-row" data-cap-target="__new__" style="color:var(--accent);font-weight:600"><span>＋ New capsule…</span></button>
+    <div class="sheet-note">${selectedIds.size} item${selectedIds.size === 1 ? "" : "s"} selected.</div>`;
+  $("#capSheetCancel").onclick = closeCapsuleSheet;
+  $("#moveInner").querySelectorAll("[data-cap-target]").forEach(b => {
+    b.onclick = () => capSheetPick(b.dataset.capTarget);
+  });
+  $("#moveSheet").hidden = false;
+}
+function closeCapsuleSheet() { _capSheetMode = false; $("#moveSheet").hidden = true; }
+
+async function capSheetPick(target) {
+  const ids = [...selectedIds];
+  closeCapsuleSheet();
+  if (target === "__new__") {
+    _pendingAddIds = ids;
+    exitSelectMode();
+    switchTab("capsules");
+    openCapsuleNew();
+    return;
+  }
+  try {
+    await addItemsToCapsule(target, ids);
+    exitSelectMode();
+    renderCloset();
+    const c = capsuleById.get(target);
+    toast(`Added to ${c ? c.name : "capsule"}`);
+  } catch (e) { toast(e.message); }
+}
+
+function capsuleBack() {
+  if (capsuleView === "pick") { capsuleView = "detail"; return renderCapsules(); }
+  if (capsuleView === "form") { _capForm = null; _pendingAddIds = null; capsuleView = capsuleId ? "detail" : "list"; return renderCapsules(); }
+  if (capsuleView === "detail") { capsuleView = "list"; capsuleId = null; return renderCapsules(); }
+  renderCapsules();
+}
+
+function wireCapsules() {
+  const body = $("#capsulesBody");
+  // form inputs (re-render only on mode change to keep field focus otherwise)
+  if (capsuleView === "form") {
+    body.querySelectorAll("[data-capmode]").forEach(b => b.onclick = () => {
+      syncCapForm(); _capForm.kind = b.dataset.capmode; renderCapsules();
+    });
+    const create = $("#capCreate"); if (create) create.onclick = saveNewCapsule;
+    return;
+  }
+  if (capsuleView === "pick") {
+    const s = $("#capPickSearch");
+    if (s) s.oninput = () => { _capPickFilter = s.value; const g = body.querySelector(".grid"); /* light re-render of grid only */ renderPickerGrid(); };
+    const done = $("#capPickDone"); if (done) done.onclick = saveCapsulePicker;
+    return;
+  }
+  const dn = $("#capDetNotes");
+  if (dn) dn.oninput = () => saveCapsuleNotes(capsuleId, dn.value);
+}
+
+// re-render just the picker grid + count (keeps the search box focused)
+function renderPickerGrid() {
+  const body = $("#capsulesBody");
+  const pool = pickerPool();
+  const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
+  const old = body.querySelector(".grid") || body.querySelector(".placeholder");
+  const html = pool.length
+    ? `<div class="grid" style="--grid-cols:${gridCols}">${pool.map(i => {
+        const on = _capPick.has(i.id);
+        const chk = `<div class="sel-dot${on ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
+        return `<button class="gtile${on ? " selected" : ""}" data-pick="${esc(i.id)}">${chk}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`;
+      }).join("")}</div>`
+    : `<div class="placeholder"><b>No matches</b></div>`;
+  if (old) { old.outerHTML = html; hydratePhotos(body); }
+}
+
+/* ===================================================================
    TABS + WIRING
    =================================================================== */
 const TAB_TITLES = {
@@ -4221,7 +4834,7 @@ function switchTab(name) {
     $("#gridPickerPop").hidden = true;
     $("#itemBar").hidden = true;
     $("#app").classList.remove("detail-photo");
-    detailId = null; detailView = null; _fromStats = false;
+    detailId = null; detailView = null; _fromStats = false; _fromCapsule = null;
   }
 
   if (name === "home") renderHome();
@@ -4230,7 +4843,7 @@ function switchTab(name) {
   else if (name === "add")      renderAdd();
   else if (name === "looks")    renderLooks();
   else if (name === "calendar") renderCalendar();
-  else if (name === "capsules") $("#capsulesBody").innerHTML = placeholder("Capsules");
+  else if (name === "capsules") { capsuleView = "list"; capsuleId = null; renderCapsules(); }
   else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; renderStats(); }
   else if (name === "settings") renderSettings();
 
@@ -4279,6 +4892,7 @@ function wireEvents() {
   // closet: lens / folders / subcategories / items / back / search
   $("#closetBody").addEventListener("click", (e) => {
     if (e.target.closest("#clBack")) return closetBack();
+    if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
@@ -4316,12 +4930,30 @@ function wireEvents() {
     if (e.target.closest("#lookDelete")) { if (lookId) deleteLook(lookId); return; }
   });
 
+  // capsules: list / detail / form / picker
+  $("#capsulesBody").addEventListener("click", (e) => {
+    if (e.target.closest("#capBack")) return capsuleBack();
+    if (e.target.closest("[data-cap-new]")) return openCapsuleNew();
+    if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);
+    if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
+    if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);
+    const pack = e.target.closest("[data-pack]");
+    if (pack) { e.stopPropagation(); return togglePack(pack.dataset.pack); }
+    const capItem = e.target.closest("[data-cap-item]");
+    if (capItem) { _fromCapsule = capsuleId; closetCat = null; closetSub = null; searchResults = null; switchTab("closet"); return openItem(capItem.dataset.capItem); }
+    const pick = e.target.closest("[data-pick]");
+    if (pick) return togglePick(pick.dataset.pick);
+    const card = e.target.closest("[data-cap]");
+    if (card) return openCapsule(card.dataset.cap);
+  });
+
   // grid action bar
   $("#gbSelect").addEventListener("click", toggleSelectMode);
   $("#gbGrid").addEventListener("click", openGridPicker);
   $("#gbEdit").addEventListener("click", () => { if (selectedIds.size) openBulkEdit(); });
   $("#gbDelete").addEventListener("click", () => { if (selectedIds.size) deleteSelected(); });
   $("#gbMove").addEventListener("click", () => { if (selectedIds.size) openMoveSheet(); });
+  $("#gbCapsule").addEventListener("click", () => { if (selectedIds.size) openCapsuleSheet(); });
   $("#gridPickerPop").addEventListener("click", (e) => {
     const b = e.target.closest("[data-cols]");
     if (b) setGridCols(+b.dataset.cols);
@@ -4336,7 +4968,8 @@ function wireEvents() {
   $("#bulkBg").addEventListener("click", closeBulkEdit);
   // move sheet (also covers add-cat sheet which reuses the same container)
   $("#moveBg").addEventListener("click", () => {
-    if (_addCatMode) { _addCatMode = false; moveCatOpen = null; $("#moveSheet").hidden = true; }
+    if (_capSheetMode) { closeCapsuleSheet(); }
+    else if (_addCatMode) { _addCatMode = false; moveCatOpen = null; $("#moveSheet").hidden = true; }
     else closeMoveSheet();
   });
 
