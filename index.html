@@ -736,7 +736,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r7";
+const APP_VERSION = "2026-06-22 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4474,7 +4474,7 @@ async function saveNewCapsule() {
   if (isTripKind(f.kind)) { payload.start_date = f.start_date || null; payload.end_date = f.end_date || null; }
   try {
     const rows = await rest("/capsules?select=*", {
-      method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload),
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(payload),
     });
     const c = rows[0];
     capsules.unshift(c);
@@ -4609,7 +4609,7 @@ function saveCapsuleNotes(id, value) {
   clearTimeout(_capNotesTimer);
   _capNotesTimer = setTimeout(async () => {
     try {
-      await rest(`/capsules?id=eq.${id}`, { method: "PATCH", body: JSON.stringify({ notes: value || null }) });
+      await rest(`/capsules?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: value || null }) });
       const c = capsuleById.get(id); if (c) c.notes = value;
     } catch (e) { /* silent */ }
   }, 900);
@@ -4628,7 +4628,7 @@ async function togglePack(itemId) {
   refreshPackProgress();
   try {
     await rest(`/capsule_items?capsule_id=eq.${capsuleId}&item_id=eq.${itemId}`,
-      { method: "PATCH", body: JSON.stringify({ packed: next }) });
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ packed: next }) });
   } catch (e) { link.packed = !next; toast(e.message); renderCapsules(); }
 }
 function refreshPackProgress() {
@@ -4720,7 +4720,7 @@ async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
   // `packed` is omitted so this works before the column migration; DB default fills it after.
   const payload = fresh.map(id => ({ capsule_id: cid, item_id: id }));
   const rows = await rest("/capsule_items?select=*", {
-    method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload),
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(payload),
   });
   capsuleLinks = capsuleLinks.concat(rows && rows.length ? rows : payload);
   buildCapsuleIndexes();
