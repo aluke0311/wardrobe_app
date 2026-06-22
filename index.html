@@ -267,6 +267,22 @@
     background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; display: flex;
     align-items: center; justify-content: center; gap: 9px; }
   .cap-plan svg { width: 19px; height: 19px; stroke: #fff; stroke-width: 1.9; fill: none; }
+  /* in-capsule organize toolbar + category groups */
+  .cap-orgbar { display: flex; align-items: center; gap: 8px; padding: 6px 14px 2px; flex-wrap: wrap; }
+  .cap-seg { display: inline-flex; background: #f4f4f7; border-radius: 9px; padding: 2px; }
+  .cap-seg button { padding: 6px 12px; border-radius: 7px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .cap-seg button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+  .cap-chip { padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid var(--line);
+    background: #fff; color: var(--muted); }
+  .cap-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  .cap-grp { margin-top: 4px; }
+  .cap-grp-hdr { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 16px 4px; }
+  .cap-grp-hdr .g-name { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink); }
+  .cap-grp-hdr .g-cnt { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  .cap-grp-hdr .g-cnt.done { color: #2f9e5e; }
+  .cap-catbar { display: flex; gap: 7px; overflow-x: auto; padding: 8px 14px 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .cap-catbar::-webkit-scrollbar { display: none; }
+  .cap-catbar .cap-chip { flex-shrink: 0; }
   .cap-secrow { display: flex; align-items: center; justify-content: space-between;
     padding: 22px 16px 6px; }
   .cap-secrow .t { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
@@ -768,7 +784,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r9";
+const APP_VERSION = "2026-06-22 r10";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4386,6 +4402,32 @@ let _capSheetMode = false;       // bulk "add to capsule" sheet open (reuses #mo
 let _fromCapsule = null;         // item opened from a capsule (closetBack returns here)
 let _pendingAddIds = null;       // items to fold into a capsule right after creation
 let _capNotesTimer = null;
+let _capSort = "category";       // detail grid grouping: "category" | "formality"
+let _capUnpackedOnly = false;    // trip detail: show only not-yet-packed items
+let _capPickCat = null;          // picker category filter (null = all)
+
+// canonical category order for grouping (packing-friendly)
+const CAP_CAT_ORDER = ["Outerwear", "Tops", "Dresses", "Bottoms", "Shoes", "Workout"];
+const catRank = (c) => { const i = CAP_CAT_ORDER.indexOf(c); return i < 0 ? 99 : i; };
+const sortFmlName = (a, b) => {
+  const fa = itemFormality(a), fb = itemFormality(b);
+  if (fa !== fb) return fa - fb;
+  return (a.name || "").localeCompare(b.name || "");
+};
+// → [{key, items}] grouped by category in canonical order, items sorted by formality then name
+function groupByCategory(list) {
+  const map = new Map();
+  for (const i of list) { const c = i.category || "Other"; if (!map.has(c)) map.set(c, []); map.get(c).push(i); }
+  const keys = [...map.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
+  return keys.map(k => ({ key: k, items: map.get(k).sort(sortFmlName) }));
+}
+// → [{key, items}] grouped by the 5 formality levels (only non-empty)
+function groupByFormality(list) {
+  const buckets = OCCASION_LADDER.map(lbl => ({ key: lbl, items: [] }));
+  for (const i of list) { const lv = Math.max(1, Math.min(5, Math.round(itemFormality(i)))); buckets[lv - 1].items.push(i); }
+  return buckets.filter(b => b.items.length)
+    .map(b => ({ key: b.key, items: b.items.sort((a, b) => (a.name || "").localeCompare(b.name || "")) }));
+}
 
 const isTrip = (c) => c && c.kind !== "capsule";
 const capModeLabel = (c) => isTrip(c) ? "Trip" : "Capsule";
@@ -4543,7 +4585,34 @@ function syncCapForm() {
 function openCapsule(id) {
   capsuleId = id;
   capsuleView = "detail";
+  _capUnpackedOnly = false;
   renderCapsules();
+}
+
+function capItemTileHtml(i, trip, packedSet) {
+  const isPacked = trip && packedSet.has(i.id);
+  const tick = trip ? `<div class="pack-tick" data-pack="${esc(i.id)}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>` : "";
+  return `<button class="gtile${isPacked ? " packed" : ""}" data-cap-item="${esc(i.id)}">
+    ${tick}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`;
+}
+
+// category- or formality-grouped grid with per-group counts (and packed counts for trips)
+function capGroupsHtml(list, trip, packedSet) {
+  if (!list.length) return `<div class="placeholder" style="padding:40px 32px"><b>No items yet</b><div>Add pieces to start planning.</div></div>`;
+  const groups = _capSort === "formality" ? groupByFormality(list) : groupByCategory(list);
+  return groups.map(g => {
+    let cnt;
+    if (trip) {
+      const packed = g.items.filter(i => packedSet.has(i.id)).length;
+      cnt = `<span class="g-cnt${packed === g.items.length ? " done" : ""}" data-grp-cnt>${packed}/${g.items.length} packed</span>`;
+    } else {
+      cnt = `<span class="g-cnt">${g.items.length} item${g.items.length === 1 ? "" : "s"}</span>`;
+    }
+    return `<div class="cap-grp" data-grp="${esc(g.key)}">
+      <div class="cap-grp-hdr"><span class="g-name">${esc(g.key)}</span>${cnt}</div>
+      <div class="grid" style="--grid-cols:${gridCols}">${g.items.map(i => capItemTileHtml(i, trip, packedSet)).join("")}</div>
+    </div>`;
+  }).join("");
 }
 
 function renderCapsuleDetail() {
@@ -4608,17 +4677,22 @@ function renderCapsuleDetail() {
     </div>`;
   }
 
-  const grid = list.length
-    ? `<div class="grid" style="--grid-cols:${gridCols}">${list.map(i => {
-        const isPacked = trip && (capsuleLinkMap.get(capsuleId) || []).some(l => l.item_id === i.id && l.packed);
-        const tick = trip ? `<div class="pack-tick" data-pack="${esc(i.id)}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>` : "";
-        return `<button class="gtile${isPacked ? " packed" : ""}" data-cap-item="${esc(i.id)}">
-          ${tick}
-          ${thumbHtml(i.image_path, "gphoto")}
-          <div class="gname">${esc(i.name || "Untitled")}</div>
-        </button>`;
-      }).join("")}</div>`
-    : `<div class="placeholder" style="padding:40px 32px"><b>No items yet</b><div>Add pieces to start planning.</div></div>`;
+  const packedSet = new Set((capsuleLinkMap.get(capsuleId) || []).filter(l => l.packed).map(l => l.item_id));
+  let gridList = list;
+  if (trip && _capUnpackedOnly) gridList = list.filter(i => !packedSet.has(i.id));
+  let grid;
+  if (trip && _capUnpackedOnly && !gridList.length && list.length) {
+    grid = `<div class="placeholder" style="padding:40px 32px"><b>All packed 🎉</b><div>Every item is checked off.</div></div>`;
+  } else {
+    grid = capGroupsHtml(gridList, trip, packedSet);
+  }
+  const orgBar = list.length > 1 ? `<div class="cap-orgbar">
+    <div class="cap-seg">
+      <button data-capsort="category" class="${_capSort === "category" ? "on" : ""}">By category</button>
+      <button data-capsort="formality" class="${_capSort === "formality" ? "on" : ""}">By formality</button>
+    </div>
+    ${trip ? `<button class="cap-chip${_capUnpackedOnly ? " on" : ""}" data-cap-unpacked>Unpacked only</button>` : ""}
+  </div>` : "";
 
   return capToolbar(c.name, true) + `
     <div class="cap-hdr">
@@ -4644,6 +4718,7 @@ function renderCapsuleDetail() {
     </button>
     <textarea class="inp" id="capDetNotes" rows="2" style="margin:16px 14px 0;width:calc(100% - 28px)" placeholder="Notes…">${esc(c.notes || "")}</textarea>
     <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
+    ${orgBar}
     ${grid}
     <div class="cap-footer"><button class="cap-del" data-cap-del>Delete capsule</button></div>`;
 }
@@ -4692,6 +4767,12 @@ async function togglePack(itemId) {
   const tile = $(`[data-cap-item="${itemId}"]`);
   if (tile) tile.classList.toggle("packed", next);
   refreshPackProgress();
+  if (_capUnpackedOnly && next && tile) {
+    tile.remove();
+    $$(".cap-grp").forEach(g => { if (!g.querySelector(".gtile")) g.remove(); });
+    if (!$(".cap-grp")) renderCapsules();
+  }
+  refreshPackGroupCounts();
   try {
     await rest(`/capsule_items?capsule_id=eq.${capsuleId}&item_id=eq.${itemId}`,
       { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ packed: next }) });
@@ -4706,17 +4787,30 @@ function refreshPackProgress() {
   fill.style.width = (total ? Math.round((packed / total) * 100) : 0) + "%";
   if (lbl) lbl.textContent = `${packed} of ${total} packed · tap the circle on a piece to check it off`;
 }
+// recompute each category/formality group's "N/M packed" header from the DOM tiles
+function refreshPackGroupCounts() {
+  $$(".cap-grp").forEach(grp => {
+    const cnt = grp.querySelector("[data-grp-cnt]");
+    if (!cnt) return;
+    const total = grp.querySelectorAll(".gtile").length;
+    const packed = grp.querySelectorAll(".gtile.packed").length;
+    cnt.textContent = `${packed}/${total} packed`;
+    cnt.classList.toggle("done", packed === total);
+  });
+}
 
 // ---- add-items picker (membership editor) ----
 function openCapsulePicker(id) {
   capsuleId = id;
   _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
   _capPickFilter = "";
+  _capPickCat = null;
   capsuleView = "pick";
   renderCapsules();
 }
 
-function pickerPool() {
+// status + keyword filtered (before category chip filter)
+function pickerPoolBase() {
   let pool = items.filter(i => itemStatus(i) !== "Archive");
   const q = _capPickFilter.trim().toLowerCase();
   if (q) pool = pool.filter(i =>
@@ -4726,26 +4820,42 @@ function pickerPool() {
     (i.subcategory || "").toLowerCase().includes(q));
   return pool;
 }
+function pickerPool() {
+  let pool = pickerPoolBase();
+  if (_capPickCat) pool = pool.filter(i => (i.category || "Other") === _capPickCat);
+  return pool;
+}
+
+// horizontal category jump-chips with counts (built from the keyword-filtered pool)
+function pickerCatBar() {
+  const base = pickerPoolBase();
+  const counts = new Map();
+  for (const i of base) { const c = i.category || "Other"; counts.set(c, (counts.get(c) || 0) + 1); }
+  const cats = [...counts.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
+  const chip = (key, lbl, n, on) => `<button class="cap-chip${on ? " on" : ""}" data-pickcat="${esc(key)}">${esc(lbl)} ${n}</button>`;
+  return `<div class="cap-catbar">${chip("__all__", "All", base.length, !_capPickCat)}${cats.map(c => chip(c, c, counts.get(c), _capPickCat === c)).join("")}</div>`;
+}
+
+// category-grouped selectable grid for the picker
+function pickerGridHtml(pool) {
+  if (!pool.length) return `<div class="placeholder"><b>No matches</b></div>`;
+  return groupByCategory(pool).map(g => `<div class="cap-grp" data-grp="${esc(g.key)}">
+    <div class="cap-grp-hdr"><span class="g-name">${esc(g.key)}</span><span class="g-cnt">${g.items.length}</span></div>
+    <div class="grid" style="--grid-cols:${gridCols}">${g.items.map(i => {
+      const on = _capPick.has(i.id);
+      const chk = `<div class="sel-dot${on ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
+      return `<button class="gtile${on ? " selected" : ""}" data-pick="${esc(i.id)}">${chk}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`;
+    }).join("")}</div>
+  </div>`).join("");
+}
 
 function renderCapsulePicker() {
   const c = capsuleById.get(capsuleId);
-  const pool = pickerPool();
-  const grid = pool.length
-    ? `<div class="grid" style="--grid-cols:${gridCols}">${pool.map(i => {
-        const on = _capPick.has(i.id);
-        const chk = `<div class="sel-dot${on ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
-        return `<button class="gtile${on ? " selected" : ""}" data-pick="${esc(i.id)}">
-          ${chk}
-          ${thumbHtml(i.image_path, "gphoto")}
-          <div class="gname">${esc(i.name || "Untitled")}</div>
-        </button>`;
-      }).join("")}</div>`
-    : `<div class="placeholder"><b>No matches</b></div>`;
   const right = `<button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>`;
   return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
     <div style="padding:10px 14px 0"><input class="inp" id="capPickSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
     <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
-    ${grid}`;
+    <div id="capPickResults">${pickerCatBar()}${pickerGridHtml(pickerPool())}</div>`;
 }
 
 function togglePick(id) {
@@ -4864,20 +4974,12 @@ function wireCapsules() {
   if (dn) dn.oninput = () => saveCapsuleNotes(capsuleId, dn.value);
 }
 
-// re-render just the picker grid + count (keeps the search box focused)
+// re-render just the picker results (cat bar + grouped grid); keeps the search box focused
 function renderPickerGrid() {
   const body = $("#capsulesBody");
-  const pool = pickerPool();
   const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
-  const old = body.querySelector(".grid") || body.querySelector(".placeholder");
-  const html = pool.length
-    ? `<div class="grid" style="--grid-cols:${gridCols}">${pool.map(i => {
-        const on = _capPick.has(i.id);
-        const chk = `<div class="sel-dot${on ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
-        return `<button class="gtile${on ? " selected" : ""}" data-pick="${esc(i.id)}">${chk}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`;
-      }).join("")}</div>`
-    : `<div class="placeholder"><b>No matches</b></div>`;
-  if (old) { old.outerHTML = html; hydratePhotos(body); }
+  const wrap = $("#capPickResults");
+  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerGridHtml(pickerPool()); hydratePhotos(body); }
 }
 
 /* ===================================================================
@@ -5316,6 +5418,11 @@ function wireEvents() {
     if (e.target.closest("[data-loc-add]")) return openLocationSheet(capsuleId);
     const locDel = e.target.closest("[data-loc-del]");
     if (locDel) { e.stopPropagation(); return removeLocation(capsuleId, parseInt(locDel.dataset.locDel)); }
+    const sortBtn = e.target.closest("[data-capsort]");
+    if (sortBtn) { _capSort = sortBtn.dataset.capsort; return renderCapsules(); }
+    if (e.target.closest("[data-cap-unpacked]")) { _capUnpackedOnly = !_capUnpackedOnly; return renderCapsules(); }
+    const pickCat = e.target.closest("[data-pickcat]");
+    if (pickCat) { _capPickCat = pickCat.dataset.pickcat === "__all__" ? null : pickCat.dataset.pickcat; return renderPickerGrid(); }
     const pack = e.target.closest("[data-pack]");
     if (pack) { e.stopPropagation(); return togglePack(pack.dataset.pack); }
     const capItem = e.target.closest("[data-cap-item]");
