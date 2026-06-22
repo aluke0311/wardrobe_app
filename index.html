@@ -176,6 +176,9 @@
   .stats-sort-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .frow.donut-hi { background: rgba(88,112,196,0.07); }
   .gtile-sub { font-size: 11px; color: var(--accent); text-align: center; line-height: 1.3; margin-top: 1px; }
+  .sf-section { margin-bottom: 4px; }
+  .sf-label { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 12px 14px 2px; }
+  .filter-badge { position: absolute; top: 1px; right: 1px; background: var(--accent); color: #fff; border-radius: 50%; font-size: 9px; width: 13px; height: 13px; display: flex; align-items: center; justify-content: center; font-weight: 700; pointer-events: none; }
 
   /* ---------- item grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
@@ -595,6 +598,12 @@
   <div class="sheet" id="logInner"></div>
 </div>
 
+<!-- ===== STATS FILTER SHEET ===== -->
+<div id="statsFilterSheet" hidden>
+  <div class="sheet-bg" id="statsFilterBg"></div>
+  <div class="sheet" id="statsFilterInner" style="max-height:80vh;overflow-y:auto"></div>
+</div>
+
 <script>
 /* ===================================================================
    CONFIG  (publishable key + URL are safe to ship in client code)
@@ -604,7 +613,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r16";
+const APP_VERSION = "2026-06-22 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2456,54 +2465,80 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
   const r = BUCKET_RANGES[bucketKey];
   if (!r || !its.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
 
-  const bucketLabel = FORMALITY_BUCKETS.find(b => b.key === bucketKey)?.label || bucketKey;
-  const rangeLabel = `${occLabel(r.min)} – ${occLabel(r.max)}`;
+  // lo/hi are the target range the user is pushing pieces toward — start at bucket default
+  let lo = r.min, hi = r.max;
 
-  const pieceRows = its.map(it => {
-    const f = itemFormality(it);
-    const matches = f >= r.min - 0.5 && f <= r.max + 0.5;
-    return `<label style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
-      <input type="checkbox" data-nudge="${esc(it.id)}" ${!matches ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
-      <span style="flex:1;min-width:0">
-        <span style="display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.name || "Untitled")}</span>
-        <span style="display:block;font-size:12px;color:var(--muted)">${esc(pieceFormalityLabel(it))}</span>
-      </span>
-    </label>`;
-  }).join("");
+  const renderSheet = () => {
+    const rangeLabel = lo === hi ? occLabel(lo) : `${occLabel(lo)} – ${occLabel(hi)}`;
+    const chips = OCCASION_LADDER.map((lbl, idx) => {
+      const lvl = idx + 1, on = lvl >= lo && lvl <= hi;
+      return `<button class="sheet-chip${on ? " on" : ""}" data-nudgelvl="${lvl}" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+    }).join("");
 
-  $("#logInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="nudgeSkip">Skip</button>
-      <h2>Nudge pieces?</h2>
-      <button class="lnk" id="nudgeApply" style="font-weight:700">Apply</button>
-    </div>
-    <div style="padding:14px 18px 30px">
-      <div class="muted" style="font-size:13px;margin-bottom:6px">Set checked pieces to <b>${esc(bucketLabel)}</b> (${esc(rangeLabel)}).</div>
-      <div>${pieceRows}</div>
-    </div>`;
+    const pieceRows = its.map(it => {
+      const f = itemFormality(it);
+      const matches = f >= lo - 0.5 && f <= hi + 0.5;
+      return `<label style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+        <input type="checkbox" data-nudge="${esc(it.id)}" ${!matches ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
+        <span style="flex:1;min-width:0">
+          <span style="display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.name || "Untitled")}</span>
+          <span style="display:block;font-size:12px;color:var(--muted)">${esc(pieceFormalityLabel(it))}</span>
+        </span>
+      </label>`;
+    }).join("");
 
-  $("#nudgeSkip").onclick = () => { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); };
+    $("#logInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="nudgeSkip">Skip</button>
+        <h2>Nudge pieces?</h2>
+        <button class="lnk" id="nudgeApply" style="font-weight:700">Apply</button>
+      </div>
+      <div style="padding:14px 18px 30px">
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Tap the range to push checked pieces toward, then apply.</div>
+        <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:14px">${chips}</div>
+        <div style="font-size:13px;margin-bottom:12px">Target: <b>${esc(rangeLabel)}</b></div>
+        <div>${pieceRows}</div>
+      </div>`;
 
-  $("#nudgeApply").onclick = async () => {
-    const toNudge = [...$("#logInner").querySelectorAll("[data-nudge]:checked")].map(x => x.dataset.nudge);
-    if (!toNudge.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
-    try {
-      const idList = toNudge.map(iid => `"${iid}"`).join(",");
-      await rest(`/items?id=in.(${idList})`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ min_occasion: r.min, max_occasion: r.max }),
+    $("#nudgeSkip").onclick = () => { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); };
+
+    // tap-lo-then-hi range selection (same logic as openOccasionEdit)
+    let tapState = "lo"; // next tap sets lo
+    $("#logInner").querySelectorAll("[data-nudgelvl]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const lvl = +btn.dataset.nudgelvl;
+        if (tapState === "lo") { lo = lvl; hi = lvl; tapState = "hi"; }
+        else if (tapState === "hi") {
+          if (lvl < lo) { lo = lvl; tapState = "hi"; }
+          else { hi = lvl; tapState = "lo"; }
+        }
+        renderSheet();
       });
-      toNudge.forEach(iid => {
-        const it = itemById.get(iid) || items.find(x => x.id === iid);
-        if (it) { it.min_occasion = r.min; it.max_occasion = r.max; }
-      });
-      outfits.forEach(o => { o._bucket = null; });
-      toast(`Formality saved · ${toNudge.length} piece${toNudge.length === 1 ? "" : "s"} updated`);
-    } catch (e) { toast(e.message); }
-    $("#logSheet").hidden = true;
-    openLook(outfitId);
+    });
+
+    $("#nudgeApply").onclick = async () => {
+      const toNudge = [...$("#logInner").querySelectorAll("[data-nudge]:checked")].map(x => x.dataset.nudge);
+      if (!toNudge.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
+      try {
+        const idList = toNudge.map(iid => `"${iid}"`).join(",");
+        await rest(`/items?id=in.(${idList})`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+          body: JSON.stringify({ min_occasion: lo, max_occasion: hi }),
+        });
+        toNudge.forEach(iid => {
+          const it = itemById.get(iid) || items.find(x => x.id === iid);
+          if (it) { it.min_occasion = lo; it.max_occasion = hi; }
+        });
+        outfits.forEach(o => { o._bucket = null; });
+        toast(`Formality saved · ${toNudge.length} piece${toNudge.length === 1 ? "" : "s"} updated`);
+      } catch (e) { toast(e.message); }
+      $("#logSheet").hidden = true;
+      openLook(outfitId);
+    };
   };
+
+  renderSheet();
 }
 
 // ---- correct a piece's formality (edits its occasion range on the item) ----
@@ -3159,6 +3194,7 @@ let statsDonutIdx = 0;      // active donut segment index
 let statsFieldSort = "count"; // "count" | "name" — sort order for field breakdown list
 let statsFilters = { status: [], category: [], season: [], formality: [] }; // multi-select arrays
 let statsDateRange = "all"; // "all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"
+let statsAcqRange = "all";  // "all"|"1yr"|"2yr"|"3yr"|"5yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
 
 const PRICE_BRACKETS = [
@@ -3178,12 +3214,13 @@ const DONUT_PALETTE = [
 ];
 
 const STATS_FIELD_LABELS = {
-  color_family: "Color", category: "Category", brand: "Brand",
+  color_family: "Color", category: "Category", brand: "Brand", retailer: "Retailer",
   price: "Price", size: "Size", season: "Season", fabric: "Fabric", acquisition: "Acquisition",
 };
 
 function statsPool() {
   const { status, category, season, formality } = statsFilters;
+  const acqCutoff = acqRangeStart();
   return items.filter(i => {
     if (status.length) {
       if (!status.includes(i.status)) return false;
@@ -3198,6 +3235,11 @@ function statsPool() {
         return i.min_occasion && i.max_occasion && i.min_occasion <= lvl && i.max_occasion >= lvl;
       });
       if (!matches) return false;
+    }
+    if (acqCutoff) {
+      const pd = i.purchase_date;
+      if (acqCutoff.older) { if (!pd || pd >= acqCutoff.cutoff) return false; }
+      else                 { if (!pd || pd < acqCutoff.cutoff)  return false; }
     }
     return true;
   });
@@ -3221,77 +3263,177 @@ function wearCountInRange(itemId) {
   return wears.filter(w => w.item_id === itemId && w.worn_on >= cutoff).length;
 }
 
-function statsFilterBar() {
+function acqRangeStart() {
+  if (statsAcqRange === "all") return null;
+  const older = statsAcqRange.startsWith("o");
+  const period = statsAcqRange.slice(1); // "1yr","2yr","3yr","5yr"
+  const d = new Date();
+  if (period === "1yr") d.setFullYear(d.getFullYear() - 1);
+  else if (period === "2yr") d.setFullYear(d.getFullYear() - 2);
+  else if (period === "3yr") d.setFullYear(d.getFullYear() - 3);
+  else if (period === "5yr") d.setFullYear(d.getFullYear() - 5);
+  return { cutoff: d.toISOString().slice(0, 10), older };
+}
+
+function statsActiveFilterCount() {
+  const { status, category, season, formality } = statsFilters;
+  let n = (status.length ? 1 : 0) + (category.length ? 1 : 0) +
+          (season.length ? 1 : 0) + (formality.length ? 1 : 0);
+  if (statsDateRange !== "all") n++;
+  if (statsAcqRange !== "all") n++;
+  return n;
+}
+
+function statsRebuild() {
+  if (statsView === "grid") {
+    if (statsListKey) {
+      const result = buildSmartList(statsListKey);
+      if (result) { statsGridItems = result.list; statsGridTitle = result.title; statsSubtitleFn = result.subtitleFn || null; }
+    } else if (statsFromField) {
+      statsView = "field"; statsGridItems = []; statsGridTitle = "";
+    } else {
+      statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false;
+    }
+  }
+  renderStats();
+}
+
+function openStatsFilters() {
   const all = items.filter(i => i.status !== "Archive");
   const cats = CATEGORIES.filter(c => all.some(i => i.category === c));
   const { status, category, season, formality } = statsFilters;
+  const wearLists = ["never-worn", "most-worn", "least-worn"];
+  const showDateRange = statsView === "main" || (statsView === "grid" && wearLists.includes(statsListKey));
+
   const chip = (dim, val, label, active) =>
     `<button class="stats-catbtn${active ? " on" : ""}" data-sf="${dim}" data-sv="${val ?? "__all__"}">${esc(label)}</button>`;
+  const acqChip = (val, label) =>
+    `<button class="stats-catbtn${statsAcqRange === val ? " on" : ""}" data-sar="${val}">${esc(label)}</button>`;
   const rangeChip = (val, label) =>
     `<button class="stats-catbtn${statsDateRange === val ? " on" : ""}" data-sr="${val}">${esc(label)}</button>`;
-  return `
-    <div class="stats-catbar">
-      ${chip("status", null, "Avail + Storage", !status.length)}
-      ${chip("status", "Available", "Available", status.includes("Available"))}
-      ${chip("status", "Storage", "Storage", status.includes("Storage"))}
-    </div>
-    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px">
-      ${rangeChip("all", "All time")}
-      ${rangeChip("7d", "7 days")}
-      ${rangeChip("14d", "14 days")}
-      ${rangeChip("30d", "30 days")}
-      ${rangeChip("90d", "90 days")}
-      ${rangeChip("6mo", "6 months")}
-      ${rangeChip("1yr", "1 year")}
-    </div>
-    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px">
-      ${chip("category", null, "All", !category.length)}
-      ${cats.map(c => chip("category", c, c, category.includes(c))).join("")}
-    </div>
-    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px">
-      ${chip("season", null, "All Seasons", !season.length)}
-      ${SEASONS.map(s => chip("season", s, s, season.includes(s))).join("")}
-    </div>
-    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px;padding-bottom:4px">
-      ${chip("formality", null, "All Formality", !formality.length)}
-      ${OCCASION_LADDER.map(f => chip("formality", f, f, formality.includes(f))).join("")}
-    </div>`;
-}
 
-function wireStatsFilters() {
-  const rebuild = () => {
-    if (statsView === "grid") {
-      if (statsListKey) {
-        const result = buildSmartList(statsListKey);
-        if (result) { statsGridItems = result.list; statsGridTitle = result.title; statsSubtitleFn = result.subtitleFn || null; }
-      } else if (statsFromField) {
-        statsView = "field"; statsGridItems = []; statsGridTitle = "";
-      } else {
-        statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false;
-      }
-    }
-    renderStats();
+  $("#statsFilterInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="sfReset" style="color:var(--danger)">Reset</button>
+      <h2>Filters</h2>
+      <button class="lnk" id="sfDone" style="font-weight:700">Done</button>
+    </div>
+    <div style="padding-bottom:34px">
+      <div class="sf-section">
+        <div class="sf-label">Status</div>
+        <div class="stats-catbar">
+          ${chip("status", null, "Avail + Storage", !status.length)}
+          ${chip("status", "Available", "Available", status.includes("Available"))}
+          ${chip("status", "Storage", "Storage", status.includes("Storage"))}
+        </div>
+      </div>
+      <div class="sf-section">
+        <div class="sf-label">Acquired within</div>
+        <div class="stats-catbar">
+          ${acqChip("all", "All time")}
+          ${acqChip("w1yr", "1 year")}
+          ${acqChip("w2yr", "2 years")}
+          ${acqChip("w3yr", "3 years")}
+          ${acqChip("w5yr", "5 years")}
+        </div>
+      </div>
+      <div class="sf-section">
+        <div class="sf-label">Acquired more than … ago</div>
+        <div class="stats-catbar">
+          ${acqChip("o1yr", "1 year")}
+          ${acqChip("o2yr", "2 years")}
+          ${acqChip("o3yr", "3 years")}
+          ${acqChip("o5yr", "5 years")}
+        </div>
+      </div>
+      ${showDateRange ? `<div class="sf-section">
+        <div class="sf-label">Worn within</div>
+        <div class="stats-catbar">
+          ${rangeChip("all", "All time")}
+          ${rangeChip("7d", "7 days")}
+          ${rangeChip("14d", "14 days")}
+          ${rangeChip("30d", "30 days")}
+          ${rangeChip("90d", "90 days")}
+          ${rangeChip("6mo", "6 months")}
+          ${rangeChip("1yr", "1 year")}
+        </div>
+      </div>` : ""}
+      <div class="sf-section">
+        <div class="sf-label">Category</div>
+        <div class="stats-catbar">
+          ${chip("category", null, "All", !category.length)}
+          ${cats.map(c => chip("category", c, c, category.includes(c))).join("")}
+        </div>
+      </div>
+      <div class="sf-section">
+        <div class="sf-label">Season</div>
+        <div class="stats-catbar">
+          ${chip("season", null, "All Seasons", !season.length)}
+          ${SEASONS.map(s => chip("season", s, s, season.includes(s))).join("")}
+        </div>
+      </div>
+      <div class="sf-section">
+        <div class="sf-label">Formality</div>
+        <div class="stats-catbar">
+          ${chip("formality", null, "All", !formality.length)}
+          ${OCCASION_LADDER.map(f => chip("formality", f, f, formality.includes(f))).join("")}
+        </div>
+      </div>
+    </div>`;
+
+  const close = () => { $("#statsFilterSheet").hidden = true; };
+
+  $("#sfDone").onclick = close;
+  $("#sfReset").onclick = () => {
+    statsFilters = { status: [], category: [], season: [], formality: [] };
+    statsDateRange = "all"; statsAcqRange = "all";
+    statsRebuild();
+    close();
   };
-  $("#statsBody").querySelectorAll("[data-sf]").forEach(btn => {
+  $("#statsFilterBg").onclick = close;
+
+  $("#statsFilterInner").querySelectorAll("[data-sf]").forEach(btn => {
     btn.addEventListener("click", () => {
-      const dim = btn.dataset.sf;
-      const val = btn.dataset.sv;
-      if (val === "__all__") {
-        statsFilters[dim] = [];
-      } else {
-        const arr = statsFilters[dim];
-        const idx = arr.indexOf(val);
+      const dim = btn.dataset.sf, val = btn.dataset.sv;
+      if (val === "__all__") { statsFilters[dim] = []; }
+      else {
+        const arr = statsFilters[dim], idx = arr.indexOf(val);
         if (idx >= 0) arr.splice(idx, 1); else arr.push(val);
       }
-      rebuild();
+      // surgical active state update in the sheet
+      btn.closest(".stats-catbar").querySelectorAll("[data-sf]").forEach(b => {
+        const v = b.dataset.sv, arr = statsFilters[dim];
+        b.classList.toggle("on", v === "__all__" ? !arr.length : arr.includes(v));
+      });
+      statsRebuild();
+      // update badge in toolbar (already re-rendered by statsRebuild)
     });
   });
-  $("#statsBody").querySelectorAll("[data-sr]").forEach(btn => {
+  $("#statsFilterInner").querySelectorAll("[data-sar]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      statsAcqRange = btn.dataset.sar;
+      btn.closest(".stats-catbar").querySelectorAll("[data-sar]").forEach(b =>
+        b.classList.toggle("on", b.dataset.sar === statsAcqRange));
+      statsRebuild();
+    });
+  });
+  $("#statsFilterInner").querySelectorAll("[data-sr]").forEach(btn => {
     btn.addEventListener("click", () => {
       statsDateRange = btn.dataset.sr;
-      rebuild();
+      btn.closest(".stats-catbar").querySelectorAll("[data-sr]").forEach(b =>
+        b.classList.toggle("on", b.dataset.sr === statsDateRange));
+      statsRebuild();
     });
   });
+
+  $("#statsFilterSheet").hidden = false;
+}
+
+function wireStatsToolbar() {
+  const back = $("#stBack");
+  if (back) back.addEventListener("click", statsNavBack);
+  const flt = $("#stFilter");
+  if (flt) flt.addEventListener("click", openStatsFilters);
 }
 
 const TOGGLE_GROUPS = {
@@ -3301,24 +3443,40 @@ const TOGGLE_GROUPS = {
   "worst-cpw":  { keys: ["best-cpw",  "worst-cpw"],  labels: ["Best", "Worst"] },
 };
 
+function dateRangeHuman() {
+  const map = { "7d": "7 days", "14d": "14 days", "30d": "30 days", "90d": "90 days", "6mo": "6 months", "1yr": "1 year" };
+  return map[statsDateRange] || statsDateRange;
+}
+
 function buildSmartList(key) {
   const av = statsPool();
-  const rangeLabel = statsDateRange === "all" ? "" : ` (${statsDateRange === "6mo" ? "6 months" : statsDateRange === "1yr" ? "1 year" : statsDateRange})`;
-  if (key === "never-worn")
-    return { list: av.filter(i => wearCountInRange(i.id) === 0), title: "Never Worn" + rangeLabel };
+  const wornSub = item => { const n = wearCountInRange(item.id); return n === 0 ? "0 wears" : `${n} wear${n === 1 ? "" : "s"}`; };
+  const rangeStr = statsDateRange === "all" ? "" : ` · past ${dateRangeHuman()}`;
+  if (key === "never-worn") {
+    const title = statsDateRange === "all" ? "Never Worn" : `Not Worn · past ${dateRangeHuman()}`;
+    return { list: av.filter(i => wearCountInRange(i.id) === 0), title };
+  }
   if (key === "not-worn-1yr")
     return { list: av.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; })
       .sort((a, b) => (daysSince(lastWorn(b.id)) || 0) - (daysSince(lastWorn(a.id)) || 0)), title: "Not Worn in 12+ Months" };
   if (key === "most-worn")
-    return { list: [...av].sort((a, b) => wearCountInRange(b.id) - wearCountInRange(a.id)).slice(0, 100), title: "Most Worn" + rangeLabel };
+    return { list: [...av].sort((a, b) => wearCountInRange(b.id) - wearCountInRange(a.id)).slice(0, 100),
+      title: "Most Worn" + rangeStr, subtitleFn: wornSub };
   if (key === "least-worn")
-    return { list: [...av].sort((a, b) => wearCountInRange(a.id) - wearCountInRange(b.id)).slice(0, 100), title: "Least Worn" + rangeLabel };
-  if (key === "best-cpw")
+    return { list: [...av].sort((a, b) => wearCountInRange(a.id) - wearCountInRange(b.id)).slice(0, 100),
+      title: "Least Worn" + rangeStr, subtitleFn: wornSub };
+  if (key === "best-cpw") {
+    const cpwSub = item => { const c = costPerWear(item); return c != null ? money(c) + "/wear" : ""; };
     return { list: av.filter(i => i.price && wearCount(i.id) > 0)
-      .sort((a, b) => (costPerWear(a) || Infinity) - (costPerWear(b) || Infinity)).slice(0, 100), title: "Best Cost-per-Wear" };
-  if (key === "worst-cpw")
+      .sort((a, b) => (costPerWear(a) || Infinity) - (costPerWear(b) || Infinity)).slice(0, 100),
+      title: "Best Cost-per-Wear", subtitleFn: cpwSub };
+  }
+  if (key === "worst-cpw") {
+    const cpwSub = item => { const c = costPerWear(item); return c != null ? money(c) + "/wear" : ""; };
     return { list: av.filter(i => i.price && wearCount(i.id) > 0)
-      .sort((a, b) => (costPerWear(b) || 0) - (costPerWear(a) || 0)).slice(0, 100), title: "Worst Cost-per-Wear" };
+      .sort((a, b) => (costPerWear(b) || 0) - (costPerWear(a) || 0)).slice(0, 100),
+      title: "Worst Cost-per-Wear", subtitleFn: cpwSub };
+  }
   if (key === "best-potential") {
     const cpwFmt = n => n >= 10 ? "$" + Math.round(n) : money(n);
     return {
@@ -3336,9 +3494,16 @@ function buildSmartList(key) {
     };
   }
   if (key === "recent") {
-    const cut = new Date(); cut.setDate(cut.getDate() - 30);
-    return { list: av.filter(i => i.created_at && new Date(i.created_at) >= cut)
-      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)), title: "Recently Added" };
+    const cut = new Date(); cut.setMonth(cut.getMonth() - 6);
+    const cutStr = cut.toISOString().slice(0, 10);
+    const acqSub = item => {
+      if (!item.purchase_date) return "";
+      const d = new Date(item.purchase_date + "T00:00:00");
+      return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+    };
+    return { list: av.filter(i => i.purchase_date && i.purchase_date >= cutStr)
+      .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date)),
+      title: "Recently Acquired", subtitleFn: acqSub };
   }
   return null;
 }
@@ -3350,10 +3515,14 @@ function renderStats() {
 }
 
 function statsToolbar(title, showBack) {
+  const n = statsActiveFilterCount();
   return `<div class="cltoolbar">
     ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
     <div class="cltitle">${esc(title)}</div>
-    <span style="width:34px"></span>
+    <button class="clsearch" id="stFilter" style="position:relative" title="Filters">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+      ${n ? `<span class="filter-badge">${n}</span>` : ""}
+    </button>
   </div>`;
 }
 
@@ -3397,6 +3566,9 @@ function getFieldGroups(field) {
     } else if (field === "fabric") {
       if (!item.fabric || !item.fabric.length) { noValue.push(item); continue; }
       for (const f of item.fabric) add(f, item);
+    } else if (field === "retailer") {
+      if (!item.retailer || !item.retailer.trim()) { noValue.push(item); continue; }
+      add(item.retailer.trim(), item);
     } else if (field === "acquisition") {
       if (!item.acquisition) { noValue.push(item); continue; }
       add(item.acquisition, item);
@@ -3450,7 +3622,7 @@ function wireDonutArrows(segments, total) {
     if (lbl && seg) lbl.innerHTML = `<div style="font-size:20px;font-weight:700;line-height:1.2">${esc(seg.label)}</div>
       <div class="muted" style="font-size:15px;margin-top:4px">${total ? ((seg.count/total)*100).toFixed(1) : 0}%</div>`;
     // highlight matching list row
-    document.querySelectorAll("#statsBody [data-sv]").forEach(btn => {
+    document.querySelectorAll("#statsBody [data-sv]:not([data-sf])").forEach(btn => {
       const active = seg && btn.dataset.sv === seg.label;
       btn.classList.toggle("donut-hi", active);
       if (active) btn.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -3475,6 +3647,8 @@ function renderStatsMain() {
   })();
   const neverWorn = avail.filter(i => wearCountInRange(i.id) === 0).length;
   const notWorn1yr = avail.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; }).length;
+  const neverWornLabel = statsDateRange === "all" ? "Never Worn" : `Not worn · past ${dateRangeHuman()}`;
+  const mostWornSub = statsDateRange === "all" ? "Most & Least worn" : `Most & Least · past ${dateRangeHuman()}`;
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
       <div class="fmeta"><div class="fname">${esc(label)}</div>${sub ? `<div class="fcount">${esc(sub)}</div>` : ""}</div>
@@ -3483,7 +3657,6 @@ function renderStatsMain() {
 
   $("#statsBody").innerHTML = `
     ${statsToolbar("Style Stats", false)}
-    ${statsFilterBar()}
     <div style="padding-bottom:32px">
       <div class="sec-hdr">Closet</div>
       <div class="card" style="margin:0 14px">
@@ -3500,18 +3673,18 @@ function renderStatsMain() {
       </div>
       <div class="frows">
         ${row("Category", null, "field:category")} ${row("Brand", null, "field:brand")}
-        ${row("Price", null, "field:price")} ${row("Size", null, "field:size")}
-        ${row("Season", null, "field:season")} ${row("Fabric", null, "field:fabric")}
-        ${row("Acquisition", null, "field:acquisition")}
+        ${row("Retailer", null, "field:retailer")} ${row("Price", null, "field:price")}
+        ${row("Size", null, "field:size")}         ${row("Season", null, "field:season")}
+        ${row("Fabric", null, "field:fabric")}     ${row("Acquisition", null, "field:acquisition")}
       </div>
       <div class="sec-hdr">Wear Insights</div>
       <div class="frows">
-        ${row("Never Worn",               `${neverWorn} item${neverWorn !== 1 ? "s" : ""}`,   "list:never-worn")}
+        ${row(neverWornLabel,             `${neverWorn} item${neverWorn !== 1 ? "s" : ""}`,   "list:never-worn")}
         ${row("Not Worn in 12+ Months",   `${notWorn1yr} item${notWorn1yr !== 1 ? "s" : ""}`, "list:not-worn-1yr")}
-        ${row("Times Worn",               "Most &amp; Least worn",                              "list:most-worn")}
-        ${row("Cost-per-Wear",            "Best &amp; Worst $/wear",                            "list:best-cpw")}
+        ${row("Most Worn",                mostWornSub,                                          "list:most-worn")}
+        ${row("Cost-per-Wear",            "Best & Worst $/wear",                                "list:best-cpw")}
         ${row("Best Potential Improvement","One more wear → biggest CPW drop",                 "list:best-potential")}
-        ${row("Recently Added",           "Last 30 days",                                      "list:recent")}
+        ${row("Recently Acquired",         "Last 6 months",                                     "list:recent")}
       </div>
       <div class="sec-hdr">Looks</div>
       <div class="card" style="margin:0 14px">
@@ -3522,7 +3695,7 @@ function renderStatsMain() {
       </div>
     </div>`;
 
-  wireStatsFilters();
+  wireStatsToolbar();
   $("#statsBody").querySelectorAll("[data-sa]").forEach(el => {
     el.addEventListener("click", () => {
       const action = el.dataset.sa;
@@ -3598,7 +3771,6 @@ function renderStatsFieldPage() {
 
   $("#statsBody").innerHTML = `
     ${statsToolbar(label, true)}
-    ${statsFilterBar()}
     ${donut ? `<div class="stats-donut-row">
       ${donut}
       <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
@@ -3614,15 +3786,14 @@ function renderStatsFieldPage() {
     <div class="frows" style="padding-top:4px">${rows}</div>
     ${sortBar}`;
 
-  $("#stBack").addEventListener("click", statsNavBack);
-  wireStatsFilters();
+  wireStatsToolbar();
   wireDonutArrows(segments, total);
 
   $("#statsBody").querySelectorAll("[data-ss]").forEach(btn => {
     btn.addEventListener("click", () => { statsFieldSort = btn.dataset.ss; renderStatsFieldPage(); });
   });
 
-  $("#statsBody").querySelectorAll("[data-sv]").forEach(el => {
+  $("#statsBody").querySelectorAll("[data-sv]:not([data-sf])").forEach(el => {
     el.addEventListener("click", () => {
       const val = el.dataset.sv;
       const { noValue, groups } = getFieldGroups(statsField);
@@ -3642,9 +3813,8 @@ function renderStatsGridPage() {
   const toggleHtml = tg ? `<div class="stats-sort-bar" style="padding-top:4px;padding-bottom:4px">
     ${tg.keys.map((k, i) => `<button class="stats-sort-btn${statsListKey === k ? " on" : ""}" data-stoggle="${k}">${esc(tg.labels[i])}</button>`).join("")}
   </div>` : "";
-  body.innerHTML = statsToolbar(statsGridTitle, true) + statsFilterBar() + toggleHtml + gridHtml(statsGridItems, statsSubtitleFn);
-  $("#stBack").addEventListener("click", statsNavBack);
-  wireStatsFilters();
+  body.innerHTML = statsToolbar(statsGridTitle, true) + toggleHtml + gridHtml(statsGridItems, statsSubtitleFn);
+  wireStatsToolbar();
   body.querySelectorAll("[data-stoggle]").forEach(btn => {
     btn.addEventListener("click", () => {
       const key = btn.dataset.stoggle;
