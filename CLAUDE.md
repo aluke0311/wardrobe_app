@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r5. Full rework from v25. ~3,100 lines.**
+**Current state: 2026-06-22 r6. Full rework from v25. ~3,100 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -450,7 +450,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-22 r5` (with Closet Review "Edit Item").
+  pushes the same day, increment `rN`. Currently `2026-06-22 r6`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
