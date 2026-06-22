@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r16 / 2026-06-21. Full rework from v25. ~2,600 lines.**
+**Current state: r17 / 2026-06-22. Full rework from v25. ~2,900 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -349,9 +349,9 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   - **Nav:** Stats is now in the bottom tab bar (replaced Capsules stub). Capsules still
     accessible via Home tile.
   - **Main page:** CLOSET section (item count + total value KPI pair, color bar → Color
-    breakdown), Browse by field rows (Color/Category/Brand/Price/Size/Season/Fabric/
-    Acquisition), WEAR INSIGHTS (Never Worn / Not Worn 12+ Mo / Times Worn / Cost-per-Wear /
-    Best Potential Improvement / Recently Added), LOOKS section (outfit count + avg items/look).
+    breakdown), Browse by field rows (Color/Category/Brand/Retailer/Price/Size/Season/Fabric/
+    Acquisition), WEAR INSIGHTS (Never Worn / Not Worn 12+ Mo / Most Worn / Cost-per-Wear /
+    Best Potential Improvement / Recently Acquired), LOOKS section (outfit count + avg items/look).
   - **Field breakdown pages:** donut SVG (pure math, no library; hex colors for Color, palette
     for others). Arrows cycle segments — highlights matching list row + scrolls it into view.
     Sort by Count / Sort by Name buttons at bottom (except canonical-order fields like Price,
@@ -359,30 +359,42 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   - **Smart list grids:** `buildSmartList(key)` → never-worn, not-worn-1yr, most-worn,
     least-worn, best-cpw, worst-cpw, best-potential, recent. `TOGGLE_GROUPS` maps paired lists
     (most-worn↔least-worn, best-cpw↔worst-cpw); grid shows a Best/Worst or Most/Least toggle
-    bar when a togglable list is active. "Best Potential" tiles show improvement inline via
-    `statsSubtitleFn` (e.g. "$45 → $36/wear"). `gridHtml(list, subtitleFn)` accepts optional
-    subtitle fn; renders `.gtile-sub` below each name.
+    bar when a togglable list is active. Tiles show subtitles: wear count (most/least-worn),
+    $/wear (CPW lists), CPW improvement (best-potential), purchase month (recently acquired).
+    `gridHtml(list, subtitleFn)` accepts optional subtitle fn; renders `.gtile-sub`.
   - **Item detail from stats:** `openItemFromStats()` switches to closet tab; `_fromStats` in
     `closetBack()` returns to the stats grid. Back stack: detail → grid → field breakdown → main.
   - **State:** `statsView` ("main"|"field"|"grid"), `statsField`, `statsGridItems`,
     `statsGridTitle`, `statsFromField`, `statsListKey`, `statsDonutIdx`, `statsFieldSort`,
     `statsFilters` ({status:[], category:[], season:[], formality:[]}), `statsDateRange`
-    ("all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"), `statsSubtitleFn`.
-  - **Filters (filter bar, 5 rows):**
-    1. Status: Available / Storage (multi-select; empty = both; Archive always excluded).
-    2. Date range: All time / 7d / 14d / 30d / 90d / 6mo / 1yr (single-select).
-    3. Category, 4. Season, 5. Formality — all multi-select (empty = all; OR logic within
-       each dim, AND logic across dims).
-  - **Date range:** `rangeStart()` computes cutoff date. `wearCountInRange(itemId)` counts
-    wears on or after cutoff. Wear-based smart lists (never-worn, most/least-worn) use
-    `wearCountInRange`; CPW and best-potential stay all-time (lifetime ratios).
-  - **`statsPool()`:** excludes Archive by default; respects multi-select status/category/
-    season/formality arrays. Empty array = no filter on that dimension.
-  - **`wireStatsFilters()`:** `[data-sf]` chips toggle array values (multi-select);
-    `[data-sr]` chips set `statsDateRange` (single-select). Both call `rebuild()` which
-    re-derives the grid if `statsListKey` is set, or navigates back if field-derived.
+    ("all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"), `statsAcqRange` ("all"|"w1yr"|"w2yr"|"w3yr"|
+    "w5yr"|"o1yr"|"o2yr"|"o3yr"|"o5yr"), `statsSubtitleFn`.
   - Price field uses `PRICE_BRACKETS` for bucketed grouping. Season/Fabric count items
     once per value (an item may appear in multiple groups).
+
+- **r17 — Stats polish + bugs fixed (2026-06-22):**
+  - **Filter sheet:** filters moved to a bottom sheet opened by funnel icon (top-right of
+    every stats toolbar). Badge shows active filter count. Sheet has Reset + Done + backdrop.
+    Replaced the inline filter bar that appeared on every page.
+  - **`wireStatsFilters()` removed**; replaced by `openStatsFilters()` (builds/wires sheet),
+    `wireStatsToolbar()` (wires back + filter button after each render), `statsRebuild()`
+    (extracted from the old rebuild closure — handles grid state transitions + re-renders).
+  - **Date range ("worn within")** only shown in filter sheet when relevant: main page or
+    wear-count grids (never-worn, most-worn, least-worn). Hidden for CPW, field pages, etc.
+  - **Acquired range filter:** "Acquired within" (w1yr/w2yr/w3yr/w5yr) and "Acquired more
+    than … ago" (o1yr/o2yr/o3yr/o5yr). `acqRangeStart()` returns `{cutoff, older}`.
+    `statsPool()` respects both directions via `purchase_date`.
+  - **Retailer field:** added to `getFieldGroups`, `STATS_FIELD_LABELS`, and main page rows.
+  - **Recently Acquired:** renamed from "Recently Added"; uses `purchase_date` (not
+    `created_at`); 6-month window; sorted by purchase_date descending; purchase month on tile.
+  - **Dynamic labels:** "Never Worn" row → "Not worn · past X" when date range active.
+    "Most Worn" row subtitle → "Most & Least · past X" when range active.
+  - **Tile subtitles:** most/least-worn show "N wears"; CPW lists show "$/wear" value.
+  - **Nudge pieces sheet:** now has a tap-lo/hi formality picker (default = bucket range)
+    so user adjusts the target range before applying rather than accepting the bucket default.
+  - **Bug fixes:** `[data-sv]` click handler on field page now uses `:not([data-sf])` to
+    avoid filter chips triggering grid navigation; donut highlight selector same fix;
+    `&amp;` double-encoding fixed in row subtitle strings.
 
 **▶ NEXT UP:**
 1. **Capsules** — named item sets, packing lists (accessible from Home tile).
@@ -461,7 +473,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-21 r16`.
+- **Currently `APP_VERSION`** is `2026-06-22 r1`.
 - **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
   Items (`min_occasion`/`max_occasion`) and outfit buckets now use the same vocabulary.
   `BUCKET_RANGES` maps each bucket key to its target `{min, max}` for nudging pieces.
@@ -472,20 +484,31 @@ that writes a new column/table before its migration is confirmed.**
 - **`openOccasionEdit(itemId, onSaved)`**: reuses `#logSheet`; tap-lo-then-hi for
   range selection (third tap resets to single). Always clears all `o._bucket` caches
   so looks re-derive correctly after a change.
-- **Stats filter bar uses two different wire-up attributes:** `[data-sf]` chips are
-  multi-select (toggle in/out of `statsFilters[dim]` array); `[data-sr]` chips are
-  single-select (set `statsDateRange`). Both handled in `wireStatsFilters()`.
-- **`statsListKey` is the CPW/wear-list key** (e.g. "worst-cpw"). If set when a filter
-  changes, `wireStatsFilters` rebuilds the grid via `buildSmartList(statsListKey)` instead
-  of going back to main. `statsNavBack()` must clear it. Field-derived grids have
-  `statsListKey = null` and `statsFromField = true` instead.
-- **`statsSubtitleFn`** is a closure set by `buildSmartList("best-potential")`; stored in
-  state and passed to `gridHtml(list, statsSubtitleFn)` on every grid render. Clear it in
-  `statsNavBack()` and whenever switching to a non-potential list.
+- **Stats filter sheet:** filters live in `#statsFilterSheet` (bottom sheet), opened by
+  funnel icon (`#stFilter`). `openStatsFilters()` builds + wires the sheet. Chips in the
+  sheet use `[data-sf]` (multi-select dims), `[data-sar]` (acquired range), `[data-sr]`
+  (wear date range). Each chip updates state + calls `statsRebuild()` immediately; sheet
+  stays open so user can stack filters. Done/backdrop just hides the sheet.
+- **`statsRebuild()`** handles grid state transitions (re-derive list if `statsListKey` set,
+  back to field if `statsFromField`, back to main otherwise) then calls `renderStats()`.
+  Call it whenever filter state changes. `wireStatsToolbar()` wires `#stBack` → `statsNavBack`
+  and `#stFilter` → `openStatsFilters` — call it at the end of every stats render.
+- **`[data-sv]` on field pages must use `:not([data-sf])`** to avoid targeting filter chips
+  (which have both attributes). The donut arrow highlight selector has the same constraint.
+  Breaking this again causes filter chip taps to also navigate to a grid.
+- **`statsListKey` is the smart-list key** (e.g. "worst-cpw"). If set when a filter changes,
+  `statsRebuild` re-derives via `buildSmartList(statsListKey)`. `statsNavBack()` must clear
+  it. Field-derived grids have `statsListKey = null` and `statsFromField = true` instead.
+- **`statsSubtitleFn`** is stored in state and passed to `gridHtml(list, statsSubtitleFn)`
+  on every grid render. Set by `buildSmartList` for most-worn, least-worn, CPW lists,
+  best-potential, recently-acquired. Clear it in `statsNavBack()`.
 - **Date range only affects wear-count lists** (most/least worn, never worn).
   CPW and Best Potential use all-time `wearCount` (lifetime ratios). `wearCountInRange(itemId)`
   checks `rangeStart()` and filters the global `wears` array; returns `wearCount(itemId)` if
-  range is "all".
+  range is "all". `dateRangeHuman()` returns the human-readable range string for labels.
+- **Acquired range filter:** `statsAcqRange` encodes direction + period: "w1yr" = within
+  1 year, "o2yr" = older than 2 years. `acqRangeStart()` returns `{cutoff, older}`.
+  `statsPool()` uses `purchase_date` (not `created_at`) for this filter.
 
 ## Deploy
 
