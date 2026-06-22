@@ -429,9 +429,11 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     `value`, `edit`) covers Category, Subcategory, Color, Size, Brand, Fabric, Season,
     Retailer, Acquisition, Price, **Occasion** (empty min/max = the algorithm-guessed
     formality the user wants to confirm), Purchase Date (**empty only** — `date_is_guess`
-    is *not* a review trigger). Editors reuse the field sheet (`openReviewField` sets
-    `_fieldOnSave` to save+advance), `openOccasionEdit(id, reviewAfterEdit)`, the move sheet
-    (`openReviewMove` + `_reviewMoveMode`, returns to deal via `applyMove`'s success branch),
+    is *not* a review trigger). Deal card buttons: **Set** (primary, opens field editor),
+    **Skip** (advance to next item), **Edit Item** (opens full item detail view in photo mode;
+    `_reviewMode = true` so back button returns to the review card). Editors reuse the field sheet
+    (`openReviewField` sets `_fieldOnSave` to save+advance), `openOccasionEdit(id, reviewAfterEdit)`,
+    the move sheet (`openReviewMove` + `_reviewMoveMode`, returns to deal via `applyMove`'s success branch),
     and a minimal date input (`openReviewDateEdit`). Scans all non-archived items (ignores
     the stats funnel filters).
 
@@ -448,7 +450,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-22 r5`.
+  pushes the same day, increment `rN`. Currently `2026-06-22 r5` (with Closet Review "Edit Item").
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -475,9 +477,13 @@ that writes a new column/table before its migration is confirmed.**
 - **Status is a lens, not a category** — a tee is always under Tops. `closetLens`
   (Available/Storage/Archive/All) scopes the category folder list. Status changes
   happen on the item detail (move bar with optimistic PATCH), nowhere else.
-- **`closetBack()` pops the navigation stack** — now 3-level for item detail:
-  `detailView === "details"` → `openItem()` (photo view); `detailId` set →
+- **`closetBack()` pops the navigation stack** — prioritizes context: if `_reviewMode`,
+  return to review deal card; else if `_fromStats`, return to stats; else render closet.
+  Within item detail: `detailView === "details"` → `openItem()` (photo view); `detailId` set →
   `renderCloset()` (grid); then `searchResults` → `closetSub` → `closetCat` → root.
+- **`_reviewMode`** — set to true when opening an item from Closet Review ("Edit Item" button).
+  `openItemFromReview(id)` sets the flag and opens the photo view; `closetBack()` checks it first
+  and returns to `renderStats()` with `statsView = "review-deal"` instead of the normal closet flow.
 - **`closetSub` special values**: `"__other__"` = items with no recognized subcategory;
   `"__all__"` = all items in the category (added r4). Handle both in `categoryGrid()`.
 - **`[hidden]` vs CSS specificity**: a CSS rule with `display: flex` on an ID selector

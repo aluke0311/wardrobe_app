@@ -212,9 +212,10 @@
   .rv-cur { margin-top: 12px; font-size: 14px; }
   .rv-cur b { font-weight: 600; }
   .rv-cur .rv-empty { color: var(--accent); font-weight: 600; }
-  .rv-actions { display: flex; gap: 10px; padding: 14px; }
+  .rv-actions { display: flex; gap: 10px; padding: 14px; flex-wrap: wrap; }
   .rv-set { flex: 1; padding: 14px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
   .rv-skip { padding: 14px 20px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-size: 16px; font-weight: 600; }
+  .rv-edit { flex: 1; padding: 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--accent); color: var(--accent); font-size: 16px; font-weight: 600; }
   .rv-done { text-align: center; padding: 70px 32px; color: var(--muted); }
   .rv-done svg { width: 52px; height: 52px; stroke: var(--accent); stroke-width: 1.6; fill: none; margin-bottom: 14px; }
   .rv-done b { display: block; font-size: 18px; color: var(--text); margin-bottom: 6px; }
@@ -1080,6 +1081,7 @@ let searchResults = null; // null = not in search-results mode; else array of it
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
 let _fromStats = false;   // item detail opened from stats (closetBack returns to stats)
+let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
 let selectMode = false;   // multi-select active
 let selectedIds = new Set();
@@ -1217,6 +1219,19 @@ function renderCloset() {
 
 function closetBack() {
   if (detailId && detailView === "details") { openItem(detailId); return; }
+  if (detailId && _reviewMode) {
+    _reviewMode = false;
+    detailId = null; detailView = null;
+    $("#itemBar").hidden = true;
+    $("#app").classList.remove("detail-photo");
+    // Return to review deal card
+    $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-stats"));
+    $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "stats"));
+    $("#title").textContent = "Style Stats";
+    $("#headerAdd").hidden = true;
+    statsView = "review-deal";
+    renderStats(); return;
+  }
   if (detailId && _fromStats) {
     _fromStats = false;
     detailId = null; detailView = null;
@@ -4116,10 +4131,12 @@ function renderReviewDeal() {
     <div class="rv-actions">
       <button class="rv-set" id="rvSet">Set ${esc(f.label)}</button>
       <button class="rv-skip" id="rvSkip">Skip</button>
+      <button class="rv-edit" id="rvEdit">Edit Item</button>
     </div>`;
   $("#stBack").addEventListener("click", statsNavBack);
   $("#rvSet").addEventListener("click", () => f.edit(item));
   $("#rvSkip").addEventListener("click", reviewSkip);
+  $("#rvEdit").addEventListener("click", () => openItemFromReview(item.id));
   hydratePhotos(body);
 }
 
@@ -4174,6 +4191,14 @@ function openReviewDateEdit(i) {
     } catch (e) { i.purchase_date = prevD; toast(e.message); }
   };
   $("#fieldSheet").hidden = false;
+}
+
+// Open the full item detail from closet review
+function openItemFromReview(itemId) {
+  _reviewMode = true;
+  detailId = itemId;
+  detailView = null;
+  openItem(itemId);
 }
 
 /* ===================================================================
