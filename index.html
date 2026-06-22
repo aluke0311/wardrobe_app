@@ -531,9 +531,12 @@
     background: #fafafa; border-radius: 12px; }
   .lk-cpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
     background: center/contain no-repeat; }
-  /* canvas-style mini collage for grid tiles / folder reps */
-  .ocanvas { position: relative; width: 100%; aspect-ratio: 3 / 4; background: #fafafa; }
-  .ocanvas .ocpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
+  /* canvas-style collage (saved layout) reused on looks tiles / folder reps / calendar */
+  .ocanvas { position: relative; width: 100%; aspect-ratio: 3 / 4; background: #fff;
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .ocanvas.omini { width: 64px; height: 64px; flex: none; aspect-ratio: auto; border-radius: 10px; }
+  .ocanvas.bare { border: none; border-radius: 0; background: transparent; }
+  .ocpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
     background: center/contain no-repeat; }
 
   /* ===== BUILD-A-LOOK CANVAS ===== */
@@ -591,6 +594,7 @@
   .cal-ccoll.solo { grid-template-columns: 1fr; }
   .cal-cp { background: #fff center/contain no-repeat; }
   .cal-cp.span2 { grid-column: span 2; }
+  .cal-ccanvas { position: relative; width: calc(100% - 4px); aspect-ratio: 3/4; border-radius: 4px; overflow: hidden; background: #fff; }
   .cal-stats { padding: 20px 14px 8px; }
   .cal-stat { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
   .cal-stat:last-child { border-bottom: none; }
@@ -612,6 +616,7 @@
   .cal-outfit-collage { width: 88px; height: 88px; border-radius: 10px; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; background: #ececf1; flex: none; }
   .cal-outfit-collage.solo { grid-template-columns: 1fr; }
   .cal-outfit-piece { background: #fff center/contain no-repeat; }
+  .cal-outfit-canvas { position: relative; width: 88px; height: 88px; border-radius: 10px; overflow: hidden; background: #fff; flex: none; }
   .cal-outfit-notes-btn { flex: 1; display: flex; align-items: center; justify-content: space-between; background: none; border: none; text-align: left; padding: 0; cursor: pointer; }
   .cal-outfit-notes-btn span { color: var(--muted); font-size: 14.5px; }
   .cal-outfit-notes-btn.has-notes span { color: var(--ink); }
@@ -833,7 +838,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r12";
+const APP_VERSION = "2026-06-22 r13";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2414,7 +2419,22 @@ function relDate(d) {
 }
 
 // ---- collage building ----
+// Saved Build-a-look arrangement → positioned-pieces HTML (or null if no usable layout).
+// `wrapCls` frames the container; pieces use absolute % geometry so it scales to any size.
+function layoutCanvasHtml(o, wrapCls) {
+  const lay = (Array.isArray(o && o.layout) ? o.layout : [])
+    .filter(p => { const it = itemById.get(p.item_id); return it && it.image_path; });
+  if (!lay.length) return null;
+  const cells = lay.map((p, i) => {
+    const it = itemById.get(p.item_id);
+    return `<div class="ocpiece" data-photo="${esc(it.image_path)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
+  }).join("");
+  return `<div class="${wrapCls}">${cells}</div>`;
+}
+
 function outfitCollageHtml(o, max, mini) {
+  const canvas = layoutCanvasHtml(o, "ocanvas" + (mini ? " omini" : ""));
+  if (canvas) return canvas;
   const pieces = outfitPieces(o).slice(0, max);
   let cls = "ocollage" + (mini ? " omini" : "");
   if (!pieces.length) return `<div class="${cls} empty"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>`;
@@ -3209,7 +3229,9 @@ function dayGroups(dateStr) {
 }
 
 // Mini calendar-cell collage (aspect-ratio 3/4, 2-col grid)
-function calCellCollageHtml(itemIds) {
+function calCellCollageHtml(itemIds, outfit) {
+  const canvas = outfit && layoutCanvasHtml(outfit, "cal-ccanvas");
+  if (canvas) return canvas;
   const pieces = itemIds.map(id => itemById.get(id)).filter(Boolean).slice(0, 4);
   if (!pieces.length) return '';
   const cells = pieces.map((p, i) => {
@@ -3220,7 +3242,9 @@ function calCellCollageHtml(itemIds) {
 }
 
 // Day-view outfit collage (88×88 square, 2-col grid)
-function calOutfitCollageHtml(itemIds) {
+function calOutfitCollageHtml(itemIds, outfit) {
+  const canvas = outfit && layoutCanvasHtml(outfit, "cal-outfit-canvas");
+  if (canvas) return canvas;
   const pieces = itemIds.map(id => itemById.get(id)).filter(Boolean).slice(0, 4);
   if (!pieces.length) return '<div class="cal-outfit-collage" style="background:#f4f4f7"></div>';
   const cells = pieces.map(p =>
@@ -3275,7 +3299,7 @@ function renderCalendarMonth(body) {
       const itemIds = firstOutfitId
         ? (outfitItemMap.get(firstOutfitId) || [])
         : [...new Set(dayWears.map(w => w.item_id))];
-      collage = calCellCollageHtml(itemIds.slice(0, 4));
+      collage = calCellCollageHtml(itemIds.slice(0, 4), firstOutfitId ? outfitById.get(firstOutfitId) : null);
     }
     cells += `<div class="cal-cell${isToday ? ' today-cell' : ''}">
       <button class="cal-cell-btn" data-calday="${esc(ds)}">
@@ -3342,8 +3366,8 @@ function renderCalendarDay(body) {
   const groups  = dayGroups(dateStr);
 
   const cardsHtml = groups.length ? groups.map(g => {
-    const collage = calOutfitCollageHtml(g.itemIds);
     const outfit  = g.outfitId ? outfitById.get(g.outfitId) : null;
+    const collage = calOutfitCollageHtml(g.itemIds, outfit);
     const notes   = outfit?.notes || '';
     const wearIdsStr = g.wearIds.join(',');
     return `<div class="cal-outfit-card">

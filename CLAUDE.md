@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r12. Full rework from v25. ~5,900 lines.**
+**Current state: 2026-06-22 r13. Full rework from v25. ~5,900 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -531,19 +531,21 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   - **Save (`saveBuilder`):** new → `POST /outfits {name, layout}` + `/outfit_items`; edit →
     `PATCH` layout/name + diff `outfit_items` (POST/DELETE). Then `buildOutfitIndexes()` and
     opens the look. Requires ≥1 piece.
-  - **Saved looks render the arrangement:** `openLook` hero shows a `.lk-canvas` of the layout
-    when `outfits.layout` is set (falls back to the old grid collage for legacy looks). *Grid
-    tiles + calendar minis still use the collage* (`outfitCollageHtml` unchanged) — arrangement
-    on tiles is a follow-up.
+  - **Saved looks render the arrangement everywhere (r13):** `layoutCanvasHtml(o, wrapCls)` is
+    the shared renderer (positioned `.ocpiece` divs from `o.layout`, `null` if no usable layout).
+    Used by `openLook` hero (`.lk-canvas`), `outfitCollageHtml` (looks grid tiles `.ocanvas` +
+    folder reps `.ocanvas.omini`), and the calendar (`calCellCollageHtml`/`calOutfitCollageHtml`
+    now take an optional `outfit` arg → `.cal-ccanvas` / `.cal-outfit-canvas`). All fall back to
+    the old grid collage when `layout` is empty (legacy looks).
   - **Migration REQUIRED before deploy:** `migration/outfit_layout.sql`
     (`ALTER TABLE outfits ADD COLUMN layout JSONB NOT NULL DEFAULT '[]'`). Until it's run,
-    saving a look 500s. **Not yet confirmed run — do not deploy r12 until the user runs it.**
+    saving a look 500s. The user said "ship" on r12 (after being told to run it first), so it
+    should be applied — if saves 500, this migration is the first thing to check.
 
 **▶ NEXT UP:**
-1. **Render layout on look grid tiles + calendar minis** (`outfitCollageHtml` → canvas mode).
-2. **Image replace** — currently "coming soon" stub on the details footer.
-3. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
-4. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
+1. **Image replace** — currently "coming soon" stub on the details footer.
+2. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
+3. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
    reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
    (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
    engine exists.)
@@ -623,7 +625,11 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r12`.
+- **Currently `APP_VERSION`** is `2026-06-22 r13`.
+- **`layoutCanvasHtml(o, wrapCls)`** is the single source for rendering a saved Build-a-look
+  arrangement (returns positioned `.ocpiece` divs, or `null` when `o.layout` has no usable
+  pieces). `outfitCollageHtml`, the `openLook` hero, and both calendar collage helpers call it
+  and fall back to their grid collage on `null`. Add new outfit-thumbnail surfaces through it.
 - **Build-a-look canvas** — `builder` global holds the whole editor state; it's `null` except
   while on `#tab-builder`. `switchTab` clears it + the `builder-mode` class for any tab ≠ builder,
   so leaving always tears down cleanly. Pieces store **normalized** geometry (`x`/`y` center
