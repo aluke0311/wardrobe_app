@@ -546,9 +546,9 @@
       <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>
       Calendar
     </button>
-    <button data-tab="capsules">
-      <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg>
-      Capsules
+    <button data-tab="stats">
+      <svg viewBox="0 0 24 24"><path d="M3 18h4v-7H3z"/><path d="M10 18h4V5h-4z"/><path d="M17 18h4v-4h-4z"/></svg>
+      Stats
     </button>
   </nav>
 </div>
@@ -604,7 +604,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r15";
+const APP_VERSION = "2026-06-21 r16";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3157,7 +3157,8 @@ let statsFromField = false;
 let statsListKey = null;    // key of current smart list (to re-derive on filter change)
 let statsDonutIdx = 0;      // active donut segment index
 let statsFieldSort = "count"; // "count" | "name" — sort order for field breakdown list
-let statsFilters = { category: [], season: [], formality: [] }; // multi-select arrays
+let statsFilters = { status: [], category: [], season: [], formality: [] }; // multi-select arrays
+let statsDateRange = "all"; // "all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
 
 const PRICE_BRACKETS = [
@@ -3182,9 +3183,13 @@ const STATS_FIELD_LABELS = {
 };
 
 function statsPool() {
-  const { category, season, formality } = statsFilters;
+  const { status, category, season, formality } = statsFilters;
   return items.filter(i => {
-    if (i.status === "Archive") return false;
+    if (status.length) {
+      if (!status.includes(i.status)) return false;
+    } else {
+      if (i.status === "Archive") return false;
+    }
     if (category.length && !category.includes(i.category)) return false;
     if (season.length && !(i.season || []).some(s => season.includes(s))) return false;
     if (formality.length) {
@@ -3198,14 +3203,48 @@ function statsPool() {
   });
 }
 
+function rangeStart() {
+  if (statsDateRange === "all") return null;
+  const d = new Date();
+  if (statsDateRange === "7d")  d.setDate(d.getDate() - 7);
+  else if (statsDateRange === "14d") d.setDate(d.getDate() - 14);
+  else if (statsDateRange === "30d") d.setDate(d.getDate() - 30);
+  else if (statsDateRange === "90d") d.setDate(d.getDate() - 90);
+  else if (statsDateRange === "6mo") d.setMonth(d.getMonth() - 6);
+  else if (statsDateRange === "1yr") d.setFullYear(d.getFullYear() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function wearCountInRange(itemId) {
+  const cutoff = rangeStart();
+  if (!cutoff) return wearCount(itemId);
+  return wears.filter(w => w.item_id === itemId && w.worn_on >= cutoff).length;
+}
+
 function statsFilterBar() {
   const all = items.filter(i => i.status !== "Archive");
   const cats = CATEGORIES.filter(c => all.some(i => i.category === c));
-  const { category, season, formality } = statsFilters;
+  const { status, category, season, formality } = statsFilters;
   const chip = (dim, val, label, active) =>
     `<button class="stats-catbtn${active ? " on" : ""}" data-sf="${dim}" data-sv="${val ?? "__all__"}">${esc(label)}</button>`;
+  const rangeChip = (val, label) =>
+    `<button class="stats-catbtn${statsDateRange === val ? " on" : ""}" data-sr="${val}">${esc(label)}</button>`;
   return `
     <div class="stats-catbar">
+      ${chip("status", null, "Avail + Storage", !status.length)}
+      ${chip("status", "Available", "Available", status.includes("Available"))}
+      ${chip("status", "Storage", "Storage", status.includes("Storage"))}
+    </div>
+    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px">
+      ${rangeChip("all", "All time")}
+      ${rangeChip("7d", "7 days")}
+      ${rangeChip("14d", "14 days")}
+      ${rangeChip("30d", "30 days")}
+      ${rangeChip("90d", "90 days")}
+      ${rangeChip("6mo", "6 months")}
+      ${rangeChip("1yr", "1 year")}
+    </div>
+    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px">
       ${chip("category", null, "All", !category.length)}
       ${cats.map(c => chip("category", c, c, category.includes(c))).join("")}
     </div>
@@ -3220,6 +3259,19 @@ function statsFilterBar() {
 }
 
 function wireStatsFilters() {
+  const rebuild = () => {
+    if (statsView === "grid") {
+      if (statsListKey) {
+        const result = buildSmartList(statsListKey);
+        if (result) { statsGridItems = result.list; statsGridTitle = result.title; statsSubtitleFn = result.subtitleFn || null; }
+      } else if (statsFromField) {
+        statsView = "field"; statsGridItems = []; statsGridTitle = "";
+      } else {
+        statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false;
+      }
+    }
+    renderStats();
+  };
   $("#statsBody").querySelectorAll("[data-sf]").forEach(btn => {
     btn.addEventListener("click", () => {
       const dim = btn.dataset.sf;
@@ -3231,17 +3283,13 @@ function wireStatsFilters() {
         const idx = arr.indexOf(val);
         if (idx >= 0) arr.splice(idx, 1); else arr.push(val);
       }
-      if (statsView === "grid") {
-        if (statsListKey) {
-          const result = buildSmartList(statsListKey);
-          if (result) { statsGridItems = result.list; statsGridTitle = result.title; statsSubtitleFn = result.subtitleFn || null; }
-        } else if (statsFromField) {
-          statsView = "field"; statsGridItems = []; statsGridTitle = "";
-        } else {
-          statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false;
-        }
-      }
-      renderStats();
+      rebuild();
+    });
+  });
+  $("#statsBody").querySelectorAll("[data-sr]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      statsDateRange = btn.dataset.sr;
+      rebuild();
     });
   });
 }
@@ -3255,15 +3303,16 @@ const TOGGLE_GROUPS = {
 
 function buildSmartList(key) {
   const av = statsPool();
+  const rangeLabel = statsDateRange === "all" ? "" : ` (${statsDateRange === "6mo" ? "6 months" : statsDateRange === "1yr" ? "1 year" : statsDateRange})`;
   if (key === "never-worn")
-    return { list: av.filter(i => wearCount(i.id) === 0), title: "Never Worn" };
+    return { list: av.filter(i => wearCountInRange(i.id) === 0), title: "Never Worn" + rangeLabel };
   if (key === "not-worn-1yr")
     return { list: av.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; })
       .sort((a, b) => (daysSince(lastWorn(b.id)) || 0) - (daysSince(lastWorn(a.id)) || 0)), title: "Not Worn in 12+ Months" };
   if (key === "most-worn")
-    return { list: [...av].sort((a, b) => wearCount(b.id) - wearCount(a.id)).slice(0, 100), title: "Most Worn" };
+    return { list: [...av].sort((a, b) => wearCountInRange(b.id) - wearCountInRange(a.id)).slice(0, 100), title: "Most Worn" + rangeLabel };
   if (key === "least-worn")
-    return { list: [...av].sort((a, b) => wearCount(a.id) - wearCount(b.id)).slice(0, 100), title: "Least Worn" };
+    return { list: [...av].sort((a, b) => wearCountInRange(a.id) - wearCountInRange(b.id)).slice(0, 100), title: "Least Worn" + rangeLabel };
   if (key === "best-cpw")
     return { list: av.filter(i => i.price && wearCount(i.id) > 0)
       .sort((a, b) => (costPerWear(a) || Infinity) - (costPerWear(b) || Infinity)).slice(0, 100), title: "Best Cost-per-Wear" };
@@ -3424,7 +3473,7 @@ function renderStatsMain() {
       `<span style="flex:${(n/tot*100).toFixed(1)};background:${colorHex(name)};display:inline-block;height:100%"></span>`
     ).join("");
   })();
-  const neverWorn = avail.filter(i => wearCount(i.id) === 0).length;
+  const neverWorn = avail.filter(i => wearCountInRange(i.id) === 0).length;
   const notWorn1yr = avail.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; }).length;
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
