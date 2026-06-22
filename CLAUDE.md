@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r7. Full rework from v25. ~3,200 lines.**
+**Current state: 2026-06-22 r10. Full rework from v25. ~3,500 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -79,6 +79,16 @@ Top-of-`<script>` config, then logically grouped sections:
   (`openCapsulePicker`, membership editor) + closet Select-mode "Add to capsule"
   (`gbCapsule` → `openCapsuleSheet`). Nav state: `capsuleId`/`capsuleView`/
   `activeCapsuleId`; items opened from a capsule set `_fromCapsule` (closetBack returns).
+  **r9 — Trip weather:** Trips with dates get a Locations section (`openLocationSheet`,
+  Open-Meteo geocode + per-location date ranges stored in `capsules.locations` JSONB) and
+  a horizontal weather strip (`loadTripWeather`/`buildTripWeather`/`fetchWeatherRange`):
+  real forecast (today→+15d), ERA5 archive (past), or 3-yr historical average (far future,
+  labeled "avg"). `_wxCache` 10-min TTL. **Migration: `migration/capsule_weather.sql`.**
+  **r10 — capsule QoL:** detail item grid is grouped into category sections with counts
+  (`capGroupsHtml` + `groupByCategory`/`groupByFormality`; canonical `CAP_CAT_ORDER`),
+  a "By category / By formality" sort toggle (`_capSort`), and for Trips per-category
+  "N/M packed" headers + an "Unpacked only" filter (`_capUnpackedOnly`). The picker has
+  category jump-chips with counts (`pickerCatBar`, `_capPickCat`) + category-grouped results.
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE at bottom.
   Currently active tabs: home · closet · looks · calendar · stats.
   Capsules is a Home-tile screen (full tab; not in the bottom nav — Stats took its slot).
@@ -121,8 +131,9 @@ first. Five tables, all RLS-scoped to `auth.uid()` (client never sends `user_id`
   (text — one of the 5 bucket keys, nullable), created_at.
   Join table `outfit_items(outfit_id, item_id, user_id)`.
 - `capsules`: id, user_id, name, kind (capsule|packing|travel), start_date,
-  end_date, notes, created_at. Join table `capsule_items(capsule_id, item_id,
-  user_id)`. Named sets you build (e.g. "Spain trip"); travel = a capsule.
+  end_date, notes, **locations** (JSONB array of `{name,lat,lon,from,to}` for Trip
+  weather — r9), created_at. Join table `capsule_items(capsule_id, item_id, user_id,
+  **packed** bool — r7)`. Named sets you build (e.g. "Spain trip"); travel = a capsule.
 - Photos: private `wardrobe` bucket, path `<user_id>/<uuid>.<ext>` (webp/jpg/png).
   RLS keys off the first path segment matching `auth.uid()`. Display = signed URLs.
 
@@ -464,12 +475,37 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   NOT NULL DEFAULT false`). Load + insert deliberately omit `packed` so everything works
   pre-migration; only the tick needs the column. **Do not deploy r7 before running it.**
 
+- **r9 — Trip weather + locations (2026-06-22):** Trips with start+end dates get a
+  **Locations** section. `openLocationSheet` (reuses `#logSheet`, 2-step search→range) calls
+  **Open-Meteo geocoding** (no key) to find a city, then stores `{name,lat,lon,from,to}` in a
+  new `capsules.locations` JSONB column (`from/to` null = whole trip; set = multi-city legs).
+  A horizontal **weather strip** (`loadTripWeather` → `buildTripWeather` → `fetchWeatherRange`)
+  shows one card per trip day: **forecast API** (today−92d→today+15d), **ERA5 archive** for older
+  past dates, and a **3-year historical average** (labeled "avg", gray card) for dates beyond the
+  forecast window. Multi-location trips group consecutive days per location and show a "→ City"
+  separator. `_wxCache` keyed by capsule id, 10-min TTL; invalidated on add/remove location.
+  All Open-Meteo (`api.open-meteo.com`, `archive-api.open-meteo.com`, `geocoding-api.open-meteo.com`).
+  **Migration: `migration/capsule_weather.sql`** (`ADD COLUMN locations JSONB NOT NULL DEFAULT '[]'`).
+- **r10 — Capsule QoL (sorting / grouping / packing / picker filters):** the detail item grid
+  is now **grouped into sections** (`capGroupsHtml`). `groupByCategory` orders by `CAP_CAT_ORDER`
+  (Outerwear, Tops, Dresses, Bottoms, Shoes, Workout, then Other), items sorted formality-then-name;
+  `groupByFormality` buckets by the 5 ladder levels. A **"By category / By formality" toggle**
+  (`_capSort`) sits above the grid. Each section header shows a **count**; for Trips it shows
+  **"N/M packed"** per category (`refreshPackGroupCounts` keeps it live on tick) plus an
+  **"Unpacked only"** filter chip (`_capUnpackedOnly` — checking a piece off removes it from
+  that view without a full re-render). The **picker** gained category **jump-chips with counts**
+  (`pickerCatBar`, `_capPickCat`) and category-grouped results (`pickerGridHtml`); the results
+  container is `#capPickResults`, re-rendered light by `renderPickerGrid` so the search box keeps
+  focus. Tapping any capsule/picker item still opens its full detail (`data-cap-item`).
+
 **▶ NEXT UP:**
 1. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
+   (Outfit *suggestions* from a capsule are explicitly deferred until the full-app outfit
+   suggestion engine exists.)
 2. **Image replace** — currently "coming soon" stub on the details footer.
 3. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
 4. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
-   reorder/rename capsules; share/duplicate a packing list.
+   reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -478,7 +514,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-22 r7`.
+  pushes the same day, increment `rN`. Currently `2026-06-22 r10`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -546,7 +582,21 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r7`.
+- **Currently `APP_VERSION`** is `2026-06-22 r10`.
+- **Trip weather (Open-Meteo)** — three APIs, **no key needed**, all by lat/lon:
+  geocoding (`geocoding-api.open-meteo.com/v1/search?name=`), forecast
+  (`api.open-meteo.com/v1/forecast`, daily, ~today−92d→+15d window), archive ERA5
+  (`archive-api.open-meteo.com/v1/archive`, real historical, lags ~5 days). `fetchWeatherRange`
+  splits a date range into those 3 zones; far-future dates get a **3-yr same-calendar-date
+  average** from the archive (flagged `hist:true`, rendered as a gray "avg" card). Temps requested
+  in °F. `capsules.locations` is JSONB (`migration/capsule_weather.sql`); a location with null
+  `from/to` covers the whole trip. `_wxCache` (10-min TTL) is invalidated whenever locations change.
+- **Capsule grouping** — `groupByCategory(list)` returns `[{key,items}]` in `CAP_CAT_ORDER`
+  (Outerwear→Tops→Dresses→Bottoms→Shoes→Workout, then "Other"), items sorted by formality then
+  name; `groupByFormality(list)` buckets by the 5 `OCCASION_LADDER` levels. Both feed `capGroupsHtml`
+  (detail) and `pickerGridHtml` (picker). `_capSort` toggles which; `_capUnpackedOnly` filters Trips;
+  `_capPickCat` is the picker's category filter. Section "N/M packed" headers are refreshed live by
+  `refreshPackGroupCounts()` reading `.gtile.packed` from the DOM (no re-render on a tick).
 - **Capsules: nested-button gotcha** — tiles in a capsule grid are `<button class="gtile">`;
   any tap target rendered *inside* a tile (the packing tick) must be a `<div>`/`<span>`, not a
   `<button>`. Nested `<button>` is invalid HTML and the parser hoists it out, breaking
