@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r10. Full rework from v25. ~3,500 lines.**
+**Current state: 2026-06-22 r11. Full rework from v25. ~5,600 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -68,6 +68,10 @@ Top-of-`<script>` config, then logically grouped sections:
   organization (no manual filing). Nav state: `looksLens`/`looksFolder`/`lookId`.
   Outfit collages via `outfitCollageHtml()`. Formality derived from piece heuristics
   (`outfitBucket`), overridable via `formality_override` on the outfit row.
+  **Build-a-look (r11):** create looks from a closet selection via the `gbLook` grid-bar
+  button (`createLookFromSelection`); edit a look's pieces via "Edit pieces" in the detail
+  (`openLookPiecePicker` reusing the capsule picker, `saveLookPicker` diffs `outfit_items`).
+  Picker nav state: `lookPickId`.
 - **CAPSULES** (r7) — `renderCapsules()` dispatches by `capsuleView`
   (list/detail/form/pick). Two modes: **Capsule** (`kind:"capsule"`, undated) and
   **Trip** (`kind:"packing"`, dates + packing checklist). `loadData()` loads
@@ -498,14 +502,29 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   container is `#capPickResults`, re-rendered light by `renderPickerGrid` so the search box keeps
   focus. Tapping any capsule/picker item still opens its full detail (`data-cap-item`).
 
+- **r11 — Build-a-look (2026-06-22):** create new outfits + edit existing looks' pieces.
+  - **Create from closet selection:** new `gbLook` button in the grid action bar (closet
+    Select mode). `createLookFromSelection()` reuses `#logSheet` for an optional name, then
+    `POST /outfits` (+ `/outfit_items` rows), updates local `outfits`/`outfitLinks`,
+    `buildOutfitIndexes()`, exits select mode, and opens the new look in the Looks tab.
+    Blank name → auto-numbered "Look #N" (newest = highest `_num`).
+  - **Edit a look's pieces:** "Edit pieces" button in the look detail's PIECE FORMALITY
+    header → `openLookPiecePicker(id)`. Reuses the capsule picker machinery (`_capPick`,
+    `pickerPool`/`pickerGridHtml`/`pickerCatBar`/`togglePick`) rendered into `#looksBody`
+    (`renderLookPicker`/`renderLookPickerGrid`). `saveLookPicker()` diffs membership →
+    `POST`/`DELETE` `outfit_items`, rebuilds indexes (clears `_bucket` caches so formality
+    re-derives), reopens the look. Guards against emptying a look (≥1 piece). Nav state:
+    `lookPickId`; `looksBack()` checks it first (→ back to the look detail), `renderLooks()`
+    clears it. **No DB migration needed.**
+
 **▶ NEXT UP:**
-1. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
-   (Outfit *suggestions* from a capsule are explicitly deferred until the full-app outfit
-   suggestion engine exists.)
-2. **Image replace** — currently "coming soon" stub on the details footer.
-3. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
-4. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
+1. **Image replace** — currently "coming soon" stub on the details footer.
+2. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
+3. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
    reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
+4. **Reorder a look's pieces** — layering is derived from `LAYER_ORDER`; no manual reorder.
+   (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
+   engine exists.)
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -582,7 +601,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r10`.
+- **Currently `APP_VERSION`** is `2026-06-22 r11`.
 - **Trip weather (Open-Meteo)** — three APIs, **no key needed**, all by lat/lon:
   geocoding (`geocoding-api.open-meteo.com/v1/search?name=`), forecast
   (`api.open-meteo.com/v1/forecast`, daily, ~today−92d→+15d window), archive ERA5
