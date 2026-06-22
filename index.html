@@ -179,6 +179,46 @@
   .sf-section { margin-bottom: 4px; }
   .sf-label { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 12px 14px 2px; }
   .filter-badge { position: absolute; top: 1px; right: 1px; background: var(--accent); color: #fff; border-radius: 50%; font-size: 9px; width: 13px; height: 13px; display: flex; align-items: center; justify-content: center; font-weight: 700; pointer-events: none; }
+  /* stylebook-style section cards */
+  .stats-sec { margin: 18px 14px 0; }
+  .stats-sec-hdr { background: #ededf2; border-radius: 14px 14px 0 0; padding: 13px 16px; display: flex; flex-direction: column; }
+  .stats-sec-hdr .t { font-size: 18px; font-weight: 700; color: var(--text); }
+  .stats-sec-hdr .s { font-size: 13px; color: var(--muted); margin-top: 1px; }
+  .stats-sec-body { background: var(--surface); border: 1px solid var(--line); border-top: none; border-radius: 0 0 14px 14px; padding: 4px 16px; }
+  .stats-sec-body .frow:last-child { border-bottom: none; }
+  .stats-note { color: var(--muted); font-size: 12.5px; padding: 12px 18px 4px; line-height: 1.4; }
+  /* number-only metric tile */
+  .gtile-metric { font-size: 17px; font-weight: 600; color: var(--text); text-align: center; margin-top: 5px; }
+  /* floating segmented toggle (worn history / cpw / price) */
+  .stats-toggle-float { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + var(--safe-b) + 14px); z-index: 18; }
+  .stats-seg { display: inline-flex; background: #ededf2; border-radius: 999px; padding: 3px; box-shadow: 0 4px 16px rgba(0,0,0,.14); }
+  .stats-seg button { padding: 8px 22px; border-radius: 999px; font-size: 14px; font-weight: 600; color: var(--muted); background: transparent; white-space: nowrap; }
+  .stats-seg button.on { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+  .rng-chk { width: 20px; height: 20px; stroke: var(--accent); stroke-width: 2.5; fill: none; flex: none; }
+  /* closet review */
+  .review-cta { width: calc(100% - 28px); margin: 26px 14px 0; display: flex; align-items: center; gap: 14px;
+    padding: 16px; border-radius: 14px; background: var(--accent); color: #fff; text-align: left; }
+  .review-cta .rc-ic { width: 26px; height: 26px; flex: none; stroke: #fff; stroke-width: 1.8; fill: none; }
+  .review-cta .rc-t { font-size: 17px; font-weight: 700; }
+  .review-cta .rc-s { font-size: 13px; opacity: .9; margin-top: 1px; }
+  .rv-prog { text-align: center; color: var(--muted); font-size: 13px; padding: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .rv-card { margin: 8px 14px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .rv-photo { width: 100%; aspect-ratio: 1/1; max-height: 46vh; background: #faf9f8 center/contain no-repeat; }
+  .rv-photo.empty { display: flex; align-items: center; justify-content: center; }
+  .rv-photo.empty svg { width: 56px; height: 56px; stroke: #ccc; stroke-width: 1.3; fill: none; }
+  .rv-info { padding: 14px 16px 16px; }
+  .rv-name { font-size: 18px; font-weight: 600; }
+  .rv-path { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .rv-cur { margin-top: 12px; font-size: 14px; }
+  .rv-cur b { font-weight: 600; }
+  .rv-cur .rv-empty { color: var(--accent); font-weight: 600; }
+  .rv-actions { display: flex; gap: 10px; padding: 14px; }
+  .rv-set { flex: 1; padding: 14px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
+  .rv-skip { padding: 14px 20px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-size: 16px; font-weight: 600; }
+  .rv-done { text-align: center; padding: 70px 32px; color: var(--muted); }
+  .rv-done svg { width: 52px; height: 52px; stroke: var(--accent); stroke-width: 1.6; fill: none; margin-bottom: 14px; }
+  .rv-done b { display: block; font-size: 18px; color: var(--text); margin-bottom: 6px; }
+  .rv-fieldrow .fcount.rv-cnt { color: var(--accent); font-weight: 600; }
 
   /* ---------- item grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
@@ -604,6 +644,11 @@
   <div class="sheet" id="statsFilterInner" style="max-height:80vh;overflow-y:auto"></div>
 </div>
 
+<div id="statsRangeSheet" hidden>
+  <div class="sheet-bg" id="statsRangeBg"></div>
+  <div class="sheet" id="statsRangeInner" style="max-height:80vh;overflow-y:auto"></div>
+</div>
+
 <script>
 /* ===================================================================
    CONFIG  (publishable key + URL are safe to ship in client code)
@@ -613,7 +658,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r1";
+const APP_VERSION = "2026-06-22 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1061,12 +1106,19 @@ function rowHtml(thumb, name, count, attrs = "") {
     <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
   </button>`;
 }
-function gridHtml(list, subtitleFn = null) {
+function gridHtml(list, subtitleFn = null, opts = {}) {
   if (!list.length) return `<div class="placeholder"><b>No items here</b></div>`;
   const chk = `<div class="sel-dot"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
   return `<div class="grid" style="--grid-cols:${gridCols}">${list.map(i => {
     const sel = selectMode && selectedIds.has(i.id);
     const sub = subtitleFn ? subtitleFn(i) : "";
+    if (opts.metricOnly) {
+      // number-only tile (Stylebook worn-history / cpw / price grids)
+      return `<button class="gtile" data-item="${esc(i.id)}">
+        ${thumbHtml(i.image_path, "gphoto")}
+        <div class="gtile-metric">${esc(sub)}</div>
+      </button>`;
+    }
     return `<button class="gtile${sel ? " selected" : ""}" data-item="${esc(i.id)}">
       ${selectMode ? chk.replace("sel-dot", "sel-dot" + (sel ? " on" : "")) : ""}
       ${thumbHtml(i.image_path, "gphoto")}
@@ -2800,6 +2852,7 @@ function closeMoveSheet() {
   $("#moveSheet").hidden = true;
   moveCatOpen = null;
   _moveItemId = null;
+  _reviewMoveMode = false;
 }
 
 function renderMoveSheet() {
@@ -2840,8 +2893,12 @@ async function applyMove(cat, sub) {
   try {
     await rest(`/items?id=in.${inList}`, { method: "PATCH", body: JSON.stringify(patch) });
     items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
+    const reviewMode = _reviewMoveMode;
     closeMoveSheet();
-    if (isSingleItem) {
+    if (reviewMode) {
+      exitSelectMode();
+      reviewAfterEdit();
+    } else if (isSingleItem) {
       const sid = _moveItemId;
       _moveItemId = null;
       exitSelectMode();
@@ -3196,6 +3253,11 @@ let statsFilters = { status: [], category: [], season: [], formality: [] }; // m
 let statsDateRange = "all"; // "all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"
 let statsAcqRange = "all";  // "all"|"1yr"|"2yr"|"3yr"|"5yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
+// closet review state
+let reviewField = null;      // current field key being dealt
+let reviewQueue = [];        // item ids queued for the current field
+let reviewIdx = 0;           // position in the queue
+let _reviewMoveMode = false; // move sheet opened from review (return to deal, not item view)
 
 const PRICE_BRACKETS = [
   { label: "Less than $25",  min: 0,   max: 25 },
@@ -3279,7 +3341,6 @@ function statsActiveFilterCount() {
   const { status, category, season, formality } = statsFilters;
   let n = (status.length ? 1 : 0) + (category.length ? 1 : 0) +
           (season.length ? 1 : 0) + (formality.length ? 1 : 0);
-  if (statsDateRange !== "all") n++;
   if (statsAcqRange !== "all") n++;
   return n;
 }
@@ -3302,15 +3363,11 @@ function openStatsFilters() {
   const all = items.filter(i => i.status !== "Archive");
   const cats = CATEGORIES.filter(c => all.some(i => i.category === c));
   const { status, category, season, formality } = statsFilters;
-  const wearLists = ["never-worn", "most-worn", "least-worn"];
-  const showDateRange = statsView === "main" || (statsView === "grid" && wearLists.includes(statsListKey));
 
   const chip = (dim, val, label, active) =>
     `<button class="stats-catbtn${active ? " on" : ""}" data-sf="${dim}" data-sv="${val ?? "__all__"}">${esc(label)}</button>`;
   const acqChip = (val, label) =>
     `<button class="stats-catbtn${statsAcqRange === val ? " on" : ""}" data-sar="${val}">${esc(label)}</button>`;
-  const rangeChip = (val, label) =>
-    `<button class="stats-catbtn${statsDateRange === val ? " on" : ""}" data-sr="${val}">${esc(label)}</button>`;
 
   $("#statsFilterInner").innerHTML = `
     <div class="sheet-hdr">
@@ -3346,18 +3403,6 @@ function openStatsFilters() {
           ${acqChip("o5yr", "5 years")}
         </div>
       </div>
-      ${showDateRange ? `<div class="sf-section">
-        <div class="sf-label">Worn within</div>
-        <div class="stats-catbar">
-          ${rangeChip("all", "All time")}
-          ${rangeChip("7d", "7 days")}
-          ${rangeChip("14d", "14 days")}
-          ${rangeChip("30d", "30 days")}
-          ${rangeChip("90d", "90 days")}
-          ${rangeChip("6mo", "6 months")}
-          ${rangeChip("1yr", "1 year")}
-        </div>
-      </div>` : ""}
       <div class="sf-section">
         <div class="sf-label">Category</div>
         <div class="stats-catbar">
@@ -3417,15 +3462,6 @@ function openStatsFilters() {
       statsRebuild();
     });
   });
-  $("#statsFilterInner").querySelectorAll("[data-sr]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      statsDateRange = btn.dataset.sr;
-      btn.closest(".stats-catbar").querySelectorAll("[data-sr]").forEach(b =>
-        b.classList.toggle("on", b.dataset.sr === statsDateRange));
-      statsRebuild();
-    });
-  });
-
   $("#statsFilterSheet").hidden = false;
 }
 
@@ -3434,14 +3470,88 @@ function wireStatsToolbar() {
   if (back) back.addEventListener("click", statsNavBack);
   const flt = $("#stFilter");
   if (flt) flt.addEventListener("click", openStatsFilters);
+  const rng = $("#stRange");
+  if (rng) rng.addEventListener("click", openStatsRange);
+}
+
+function openStatsRange() {
+  $("#statsRangeInner").innerHTML = `
+    <div class="sheet-hdr">
+      <span style="width:48px"></span>
+      <h2>Range</h2>
+      <button class="lnk" id="srDone" style="font-weight:700">Done</button>
+    </div>
+    <div style="padding-bottom:24px">
+      ${RANGE_OPTIONS.map(([v, l]) => `<button class="sheet-row" data-srv="${v}">
+        <span>${esc(l)}</span>
+        ${statsDateRange === v ? `<svg class="rng-chk" viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg>` : ""}
+      </button>`).join("")}
+    </div>`;
+  const close = () => { $("#statsRangeSheet").hidden = true; };
+  $("#srDone").onclick = close;
+  $("#statsRangeBg").onclick = close;
+  $("#statsRangeInner").querySelectorAll("[data-srv]").forEach(btn => {
+    btn.addEventListener("click", () => { statsDateRange = btn.dataset.srv; close(); statsRebuild(); });
+  });
+  $("#statsRangeSheet").hidden = false;
 }
 
 const TOGGLE_GROUPS = {
-  "most-worn":  { keys: ["most-worn", "least-worn"], labels: ["Most", "Least"] },
-  "least-worn": { keys: ["most-worn", "least-worn"], labels: ["Most", "Least"] },
-  "best-cpw":   { keys: ["best-cpw",  "worst-cpw"],  labels: ["Best", "Worst"] },
-  "worst-cpw":  { keys: ["best-cpw",  "worst-cpw"],  labels: ["Best", "Worst"] },
+  "most-worn":       { keys: ["least-worn", "most-worn"],           labels: ["Least Worn", "Most Worn"] },
+  "least-worn":      { keys: ["least-worn", "most-worn"],           labels: ["Least Worn", "Most Worn"] },
+  "best-cpw":        { keys: ["best-cpw",  "worst-cpw"],            labels: ["Best CPW", "Worst CPW"] },
+  "worst-cpw":       { keys: ["best-cpw",  "worst-cpw"],            labels: ["Best CPW", "Worst CPW"] },
+  "least-expensive": { keys: ["least-expensive", "most-expensive"], labels: ["Least Expensive", "Most Expensive"] },
+  "most-expensive":  { keys: ["least-expensive", "most-expensive"], labels: ["Least Expensive", "Most Expensive"] },
 };
+// lists whose date Range control is meaningful (wear-count based)
+const RANGE_LISTS = ["never-worn", "most-worn", "least-worn", "best-cpw", "worst-cpw"];
+// lists shown as number-only metric tiles (no item name)
+const METRIC_LISTS = ["most-worn", "least-worn", "best-cpw", "worst-cpw", "least-expensive", "most-expensive"];
+const RANGE_OPTIONS = [
+  ["all", "All time"], ["7d", "Last 7 Days"], ["14d", "Last 14 Days"], ["30d", "Last 30 Days"],
+  ["90d", "Last 90 Days"], ["6mo", "Last 6 Months"], ["1yr", "Last Year"],
+];
+
+// Closet Review: fields dealt one item at a time. `missing` = empty (or, for the
+// date, a guessed value that wants confirming). `value` renders the current value.
+const REVIEW_FIELDS = [
+  { key: "category", label: "Category", missing: i => !i.category,
+    edit: i => openReviewMove(i), value: i => i.category || null },
+  { key: "subcategory", label: "Subcategory", missing: i => !!i.category && !i.subcategory,
+    edit: i => openReviewMove(i), value: i => i.subcategory || null },
+  { key: "color_family", label: "Color", missing: i => !i.color_family,
+    edit: i => openReviewField(i, "color_family"), value: i => i.color_family || null },
+  { key: "size", label: "Size", missing: i => !i.size,
+    edit: i => openReviewField(i, "size"), value: i => i.size || null },
+  { key: "brand", label: "Brand", missing: i => !(i.brand && i.brand.trim()),
+    edit: i => openReviewField(i, "brand"), value: i => i.brand || null },
+  { key: "fabric", label: "Fabric", missing: i => !(i.fabric && i.fabric.length),
+    edit: i => openReviewField(i, "fabric"), value: i => (i.fabric || []).join(", ") || null },
+  { key: "season", label: "Season", missing: i => !(i.season && i.season.length),
+    edit: i => openReviewField(i, "season"), value: i => (i.season || []).join(", ") || null },
+  { key: "retailer", label: "Retailer", missing: i => !(i.retailer && i.retailer.trim()),
+    edit: i => openReviewField(i, "retailer"), value: i => i.retailer || null },
+  { key: "acquisition", label: "Acquisition", missing: i => !i.acquisition,
+    edit: i => openReviewField(i, "acquisition"), value: i => i.acquisition || null },
+  { key: "price", label: "Price", missing: i => i.price == null || i.price === "",
+    edit: i => openReviewField(i, "price"), value: i => (i.price != null && i.price !== "") ? money(i.price) : null },
+  { key: "occasion", label: "Occasion", missing: i => !(i.min_occasion && i.max_occasion),
+    edit: i => openOccasionEdit(i.id, reviewAfterEdit),
+    value: i => (i.min_occasion && i.max_occasion)
+      ? (i.min_occasion === i.max_occasion ? occLabel(i.min_occasion) : `${occLabel(i.min_occasion)} – ${occLabel(i.max_occasion)}`)
+      : null },
+  { key: "purchase_date", label: "Purchase Date",
+    missing: i => !i.purchase_date,
+    edit: i => openReviewDateEdit(i),
+    value: i => i.purchase_date
+      ? new Date(i.purchase_date + "T00:00:00").toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+      : null },
+];
+
+function reviewPool() { return items.filter(i => i.status !== "Archive"); }
+function reviewCount(f) { return reviewPool().filter(f.missing).length; }
+function reviewTotalItems() { return reviewPool().filter(i => REVIEW_FIELDS.some(f => f.missing(i))).length; }
 
 function dateRangeHuman() {
   const map = { "7d": "7 days", "14d": "14 days", "30d": "30 days", "90d": "90 days", "6mo": "6 months", "1yr": "1 year" };
@@ -3451,31 +3561,33 @@ function dateRangeHuman() {
 function buildSmartList(key) {
   const av = statsPool();
   const wornSub = item => { const n = wearCountInRange(item.id); return n === 0 ? "0 wears" : `${n} wear${n === 1 ? "" : "s"}`; };
-  const rangeStr = statsDateRange === "all" ? "" : ` · past ${dateRangeHuman()}`;
   if (key === "never-worn") {
-    const title = statsDateRange === "all" ? "Never Worn" : `Not Worn · past ${dateRangeHuman()}`;
+    const title = statsDateRange === "all" ? "Not Logged on Calendar" : `Not Logged · past ${dateRangeHuman()}`;
     return { list: av.filter(i => wearCountInRange(i.id) === 0), title };
   }
-  if (key === "not-worn-1yr")
-    return { list: av.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; })
-      .sort((a, b) => (daysSince(lastWorn(b.id)) || 0) - (daysSince(lastWorn(a.id)) || 0)), title: "Not Worn in 12+ Months" };
   if (key === "most-worn")
     return { list: [...av].sort((a, b) => wearCountInRange(b.id) - wearCountInRange(a.id)).slice(0, 100),
-      title: "Most Worn" + rangeStr, subtitleFn: wornSub };
+      title: "Worn History", subtitleFn: wornSub };
   if (key === "least-worn")
     return { list: [...av].sort((a, b) => wearCountInRange(a.id) - wearCountInRange(b.id)).slice(0, 100),
-      title: "Least Worn" + rangeStr, subtitleFn: wornSub };
-  if (key === "best-cpw") {
-    const cpwSub = item => { const c = costPerWear(item); return c != null ? money(c) + "/wear" : ""; };
-    return { list: av.filter(i => i.price && wearCount(i.id) > 0)
-      .sort((a, b) => (costPerWear(a) || Infinity) - (costPerWear(b) || Infinity)).slice(0, 100),
-      title: "Best Cost-per-Wear", subtitleFn: cpwSub };
+      title: "Worn History", subtitleFn: wornSub };
+  if (key === "best-cpw" || key === "worst-cpw") {
+    // range-aware CPW: price / wears within the active range
+    const cpwR = item => { const n = wearCountInRange(item.id); return n ? parseFloat(item.price) / n : null; };
+    const cpwSub = item => { const c = cpwR(item); return c != null ? money(c) : ""; };
+    const withWears = av.filter(i => i.price && wearCountInRange(i.id) > 0);
+    const sorted = key === "best-cpw"
+      ? withWears.sort((a, b) => (cpwR(a) || Infinity) - (cpwR(b) || Infinity))
+      : withWears.sort((a, b) => (cpwR(b) || 0) - (cpwR(a) || 0));
+    return { list: sorted.slice(0, 100), title: "Cost per Wear", subtitleFn: cpwSub };
   }
-  if (key === "worst-cpw") {
-    const cpwSub = item => { const c = costPerWear(item); return c != null ? money(c) + "/wear" : ""; };
-    return { list: av.filter(i => i.price && wearCount(i.id) > 0)
-      .sort((a, b) => (costPerWear(b) || 0) - (costPerWear(a) || 0)).slice(0, 100),
-      title: "Worst Cost-per-Wear", subtitleFn: cpwSub };
+  if (key === "most-expensive" || key === "least-expensive") {
+    const priceSub = item => { const p = parseFloat(item.price); return isNaN(p) ? "" : money(p); };
+    const withPrice = av.filter(i => i.price != null && !isNaN(parseFloat(i.price)));
+    const sorted = key === "most-expensive"
+      ? withPrice.sort((a, b) => parseFloat(b.price) - parseFloat(a.price))
+      : withPrice.sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
+    return { list: sorted.slice(0, 100), title: "Purchase Price", subtitleFn: priceSub };
   }
   if (key === "best-potential") {
     const cpwFmt = n => n >= 10 ? "$" + Math.round(n) : money(n);
@@ -3494,31 +3606,35 @@ function buildSmartList(key) {
     };
   }
   if (key === "recent") {
-    const cut = new Date(); cut.setMonth(cut.getMonth() - 6);
-    const cutStr = cut.toISOString().slice(0, 10);
     const acqSub = item => {
       if (!item.purchase_date) return "";
       const d = new Date(item.purchase_date + "T00:00:00");
       return d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
     };
-    return { list: av.filter(i => i.purchase_date && i.purchase_date >= cutStr)
-      .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date)),
+    // most recently acquired by purchase_date (no hard window — always shows items)
+    return { list: av.filter(i => i.purchase_date)
+      .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date)).slice(0, 100),
       title: "Recently Acquired", subtitleFn: acqSub };
   }
   return null;
 }
 
 function renderStats() {
-  if (statsView === "field") { renderStatsFieldPage(); return; }
-  if (statsView === "grid")  { renderStatsGridPage();  return; }
+  if (statsView === "field")       { renderStatsFieldPage();   return; }
+  if (statsView === "grid")        { renderStatsGridPage();    return; }
+  if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
+  if (statsView === "review")      { renderReviewLanding();    return; }
+  if (statsView === "review-deal") { renderReviewDeal();       return; }
   renderStatsMain();
 }
 
-function statsToolbar(title, showBack) {
+function statsToolbar(title, showBack, showRange) {
   const n = statsActiveFilterCount();
+  const rangeLbl = statsDateRange === "all" ? "Range" : dateRangeHuman();
   return `<div class="cltoolbar">
     ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
     <div class="cltitle">${esc(title)}</div>
+    ${showRange ? `<button class="lnk" id="stRange" style="font-size:15px;white-space:nowrap;padding:0 6px">${esc(rangeLbl)}</button>` : ""}
     <button class="clsearch" id="stFilter" style="position:relative" title="Filters">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
       ${n ? `<span class="filter-badge">${n}</span>` : ""}
@@ -3528,6 +3644,12 @@ function statsToolbar(title, showBack) {
 
 function statsNavBack() {
   statsListKey = null; statsSubtitleFn = null;
+  statsDateRange = "all";   // range is per-page; reset when navigating
+  if (statsView === "review-deal") {
+    statsView = "review"; reviewField = null; reviewQueue = []; reviewIdx = 0;
+    renderStats(); return;
+  }
+  if (statsView === "review") { statsView = "main"; renderStats(); return; }
   if (statsView === "grid" && statsFromField) {
     statsView = "field"; statsGridItems = []; statsGridTitle = "";
   } else {
@@ -3646,9 +3768,12 @@ function renderStatsMain() {
     ).join("");
   })();
   const neverWorn = avail.filter(i => wearCountInRange(i.id) === 0).length;
-  const notWorn1yr = avail.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; }).length;
-  const neverWornLabel = statsDateRange === "all" ? "Never Worn" : `Not worn · past ${dateRangeHuman()}`;
-  const mostWornSub = statsDateRange === "all" ? "Most & Least worn" : `Most & Least · past ${dateRangeHuman()}`;
+  const rangeTag = statsDateRange === "all" ? "" : ` · past ${dateRangeHuman()}`;
+  const notLoggedLabel = statsDateRange === "all" ? "Not Logged on Calendar" : `Not Logged${rangeTag}`;
+  const wornSub = `Most & Least worn${rangeTag}`;
+  const topLook = displayOutfits().slice().sort((a, b) => outfitWornCount(b) - outfitWornCount(a))[0];
+  const topLookSub = topLook ? `Most worn: ${outfitWornCount(topLook)} time${outfitWornCount(topLook) === 1 ? "" : "s"}` : "By wear count";
+  const reviewToReview = reviewTotalItems();
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
       <div class="fmeta"><div class="fname">${esc(label)}</div>${sub ? `<div class="fcount">${esc(sub)}</div>` : ""}</div>
@@ -3656,52 +3781,80 @@ function renderStatsMain() {
     </button>`;
 
   $("#statsBody").innerHTML = `
-    ${statsToolbar("Style Stats", false)}
+    ${statsToolbar("Style Stats", false, true)}
     <div style="padding-bottom:32px">
-      <div class="sec-hdr">Closet</div>
-      <div class="card" style="margin:0 14px">
-        <div class="kpi-row">
-          <div class="kpi-cell"><div class="kpi-val">${avail.length}</div><div class="kpi-lbl">Items (Available + Storage)</div></div>
-          <div class="kpi-cell"><div class="kpi-val">${money(totalVal)}</div><div class="kpi-lbl">Total Value</div></div>
-        </div>
-        <button class="frow" data-sa="field:color_family" style="border-top:1px solid var(--line);padding-top:14px">
-          <div style="flex:1"><div class="fld" style="margin-bottom:6px">Color</div>
-            <div style="height:12px;border-radius:6px;overflow:hidden;display:flex">${colorBar}</div>
+      <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Clothing Stats</div><div class="s">All about your wardrobe</div></div>
+        <div class="stats-sec-body">
+          <div class="kpi-row" style="border-bottom:1px solid var(--line)">
+            <div class="kpi-cell"><div class="kpi-val">${avail.length}</div><div class="kpi-lbl">Item Count</div></div>
+            <div class="kpi-cell"><div class="kpi-val">${money(totalVal)}</div><div class="kpi-lbl">Total Closet Value</div></div>
           </div>
-          <svg class="chev" viewBox="0 0 24 24" style="flex-shrink:0;margin-left:10px"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
+          <button class="frow" data-sa="field:color_family">
+            <div style="flex:1"><div class="fld" style="margin-bottom:6px">Color</div>
+              <div style="height:12px;border-radius:6px;overflow:hidden;display:flex">${colorBar}</div>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" style="flex-shrink:0;margin-left:10px"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+          ${row("Recently Acquired",         "Most recent first",                                "list:recent")}
+          ${row(notLoggedLabel,              `${neverWorn} item${neverWorn !== 1 ? "s" : ""}`,    "list:never-worn")}
+          ${row("Worn History",              wornSub,                                             "list:most-worn")}
+          ${row("Cost per Wear",             "Best & Worst $/wear",                               "list:best-cpw")}
+          ${row("Purchase Price",            "Most & least expensive",                            "list:least-expensive")}
+          ${row("Best Potential Improvement","One more wear → biggest CPW drop",                  "list:best-potential")}
+        </div>
+        <div class="stats-note">Total Closet Value and Item Count exclude archived items.</div>
       </div>
-      <div class="frows">
-        ${row("Category", null, "field:category")} ${row("Brand", null, "field:brand")}
-        ${row("Retailer", null, "field:retailer")} ${row("Price", null, "field:price")}
-        ${row("Size", null, "field:size")}         ${row("Season", null, "field:season")}
-        ${row("Fabric", null, "field:fabric")}     ${row("Acquisition", null, "field:acquisition")}
-      </div>
-      <div class="sec-hdr">Wear Insights</div>
-      <div class="frows">
-        ${row(neverWornLabel,             `${neverWorn} item${neverWorn !== 1 ? "s" : ""}`,   "list:never-worn")}
-        ${row("Not Worn in 12+ Months",   `${notWorn1yr} item${notWorn1yr !== 1 ? "s" : ""}`, "list:not-worn-1yr")}
-        ${row("Most Worn",                mostWornSub,                                          "list:most-worn")}
-        ${row("Cost-per-Wear",            "Best & Worst $/wear",                                "list:best-cpw")}
-        ${row("Best Potential Improvement","One more wear → biggest CPW drop",                 "list:best-potential")}
-        ${row("Recently Acquired",         "Last 6 months",                                     "list:recent")}
-      </div>
-      <div class="sec-hdr">Looks</div>
-      <div class="card" style="margin:0 14px">
-        <div class="kpi-row">
-          <div class="kpi-cell"><div class="kpi-val">${outfits.length}</div><div class="kpi-lbl">Outfits</div></div>
-          <div class="kpi-cell"><div class="kpi-val">${avgItems}</div><div class="kpi-lbl">Avg Items / Look</div></div>
+
+      <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Looks Stats</div><div class="s">How you wear your outfits</div></div>
+        <div class="stats-sec-body">
+          <div class="kpi-row" style="border-bottom:1px solid var(--line)">
+            <div class="kpi-cell"><div class="kpi-val">${outfits.length}</div><div class="kpi-lbl">Outfit Count</div></div>
+            <div class="kpi-cell"><div class="kpi-val">${avgItems}</div><div class="kpi-lbl">Avg. Items per Look</div></div>
+          </div>
+          ${row("Most Worn Looks", topLookSub, "looks:most-worn")}
         </div>
       </div>
+
+      <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">View Closet By…</div><div class="s">Browse the closet by field</div></div>
+        <div class="stats-sec-body">
+          ${row("Color", null, "field:color_family")}
+          ${row("Category", null, "field:category")}
+          ${row("Brand", null, "field:brand")}
+          ${row("Retailer", null, "field:retailer")}
+          ${row("Price", null, "field:price")}
+          ${row("Size", null, "field:size")}
+          ${row("Season", null, "field:season")}
+          ${row("Fabric", null, "field:fabric")}
+          ${row("Acquisition", null, "field:acquisition")}
+        </div>
+      </div>
+
+      <button class="review-cta" id="statsReviewCta">
+        <svg class="rc-ic" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <div style="flex:1">
+          <div class="rc-t">Closet Review</div>
+          <div class="rc-s">${reviewToReview} item${reviewToReview === 1 ? "" : "s"} with empty or guessed details</div>
+        </div>
+        <svg class="chev" viewBox="0 0 24 24" style="stroke:#fff"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
     </div>`;
 
   wireStatsToolbar();
+  const reviewCta = $("#statsReviewCta");
+  if (reviewCta) reviewCta.addEventListener("click", () => { statsView = "review"; renderStats(); });
   $("#statsBody").querySelectorAll("[data-sa]").forEach(el => {
     el.addEventListener("click", () => {
       const action = el.dataset.sa;
+      statsDateRange = "all";   // range is per-page; entering a sub-page starts fresh
       if (action.startsWith("field:")) {
         statsView = "field"; statsField = action.slice(6); statsDonutIdx = 0; statsFieldSort = "count";
         renderStats(); return;
+      }
+      if (action === "looks:most-worn") {
+        statsView = "outfits"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -3810,10 +3963,16 @@ function renderStatsFieldPage() {
 function renderStatsGridPage() {
   const body = $("#statsBody");
   const tg = TOGGLE_GROUPS[statsListKey];
-  const toggleHtml = tg ? `<div class="stats-sort-bar" style="padding-top:4px;padding-bottom:4px">
-    ${tg.keys.map((k, i) => `<button class="stats-sort-btn${statsListKey === k ? " on" : ""}" data-stoggle="${k}">${esc(tg.labels[i])}</button>`).join("")}
-  </div>` : "";
-  body.innerHTML = statsToolbar(statsGridTitle, true) + toggleHtml + gridHtml(statsGridItems, statsSubtitleFn);
+  const showRange = RANGE_LISTS.includes(statsListKey);
+  const metricOnly = METRIC_LISTS.includes(statsListKey);
+  body.innerHTML = statsToolbar(statsGridTitle, true, showRange)
+    + gridHtml(statsGridItems, statsSubtitleFn, { metricOnly })
+    + (tg ? `<div style="height:90px"></div>` : "");
+  if (tg) {
+    body.insertAdjacentHTML("beforeend", `<div class="stats-toggle-float"><div class="stats-seg">
+      ${tg.keys.map((k, i) => `<button class="${statsListKey === k ? "on" : ""}" data-stoggle="${k}">${esc(tg.labels[i])}</button>`).join("")}
+    </div></div>`);
+  }
   wireStatsToolbar();
   body.querySelectorAll("[data-stoggle]").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -3838,6 +3997,183 @@ function openItemFromStats(id) {
   $("#gridBar").hidden = true;
   $("#app").classList.remove("has-gridbar");
   openItem(id);
+}
+
+function renderStatsOutfitsPage() {
+  const body = $("#statsBody");
+  const list = displayOutfits().slice()
+    .sort((a, b) => outfitWornCount(b) - outfitWornCount(a)).slice(0, 100);
+  const grid = list.length ? `<div class="ogrid" style="padding:0 14px">${list.map(o => {
+    const n = outfitWornCount(o);
+    return `<button class="otile" data-look="${esc(o.id)}">
+      ${outfitCollageHtml(o, 4)}
+      <div class="oname">${esc(outfitName(o))}</div>
+      <div class="ometa">${n} wear${n === 1 ? "" : "s"}</div>
+    </button>`;
+  }).join("")}</div>` : emptyLooks();
+  body.innerHTML = statsToolbar("Most Worn Looks", true, false) + grid;
+  wireStatsToolbar();
+  body.querySelectorAll(".otile").forEach(btn => {
+    btn.addEventListener("click", () => openLookFromStats(btn.dataset.look));
+  });
+  hydratePhotos(body);
+}
+
+function openLookFromStats(id) {
+  $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-looks"));
+  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "looks"));
+  $("#title").textContent = TAB_TITLES.looks;
+  $("#headerAdd").hidden = true;
+  openLook(id);
+}
+
+/* ---- Closet Review ---- */
+function renderReviewLanding() {
+  const body = $("#statsBody");
+  const rows = REVIEW_FIELDS.map(f => ({ f, n: reviewCount(f) })).filter(r => r.n > 0);
+  const total = reviewTotalItems();
+  const intro = total
+    ? `<div class="stats-note" style="padding:14px 18px 6px">Pick a detail to fill in. We'll deal you the ${total} item${total === 1 ? "" : "s"} missing or guessing it, one at a time.</div>`
+    : "";
+  const list = rows.length
+    ? `<div class="stats-sec" style="margin-top:8px"><div class="stats-sec-body">${rows.map(r =>
+        `<button class="frow rv-fieldrow" data-rv="${r.f.key}">
+          <div class="fmeta"><div class="fname">${esc(r.f.label)}</div>
+            <div class="fcount rv-cnt">${r.n} item${r.n === 1 ? "" : "s"} to review</div></div>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>`).join("")}</div></div>`
+    : `<div class="rv-done"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <b>All caught up</b><div>Every item has its details filled in.</div></div>`;
+  body.innerHTML = `<div class="cltoolbar">
+      <button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cltitle">Closet Review</div><span style="width:34px"></span>
+    </div>${intro}${list}<div style="height:24px"></div>`;
+  $("#stBack").addEventListener("click", statsNavBack);
+  body.querySelectorAll("[data-rv]").forEach(btn => {
+    btn.addEventListener("click", () => startReview(btn.dataset.rv));
+  });
+}
+
+function startReview(key) {
+  const f = REVIEW_FIELDS.find(x => x.key === key);
+  if (!f) return;
+  reviewField = key;
+  reviewQueue = reviewPool().filter(f.missing).map(i => i.id);
+  reviewIdx = 0;
+  statsView = "review-deal";
+  renderStats();
+}
+
+function reviewAfterEdit() {
+  // value was saved — advance to the next item
+  reviewIdx++;
+  if (statsView === "review-deal") renderStats();
+}
+
+function reviewSkip() { reviewIdx++; renderStats(); }
+
+function renderReviewDeal() {
+  const body = $("#statsBody");
+  const f = REVIEW_FIELDS.find(x => x.key === reviewField);
+  if (!f) { statsView = "review"; renderStats(); return; }
+  const total = reviewQueue.length;
+  const toolbar = `<div class="cltoolbar">
+      <button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cltitle">${esc(f.label)}</div><span style="width:34px"></span>
+    </div>`;
+
+  if (reviewIdx >= total) {
+    body.innerHTML = toolbar + `<div class="rv-done">
+      <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <b>${esc(f.label)} — done</b><div>You reviewed all ${total} item${total === 1 ? "" : "s"}.</div>
+      <button class="rv-set" id="rvBackList" style="margin-top:20px;max-width:240px">Back to review</button>
+    </div>`;
+    $("#stBack").addEventListener("click", statsNavBack);
+    $("#rvBackList").addEventListener("click", statsNavBack);
+    return;
+  }
+
+  const item = items.find(i => i.id === reviewQueue[reviewIdx]);
+  if (!item) { reviewSkip(); return; }
+  const cur = f.value(item);
+  const curHtml = cur
+    ? `Current: <b>${esc(cur)}</b>`
+    : `<span class="rv-empty">Empty — not set</span>`;
+  const path = item.category ? (item.subcategory ? `${item.category} › ${item.subcategory}` : item.category) : "Uncategorized";
+
+  body.innerHTML = toolbar
+    + `<div class="rv-prog">${reviewIdx + 1} of ${total}</div>
+    <div class="rv-card">
+      ${item.image_path
+        ? `<div class="rv-photo" data-photo="${esc(item.image_path)}"></div>`
+        : `<div class="rv-photo empty"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
+      <div class="rv-info">
+        <div class="rv-name">${esc(item.name || "Untitled")}</div>
+        <div class="rv-path">${esc(path)}</div>
+        <div class="rv-cur">${curHtml}</div>
+      </div>
+    </div>
+    <div class="rv-actions">
+      <button class="rv-set" id="rvSet">Set ${esc(f.label)}</button>
+      <button class="rv-skip" id="rvSkip">Skip</button>
+    </div>`;
+  $("#stBack").addEventListener("click", statsNavBack);
+  $("#rvSet").addEventListener("click", () => f.edit(item));
+  $("#rvSkip").addEventListener("click", reviewSkip);
+  hydratePhotos(body);
+}
+
+// Open a FIELD_CONFIGS field for review; saves to DB then advances.
+function openReviewField(i, field) {
+  const cfg = FIELD_CONFIGS[field];
+  if (!cfg) return;
+  _fieldEditId = i.id;
+  _fieldEditKey = field;
+  _fieldPending = i[field];
+  _fieldEditItem = i;
+  _fieldOnSave = (val) => { saveField(i.id, field, val); reviewAfterEdit(); };
+  renderFieldSheet(i, field, cfg);
+  $("#fieldSheet").hidden = false;
+}
+
+// Open the category/subcategory move sheet for review.
+function openReviewMove(i) {
+  _reviewMoveMode = true;
+  _moveItemId = i.id;
+  selectedIds = new Set([i.id]);
+  moveCatOpen = i.category || null;   // pre-expand current category (subcategory case)
+  renderMoveSheet();
+  $("#moveSheet").hidden = false;
+}
+
+// Purchase date editor (empty dates only).
+function openReviewDateEdit(i) {
+  _fieldEditItem = i;
+  $("#fieldInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="rdCancel">Cancel</button>
+      <h2>Purchase Date</h2>
+      <button class="lnk" id="rdSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:16px 18px 8px">
+      <input class="inp" id="rdDate" type="date" value="${esc(i.purchase_date || "")}" style="width:100%;font-size:16px">
+    </div>`;
+  $("#rdCancel").onclick = closeFieldSheet;
+  $("#rdSave").onclick = async () => {
+    const val = $("#rdDate").value || null;
+    const prevD = i.purchase_date;
+    i.purchase_date = val;
+    closeFieldSheet();
+    reviewAfterEdit();
+    try {
+      await rest(`/items?id=eq.${i.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ purchase_date: val }),
+      });
+    } catch (e) { i.purchase_date = prevD; toast(e.message); }
+  };
+  $("#fieldSheet").hidden = false;
 }
 
 /* ===================================================================
@@ -3870,7 +4206,7 @@ function switchTab(name) {
   else if (name === "looks")    renderLooks();
   else if (name === "calendar") renderCalendar();
   else if (name === "capsules") $("#capsulesBody").innerHTML = placeholder("Capsules");
-  else if (name === "stats")    { statsView = "main"; renderStats(); }
+  else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; renderStats(); }
   else if (name === "settings") renderSettings();
 
   window.scrollTo(0, 0);

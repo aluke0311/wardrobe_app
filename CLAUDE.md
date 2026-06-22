@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: r17 / 2026-06-22. Full rework from v25. ~2,900 lines.**
+**Current state: 2026-06-22 r5. Full rework from v25. ~3,100 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -396,6 +396,45 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     avoid filter chips triggering grid navigation; donut highlight selector same fix;
     `&amp;` double-encoding fixed in row subtitle strings.
 
+- **r1–r5 — Stats Stylebook refinement + Closet Review (2026-06-22):**
+  - **Titles match Stylebook:** main page is three card-sections — **Clothing Stats**
+    (KPIs + color bar + insight rows), **Looks Stats**, **View Closet By…** (field rows
+    only — *no donut on main*, the rotating-viz idea was explicitly rejected; the donut
+    lives only on each field sub-page). CSS: `.stats-sec` / `.stats-sec-hdr` / `.stats-sec-body`.
+  - **Dedicated Range button** (`#stRange`, `statsToolbar(title, showBack, showRange)`):
+    own bottom sheet (`#statsRangeSheet`, `openStatsRange()`, `RANGE_OPTIONS`) with All
+    time → Last Year + checkmark. Shown only on main + wear-count grids (`RANGE_LISTS` =
+    never-worn/most-worn/least-worn/best-cpw/worst-cpw). **Removed from the funnel sheet.**
+    Button label shows the active range. **Range resets to "all" on every navigation**
+    (tab entry, entering any sub-page via `data-sa`, `statsNavBack`); it persists only
+    while on a page (e.g. Most↔Least toggle keeps it).
+  - **CPW is now range-aware** (`buildSmartList` best/worst-cpw use `wearCountInRange`),
+    so the Range button on Cost per Wear actually changes results.
+  - **Purchase Price** = new toggle grid (`least-expensive`/`most-expensive` in
+    `buildSmartList` + `TOGGLE_GROUPS`), price on each card. Price *also* stays a donut
+    under View Closet By.
+  - **Number-only metric tiles:** `gridHtml(list, subtitleFn, {metricOnly})` renders the
+    metric centered with no item name (`.gtile-metric`). `METRIC_LISTS` = worn/cpw/price.
+    Toggle moved to a floating segmented pill (`.stats-toggle-float` / `.stats-seg`).
+  - **Row changes:** "Never Worn" → **"Not Logged on Calendar"** (range-aware); dropped
+    "Not Worn in 12+ Months" (subset); **Recently Acquired** no longer gated to 6 months
+    (shows most-recent-first, top 100 — the gate was hiding everything).
+  - **Looks Stats → Most Worn Looks** (`statsView="outfits"`, `renderStatsOutfitsPage`,
+    `openLookFromStats`): outfit grid sorted by `outfitWornCount`, tap → opens the look
+    in the Looks tab.
+  - **Closet Review** (`statsView` `"review"`/`"review-deal"`): periwinkle CTA at the
+    bottom of stats main (`.review-cta`). Landing lists each field with a gap count;
+    picking one **deals items one card at a time** to fill in (`.rv-card`, `renderReviewDeal`,
+    `startReview`/`reviewAfterEdit`/`reviewSkip`). `REVIEW_FIELDS` config (each: `missing`,
+    `value`, `edit`) covers Category, Subcategory, Color, Size, Brand, Fabric, Season,
+    Retailer, Acquisition, Price, **Occasion** (empty min/max = the algorithm-guessed
+    formality the user wants to confirm), Purchase Date (**empty only** — `date_is_guess`
+    is *not* a review trigger). Editors reuse the field sheet (`openReviewField` sets
+    `_fieldOnSave` to save+advance), `openOccasionEdit(id, reviewAfterEdit)`, the move sheet
+    (`openReviewMove` + `_reviewMoveMode`, returns to deal via `applyMove`'s success branch),
+    and a minimal date input (`openReviewDateEdit`). Scans all non-archived items (ignores
+    the stats funnel filters).
+
 **▶ NEXT UP:**
 1. **Capsules** — named item sets, packing lists (accessible from Home tile).
 2. **Build-a-look** — closet multi-select → create new outfit; edit a look's pieces.
@@ -409,7 +448,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-21 r11`.
+  pushes the same day, increment `rN`. Currently `2026-06-22 r5`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
@@ -473,7 +512,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r1`.
+- **Currently `APP_VERSION`** is `2026-06-22 r5`.
 - **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
   Items (`min_occasion`/`max_occasion`) and outfit buckets now use the same vocabulary.
   `BUCKET_RANGES` maps each bucket key to its target `{min, max}` for nudging pieces.
