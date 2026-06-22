@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r11. Full rework from v25. ~5,600 lines.**
+**Current state: 2026-06-22 r12. Full rework from v25. ~5,900 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -68,10 +68,12 @@ Top-of-`<script>` config, then logically grouped sections:
   organization (no manual filing). Nav state: `looksLens`/`looksFolder`/`lookId`.
   Outfit collages via `outfitCollageHtml()`. Formality derived from piece heuristics
   (`outfitBucket`), overridable via `formality_override` on the outfit row.
-  **Build-a-look (r11):** create looks from a closet selection via the `gbLook` grid-bar
-  button (`createLookFromSelection`); edit a look's pieces via "Edit pieces" in the detail
-  (`openLookPiecePicker` reusing the capsule picker, `saveLookPicker` diffs `outfit_items`).
-  Picker nav state: `lookPickId`.
+- **BUILD-A-LOOK** (r12) — Stylebook canvas on `#tab-builder`. `openBuilder(outfitId?, seedItemId?)`
+  → `renderBuilder()` dispatches canvas (`renderBuilderCanvas`/`wireBuilderCanvas`, pointer
+  drag+resize) vs. the +Clothing picker (`renderBuilderPicker`, closet-by-category-folder).
+  State in `builder` ({outfitId,name,pieces:[{item_id,x,y,s}],selIdx,picking,pickCat,pickQ}).
+  `saveBuilder()` writes `outfits.layout` (JSONB) + diffs `outfit_items`. Saved looks render
+  the arrangement in the `openLook` hero (`.lk-canvas`). **Migration `migration/outfit_layout.sql`.**
 - **CAPSULES** (r7) — `renderCapsules()` dispatches by `capsuleView`
   (list/detail/form/pick). Two modes: **Capsule** (`kind:"capsule"`, undated) and
   **Trip** (`kind:"packing"`, dates + packing checklist). `loadData()` loads
@@ -132,8 +134,9 @@ first. Five tables, all RLS-scoped to `auth.uid()` (client never sends `user_id`
   past date allowed, so historical back-fill is normal), **context** (text),
   created_at. One row per item per day worn.
 - `outfits`: id, user_id, name, context, notes, image_path, **formality_override**
-  (text — one of the 5 bucket keys, nullable), created_at.
-  Join table `outfit_items(outfit_id, item_id, user_id)`.
+  (text — one of the 5 bucket keys, nullable), **layout** (JSONB array of
+  `{item_id,x,y,s}` — the Build-a-look canvas arrangement, r12, `migration/outfit_layout.sql`),
+  created_at. Join table `outfit_items(outfit_id, item_id, user_id)`.
 - `capsules`: id, user_id, name, kind (capsule|packing|travel), start_date,
   end_date, notes, **locations** (JSONB array of `{name,lat,lon,from,to}` for Trip
   weather — r9), created_at. Join table `capsule_items(capsule_id, item_id, user_id,
@@ -502,27 +505,46 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   container is `#capPickResults`, re-rendered light by `renderPickerGrid` so the search box keeps
   focus. Tapping any capsule/picker item still opens its full detail (`data-cap-item`).
 
-- **r11 — Build-a-look (2026-06-22):** create new outfits + edit existing looks' pieces.
-  - **Create from closet selection:** new `gbLook` button in the grid action bar (closet
-    Select mode). `createLookFromSelection()` reuses `#logSheet` for an optional name, then
-    `POST /outfits` (+ `/outfit_items` rows), updates local `outfits`/`outfitLinks`,
-    `buildOutfitIndexes()`, exits select mode, and opens the new look in the Looks tab.
-    Blank name → auto-numbered "Look #N" (newest = highest `_num`).
-  - **Edit a look's pieces:** "Edit pieces" button in the look detail's PIECE FORMALITY
-    header → `openLookPiecePicker(id)`. Reuses the capsule picker machinery (`_capPick`,
-    `pickerPool`/`pickerGridHtml`/`pickerCatBar`/`togglePick`) rendered into `#looksBody`
-    (`renderLookPicker`/`renderLookPickerGrid`). `saveLookPicker()` diffs membership →
-    `POST`/`DELETE` `outfit_items`, rebuilds indexes (clears `_bucket` caches so formality
-    re-derives), reopens the look. Guards against emptying a look (≥1 piece). Nav state:
-    `lookPickId`; `looksBack()` checks it first (→ back to the look detail), `renderLooks()`
-    clears it. **No DB migration needed.**
+- **r11 — Build-a-look v1 (multi-select), REMOVED in r12.** The first pass added a `gbLook`
+  closet-select button + a capsule-style "Edit pieces" picker. The user didn't like it; r12
+  replaced it wholesale with the Stylebook canvas. Don't reintroduce the `gbLook` button or
+  the `lookPickId` picker — they're gone.
+- **r12 — Build-a-look canvas (Stylebook-style, 2026-06-22):** a free-form outfit builder on
+  its own screen (`#tab-builder` / `#builderBody`, a non-nav screen like Add/Search; bottom
+  nav hidden via `#app.builder-mode`). **Reverses the old "no canvas" product decision** —
+  the user explicitly asked for it.
+  - **Entry points:** Looks toolbar **+** (`#looksNew` → `openBuilder()`); item detail
+    **"Add to Look"** (`openBuilder(null, itemId)` seeds that piece); look detail **"Edit in
+    canvas"** in the PIECE FORMALITY header (`openBuilder(lookId)` loads the saved layout).
+  - **Canvas (`renderBuilderCanvas` + `wireBuilderCanvas`):** pieces are absolutely-positioned
+    `.bpiece` divs (`background:contain`); **pointer events** (touch+mouse) drag to move and a
+    corner handle (`.bp-handle`) to resize; tap selects; a selection bar does Send back / Bring
+    front (array reorder = z-order) / Remove. Move/resize/select mutate the DOM directly (no
+    re-render → no photo flicker); layer/delete/add re-render.
+  - **+ Clothing picker** (`renderBuilderPicker`): closet **by category folder** (Tops, Bottoms,
+    …, canonical `catRank` order) → item grid, plus a search box (flat results). Tapping an item
+    drops it on the canvas (`addPieceToBuilder`, dedupes). `renderBuilderPickerResults()` is the
+    light search re-render (keeps focus); category taps full-render to update the toolbar.
+  - **State:** `builder = { outfitId, name, pieces:[{item_id,x,y,s}], selIdx, picking, pickCat,
+    pickQ }`. `x`/`y` = piece **center** fraction (0..1); `s` = width fraction of canvas width;
+    **array order = z-order**. `defaultPlacement(k)` staggers new drops. `clamp01` helper.
+  - **Save (`saveBuilder`):** new → `POST /outfits {name, layout}` + `/outfit_items`; edit →
+    `PATCH` layout/name + diff `outfit_items` (POST/DELETE). Then `buildOutfitIndexes()` and
+    opens the look. Requires ≥1 piece.
+  - **Saved looks render the arrangement:** `openLook` hero shows a `.lk-canvas` of the layout
+    when `outfits.layout` is set (falls back to the old grid collage for legacy looks). *Grid
+    tiles + calendar minis still use the collage* (`outfitCollageHtml` unchanged) — arrangement
+    on tiles is a follow-up.
+  - **Migration REQUIRED before deploy:** `migration/outfit_layout.sql`
+    (`ALTER TABLE outfits ADD COLUMN layout JSONB NOT NULL DEFAULT '[]'`). Until it's run,
+    saving a look 500s. **Not yet confirmed run — do not deploy r12 until the user runs it.**
 
 **▶ NEXT UP:**
-1. **Image replace** — currently "coming soon" stub on the details footer.
-2. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
-3. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
+1. **Render layout on look grid tiles + calendar minis** (`outfitCollageHtml` → canvas mode).
+2. **Image replace** — currently "coming soon" stub on the details footer.
+3. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
+4. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
    reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
-4. **Reorder a look's pieces** — layering is derived from `LAYER_ORDER`; no manual reorder.
    (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
    engine exists.)
 
@@ -601,7 +623,15 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r11`.
+- **Currently `APP_VERSION`** is `2026-06-22 r12`.
+- **Build-a-look canvas** — `builder` global holds the whole editor state; it's `null` except
+  while on `#tab-builder`. `switchTab` clears it + the `builder-mode` class for any tab ≠ builder,
+  so leaving always tears down cleanly. Pieces store **normalized** geometry (`x`/`y` center
+  fraction, `s` width fraction) so the same `layout` renders at any canvas size. **Move/resize/
+  select do DOM surgery, never a re-render** (re-render reloads photos → flicker); only add/
+  layer/delete/picker re-render. The canvas needs `touch-action:none` (set in CSS on `.bCanvas`
+  and `.bpiece`) or the browser scrolls instead of dragging. **`outfits.layout` write requires
+  `migration/outfit_layout.sql`** — saving a look 500s until it's run.
 - **Trip weather (Open-Meteo)** — three APIs, **no key needed**, all by lat/lon:
   geocoding (`geocoding-api.open-meteo.com/v1/search?name=`), forecast
   (`api.open-meteo.com/v1/forecast`, daily, ~today−92d→+15d window), archive ERA5
