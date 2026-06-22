@@ -171,6 +171,10 @@
   .stats-catbar::-webkit-scrollbar { display: none; }
   .stats-catbtn { flex-shrink: 0; padding: 6px 14px; border-radius: 20px; font-size: 13.5px; background: var(--surface); border: 1px solid var(--line); color: var(--text); white-space: nowrap; }
   .stats-catbtn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .stats-sort-bar { display: flex; justify-content: center; gap: 10px; padding: 10px 14px 20px; }
+  .stats-sort-btn { padding: 7px 22px; border-radius: 20px; font-size: 14px; background: var(--surface); border: 1px solid var(--line); color: var(--text); }
+  .stats-sort-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .frow.donut-hi { background: rgba(88,112,196,0.07); }
 
   /* ---------- item grid ---------- */
   .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
@@ -599,7 +603,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-21 r13";
+const APP_VERSION = "2026-06-21 r14";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3142,12 +3146,15 @@ function openCalNotes(outfitId, onSaved) {
    STYLE STATS
    =================================================================== */
 
-let statsView = "main";      // "main" | "field" | "grid"
-let statsField = null;        // field key being browsed
-let statsGridItems = [];      // items in current grid view
-let statsGridTitle = "";      // title for current grid view
-let statsFromField = false;   // whether the current grid came from a field breakdown
-let statsCategory = null;     // null = all categories; else category name
+let statsView = "main";
+let statsField = null;
+let statsGridItems = [];
+let statsGridTitle = "";
+let statsFromField = false;
+let statsListKey = null;    // key of current smart list (to re-derive on filter change)
+let statsDonutIdx = 0;      // active donut segment index
+let statsFieldSort = "count"; // "count" | "name" — sort order for field breakdown list
+let statsFilters = { category: null, season: null, formality: null };
 
 const PRICE_BRACKETS = [
   { label: "Less than $25",  min: 0,   max: 25 },
@@ -3165,31 +3172,94 @@ const DONUT_PALETTE = [
   "#e6c34a","#7a5230","#e88aa8","#9a9a9a","#1a1a1a","#d8c4a0",
 ];
 
+const STATS_FIELD_LABELS = {
+  color_family: "Color", category: "Category", brand: "Brand",
+  price: "Price", size: "Size", season: "Season", fabric: "Fabric", acquisition: "Acquisition",
+};
+
 function statsPool() {
-  return items.filter(i => i.status !== "Archive" && (!statsCategory || i.category === statsCategory));
+  const { category, season, formality } = statsFilters;
+  return items.filter(i => {
+    if (i.status === "Archive") return false;
+    if (category && i.category !== category) return false;
+    if (season && !(i.season || []).includes(season)) return false;
+    if (formality) {
+      const lvl = OCCASION_LADDER.indexOf(formality) + 1;
+      if (!i.min_occasion || !i.max_occasion) return false;
+      if (i.min_occasion > lvl || i.max_occasion < lvl) return false;
+    }
+    return true;
+  });
 }
 
-function statsCatBar() {
+function statsFilterBar() {
   const all = items.filter(i => i.status !== "Archive");
   const cats = CATEGORIES.filter(c => all.some(i => i.category === c));
-  return `<div class="stats-catbar">
-    <button class="stats-catbtn${!statsCategory ? " on" : ""}" data-scv="__all__">All</button>
-    ${cats.map(c => `<button class="stats-catbtn${statsCategory === c ? " on" : ""}" data-scv="${esc(c)}">${esc(c)}</button>`).join("")}
-  </div>`;
+  const { category, season, formality } = statsFilters;
+  const chip = (dim, val, label, active) =>
+    `<button class="stats-catbtn${active ? " on" : ""}" data-sf="${dim}" data-sv="${val ?? "__all__"}">${esc(label)}</button>`;
+  return `
+    <div class="stats-catbar">
+      ${chip("category", null, "All", !category)}
+      ${cats.map(c => chip("category", c, c, category === c)).join("")}
+    </div>
+    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px">
+      ${chip("season", null, "All Seasons", !season)}
+      ${SEASONS.map(s => chip("season", s, s, season === s)).join("")}
+    </div>
+    <div class="stats-catbar" style="border-top:1px solid var(--line);padding-top:8px;padding-bottom:4px">
+      ${chip("formality", null, "All Formality", !formality)}
+      ${OCCASION_LADDER.map(f => chip("formality", f, f, formality === f)).join("")}
+    </div>`;
 }
 
-function wireStatsCatBar() {
-  $("#statsBody").querySelectorAll(".stats-catbtn").forEach(btn => {
+function wireStatsFilters() {
+  $("#statsBody").querySelectorAll("[data-sf]").forEach(btn => {
     btn.addEventListener("click", () => {
-      statsCategory = btn.dataset.scv === "__all__" ? null : btn.dataset.scv;
+      const dim = btn.dataset.sf;
+      statsFilters[dim] = btn.dataset.sv === "__all__" ? null : btn.dataset.sv;
       if (statsView === "grid") {
-        // pop back to parent — can't re-derive the grid in place
-        if (statsFromField) { statsView = "field"; statsGridItems = []; statsGridTitle = ""; }
-        else { statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false; }
+        if (statsListKey) {
+          const result = buildSmartList(statsListKey);
+          if (result) { statsGridItems = result.list; statsGridTitle = result.title; }
+        } else if (statsFromField) {
+          statsView = "field"; statsGridItems = []; statsGridTitle = "";
+        } else {
+          statsView = "main"; statsField = null; statsGridItems = []; statsGridTitle = ""; statsFromField = false;
+        }
       }
       renderStats();
     });
   });
+}
+
+function buildSmartList(key) {
+  const av = statsPool();
+  if (key === "never-worn")
+    return { list: av.filter(i => wearCount(i.id) === 0), title: "Never Worn" };
+  if (key === "not-worn-1yr")
+    return { list: av.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; })
+      .sort((a, b) => (daysSince(lastWorn(b.id)) || 0) - (daysSince(lastWorn(a.id)) || 0)), title: "Not Worn in 12+ Months" };
+  if (key === "most-worn")
+    return { list: [...av].sort((a, b) => wearCount(b.id) - wearCount(a.id)).slice(0, 100), title: "Most Worn" };
+  if (key === "best-cpw")
+    return { list: av.filter(i => i.price && wearCount(i.id) > 0)
+      .sort((a, b) => (costPerWear(a) || Infinity) - (costPerWear(b) || Infinity)).slice(0, 100), title: "Best Cost-per-Wear" };
+  if (key === "worst-cpw")
+    return { list: av.filter(i => i.price && wearCount(i.id) > 0)
+      .sort((a, b) => (costPerWear(b) || 0) - (costPerWear(a) || 0)).slice(0, 100), title: "Worst Cost-per-Wear" };
+  if (key === "best-potential")
+    return { list: av.filter(i => i.price && wearCount(i.id) > 0)
+      .sort((a, b) => {
+        const na = wearCount(a.id), nb = wearCount(b.id);
+        return (b.price / (nb * (nb + 1))) - (a.price / (na * (na + 1)));
+      }).slice(0, 100), title: "Best Potential Improvement" };
+  if (key === "recent") {
+    const cut = new Date(); cut.setDate(cut.getDate() - 30);
+    return { list: av.filter(i => i.created_at && new Date(i.created_at) >= cut)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)), title: "Recently Added" };
+  }
+  return null;
 }
 
 function renderStats() {
@@ -3200,15 +3270,14 @@ function renderStats() {
 
 function statsToolbar(title, showBack) {
   return `<div class="cltoolbar">
-    ${showBack
-      ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
-      : `<span style="width:34px"></span>`}
+    ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
     <div class="cltitle">${esc(title)}</div>
     <span style="width:34px"></span>
   </div>`;
 }
 
 function statsNavBack() {
+  statsListKey = null;
   if (statsView === "grid" && statsFromField) {
     statsView = "field"; statsGridItems = []; statsGridTitle = "";
   } else {
@@ -3222,9 +3291,7 @@ function getFieldGroups(field) {
   const avail = statsPool();
   const noValue = [];
   const groups = {};
-
   const add = (label, item) => { if (!groups[label]) groups[label] = []; groups[label].push(item); };
-
   for (const item of avail) {
     if (field === "color_family") {
       if (!item.color_family) { noValue.push(item); continue; }
@@ -3254,18 +3321,11 @@ function getFieldGroups(field) {
       add(item.acquisition, item);
     }
   }
-
   let sorted;
-  if (field === "price") {
-    sorted = PRICE_BRACKETS.map(b => ({ label: b.label, items: groups[b.label] || [] }));
-  } else if (field === "season") {
-    sorted = SEASONS.map(s => ({ label: s, items: groups[s] || [] })).filter(g => g.items.length);
-  } else if (field === "category") {
-    sorted = CATEGORIES.map(c => ({ label: c, items: groups[c] || [] })).filter(g => g.items.length);
-  } else {
-    sorted = Object.entries(groups).map(([label, items]) => ({ label, items }))
-      .sort((a, b) => b.items.length - a.items.length);
-  }
+  if (field === "price") sorted = PRICE_BRACKETS.map(b => ({ label: b.label, items: groups[b.label] || [] }));
+  else if (field === "season") sorted = SEASONS.map(s => ({ label: s, items: groups[s] || [] })).filter(g => g.items.length);
+  else if (field === "category") sorted = CATEGORIES.map(c => ({ label: c, items: groups[c] || [] })).filter(g => g.items.length);
+  else sorted = Object.entries(groups).map(([label, items]) => ({ label, items })).sort((a, b) => b.items.length - a.items.length);
   return { noValue, groups: sorted };
 }
 
@@ -3273,12 +3333,13 @@ function segmentColor(field, label, idx) {
   return field === "color_family" ? colorHex(label) : DONUT_PALETTE[idx % DONUT_PALETTE.length];
 }
 
-function donutSvg(segments) {
+function donutSvgHighlight(segments, activeIdx) {
   const total = segments.reduce((s, x) => s + x.count, 0);
   if (!total) return "";
   const cx = 80, cy = 80, R = 72, r = 46, gap = total > 1 ? 0.012 : 0;
   let paths = "", angle = -Math.PI / 2;
-  for (const seg of segments) {
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
     if (!seg.count) continue;
     const sweep = (seg.count / total) * Math.PI * 2 - gap;
     if (sweep <= 0) continue;
@@ -3288,10 +3349,34 @@ function donutSvg(segments) {
     const x3 = cx + r * Math.cos(a2),    y3 = cy + r * Math.sin(a2);
     const x4 = cx + r * Math.cos(angle), y4 = cy + r * Math.sin(angle);
     const lg = sweep > Math.PI ? 1 : 0;
-    paths += `<path d="M${x1.toFixed(1)} ${y1.toFixed(1)} A${R} ${R} 0 ${lg} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} L${x3.toFixed(1)} ${y3.toFixed(1)} A${r} ${r} 0 ${lg} 0 ${x4.toFixed(1)} ${y4.toFixed(1)}Z" fill="${seg.color}"/>`;
+    const op = segments.length <= 1 ? 1 : (i === activeIdx ? 1 : 0.22);
+    paths += `<path class="dseg" d="M${x1.toFixed(1)} ${y1.toFixed(1)} A${R} ${R} 0 ${lg} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} L${x3.toFixed(1)} ${y3.toFixed(1)} A${r} ${r} 0 ${lg} 0 ${x4.toFixed(1)} ${y4.toFixed(1)}Z" fill="${seg.color}" style="opacity:${op};transition:opacity .15s"/>`;
     angle = a2 + gap;
   }
   return `<svg width="160" height="160" viewBox="0 0 160 160" style="display:block;flex-shrink:0">${paths}</svg>`;
+}
+
+function wireDonutArrows(segments, total) {
+  const upBtn = document.getElementById("donutUp");
+  const dnBtn = document.getElementById("donutDn");
+  if (!upBtn || !segments.length) return;
+  const update = () => {
+    document.querySelectorAll(".dseg").forEach((p, i) => {
+      p.style.opacity = segments.length <= 1 ? 1 : (i === statsDonutIdx ? 1 : 0.22);
+    });
+    const seg = segments[statsDonutIdx];
+    const lbl = document.getElementById("donutLbl");
+    if (lbl && seg) lbl.innerHTML = `<div style="font-size:20px;font-weight:700;line-height:1.2">${esc(seg.label)}</div>
+      <div class="muted" style="font-size:15px;margin-top:4px">${total ? ((seg.count/total)*100).toFixed(1) : 0}%</div>`;
+    // highlight matching list row
+    document.querySelectorAll("#statsBody [data-sv]").forEach(btn => {
+      const active = seg && btn.dataset.sv === seg.label;
+      btn.classList.toggle("donut-hi", active);
+      if (active) btn.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  };
+  upBtn.addEventListener("click", () => { statsDonutIdx = (statsDonutIdx - 1 + segments.length) % segments.length; update(); });
+  dnBtn.addEventListener("click", () => { statsDonutIdx = (statsDonutIdx + 1) % segments.length; update(); });
 }
 
 function renderStatsMain() {
@@ -3299,20 +3384,16 @@ function renderStatsMain() {
   const totalVal = avail.reduce((s, i) => s + (parseFloat(i.price) || 0), 0);
   const totalOutfitItems = [...outfitItemMap.values()].reduce((s, a) => s + a.length, 0);
   const avgItems = outfits.length ? (totalOutfitItems / outfits.length).toFixed(1) : "—";
-
   const colorBar = (() => {
     const counts = {};
     for (const i of avail) if (i.color_family) counts[i.color_family] = (counts[i.color_family] || 0) + 1;
     const tot = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, n]) => {
-      const bg = colorHex(name);
-      return `<span style="flex:${(n/tot*100).toFixed(1)};background:${bg};display:inline-block;height:100%"></span>`;
-    }).join("");
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([name, n]) =>
+      `<span style="flex:${(n/tot*100).toFixed(1)};background:${colorHex(name)};display:inline-block;height:100%"></span>`
+    ).join("");
   })();
-
   const neverWorn = avail.filter(i => wearCount(i.id) === 0).length;
   const notWorn1yr = avail.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; }).length;
-
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
       <div class="fmeta"><div class="fname">${esc(label)}</div>${sub ? `<div class="fcount">${esc(sub)}</div>` : ""}</div>
@@ -3321,7 +3402,7 @@ function renderStatsMain() {
 
   $("#statsBody").innerHTML = `
     ${statsToolbar("Style Stats", false)}
-    ${statsCatBar()}
+    ${statsFilterBar()}
     <div style="padding-bottom:32px">
       <div class="sec-hdr">Closet</div>
       <div class="card" style="margin:0 14px">
@@ -3329,33 +3410,29 @@ function renderStatsMain() {
           <div class="kpi-cell"><div class="kpi-val">${avail.length}</div><div class="kpi-lbl">Items (Available + Storage)</div></div>
           <div class="kpi-cell"><div class="kpi-val">${money(totalVal)}</div><div class="kpi-lbl">Total Value</div></div>
         </div>
-        <button class="frow" data-sa="field:color_family" style="border-top:1px solid var(--sep);padding-top:14px">
-          <div style="flex:1">
-            <div class="fld" style="margin-bottom:6px">Color</div>
+        <button class="frow" data-sa="field:color_family" style="border-top:1px solid var(--line);padding-top:14px">
+          <div style="flex:1"><div class="fld" style="margin-bottom:6px">Color</div>
             <div style="height:12px;border-radius:6px;overflow:hidden;display:flex">${colorBar}</div>
           </div>
           <svg class="chev" viewBox="0 0 24 24" style="flex-shrink:0;margin-left:10px"><path d="M9 6l6 6-6 6"/></svg>
         </button>
       </div>
       <div class="frows">
-        ${row("Category",    null, "field:category")}
-        ${row("Brand",       null, "field:brand")}
-        ${row("Price",       null, "field:price")}
-        ${row("Size",        null, "field:size")}
-        ${row("Season",      null, "field:season")}
-        ${row("Fabric",      null, "field:fabric")}
+        ${row("Category", null, "field:category")} ${row("Brand", null, "field:brand")}
+        ${row("Price", null, "field:price")} ${row("Size", null, "field:size")}
+        ${row("Season", null, "field:season")} ${row("Fabric", null, "field:fabric")}
         ${row("Acquisition", null, "field:acquisition")}
       </div>
-
       <div class="sec-hdr">Wear Insights</div>
       <div class="frows">
-        ${row("Never Worn",            `${neverWorn} item${neverWorn !== 1 ? "s" : ""}`,    "list:never-worn")}
-        ${row("Not Worn in 12+ Months",`${notWorn1yr} item${notWorn1yr !== 1 ? "s" : ""}`,  "list:not-worn-1yr")}
-        ${row("Most Worn",             "Top 100 by wear count",                              "list:most-worn")}
-        ${row("Worst Cost-per-Wear",   "Highest $/wear",                                     "list:worst-cpw")}
-        ${row("Recently Added",        "Last 30 days",                                       "list:recent")}
+        ${row("Never Worn",               `${neverWorn} item${neverWorn !== 1 ? "s" : ""}`,   "list:never-worn")}
+        ${row("Not Worn in 12+ Months",   `${notWorn1yr} item${notWorn1yr !== 1 ? "s" : ""}`, "list:not-worn-1yr")}
+        ${row("Most Worn",                "Top 100 by wear count",                             "list:most-worn")}
+        ${row("Best Cost-per-Wear",       "Lowest $/wear",                                     "list:best-cpw")}
+        ${row("Worst Cost-per-Wear",      "Highest $/wear",                                    "list:worst-cpw")}
+        ${row("Best Potential Improvement","One more wear → biggest CPW drop",                 "list:best-potential")}
+        ${row("Recently Added",           "Last 30 days",                                      "list:recent")}
       </div>
-
       <div class="sec-hdr">Looks</div>
       <div class="card" style="margin:0 14px">
         <div class="kpi-row">
@@ -3365,40 +3442,20 @@ function renderStatsMain() {
       </div>
     </div>`;
 
-  wireStatsCatBar();
+  wireStatsFilters();
   $("#statsBody").querySelectorAll("[data-sa]").forEach(el => {
     el.addEventListener("click", () => {
       const action = el.dataset.sa;
       if (action.startsWith("field:")) {
-        statsView = "field"; statsField = action.slice(6);
+        statsView = "field"; statsField = action.slice(6); statsDonutIdx = 0; statsFieldSort = "count";
         renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
-        const av = statsPool();
-        let list, title;
-        if (key === "never-worn") {
-          list = av.filter(i => wearCount(i.id) === 0);
-          title = "Never Worn";
-        } else if (key === "not-worn-1yr") {
-          list = av.filter(i => { const d = daysSince(lastWorn(i.id)); return d !== null && d >= 365; })
-            .sort((a, b) => (daysSince(lastWorn(b.id)) || 0) - (daysSince(lastWorn(a.id)) || 0));
-          title = "Not Worn in 12+ Months";
-        } else if (key === "most-worn") {
-          list = [...av].sort((a, b) => wearCount(b.id) - wearCount(a.id)).slice(0, 100);
-          title = "Most Worn";
-        } else if (key === "worst-cpw") {
-          list = av.filter(i => i.price && wearCount(i.id) > 0)
-            .sort((a, b) => (costPerWear(b.id) || 0) - (costPerWear(a.id) || 0)).slice(0, 100);
-          title = "Worst Cost-per-Wear";
-        } else if (key === "recent") {
-          const cut = new Date(); cut.setDate(cut.getDate() - 30);
-          list = av.filter(i => i.created_at && new Date(i.created_at) >= cut)
-            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-          title = "Recently Added";
-        }
-        if (list) {
-          statsView = "grid"; statsGridItems = list; statsGridTitle = title; statsFromField = false;
+        const result = buildSmartList(key);
+        if (result) {
+          statsView = "grid"; statsGridItems = result.list; statsGridTitle = result.title;
+          statsFromField = false; statsListKey = key;
           renderStats();
         }
       }
@@ -3407,70 +3464,93 @@ function renderStatsMain() {
 }
 
 function renderStatsFieldPage() {
-  const FIELD_LABELS = {
-    color_family: "Color", category: "Category", brand: "Brand",
-    price: "Price", size: "Size", season: "Season", fabric: "Fabric", acquisition: "Acquisition",
-  };
-  const label = FIELD_LABELS[statsField] || statsField;
-  const { noValue, groups } = getFieldGroups(statsField);
+  const label = STATS_FIELD_LABELS[statsField] || statsField;
+  const { noValue, groups: rawGroups } = getFieldGroups(statsField);
 
-  const segments = groups.map((g, i) => ({ label: g.label, count: g.items.length, color: segmentColor(statsField, g.label, i) }))
-    .filter(s => s.count > 0);
-  const top = segments[0];
-  const topTotal = segments.reduce((s, x) => s + x.count, 0);
+  // Assign stable colors based on count-sorted order, then optionally sort list by name
+  const groupsWithColor = rawGroups.map((g, i) => ({ ...g, color: segmentColor(statsField, g.label, i) }));
+  const CANONICAL_FIELDS = ["price", "season", "category"];
+  const canSort = !CANONICAL_FIELDS.includes(statsField);
+  const displayGroups = (canSort && statsFieldSort === "name")
+    ? [...groupsWithColor].sort((a, b) => a.label.localeCompare(b.label))
+    : groupsWithColor;
 
-  const donut = donutSvg(segments);
+  // Donut always uses count order
+  const segments = groupsWithColor.filter(g => g.items.length > 0)
+    .map(g => ({ label: g.label, count: g.items.length, color: g.color }));
+  if (statsDonutIdx >= segments.length) statsDonutIdx = 0;
+  const total = segments.reduce((s, x) => s + x.count, 0);
+  const active = segments[statsDonutIdx];
+  const donut = donutSvgHighlight(segments, statsDonutIdx);
+
+  const arrowBtn = (id, up) =>
+    `<button id="${id}" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--surface);border:1px solid var(--line);flex-shrink:0">
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        ${up ? '<path d="M1.5 7.5l4-4 4 4"/>' : '<path d="M1.5 3.5l4 4 4-4"/>'}
+      </svg>
+    </button>`;
 
   const noValRow = noValue.length
     ? `<div class="card" style="margin:0 14px 2px">
         <button class="frow" style="padding:10px 0;border-bottom:none" data-sv="__novalue__">
-          <span class="fmeta"><span class="fname">No value</span></span>
+          <div class="fmeta"><div class="fname">No value</div></div>
           <span class="muted" style="font-size:15px;margin-right:6px">${noValue.length}</span>
           <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
         </button>
       </div>` : "";
 
-  const rows = groups.map((g, i) => {
-    const color = segmentColor(statsField, g.label, i);
+  const rows = displayGroups.map(g => {
     const swatch = statsField === "color_family"
-      ? `<span style="width:26px;height:26px;border-radius:50%;background:${color};flex-shrink:0;border:1px solid rgba(0,0,0,.1)"></span>`
-      : "";
-    return `<button class="frow" data-sv="${esc(g.label)}">
-      ${swatch}
-      <div class="fmeta"><div class="fname">${esc(g.label)}</div></div>
+      ? `<span style="width:26px;height:26px;border-radius:50%;background:${g.color};flex-shrink:0;border:1px solid rgba(0,0,0,.1)"></span>` : "";
+    const isActive = active && g.label === active.label;
+    return `<button class="frow${isActive ? " donut-hi" : ""}" data-sv="${esc(g.label)}">
+      ${swatch}<div class="fmeta"><div class="fname">${esc(g.label)}</div></div>
       <span class="muted" style="font-size:15px;margin-right:6px">${g.items.length}</span>
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   }).join("");
 
+  const sortBar = canSort ? `
+    <div class="stats-sort-bar">
+      <button class="stats-sort-btn${statsFieldSort === "count" ? " on" : ""}" data-ss="count">Sort by Count</button>
+      <button class="stats-sort-btn${statsFieldSort === "name" ? " on" : ""}" data-ss="name">Sort by Name</button>
+    </div>` : `<div style="height:20px"></div>`;
+
   $("#statsBody").innerHTML = `
     ${statsToolbar(label, true)}
-    ${statsCatBar()}
+    ${statsFilterBar()}
     ${donut ? `<div class="stats-donut-row">
       ${donut}
-      ${top ? `<div><div style="font-size:20px;font-weight:700;line-height:1.2">${esc(top.label)}</div>
-        <div class="muted" style="font-size:15px;margin-top:4px">${topTotal ? ((top.count/topTotal)*100).toFixed(1) : 0}%</div>
-      </div>` : ""}
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
+        ${arrowBtn("donutUp", true)}
+        <div id="donutLbl" style="text-align:center;min-width:80px">
+          <div style="font-size:20px;font-weight:700;line-height:1.2">${esc(active?.label || "")}</div>
+          <div class="muted" style="font-size:15px;margin-top:4px">${active && total ? ((active.count/total)*100).toFixed(1) : 0}%</div>
+        </div>
+        ${arrowBtn("donutDn", false)}
+      </div>
     </div>` : ""}
     ${noValRow}
     <div class="frows" style="padding-top:4px">${rows}</div>
-    <div style="height:24px"></div>`;
+    ${sortBar}`;
 
   $("#stBack").addEventListener("click", statsNavBack);
-  wireStatsCatBar();
+  wireStatsFilters();
+  wireDonutArrows(segments, total);
+
+  $("#statsBody").querySelectorAll("[data-ss]").forEach(btn => {
+    btn.addEventListener("click", () => { statsFieldSort = btn.dataset.ss; renderStatsFieldPage(); });
+  });
 
   $("#statsBody").querySelectorAll("[data-sv]").forEach(el => {
     el.addEventListener("click", () => {
       const val = el.dataset.sv;
       const { noValue, groups } = getFieldGroups(statsField);
       let list, title;
-      if (val === "__novalue__") {
-        list = noValue; title = `No ${FIELD_LABELS[statsField] || statsField}`;
-      } else {
-        const g = groups.find(g => g.label === val);
-        list = g ? g.items : []; title = val;
-      }
-      statsView = "grid"; statsGridItems = list; statsGridTitle = title; statsFromField = true;
+      if (val === "__novalue__") { list = noValue; title = `No ${STATS_FIELD_LABELS[statsField] || statsField}`; }
+      else { const g = groups.find(g => g.label === val); list = g ? g.items : []; title = val; }
+      statsView = "grid"; statsGridItems = list; statsGridTitle = title;
+      statsFromField = true; statsListKey = null;
       renderStats();
     });
   });
@@ -3478,9 +3558,9 @@ function renderStatsFieldPage() {
 
 function renderStatsGridPage() {
   const body = $("#statsBody");
-  body.innerHTML = statsToolbar(statsGridTitle, true) + statsCatBar() + gridHtml(statsGridItems);
+  body.innerHTML = statsToolbar(statsGridTitle, true) + statsFilterBar() + gridHtml(statsGridItems);
   $("#stBack").addEventListener("click", statsNavBack);
-  wireStatsCatBar();
+  wireStatsFilters();
   body.querySelectorAll(".gtile").forEach(btn => {
     btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
   });
