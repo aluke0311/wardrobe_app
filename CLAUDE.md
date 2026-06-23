@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r13. Full rework from v25. ~5,900 lines.**
+**Current state: 2026-06-22 r14. Full rework from v25. ~5,950 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -542,13 +542,22 @@ through Phase G. The data, schema, and migration are all intact and untouched.
     saving a look 500s. The user said "ship" on r12 (after being told to run it first), so it
     should be applied — if saves 500, this migration is the first thing to check.
 
+- **r14 — Item photo replace/add/remove (2026-06-22):** the item-detail footer's
+  "Edit Image"/"Replace Image" stubs are replaced with a working set. `pickItemPhoto(id)`
+  spawns a transient `<input type=file accept=image/*>`; `replaceItemPhoto(id, file)` runs the
+  same pipeline as Add (`compressImage` → `uploadPhoto` → PATCH `image_path` → delete the old
+  photo, fire-and-forget → `signedUrlBatch` the new path → re-render details). `removeItemPhoto`
+  nulls `image_path` + deletes the file. Footer is now state-aware: photo → "Replace Photo" +
+  "Remove Photo"; no photo → "Add Photo". The vague "Edit Image" (crop/rotate) stub was dropped
+  — full-photo replace covers the practical need; a crop editor is out of scope.
+
 **▶ NEXT UP:**
-1. **Image replace** — currently "coming soon" stub on the details footer.
-2. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
-3. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
+1. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
+2. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
    reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
    (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
    engine exists.)
+3. **Image crop/rotate editor** — deferred; replace-whole-photo shipped in r14 instead.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -625,7 +634,11 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r13`.
+- **Currently `APP_VERSION`** is `2026-06-22 r14`.
+- **Item photo replace** — `pickItemPhoto`/`replaceItemPhoto`/`removeItemPhoto` (item-detail
+  footer). Replace reuses the Add pipeline (`compressImage`→`uploadPhoto`→PATCH→`deletePhoto`
+  old→`signedUrlBatch` new); each upload gets a fresh `uuid.ext` filename so there's no cache
+  collision. Footer markup is state-aware on `i.image_path`. No in-app crop/rotate (dropped).
 - **`layoutCanvasHtml(o, wrapCls)`** is the single source for rendering a saved Build-a-look
   arrangement (returns positioned `.ocpiece` divs, or `null` when `o.layout` has no usable
   pieces). `outfitCollageHtml`, the `openLook` hero, and both calendar collage helpers call it

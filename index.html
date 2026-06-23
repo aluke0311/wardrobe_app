@@ -838,7 +838,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r13";
+const APP_VERSION = "2026-06-22 r14";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1680,16 +1680,19 @@ function openItemDetails(id) {
 
     </div>
     <div class="det-footer">
-      <button class="lnk" id="detEditImg">Edit Image</button>
-      <button class="lnk" id="detReplaceImg">Replace Image</button>
+      ${i.image_path
+        ? `<button class="lnk" id="detReplaceImg">Replace Photo</button>
+           <button class="lnk" id="detRemoveImg" style="color:var(--danger)">Remove Photo</button>`
+        : `<button class="lnk" id="detReplaceImg">Add Photo</button>`}
     </div>
   `;
 
   $("#itemBar").hidden = true;
   hydratePhotos(body);
 
-  $("#detEditImg").onclick = () => toast("Image editing — coming soon");
-  $("#detReplaceImg").onclick = () => toast("Image replacement — coming soon");
+  $("#detReplaceImg").onclick = () => pickItemPhoto(i.id);
+  const rmImg = $("#detRemoveImg");
+  if (rmImg) rmImg.onclick = () => removeItemPhoto(i.id);
 
   // Notes auto-save (direct REST call so we skip the openItemDetails re-render)
   const ta = $("#detNotes");
@@ -1718,6 +1721,55 @@ function openItemDetails(id) {
   body.querySelectorAll("[data-occ-item]").forEach(btn => {
     btn.onclick = () => openOccasionEdit(btn.dataset.occItem, () => openItemDetails(id));
   });
+}
+
+// ---- Replace / add / remove an item's photo (reuses the add-item pipeline) ----
+function pickItemPhoto(id) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.onchange = (e) => { const f = e.target.files[0]; if (f) replaceItemPhoto(id, f); };
+  input.click();
+}
+
+async function replaceItemPhoto(id, file) {
+  const i = items.find(x => x.id === id);
+  if (!i) return;
+  toast("Uploading photo…");
+  try {
+    const { blob, ext } = await compressImage(file);
+    const filename = `${(crypto.randomUUID ? crypto.randomUUID() : Date.now())}.${ext}`;
+    const path = await uploadPhoto(blob, filename);
+    const old = i.image_path;
+    await rest(`/items?id=eq.${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ image_path: path }),
+    });
+    i.image_path = path;
+    if (old && old !== path) deletePhoto(old);  // fire-and-forget cleanup
+    signedUrlBatch([path]);                     // pre-sign so the new photo renders immediately
+    toast(old ? "Photo replaced" : "Photo added");
+    if (detailId === id && detailView === "details") openItemDetails(id);
+  } catch (e) { toast(e.message); }
+}
+
+async function removeItemPhoto(id) {
+  const i = items.find(x => x.id === id);
+  if (!i || !i.image_path) return;
+  if (!confirm("Remove this photo?")) return;
+  const old = i.image_path;
+  try {
+    await rest(`/items?id=eq.${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ image_path: null }),
+    });
+    i.image_path = null;
+    deletePhoto(old);
+    toast("Photo removed");
+    if (detailId === id && detailView === "details") openItemDetails(id);
+  } catch (e) { toast(e.message); }
 }
 
 // ---- Save a single field to Supabase ----
