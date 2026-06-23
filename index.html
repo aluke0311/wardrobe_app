@@ -841,7 +841,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r17";
+const APP_VERSION = "2026-06-22 r18";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5021,9 +5021,53 @@ function renderCapsuleDetail() {
       <div class="cap-actions">
         <button class="cap-act2" data-cap-rename>Rename</button>
         <button class="cap-act2" data-cap-dup>Duplicate</button>
+        <button class="cap-act2" data-cap-share>Share list</button>
       </div>
       <button class="cap-del" data-cap-del>Delete capsule</button>
     </div>`;
+}
+
+// ---- build a plain-text checklist of a capsule (grouped by category) ----
+function capsuleListText(id) {
+  const c = capsuleById.get(id);
+  if (!c) return "";
+  const trip = isTrip(c);
+  const packedSet = new Set((capsuleLinkMap.get(id) || []).filter(l => l.packed).map(l => l.item_id));
+  const lines = [c.name];
+  const dates = capDateLabel(c);
+  if (dates) lines.push(dates);
+  lines.push("");
+  const groups = groupByCategory(capsuleItems(id));
+  if (!groups.length) lines.push("(no items yet)");
+  for (const g of groups) {
+    lines.push(`${g.key.toUpperCase()} (${g.items.length})`);
+    for (const i of g.items) {
+      const box = trip ? (packedSet.has(i.id) ? "[x] " : "[ ] ") : "• ";
+      lines.push(`${box}${i.name || "Untitled"}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+async function shareCapsuleList(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  const text = capsuleListText(id);
+  try {
+    if (navigator.share) { await navigator.share({ title: c.name, text }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }  // user dismissed the share sheet
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("List copied to clipboard");
+  } catch (_) {
+    // last-resort fallback for browsers without the async clipboard API
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("List copied to clipboard"); }
+    catch { toast("Couldn't copy the list"); }
+    ta.remove();
+  }
 }
 
 // ---- rename a capsule (reuses #logSheet) ----
@@ -6083,6 +6127,7 @@ function wireEvents() {
     if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
     if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
+    if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);
     if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);
     if (e.target.closest("[data-loc-add]")) return openLocationSheet(capsuleId);
     const locDel = e.target.closest("[data-loc-del]");
