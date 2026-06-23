@@ -841,7 +841,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r16";
+const APP_VERSION = "2026-06-22 r17";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2419,6 +2419,17 @@ let lookId = null;        // outfit id in detail (null = none)
 // ---- derived helpers ----
 function outfitItems(o) { return (outfitItemMap.get(o.id) || []).map(id => itemById.get(id)).filter(Boolean); }
 function displayOutfits() { return outfits.filter(o => (outfitItemMap.get(o.id) || []).some(id => itemById.has(id))); }
+// Looks pool, scoped to the active capsule when planning: only looks wearable
+// entirely from that capsule's items (every piece is a member).
+function looksScopedOutfits() {
+  const list = displayOutfits();
+  if (!activeCapsuleId) return list;
+  const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
+  return list.filter(o => {
+    const ids = (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id));
+    return ids.length && ids.every(id => set.has(id));
+  });
+}
 function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
 function outfitPieces(o) {
   return outfitItems(o).filter(i => i.image_path)
@@ -2551,7 +2562,7 @@ const repByRecency = (list) =>
   list.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")))[0];
 
 function folderRowsHtml(lens) {
-  const all = displayOutfits();
+  const all = looksScopedOutfits();
   let rows = "";
   if (lens === "Formality") {
     for (const b of FORMALITY_BUCKETS) {
@@ -2569,7 +2580,7 @@ function folderRowsHtml(lens) {
   return rows ? `<div class="frows">${rows}</div>` : emptyLooks();
 }
 function folderOutfits(lens, folder) {
-  const all = displayOutfits();
+  const all = looksScopedOutfits();
   const list = lens === "Formality"
     ? all.filter(o => outfitBucket(o) === folder)
     : all.filter(o => outfitSeasons(o).includes(folder));
@@ -2579,7 +2590,7 @@ function folderLabel(lens, folder) {
   return lens === "Formality" ? (FORMALITY_BUCKETS.find(b => b.key === folder)?.label || folder) : folder;
 }
 function lensOutfitsSorted() {
-  const all = displayOutfits();
+  const all = looksScopedOutfits();
   if (looksLens === "Recent") return all.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
   return all.slice().sort((a, b) => (b._num || 0) - (a._num || 0)); // All: newest created first
 }
@@ -2597,21 +2608,33 @@ function outfitGridHtml(list) {
   }).join("")}</div>`;
 }
 
+// Banner shown across Looks while a capsule scopes the view to wearable looks.
+function looksCapsuleBanner() {
+  if (!activeCapsuleId) return "";
+  const c = capsuleById.get(activeCapsuleId);
+  if (!c) return "";
+  return `<div class="cap-banner">
+    <div class="cb-t">Wearable from · ${esc(c.name)}</div>
+    <button class="cb-x" data-cap-clear>✕</button>
+  </div>`;
+}
+
 function renderLooks() {
   lookId = null;
   $("#itemBar").hidden = true;
   const body = $("#looksBody");
+  const banner = looksCapsuleBanner();
   if (looksLens === "Recent" || looksLens === "All") {
     const full = lensOutfitsSorted();
     const list = full.slice(0, LOOKS_FLAT_CAP);
     const more = full.length > list.length
       ? `<div class="snote center" style="padding:0 16px 24px">Showing ${list.length} of ${full.length}. Narrow with Formality or Season.</div>` : "";
-    body.innerHTML = looksToolbar("Looks", false, true) + looksLensHtml() + outfitGridHtml(list) + more;
+    body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml() + outfitGridHtml(list) + more;
   } else if (looksFolder) {
     const list = folderOutfits(looksLens, looksFolder);
-    body.innerHTML = looksToolbar(`${folderLabel(looksLens, looksFolder)} · ${list.length}`, true, true) + outfitGridHtml(list);
+    body.innerHTML = looksToolbar(`${folderLabel(looksLens, looksFolder)} · ${list.length}`, true, true) + banner + outfitGridHtml(list);
   } else {
-    body.innerHTML = looksToolbar("Looks", false, true) + looksLensHtml() + folderRowsHtml(looksLens);
+    body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml() + folderRowsHtml(looksLens);
   }
   hydratePhotos(body);
 }
@@ -2623,7 +2646,7 @@ function looksBack() {
 }
 
 function openRandomLook() {
-  const all = displayOutfits();
+  const all = looksScopedOutfits();
   if (all.length) openLook(all[Math.floor(Math.random() * all.length)].id);
 }
 
@@ -6013,6 +6036,7 @@ function wireEvents() {
   // looks: lens / folders / outfit tiles / detail actions
   $("#looksBody").addEventListener("click", (e) => {
     if (e.target.closest("#looksBack")) return looksBack();
+    if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; return renderLooks(); }
     if (e.target.closest("#looksNew")) return openBuilder();
     if (e.target.closest("#looksShuffle")) return openRandomLook();
     const lens = e.target.closest("[data-llens]");

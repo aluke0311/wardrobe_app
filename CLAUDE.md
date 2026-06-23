@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r16. Full rework from v25. ~6,100 lines.**
+**Current state: 2026-06-22 r17. Full rework from v25. ~6,120 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -568,9 +568,19 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   `addItemsToCapsule` for the members — packing resets since inserts omit `packed`; opens the
   copy). Footer is now Rename · Duplicate (`.cap-actions`) above Delete. **No DB migration.**
 
+- **r17 — Active-capsule lens in Looks (2026-06-22):** while a capsule is active (set by
+  "Plan outfits from this"), the Looks tab now also scopes to **looks wearable entirely from
+  that capsule** (every piece is a member). `looksScopedOutfits()` wraps `displayOutfits()`
+  with the capsule filter; `lensOutfitsSorted`/`folderRowsHtml`/`folderOutfits`/`openRandomLook`
+  use it (stats/calendar/home keep the unscoped `displayOutfits()`). A `cap-banner`
+  ("Wearable from · {name}", `looksCapsuleBanner`) shows on every Looks screen with a ✕
+  (`[data-cap-clear]` in the looksBody handler → clears `activeCapsuleId`). Note: `switchTab`
+  does **not** clear `activeCapsuleId` (so the scope spans Closet + Looks); only the banner ✕
+  or deleting the capsule clears it. **No DB migration.**
+
 **▶ NEXT UP:**
-1. **Capsules follow-ups (remaining)** — surface the active-capsule lens in Looks/Calendar too;
-   reorder capsules; share a packing list; auto-refresh trip weather.
+1. **Capsules follow-ups (remaining)** — active-capsule lens in the Calendar too; reorder
+   capsules (needs an order column); share a packing list; auto-refresh trip weather.
    (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
    engine exists.)
 2. **Image crop/rotate editor** — deferred; replace-whole-photo shipped in r14 instead.
@@ -650,7 +660,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r16`.
+- **Currently `APP_VERSION`** is `2026-06-22 r17`.
 - **Calendar day-view logging** — `+ Clothing` (`openCalAddClothing`, multi-select via the shared
   `_capPick` picker, solo wear rows) and `+ Look` (`openCalAddLook`/`logLookOnDay`, one wear per
   piece with `outfit_id`) render into `#calendarBody` with `body.onclick` delegation. The clothing
@@ -690,9 +700,11 @@ that writes a new column/table before its migration is confirmed.**
   any tap target rendered *inside* a tile (the packing tick) must be a `<div>`/`<span>`, not a
   `<button>`. Nested `<button>` is invalid HTML and the parser hoists it out, breaking
   `.gtile .pack-tick` selectors. Use `data-*` + `closest()` + `stopPropagation` for the inner tap.
-- **`activeCapsuleId`** scopes the Closet: when set, `lensItems()` returns only that capsule's
-  members (ignoring the status lens) and `renderCloset()` injects a clear-able `.cap-banner`.
-  Cleared by the banner ✕ (`[data-cap-clear]`) or any tab switch.
+- **`activeCapsuleId`** scopes the Closet **and Looks** (r17): in Closet `lensItems()` returns
+  only that capsule's members (ignoring the status lens); in Looks `looksScopedOutfits()` keeps
+  only looks wearable entirely from it. Both inject a clear-able `.cap-banner`. It does **NOT**
+  clear on tab switch (it deliberately spans both surfaces) — only the banner ✕ (`[data-cap-clear]`,
+  handled in both the closetBody and looksBody handlers) or deleting the capsule clears it.
 - **`capsule_items.packed`** is loaded via `select=*` and inserts omit it, so capsules work
   before the migration; only `togglePack()` PATCHes `packed` (needs `capsule_items_packed.sql`).
 - **Formality is 1–5** (`OCCASION_LADDER` has 5 entries): Lounge/Casual/Smart/Dressy/Formal.
