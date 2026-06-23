@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r15. Full rework from v25. ~6,050 lines.**
+**Current state: 2026-06-22 r16. Full rework from v25. ~6,100 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -562,9 +562,15 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   `outfitWearMap` and re-render the day. The picker uses `body.onclick` delegation; `renderCalendarDay`
   now clears it (`body.onclick = null`) on return. State: `_calLookQ`. **No DB migration.**
 
+- **r16 — Capsule rename + duplicate (2026-06-22):** capsule detail footer gains **Rename**
+  (`renameCapsule`, reuses `#logSheet` → optimistic PATCH `capsules.name`) and **Duplicate**
+  (`duplicateCapsule`, POSTs a `"<name> (copy)"` shell copying kind/dates/notes/locations, then
+  `addItemsToCapsule` for the members — packing resets since inserts omit `packed`; opens the
+  copy). Footer is now Rename · Duplicate (`.cap-actions`) above Delete. **No DB migration.**
+
 **▶ NEXT UP:**
-1. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
-   reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
+1. **Capsules follow-ups (remaining)** — surface the active-capsule lens in Looks/Calendar too;
+   reorder capsules; share a packing list; auto-refresh trip weather.
    (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
    engine exists.)
 2. **Image crop/rotate editor** — deferred; replace-whole-photo shipped in r14 instead.
@@ -644,7 +650,7 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r15`.
+- **Currently `APP_VERSION`** is `2026-06-22 r16`.
 - **Calendar day-view logging** — `+ Clothing` (`openCalAddClothing`, multi-select via the shared
   `_capPick` picker, solo wear rows) and `+ Look` (`openCalAddLook`/`logLookOnDay`, one wear per
   piece with `outfit_id`) render into `#calendarBody` with `body.onclick` delegation. The clothing

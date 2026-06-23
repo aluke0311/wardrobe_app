@@ -290,6 +290,9 @@
   .cap-footer { padding: 24px 14px 30px; }
   .cap-del { width: 100%; padding: 13px; border-radius: 12px; background: var(--surface);
     border: 1px solid var(--line); color: var(--danger); font-weight: 600; font-size: 15px; }
+  .cap-actions { display: flex; gap: 10px; margin-bottom: 10px; }
+  .cap-act2 { flex: 1; padding: 13px; border-radius: 12px; background: var(--surface);
+    border: 1px solid var(--line); color: var(--ink); font-weight: 600; font-size: 15px; }
   /* packing progress + tick */
   .cap-pack { margin: 12px 14px 0; }
   .cap-pack-bar { height: 8px; border-radius: 5px; background: #ececf1; overflow: hidden; }
@@ -838,7 +841,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r15";
+const APP_VERSION = "2026-06-22 r16";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4991,7 +4994,71 @@ function renderCapsuleDetail() {
     <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
     ${orgBar}
     ${grid}
-    <div class="cap-footer"><button class="cap-del" data-cap-del>Delete capsule</button></div>`;
+    <div class="cap-footer">
+      <div class="cap-actions">
+        <button class="cap-act2" data-cap-rename>Rename</button>
+        <button class="cap-act2" data-cap-dup>Duplicate</button>
+      </div>
+      <button class="cap-del" data-cap-del>Delete capsule</button>
+    </div>`;
+}
+
+// ---- rename a capsule (reuses #logSheet) ----
+function renameCapsule(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="renCancel">Cancel</button>
+      <h2>Rename</h2>
+      <button class="lnk" id="renSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:18px 18px 30px">
+      <input class="inp" id="renName" value="${esc(c.name)}" placeholder="Capsule name" style="width:100%;font-size:16px">
+    </div>`;
+  $("#logSheet").hidden = false;
+  $("#renCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#renSave").onclick = async () => {
+    const name = $("#renName").value.trim();
+    if (!name) { toast("Give it a name"); return; }
+    $("#logSheet").hidden = true;
+    const prev = c.name;
+    c.name = name;  // optimistic
+    try {
+      await rest(`/capsules?id=eq.${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ name }),
+      });
+      renderCapsules();
+      toast("Renamed");
+    } catch (e) { c.name = prev; toast(e.message); }
+  };
+}
+
+// ---- duplicate a capsule (shell + its items; packing resets) ----
+async function duplicateCapsule(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  const itemIds = (capsuleLinkMap.get(id) || []).map(l => l.item_id);
+  try {
+    const payload = { name: `${c.name} (copy)`, kind: c.kind, notes: c.notes || null };
+    if (c.start_date) payload.start_date = c.start_date;
+    if (c.end_date)   payload.end_date   = c.end_date;
+    if (c.locations)  payload.locations  = c.locations;  // column exists since r9
+    const rows = await rest("/capsules?select=*", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    const nc = Array.isArray(rows) ? rows[0] : rows;
+    if (!nc || !nc.id) throw new Error("Could not duplicate");
+    capsules.unshift(nc);
+    buildCapsuleIndexes();
+    if (itemIds.length) await addItemsToCapsule(nc.id, itemIds);
+    capsuleId = nc.id;
+    capsuleView = "detail";
+    renderCapsules();
+    toast("Capsule duplicated");
+  } catch (e) { toast(e.message); }
 }
 
 function planFromCapsule(id) {
@@ -5990,6 +6057,8 @@ function wireEvents() {
     if (e.target.closest("[data-cap-new]")) return openCapsuleNew();
     if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);
     if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
+    if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
+    if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
     if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);
     if (e.target.closest("[data-loc-add]")) return openLocationSheet(capsuleId);
     const locDel = e.target.closest("[data-loc-del]");
