@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-22 r14. Full rework from v25. ~5,950 lines.**
+**Current state: 2026-06-22 r15. Full rework from v25. ~6,050 lines.**
 The old v25 (5,788 lines, all features) is preserved at git tag `v25-full` and
 `archive/index_v25_full.html`. Do not use v25 as a reference for current UI code;
 use only what's in `index.html` now.
@@ -551,13 +551,23 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   "Remove Photo"; no photo → "Add Photo". The vague "Edit Image" (crop/rotate) stub was dropped
   — full-photo replace covers the practical need; a crop editor is out of scope.
 
+- **r15 — Calendar: log from day view (2026-06-22):** the day-view footer's "+ Clothing" /
+  "+ Look" stubs now work. **+ Clothing** (`openCalAddClothing` → `renderCalClothingPicker`) is a
+  multi-select closet picker reusing the shared picker machinery (`_capPick`, `pickerPool`/
+  `pickerGridHtml`/`pickerCatBar`/`togglePick`, count via the shared `#capPickCount` id) rendered
+  into `#calendarBody`; Done → `saveCalClothingLog()` POSTs one solo wear row per item
+  (`{item_id, worn_on: calendarDay}`, no `outfit_id`). **+ Look** (`openCalAddLook` →
+  `renderCalLookPicker`/`calLookListHtml`) is a searchable recent-looks grid (cap 150); tapping a
+  look → `logLookOnDay()` POSTs one wear per piece with that `outfit_id`. Both rebuild
+  `outfitWearMap` and re-render the day. The picker uses `body.onclick` delegation; `renderCalendarDay`
+  now clears it (`body.onclick = null`) on return. State: `_calLookQ`. **No DB migration.**
+
 **▶ NEXT UP:**
-1. **Calendar: log from day view** — "+ Clothing" / "+ Look" from the day view.
-2. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
+1. **Capsules follow-ups** — surface the active-capsule lens in Looks/Calendar too;
    reorder/rename capsules; share/duplicate a packing list; auto-refresh trip weather.
    (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion
    engine exists.)
-3. **Image crop/rotate editor** — deferred; replace-whole-photo shipped in r14 instead.
+2. **Image crop/rotate editor** — deferred; replace-whole-photo shipped in r14 instead.
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -634,7 +644,12 @@ that writes a new column/table before its migration is confirmed.**
   `_addPhotoUrl` (object URL for preview, revoke on reset). Category sheet reuses
   `#moveSheet`; guard with `_addCatMode = true` so the bg-click handler routes
   correctly. Field edits via `openAddFieldEdit(field)` which sets `_fieldOnSave`.
-- **Currently `APP_VERSION`** is `2026-06-22 r14`.
+- **Currently `APP_VERSION`** is `2026-06-22 r15`.
+- **Calendar day-view logging** — `+ Clothing` (`openCalAddClothing`, multi-select via the shared
+  `_capPick` picker, solo wear rows) and `+ Look` (`openCalAddLook`/`logLookOnDay`, one wear per
+  piece with `outfit_id`) render into `#calendarBody` with `body.onclick` delegation. The clothing
+  picker reuses the `#capPickCount` element id so `togglePick` updates the count. `renderCalendarDay`
+  clears `body.onclick` on return so stale picker delegation doesn't linger.
 - **Item photo replace** — `pickItemPhoto`/`replaceItemPhoto`/`removeItemPhoto` (item-detail
   footer). Replace reuses the Add pipeline (`compressImage`→`uploadPhoto`→PATCH→`deletePhoto`
   old→`signedUrlBatch` new); each upload gets a fresh `uuid.ext` filename so there's no cache

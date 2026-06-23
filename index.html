@@ -838,7 +838,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r14";
+const APP_VERSION = "2026-06-22 r15";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3474,11 +3474,12 @@ function renderCalendarDay(body) {
     </div>
   </div>`;
 
+  body.onclick = null;  // clear any stale picker/month delegation
   $('#calDayBack').onclick = () => { calendarDay = null; renderCalendarMonth(body); };
   $('#calDayPrev').onclick = () => { calendarDay = prevD; renderCalendarDay(body); };
   if (!isFuture) $('#calDayNext').onclick = () => { calendarDay = nextD; renderCalendarDay(body); };
-  $('#calAddClothing').onclick = () => toast('Coming soon: log clothing for this day');
-  $('#calAddLook').onclick     = () => toast('Coming soon: log a look for this day');
+  $('#calAddClothing').onclick = () => openCalAddClothing();
+  $('#calAddLook').onclick     = () => openCalAddLook();
 
   body.querySelectorAll('.cal-outfit-card').forEach(wireCalSwipe);
 
@@ -3543,6 +3544,142 @@ function wireCalSwipe(card) {
     inner.style.transform = opened ? `translateX(-${W}px)` : 'translateX(0)';
     acts.style.transform  = opened ? 'translateX(0)' : 'translateX(100%)';
   }, { passive: true });
+}
+
+/* ---- log a wear from the calendar day view (+ Clothing / + Look) ---- */
+let _calLookQ = "";  // look-picker search
+
+function calDayLabel(ds) {
+  const [y, m, d] = ds.split('-').map(Number);
+  return `${CAL_MONTHS[m - 1]} ${d}, ${y}`;
+}
+
+// + Clothing: multi-select closet picker (reuses pickerPool/pickerGridHtml/togglePick)
+function openCalAddClothing() {
+  _capPick = new Set();
+  _capPickFilter = "";
+  _capPickCat = null;
+  renderCalClothingPicker();
+}
+
+function renderCalClothingPicker() {
+  const body = $('#calendarBody');
+  body.innerHTML = `<div class="tabbody">
+    <div class="cal-day-header">
+      <button id="calLogCancel" style="color:var(--accent);font-size:15px;font-weight:500">Cancel</button>
+      <div style="font-size:16px;font-weight:600">Log clothing</div>
+      <button id="calLogDone" style="color:var(--accent);font-size:15px;font-weight:700">Done</button>
+    </div>
+    <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
+    <div style="padding:6px 14px 0"><input class="inp" id="calLogSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
+    <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
+    <div id="calLogResults">${pickerCatBar()}${pickerGridHtml(pickerPool())}</div>
+  </div>`;
+  hydratePhotos(body);
+  window.scrollTo(0, 0);
+  const s = $('#calLogSearch');
+  if (s) s.oninput = () => { _capPickFilter = s.value; renderCalLogGrid(); };
+  body.onclick = (e) => {
+    if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
+    if (e.target.closest('#calLogDone')) return saveCalClothingLog();
+    const pc = e.target.closest('[data-pickcat]');
+    if (pc) { _capPickCat = pc.dataset.pickcat === '__all__' ? null : pc.dataset.pickcat; return renderCalLogGrid(); }
+    const pk = e.target.closest('[data-pick]');
+    if (pk) return togglePick(pk.dataset.pick);  // updates #capPickCount + tile
+  };
+}
+
+// light re-render of the picker results (keeps the search box focused)
+function renderCalLogGrid() {
+  const cnt = $('#capPickCount'); if (cnt) cnt.textContent = `${_capPick.size} selected`;
+  const wrap = $('#calLogResults');
+  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerGridHtml(pickerPool()); hydratePhotos($('#calendarBody')); }
+}
+
+async function saveCalClothingLog() {
+  const body = $('#calendarBody');
+  const ids = [..._capPick];
+  if (!ids.length) return renderCalendarDay(body);
+  const date = calendarDay;
+  try {
+    const payload = ids.map(item_id => ({ item_id, worn_on: date }));  // solo wears, no outfit_id
+    const rows = await rest('/wears', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify(payload),
+    });
+    if (Array.isArray(rows)) wears.push(...rows);
+    else payload.forEach(p => wears.push({ ...p, outfit_id: null }));
+    buildOutfitWearMap();
+    renderCalendarDay(body);
+    toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`);
+  } catch (e) { toast(e.message); }
+}
+
+// + Look: pick a saved look → one wear row per piece, linked to the outfit
+function openCalAddLook() {
+  _calLookQ = "";
+  renderCalLookPicker();
+}
+
+function calLookListHtml() {
+  const q = _calLookQ.trim().toLowerCase();
+  let list = displayOutfits().slice()
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  if (q) list = list.filter(o => outfitName(o).toLowerCase().includes(q));
+  const capped = list.slice(0, 150);
+  if (!capped.length) return `<div class="cal-day-empty">No looks found.</div>`;
+  const more = list.length > capped.length
+    ? `<div class="snote center" style="padding:4px 16px 20px;color:var(--muted);font-size:12.5px">Showing ${capped.length} most recent of ${list.length}. Search to narrow.</div>` : "";
+  return `<div class="ogrid">${capped.map(o =>
+    `<button class="otile" data-callook="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div></button>`
+  ).join('')}</div>${more}`;
+}
+
+function renderCalLookPicker() {
+  const body = $('#calendarBody');
+  body.innerHTML = `<div class="tabbody">
+    <div class="cal-day-header">
+      <button id="calLogCancel" style="color:var(--accent);font-size:15px;font-weight:500">Cancel</button>
+      <div style="font-size:16px;font-weight:600">Log a look</div>
+      <span style="width:54px"></span>
+    </div>
+    <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
+    <div style="padding:6px 14px 8px"><input class="inp" id="calLookSearch" placeholder="Search looks…" value="${esc(_calLookQ)}"></div>
+    <div id="calLookResults">${calLookListHtml()}</div>
+  </div>`;
+  hydratePhotos(body);
+  window.scrollTo(0, 0);
+  const s = $('#calLookSearch');
+  if (s) s.oninput = () => {
+    _calLookQ = s.value;
+    const wrap = $('#calLookResults');
+    if (wrap) { wrap.innerHTML = calLookListHtml(); hydratePhotos(body); }
+  };
+  body.onclick = (e) => {
+    if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
+    const lk = e.target.closest('[data-callook]');
+    if (lk) return logLookOnDay(lk.dataset.callook);
+  };
+}
+
+async function logLookOnDay(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  const its = outfitItems(o);
+  if (!its.length) { toast('This look has no pieces'); return; }
+  const date = calendarDay;
+  try {
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id }));
+    const rows = await rest('/wears', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify(payload),
+    });
+    if (Array.isArray(rows)) wears.push(...rows);
+    else payload.forEach(p => wears.push(p));
+    buildOutfitWearMap();
+    renderCalendarDay($('#calendarBody'));
+    toast(`Logged ${outfitName(o)} for ${date}`);
+  } catch (e) { toast(e.message); }
 }
 
 function openCalNotes(outfitId, onSaved) {
