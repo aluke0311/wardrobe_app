@@ -586,12 +586,132 @@ through Phase G. The data, schema, and migration are all intact and untouched.
   textarea fallback. `AbortError` (user dismissed the share sheet) is swallowed silently.
   **No DB migration.**
 
-**▶ NEXT UP:**
-1. **Capsules follow-ups (remaining)** — reorder capsules (needs an order column);
-   auto-refresh trip weather. (Active-capsule lens deliberately NOT added to the Calendar —
-   logging is about what you actually wore, not capsule planning.)
-2. **Image crop/rotate editor** — deferred; replace-whole-photo shipped in r14 instead.
-   (Outfit *suggestions* from a capsule remain deferred until the full outfit-suggestion engine.)
+**▶ NEXT UP — 2026-06-23 big cleanup + feature round.**
+Full design locked in **`STYLE_MODEL.md`** (read it first). Refresh spec in
+**`migration/RESET_PLAN.md`** (fully rewritten). Execute phases in order; each is
+self-contained and its dependencies are noted.
+
+---
+
+### Phase 2 — Schema + config foundation (GATES Phase 4)
+
+**What:** Replace the stale half-migrated formality system with the clean 1–6 model.
+
+1. Rewrite **`schema.sql`** to the clean target:
+   - Add `items.formality smallint check (between 1 and 6)` (replaces `min_occasion`/`max_occasion`).
+   - Add `wears.formality_for smallint` (nullable 1–6 — the "demand" capture).
+   - Add `outfits.rating smallint` (nullable — reserved for future 👍/👎 feedback loop).
+   - Add `exclusions` table: `(id uuid pk, user_id uuid, item_a uuid ref items, item_b uuid ref items, reason text, created_at)`. Normalize `item_a < item_b`. RLS own_rows policy.
+   - Drop dead v25 columns from `items`: `min_occasion`, `max_occasion`, `availability`, `care`, `needs_repair`, `needs_tailoring`, `storage_location`, `fit`, `length`, `rise`, `price_original`.
+   - Drop `events` table (rework calendar uses `wears`, not `events`).
+   - Keep all other tables + columns untouched.
+
+2. Write a **migration SQL file** (`migration/formality_schema.sql`) for the LIVE DB — idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` style. User runs it in the Supabase SQL editor before the Phase 4 UI ships. Until then the live DB still has `min_occasion`/`max_occasion`.
+
+3. Update **config constants** in `index.html`:
+   - `OCCASION_LADDER` (index.html:868): change from 5 labels to 6: `["Function", "Very Casual", "Everyday Casual", "Smart Casual", "Dressed Up", "Formal"]`.
+   - `FORMALITY_BUCKETS` (index.html:2381): remove the stale "1–7 ladder" comments; fix the orphaned `workout` bucket (Workout is now formality 1, not off-ladder); align to 6 levels.
+   - `BUCKET_RANGES` (index.html:2391): update to 1–6.
+   - `SUBCAT_FORMALITY` (index.html:2401): remap all values to 1–6 scale (currently maps to 1–4 with stale "1–7" comments). Heels → 4, Blazers → 4, Cocktail dresses → 5, etc.
+   - `CAT_FORMALITY` (index.html:2410): update to 1–6.
+
+4. **Item-detail formality editor** — swap the min/max two-field range picker for a single-level picker (6 chips: Function/Very Casual/Everyday Casual/Smart Casual/Dressed Up/Formal). Update `FIELD_CONFIGS` to add `formality` as type `single` with these 6 opts. Remove `min_occasion`/`max_occasion` from the attributes card (or show both old + new during the transition until migration is run).
+
+5. **Closet Review** — update the "guessed formality" card to use `formality` (the new single field) instead of empty `min_occasion`/`max_occasion`. The seed guess still comes from `SUBCAT_FORMALITY`/`CAT_FORMALITY`.
+
+6. **`outfitBucket(o)`** — rewrite to derive from `item.formality` (single value) instead of averaging `min/max_occasion` ranges. Simpler binning.
+
+**Gate:** user must run `migration/formality_schema.sql` before shipping any UI that reads/writes `formality`. Until then, keep the existing `min_occasion`/`max_occasion` reads for any live UI that still needs them.
+
+---
+
+### Phase 3 — Quick wins (formality-independent, ship any time)
+
+Each item below is standalone — no dependency on Phase 2 or each other.
+
+**3a — Build-a-look picker: subcategory drill + scoped search**
+- File: `builderPickContent()` (index.html:5528), `renderBuilderPicker()` (index.html:5506).
+- Currently: category → item grid; search queries the whole closet ignoring `pickCat`.
+- Change: add subcategory drill between category and item grid (same pattern as closet: cat → subcat list → item grid). Add optional subcategory filter chips along the top of the item grid when a category is selected (like `pickerCatBar` in capsules). Scope search to the current `pickCat`/`pickSub` when set — only search globally when no category is selected.
+- State needed: add `pickSub` to the `builder` object (null = subcategory list, string = filter).
+
+**3b — Calendar copy/move wears**
+- Current stub at index.html:3528 — the "Coming soon" toast on the swipe-action buttons.
+- **Copy:** duplicate the wear row(s) to a different date (date picker → `POST /wears`). For outfit groups, copy all items with the same `outfit_id`.
+- **Move:** copy to new date + delete original rows. Confirm before deleting.
+- Wire into the existing swipe-action buttons (already rendered, just toasting).
+
+**3c — Season derive-and-confirm**
+- A Closet Review field card for `season` that seeds a guess from the item's `purchase_date` month (summer months → Summer, etc.) or from historical wear months. One-tap confirm or override.
+- Fits naturally into the existing `REVIEW_FIELDS` / `renderReviewDeal` pattern.
+
+---
+
+### Phase 4 — Outfit suggestions + closet-vs-life gap (needs Phase 2)
+
+**4a — `suggestOutfits(targetLevel?, context?)` engine**
+- Input: optional target formality level (1–6) and/or context string.
+- Slot-filling: one Top (or Dress), one Bottom (skip if Dress), one Shoes, optional Outerwear. Candidates filtered by `item.formality` in-band (±1 of target).
+- Scoring per combo (all derived, no AI):
+  1. **Formality cohesion** — adjacent levels OK; 2 apart = penalty; ≥3 = reject. (Essay's law.)
+  2. **Color compatibility** — historical co-occurrence (`outfitItemMap` + `outfitWearMap`) = "worn together before" boost. Plus simple neutral rules: Black/White/Gray/Beige pair with anything; loud colors penalize combos with other loud colors.
+  3. **Season/weather** — `season` overlap + Open-Meteo temp (already wired for trips; reuse `_wxCache`).
+  4. **Rotation** — boost items not worn in 30+ days (`daysSince`).
+  5. **Exclusions** — hard filter: reject any combo where both `item_a` and `item_b` are present in the `exclusions` table. Surface the `reason` on the rejection.
+  6. **Context hard rules** — if context string matches known rules (funeral → dark colors; chorus concert → black only), filter accordingly.
+- Output: top N combos (N=5 or so), each as a list of item IDs.
+
+**4b — Entry points**
+- `#itemShuffle` (index.html:1561) — the "suggest outfit" button already on the item detail (currently toasts "coming soon"). Wire to `suggestOutfits(null, null)` seeded with the current item already placed. Opens results in Build-a-look canvas.
+- Looks tab **+** new look button — offer "Build manually" or "Suggest for me" (opens the suggestion sheet).
+- Optional: Home tile "Get dressed" / "What to wear" CTA.
+
+**4c — Suggestion UI**
+- A bottom sheet showing the top suggestion as a canvas preview (reuse `layoutCanvasHtml`), with prev/next arrows to cycle through the N results.
+- "Wear this" → logs the look (same as `openWearLook`).
+- "Open in builder" → opens in Build-a-look canvas for tweaking.
+- "These two don't go" → opens a mini form: pick the two offending items from the outfit + type/select a reason → `POST /exclusions`. Normalizes item_a < item_b.
+- Optional level picker and context typeahead at the top of the sheet to filter by.
+
+**4d — Context typeahead**
+- On the suggestion sheet, wear-logging, and look detail: a text input + single-select of `distinctScalar("context")` over the `wears` and `outfits` tables (same pattern as `brand` typeahead). Pre-fills formality default when a known context is selected. Never required.
+- Wire `wears.context` capture into the calendar "+ Look" / "+ Clothing" log flow.
+
+**4e — One-tap demand capture (formality_for)**
+- On the calendar day-view after logging a wear, offer a one-tap "How dressed up was this day?" (6-chip row: the OCCASION_LADDER labels). Writes `wears.formality_for`. Optional — if dismissed, just skip.
+
+**4f — Closet-vs-life gap (Stats tab)**
+- v1 (free, works on historical wears): compare closet supply distribution (count items by `formality`) vs. wear demand distribution (count wears by the `formality` of worn outfits via `outfitBucket`). Bar chart or simple percentage bars. → "Your closet is 40% Smart Casual but you mostly wear Everyday Casual."
+- Lives in Stats tab, new section "Closet vs. Your Life" or similar.
+- v2 (later, as `formality_for` data accumulates): use the actual demand-captured `wears.formality_for` instead of the derived outfit bucket.
+
+---
+
+### Phase 5 — Audit + docs (last — reflects final state)
+
+**5a — Bug + improvement audit**
+- Full read-through of `index.html`; fix small bugs inline; surface anything larger.
+- Known items to check: the stale FORMALITY_BUCKETS "1–7 ladder" comments (cleaned in Phase 2); any `[data-sv]:not([data-sf])` selector gaps; builder canvas touch-action on older iOS.
+
+**5b — Rewrite CLAUDE.md**
+- Archive the r1–r18 build log to `archive/CLAUDE_build_history.md`.
+- Keep a tight current-state CLAUDE.md: architecture, data model, conventions, current `APP_VERSION`, known gotchas — no per-release history.
+
+**5c — ROADMAP update**
+- The old `ROADMAP.md` describes the v25 app; it's obsolete. Replace with a short living doc covering: what's shipped in the rework, the Phase 2–5 plan above (mark each ✓ as completed), and the back-burner items (wear-logging G-series, crop editor, reorder capsules).
+
+**5d — User guide / manual**
+- A `USER_GUIDE.md` (or in-app Help screen) covering every surface: Closet (lenses, status, categories), Looks (formality, builder), Capsules (capsule vs. trip, weather, active-capsule lens), Calendar (logging, copy/move), Stats (gap analysis, Closet Review), Suggestions (how they work, exclusions).
+
+---
+
+### Back-burner (not in this round)
+- Reorder capsules (needs an `order` column)
+- Auto-refresh trip weather
+- Wear-logging loop overhaul (G1 multi-select fast logger, G3 Home CTA, G2 long-press grid log)
+- Crop/rotate photo editor
+- Explicit outfit feedback (👍/👎 — `outfits.rating` column added in Phase 2 but UI deferred)
+- Outfit of the day on Home connected to weather
 
 Migrations are run by the user in the Supabase SQL editor; **never deploy UI
 that writes a new column/table before its migration is confirmed.**
@@ -600,7 +720,7 @@ that writes a new column/table before its migration is confirmed.**
 
 - **`APP_VERSION`** is shown in the UI as-is. Format **`YYYY-MM-DD rN`** for the
   rework series (r = rework): on a new day use today's date + `r1`; for additional
-  pushes the same day, increment `rN`. Currently `2026-06-22 r10`.
+  pushes the same day, increment `rN`. Currently `2026-06-22 r18`.
 - Match the surrounding code's comment density; comment non-obvious logic only.
 - Fixed product choices (taxonomy, color families, occasion ladder, contexts) live
   as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`,
