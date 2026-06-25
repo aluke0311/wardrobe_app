@@ -420,6 +420,11 @@
 
   /* ---------- item photo view ---------- */
   .item-nav { display: flex; align-items: center; padding: 10px 10px 6px; gap: 6px; border-bottom: 1px solid var(--line); }
+  .item-sib-bar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
+  .item-sib-btn { width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; justify-content: center; }
+  .item-sib-btn:disabled { opacity: .3; }
+  .item-sib-btn svg { width: 16px; height: 16px; stroke: var(--text); stroke-width: 2; fill: none; }
+  .item-sib-label { font-size: 12px; color: var(--muted); min-width: 80px; text-align: center; }
   .item-back { display: flex; align-items: center; gap: 3px; color: var(--accent); font-size: 16px; font-weight: 500; padding: 4px 6px 4px 2px; flex-shrink: 0; }
   .item-back svg { width: 18px; height: 18px; stroke: var(--accent); stroke-width: 2; fill: none; flex-shrink: 0; }
   .item-nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
@@ -853,7 +858,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-25 r3";
+const APP_VERSION = "2026-06-25 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1443,7 +1448,8 @@ function renderCloset() {
     body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(searchResults);
   } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
-    body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub));
+    body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
+      + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
   } else if (closetCat) {
     body.innerHTML = renderClosetCategory(closetCat);
   } else {
@@ -1466,6 +1472,9 @@ function renderCloset() {
   // wire "+" add button (pre-fills category context)
   const clPlus = $("#clPlus");
   if (clPlus) clPlus.onclick = () => switchTab("add");
+  // "Closet" footer link — jumps all the way back to root
+  const clRootJump = $("#clRootJump");
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; renderCloset(); };
 }
 
 function closetBack() {
@@ -1538,6 +1547,14 @@ const FIELD_CONFIGS = {
   acquisition:  { label: "Acquired",  type: "single",    opts: ["New","Secondhand","Gift"] },
 };
 
+// Items visible in the current subcategory/grid context (for prev/next navigation).
+function siblingItems() {
+  if (searchResults) return searchResults;
+  if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
+  if (closetCat) return lensItems().filter(i => i.category === closetCat);
+  return lensItems();
+}
+
 // ---- Photo view ----
 function openItem(id) {
   const i = items.find(x => x.id === id);
@@ -1548,6 +1565,21 @@ function openItem(id) {
   const backLabel = closetSub
     ? (closetSub === "__all__" ? closetCat : closetSub === "__other__" ? "Other" : closetSub)
     : closetCat || "Closet";
+
+  const sibs = siblingItems();
+  const sibIdx = sibs.findIndex(x => x.id === id);
+  const sibLabel = closetSub && closetSub !== "__all__" && closetSub !== "__other__"
+    ? closetSub : closetCat || "Closet";
+  const sibBar = sibs.length > 1 ? `
+    <div class="item-sib-bar">
+      <button class="item-sib-btn" id="itemPrev" ${sibIdx <= 0 ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="item-sib-label">${sibIdx + 1} of ${sibs.length}${sibLabel !== "Closet" ? `<br><span style="font-size:11px">${esc(sibLabel)}</span>` : ""}</span>
+      <button class="item-sib-btn" id="itemNext" ${sibIdx >= sibs.length - 1 ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>` : "";
 
   const body = $("#closetBody");
   body.innerHTML = `
@@ -1564,6 +1596,7 @@ function openItem(id) {
         <button class="item-add-look" id="itemAddLook">Add to Look</button>
       </div>
     </div>
+    ${sibBar}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#ccc;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -1578,6 +1611,10 @@ function openItem(id) {
 
   $("#itemShuffle").onclick = () => openSuggestSheet(i.id);
   $("#itemAddLook").onclick = () => openBuilder(null, i.id);
+
+  const prevBtn = $("#itemPrev"), nextBtn = $("#itemNext");
+  if (prevBtn) prevBtn.onclick = () => { const s = siblingItems(); const idx = s.findIndex(x => x.id === id); if (idx > 0) openItem(s[idx - 1].id); };
+  if (nextBtn) nextBtn.onclick = () => { const s = siblingItems(); const idx = s.findIndex(x => x.id === id); if (idx < s.length - 1) openItem(s[idx + 1].id); };
 }
 
 // ---- Details / edit view ----
@@ -2690,8 +2727,12 @@ function suggestOutfits(targetLevel = null, seedItemId = null) {
   const shoes = slot("Shoes");
   const outerwear = slot("Outerwear");
 
-  const hasSeed = id => !seedItemId || id === seedItemId;
   const exFree = its => !its.some((a, i) => its.some((b, j) => i < j && isExcluded(a.id, b.id)));
+  // Function items (formality 1) must never mix with non-function items
+  const formalityOk = its => {
+    const hasFunc = its.some(p => itemFormality(p) === 1);
+    return !hasFunc || its.every(p => itemFormality(p) === 1);
+  };
 
   const combos = [];
 
@@ -2700,7 +2741,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null) {
     for (const sh of shoes) {
       for (const ow of [null, ...outerwear.slice(0, 2)]) {
         const its = [d, sh, ...(ow ? [ow] : [])];
-        if (!exFree(its)) continue;
+        if (!exFree(its) || !formalityOk(its)) continue;
         combos.push({ pieces: its, score: scoreCombo(its, targetLevel) });
       }
     }
@@ -2712,11 +2753,11 @@ function suggestOutfits(targetLevel = null, seedItemId = null) {
       if (isExcluded(t.id, bt.id)) continue;
       for (const sh of shoes.slice(0, 4)) {
         const its3 = [t, bt, sh];
-        if (!exFree(its3)) continue;
+        if (!exFree(its3) || !formalityOk(its3)) continue;
         combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel) });
         for (const ow of outerwear.slice(0, 2)) {
           const its4 = [t, bt, sh, ow];
-          if (exFree(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel) });
+          if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel) });
         }
       }
     }
@@ -5037,11 +5078,19 @@ function renderReviewLanding() {
   });
 }
 
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function startReview(key) {
   const f = REVIEW_FIELDS.find(x => x.key === key);
   if (!f) return;
   reviewField = key;
-  reviewQueue = reviewPool().filter(f.missing).map(i => i.id);
+  reviewQueue = shuffle(reviewPool().filter(f.missing).map(i => i.id));
   reviewIdx = 0;
   statsView = "review-deal";
   renderStats();
