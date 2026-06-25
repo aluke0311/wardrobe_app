@@ -52,6 +52,16 @@
     color: #fff; font-weight: 600; text-align: center;
   }
   .btn:disabled { opacity: .6; }
+  .btn-sec {
+    width: 100%; padding: 13px; border-radius: 12px; background: var(--surface);
+    color: var(--text); font-weight: 600; text-align: center; border: 1px solid var(--line);
+  }
+  .icon-btn {
+    width: 44px; height: 44px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--surface); display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:disabled { opacity: .3; }
+  .icon-btn svg { width: 22px; height: 22px; stroke: var(--text); stroke-width: 2; fill: none; }
   .err { color: var(--danger); font-size: 13.5px; }
 
   /* ---------- app shell ---------- */
@@ -843,7 +853,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-25 r2";
+const APP_VERSION = "2026-06-25 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1685,6 +1695,14 @@ function openItemDetails(id) {
       <div class="det-section-label">LINK</div>
       <div class="det-card">${detRow("URL", esc(i.url || ""), "url")}</div>
 
+      <div class="det-section-label">SUGGESTIONS</div>
+      <div class="det-card">
+        <button class="det-row" id="detNoSuggest" style="width:100%;text-align:left">
+          <span class="det-lbl">Don't suggest in outfits</span>
+          <span class="det-val">${isNoSuggest(i) ? "On" : "Off"}</span>
+        </button>
+      </div>
+
     </div>
     <div class="det-footer">
       ${i.image_path
@@ -1700,6 +1718,11 @@ function openItemDetails(id) {
   $("#detReplaceImg").onclick = () => pickItemPhoto(i.id);
   const rmImg = $("#detRemoveImg");
   if (rmImg) rmImg.onclick = () => removeItemPhoto(i.id);
+
+  $("#detNoSuggest").onclick = async () => {
+    await setNoSuggest(i.id, !isNoSuggest(i));
+    openItemDetails(i.id);
+  };
 
   // Notes auto-save (direct REST call so we skip the openItemDetails re-render)
   const ta = $("#detNotes");
@@ -2610,6 +2633,23 @@ function buildExcludeSet() {
 }
 function isExcluded(a, b) { return _excludeSet.has([a, b].sort().join(":")); }
 
+// "Never suggest this item" — stored as a sentinel tag (no schema change needed).
+const NO_SUGGEST_TAG = "no-suggest";
+function isNoSuggest(i) { return !!i && (i.tags || []).includes(NO_SUGGEST_TAG); }
+async function setNoSuggest(id, on) {
+  const i = itemById.get(id); if (!i) return;
+  const tags = (i.tags || []).filter(t => t !== NO_SUGGEST_TAG);
+  if (on) tags.push(NO_SUGGEST_TAG);
+  i.tags = tags;  // optimistic
+  try {
+    await rest(`/items?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags }) });
+  } catch (e) { toast(e.message); }
+}
+
+// Slot a piece falls into for suggestions. Cardigans dress like outerwear,
+// so they never fill the "shirt" slot.
+function suggestSlot(i) { return i.subcategory === "Cardigans" ? "Outerwear" : i.category; }
+
 const NEUTRAL_COLORS = new Set(["White","Gray","Black","Beige","Brown","Metallic"]);
 
 // Score a candidate combo of items. Higher = better.
@@ -2633,12 +2673,15 @@ function scoreCombo(its, target) {
 }
 
 function suggestOutfits(targetLevel = null, seedItemId = null) {
-  const avail = items.filter(i => itemStatus(i) === "Available" && i.image_path);
+  const avail = items.filter(i => itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i));
+  const seed = seedItemId ? itemById.get(seedItemId) : null;
   const slot = (...cats) => {
-    let pool = avail.filter(i => cats.includes(i.category));
-    if (targetLevel) pool = pool.filter(i => Math.abs(itemFormality(i) - targetLevel) <= 1);
-    if (!pool.length && targetLevel) pool = avail.filter(i => cats.includes(i.category));
-    return pool.sort((a, b) => (daysSince(lastWorn(b.id)) ?? 999) - (daysSince(lastWorn(a.id)) ?? 999)).slice(0, 6);
+    let pool = avail.filter(i => cats.includes(suggestSlot(i)));
+    if (targetLevel) { const f = pool.filter(i => Math.abs(itemFormality(i) - targetLevel) <= 1); if (f.length) pool = f; }
+    pool = pool.sort((a, b) => (daysSince(lastWorn(b.id)) ?? 999) - (daysSince(lastWorn(a.id)) ?? 999)).slice(0, 6);
+    // always keep the seed item in its own slot so suggestions build around it
+    if (seed && cats.includes(suggestSlot(seed)) && !pool.find(p => p.id === seed.id)) pool.unshift(seed);
+    return pool;
   };
 
   const tops = slot("Tops");
@@ -2778,7 +2821,7 @@ function renderSuggestSheet() {
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
       <button class="btn" data-swear>Wear this today</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
-      <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sexclude>These two don't go together…</button>
+      <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
     </div>` : ""}`;
 
   $("#sgClose").onclick = () => { $("#logSheet").hidden = true; };
@@ -2832,9 +2875,47 @@ function renderSuggestSheet() {
     }, 50);
   };
 
-  const exBtn = $("#logInner").querySelector("[data-sexclude]");
-  if (exBtn && combo) exBtn.onclick = () => openExcludeSheet(combo.pieces);
+  const fbBtn = $("#logInner").querySelector("[data-sfeedback]");
+  if (fbBtn && combo) fbBtn.onclick = () => openFeedbackSheet(combo.pieces);
 
+  hydratePhotos($("#logInner"));
+}
+
+// Feedback sheet from the suggester: never-suggest an item, or mark a pair as clashing.
+function openFeedbackSheet(pieces) {
+  const rows = pieces.map(p => {
+    const off = isNoSuggest(p);
+    return `<div class="frow" style="align-items:center">
+      ${thumbHtml(p.image_path, 40)}
+      <div class="fmeta"><div class="fname">${esc(p.name)}</div><div class="fcount">${esc(p.category)}</div></div>
+      <button class="rv-set" style="flex:none;width:auto;padding:8px 14px;font-size:13px" data-nosug="${esc(p.id)}">
+        ${off ? "Suggest again" : "Don't suggest"}
+      </button>
+    </div>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="fbBack">Back</button>
+      <h2>Feedback</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div style="padding:8px 16px 16px">
+      <div class="muted" style="font-size:13px;margin-bottom:10px">Never suggest an item again, or tell us two pieces don't go together.</div>
+      ${rows}
+      <button class="btn btn-sec" id="fbPair" style="margin-top:16px">These two don't go together…</button>
+    </div>`;
+  $("#fbBack").onclick = () => renderSuggestSheet();
+  $("#fbPair").onclick = () => openExcludeSheet(pieces);
+  $("#logInner").querySelectorAll("[data-nosug]").forEach(b => {
+    b.onclick = async () => {
+      const id = b.dataset.nosug;
+      await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId);
+      if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
+      toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
+      openFeedbackSheet(pieces);
+    };
+  });
   hydratePhotos($("#logInner"));
 }
 
@@ -2880,7 +2961,7 @@ async function openExcludeSheet(pieces) {
           <input class="inp" id="exReason" type="text" placeholder="Reason (optional)" style="width:100%;font-size:15px" value="">
         </div>
       </div>`;
-    $("#exBack").onclick = () => renderSuggestSheet();
+    $("#exBack").onclick = () => openFeedbackSheet(pieces);
     $("#exSave").onclick = async () => {
       const [a, b] = [...pieceSel].sort();
       const reason = $("#exReason").value.trim() || null;
