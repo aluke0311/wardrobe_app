@@ -2626,7 +2626,7 @@ function scoreCombo(its, target) {
   if (louds.length >= 2) s -= 3;
   // rotation: reward items not worn recently
   for (const i of its) {
-    const d = daysSince(i.id);
+    const d = daysSince(lastWorn(i.id));
     s += d === null ? 3 : d > 60 ? 2 : d > 30 ? 1 : 0;
   }
   return s;
@@ -2638,7 +2638,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null) {
     let pool = avail.filter(i => cats.includes(i.category));
     if (targetLevel) pool = pool.filter(i => Math.abs(itemFormality(i) - targetLevel) <= 1);
     if (!pool.length && targetLevel) pool = avail.filter(i => cats.includes(i.category));
-    return pool.sort((a, b) => (daysSince(b.id) ?? 999) - (daysSince(a.id) ?? 999)).slice(0, 6);
+    return pool.sort((a, b) => (daysSince(lastWorn(b.id)) ?? 999) - (daysSince(lastWorn(a.id)) ?? 999)).slice(0, 6);
   };
 
   const tops = slot("Tops");
@@ -2740,7 +2740,7 @@ function renderSuggestSheet() {
   if (combo) {
     const layout = suggestionLayout(combo.pieces);
     const fakeOutfit = { layout, formality_override: null, _bucket: null };
-    const canvas = layoutCanvasHtml(fakeOutfit, "sg-canvas");
+    const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas");
     preview = canvas || combo.pieces.map(p =>
       `<div style="display:flex;align-items:center;gap:10px;padding:6px 0">
         ${thumbHtml(p.image_path, 40)}
@@ -2834,6 +2834,8 @@ function renderSuggestSheet() {
 
   const exBtn = $("#logInner").querySelector("[data-sexclude]");
   if (exBtn && combo) exBtn.onclick = () => openExcludeSheet(combo.pieces);
+
+  hydratePhotos($("#logInner"));
 }
 
 function openNewLookSheet() {
@@ -5086,8 +5088,12 @@ function openReviewDateEdit(i) {
 // Open the full item detail from closet review
 function openItemFromReview(itemId) {
   _reviewMode = true;
-  detailId = itemId;
-  detailView = null;
+  $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-closet"));
+  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "closet"));
+  $("#title").textContent = "";
+  $("#headerAdd").hidden = true;
+  $("#gridBar").hidden = true;
+  $("#app").classList.remove("has-gridbar");
   openItem(itemId);
 }
 
