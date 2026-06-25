@@ -841,7 +841,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-22 r18";
+const APP_VERSION = "2026-06-25 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -864,9 +864,9 @@ const COLOR_FAMILIES = [
 ];
 const colorHex = (name) => (COLOR_FAMILIES.find(c => c[0] === name) || [])[1] || "#ccc";
 
-// Formality ladder 1-5 (index 0 = level 1). Matches outfit bucket labels.
-const OCCASION_LADDER = ["Lounge", "Casual", "Smart", "Dressy", "Formal"];
-const occLabel = (n) => (n >= 1 && n <= 5) ? OCCASION_LADDER[n - 1] : null;
+// Formality scale 1-6 (index 0 = level 1). Matches outfit bucket labels.
+const OCCASION_LADDER = ["Function", "Very Casual", "Everyday Casual", "Smart Casual", "Dressed Up", "Formal"];
+const occLabel = (n) => (n >= 1 && n <= 6) ? OCCASION_LADDER[n - 1] : null;
 
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
 const STATUSES = ["Available", "Storage", "Archive", "Wishlist"];
@@ -1508,16 +1508,17 @@ function closetBack() {
 
 // Field definitions for the edit sheet (used by openFieldEdit)
 const FIELD_CONFIGS = {
-  color_family: { label: "Color",  type: "color",  opts: COLOR_FAMILIES.map(c => c[0]) },
-  fabric:       { label: "Fabric", type: "multi",  filter: true, opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
-  size:         { label: "Size",   type: "single", opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
-  season:       { label: "Season", type: "multi",  opts: SEASONS },
-  brand:        { label: "Brand",  type: "typeahead" },
-  status:       { label: "Status", type: "single", opts: ["Available","Storage","Archive"] },
-  price:        { label: "Price",  type: "price" },
-  url:          { label: "URL",    type: "text" },
-  retailer:     { label: "Retailer", type: "text" },
-  acquisition:  { label: "Acquired", type: "single", opts: ["New","Secondhand","Gift"] },
+  color_family: { label: "Color",     type: "color",     opts: COLOR_FAMILIES.map(c => c[0]) },
+  fabric:       { label: "Fabric",    type: "multi",     filter: true, opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
+  size:         { label: "Size",      type: "single",    opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
+  season:       { label: "Season",    type: "multi",     opts: SEASONS },
+  brand:        { label: "Brand",     type: "typeahead" },
+  status:       { label: "Status",    type: "single",    opts: ["Available","Storage","Archive"] },
+  formality:    { label: "Formality", type: "formality" },
+  price:        { label: "Price",     type: "price" },
+  url:          { label: "URL",       type: "text" },
+  retailer:     { label: "Retailer",  type: "text" },
+  acquisition:  { label: "Acquired",  type: "single",    opts: ["New","Secondhand","Gift"] },
 };
 
 // ---- Photo view ----
@@ -1654,11 +1655,7 @@ function openItemDetails(id) {
         <div class="det-divider"></div>
         ${detRow("Acquired", esc(i.acquisition || ""), "acquisition")}
         <div class="det-divider"></div>
-        <button class="det-row" data-occ-item="${esc(i.id)}">
-          <span class="det-lbl">Occasion</span>
-          <span class="det-val${i.min_occasion ? "" : " placeholder"}">${i.min_occasion ? esc(pieceFormalityLabel(i)) : "Occasion"}</span>
-          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
+        ${detRow("Formality", i.formality ? esc(occLabel(i.formality)) : "", "formality")}
       </div>
 
       <div class="det-section-label">PRICING</div>
@@ -1719,10 +1716,6 @@ function openItemDetails(id) {
   // Attribute rows → field edit sheet
   body.querySelectorAll("[data-det-field]").forEach(btn => {
     btn.onclick = () => openFieldEdit(id, btn.dataset.detField);
-  });
-  // Occasion row → custom range editor (edits min/max_occasion)
-  body.querySelectorAll("[data-occ-item]").forEach(btn => {
-    btn.onclick = () => openOccasionEdit(btn.dataset.occItem, () => openItemDetails(id));
   });
 }
 
@@ -1858,6 +1851,12 @@ function renderFieldSheet(i, field, cfg) {
       </button>`;
     }).join("");
     content = `<div style="padding:16px 18px"><div class="fld-color-grid">${chips}</div></div>`;
+  } else if (cfg.type === "formality") {
+    const chips = OCCASION_LADDER.map((lbl, idx) => {
+      const lvl = idx + 1, on = curVal === lvl;
+      return `<button class="sheet-chip${on ? " on" : ""}" data-fv="${lvl}" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+    }).join("");
+    content = `<div class="sheet-expand" style="border:none"><div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div></div>`;
   } else {
     // single or multi chips
     const isMulti = cfg.type === "multi";
@@ -1946,7 +1945,10 @@ function renderFieldSheet(i, field, cfg) {
         if (inp) { inp.value = v; inp.focus(); }
         return;
       }
-      if (cfg.type === "multi") {
+      if (cfg.type === "formality") {
+        const n = +v;
+        _fieldPending = (_fieldPending === n) ? null : n;
+      } else if (cfg.type === "multi") {
         const cur = Array.isArray(_fieldPending) ? _fieldPending : (Array.isArray((i || {})[field]) ? [...(i || {})[field]] : []);
         _fieldPending = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v];
       } else if (cfg.type === "color" || cfg.type === "single") {
@@ -2376,38 +2378,33 @@ async function saveNewItem() {
 const LOOK_LENSES = ["Formality", "Season", "Recent", "All"];
 const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phone)
 
-// Coarse formality folders — mirror the user's old Stylebook buckets, mapped onto
-// the 1–7 ladder. "workout" is off-ladder (handled specially).
+// Formality folders — one per level on the 1-6 scale.
 const FORMALITY_BUCKETS = [
-  { key: "workout", label: "Workout" },
-  { key: "lounge",  label: "Lounge"  },  // ladder 1–2
-  { key: "casual",  label: "Casual"  },  // ladder 3
-  { key: "smart",   label: "Smart"   },  // ladder 4–5
-  { key: "dressy",  label: "Dressy"  },  // ladder 6
-  { key: "formal",  label: "Formal"  },  // ladder 7
+  { key: "function", label: "Function"        },  // 1
+  { key: "vcasual",  label: "Very Casual"      },  // 2
+  { key: "ecasual",  label: "Everyday Casual"  },  // 3
+  { key: "smart",    label: "Smart Casual"     },  // 4
+  { key: "dressy",   label: "Dressed Up"       },  // 5
+  { key: "formal",   label: "Formal"           },  // 6
 ];
 
-// Bucket → item occasion range used when nudging pieces to match a look's formality.
+// Bucket key → target formality level (used when nudging pieces toward a look's level).
 const BUCKET_RANGES = {
-  lounge:  { min: 1, max: 1 },
-  casual:  { min: 2, max: 2 },
-  smart:   { min: 3, max: 3 },
-  dressy:  { min: 4, max: 4 },
-  formal:  { min: 5, max: 5 },
+  function: 1, vcasual: 2, ecasual: 3, smart: 4, dressy: 5, formal: 6,
 };
 
-// Per-subcategory / category formality estimate on the 1–7 ladder. Used only when
-// an item has no explicit min/max_occasion set (most don't yet).
+// Per-subcategory / category formality seed on the 1-6 scale. Used when an item
+// has no explicit formality set (most items start unset — Closet Review fills them).
 const SUBCAT_FORMALITY = {
-  "Tee shirts": 2, "Graphic tees": 1, "Long-sleeve tees": 2, "Sleeveless": 2,
-  "Blouses": 3, "Sweaters": 3, "Cardigans": 3, "Sweatshirts": 1,
-  "Jeans": 2, "Pants": 3, "Shorts": 2, "Skirts": 3, "Leggings/Joggers": 1, "Tights": 2,
-  "Casual dresses": 2, "Work dresses": 3, "Cocktail dresses": 4,
-  "Blazers": 3, "Jackets": 2, "Coats": 3,
-  "Boots": 3, "Sandals": 2, "Flats": 2, "Heels": 4, "Sneakers": 2,
+  "Tee shirts": 2, "Graphic tees": 3, "Long-sleeve tees": 2, "Sleeveless": 3,
+  "Blouses": 4, "Sweaters": 3, "Cardigans": 3, "Sweatshirts": 2,
+  "Jeans": 3, "Pants": 4, "Shorts": 3, "Skirts": 3, "Leggings/Joggers": 2, "Tights": 3,
+  "Casual dresses": 3, "Work dresses": 4, "Cocktail dresses": 5,
+  "Blazers": 4, "Jackets": 3, "Coats": 3,
+  "Boots": 3, "Sandals": 3, "Flats": 3, "Heels": 4, "Sneakers": 3,
   "Workout tops": 1, "Active shorts": 1, "Sports bras": 1,
 };
-const CAT_FORMALITY = { Tops: 2, Bottoms: 2, Dresses: 3, Outerwear: 3, Shoes: 2, Workout: 1 };
+const CAT_FORMALITY = { Tops: 2, Bottoms: 3, Dresses: 4, Outerwear: 3, Shoes: 3, Workout: 1 };
 
 // Vertical stacking order for collages: outerwear/tops up top, bottoms, then shoes.
 const LAYER_ORDER = { Outerwear: 0, Tops: 1, Dresses: 1, Workout: 1, Bottoms: 2, Shoes: 3 };
@@ -2450,26 +2447,20 @@ function outfitWornCount(o) { return effectiveWearDays(o).length; }
 function outfitLastWorn(o) { const d = effectiveWearDays(o).sort(); return d.length ? d[d.length - 1] : null; }
 function outfitCost(o) { return outfitItems(o).reduce((s, i) => s + (i.price ? Number(i.price) : 0), 0); }
 
+// Returns the formality level (1-6) for an item: explicit field first, then taxonomy seed.
 function itemFormality(i) {
-  if (i.min_occasion && i.max_occasion) return (i.min_occasion + i.max_occasion) / 2;
-  if (i.min_occasion) return i.min_occasion;
-  if (i.max_occasion) return i.max_occasion;
+  if (i.formality) return i.formality;
   return SUBCAT_FORMALITY[i.subcategory] ?? CAT_FORMALITY[i.category] ?? 3;
 }
 function outfitBucket(o) {
   if (o._bucket) return o._bucket;
   if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
   const its = outfitItems(o);
-  let key = "casual";
+  let key = "ecasual";
   if (its.length) {
-    const nonShoe = its.filter(i => i.category !== "Shoes");
-    const workoutN = its.filter(i => i.category === "Workout").length;
-    if (workoutN >= 1 && workoutN >= (nonShoe.length || its.length) / 2) {
-      key = "workout";
-    } else {
-      const c = Math.max(1, Math.min(5, Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length)));
-      key = ["lounge", "casual", "smart", "dressy", "formal"][c - 1];
-    }
+    const avg = Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length);
+    const c = Math.max(1, Math.min(6, avg));
+    key = ["function", "vcasual", "ecasual", "smart", "dressy", "formal"][c - 1];
   }
   o._bucket = key;
   return key;
@@ -2512,14 +2503,10 @@ function outfitCollageHtml(o, max, mini) {
   return `<div class="${cls}">${cells}</div>`;
 }
 
-// Formality label for a piece: explicit range if set, else the estimated level.
+// Formality label for a piece: explicit formality field, else taxonomy seed.
 function pieceFormalityLabel(it) {
-  if (it.min_occasion && it.max_occasion) {
-    return it.min_occasion === it.max_occasion
-      ? occLabel(it.min_occasion)
-      : `${occLabel(it.min_occasion)} – ${occLabel(it.max_occasion)}`;
-  }
-  return "auto · " + occLabel(Math.max(1, Math.min(5, Math.round(itemFormality(it)))));
+  if (it.formality) return occLabel(it.formality);
+  return "est. · " + occLabel(Math.max(1, Math.min(6, Math.round(itemFormality(it)))));
 }
 
 function emptyLooks() {
@@ -2873,25 +2860,22 @@ function openLookFormalityEdit(id) {
 function showNudgePiecesSheet(outfitId, bucketKey) {
   const o = outfitById.get(outfitId);
   if (!o) { $("#logSheet").hidden = true; return; }
-  const its = outfitItems(o).filter(it => it.category !== "Workout");
-  const r = BUCKET_RANGES[bucketKey];
-  if (!r || !its.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
+  const its = outfitItems(o);
+  const targetDefault = BUCKET_RANGES[bucketKey];
+  if (!targetDefault || !its.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
 
-  // lo/hi are the target range the user is pushing pieces toward — start at bucket default
-  let lo = r.min, hi = r.max;
+  let target = targetDefault; // single level 1-6
 
   const renderSheet = () => {
-    const rangeLabel = lo === hi ? occLabel(lo) : `${occLabel(lo)} – ${occLabel(hi)}`;
     const chips = OCCASION_LADDER.map((lbl, idx) => {
-      const lvl = idx + 1, on = lvl >= lo && lvl <= hi;
+      const lvl = idx + 1, on = lvl === target;
       return `<button class="sheet-chip${on ? " on" : ""}" data-nudgelvl="${lvl}" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
     }).join("");
 
     const pieceRows = its.map(it => {
       const f = itemFormality(it);
-      const matches = f >= lo - 0.5 && f <= hi + 0.5;
       return `<label style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
-        <input type="checkbox" data-nudge="${esc(it.id)}" ${!matches ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
+        <input type="checkbox" data-nudge="${esc(it.id)}" ${f !== target ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
         <span style="flex:1;min-width:0">
           <span style="display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.name || "Untitled")}</span>
           <span style="display:block;font-size:12px;color:var(--muted)">${esc(pieceFormalityLabel(it))}</span>
@@ -2906,26 +2890,16 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
         <button class="lnk" id="nudgeApply" style="font-weight:700">Apply</button>
       </div>
       <div style="padding:14px 18px 30px">
-        <div class="muted" style="font-size:13px;margin-bottom:10px">Tap the range to push checked pieces toward, then apply.</div>
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Tap target formality, then apply to checked pieces.</div>
         <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:14px">${chips}</div>
-        <div style="font-size:13px;margin-bottom:12px">Target: <b>${esc(rangeLabel)}</b></div>
+        <div style="font-size:13px;margin-bottom:12px">Target: <b>${esc(occLabel(target))}</b></div>
         <div>${pieceRows}</div>
       </div>`;
 
     $("#nudgeSkip").onclick = () => { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); };
 
-    // tap-lo-then-hi range selection (same logic as openOccasionEdit)
-    let tapState = "lo"; // next tap sets lo
     $("#logInner").querySelectorAll("[data-nudgelvl]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const lvl = +btn.dataset.nudgelvl;
-        if (tapState === "lo") { lo = lvl; hi = lvl; tapState = "hi"; }
-        else if (tapState === "hi") {
-          if (lvl < lo) { lo = lvl; tapState = "hi"; }
-          else { hi = lvl; tapState = "lo"; }
-        }
-        renderSheet();
-      });
+      btn.addEventListener("click", () => { target = +btn.dataset.nudgelvl; renderSheet(); });
     });
 
     $("#nudgeApply").onclick = async () => {
@@ -2936,11 +2910,11 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
         await rest(`/items?id=in.(${idList})`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-          body: JSON.stringify({ min_occasion: lo, max_occasion: hi }),
+          body: JSON.stringify({ formality: target }),
         });
         toNudge.forEach(iid => {
           const it = itemById.get(iid) || items.find(x => x.id === iid);
-          if (it) { it.min_occasion = lo; it.max_occasion = hi; }
+          if (it) { it.formality = target; }
         });
         outfits.forEach(o => { o._bucket = null; });
         toast(`Formality saved · ${toNudge.length} piece${toNudge.length === 1 ? "" : "s"} updated`);
@@ -2953,20 +2927,19 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
   renderSheet();
 }
 
-// ---- correct a piece's formality (edits its occasion range on the item) ----
-// Works on any item (called from a look's piece list and the item details card).
+// ---- correct a piece's formality (edits items.formality — a single 1-6 level) ----
+// Called from a look's PIECE FORMALITY list.
 // Clears every outfit's cached bucket so looks re-derive after a change.
 function openOccasionEdit(itemId, onSaved) {
   const it = itemById.get(itemId) || items.find(x => x.id === itemId);
   if (!it) return;
-  let lo = it.min_occasion || null, hi = it.max_occasion || null;
+  let lvl = it.formality || null;
 
   const render = () => {
     const chips = OCCASION_LADDER.map((lbl, idx) => {
-      const lvl = idx + 1, on = lo != null && lvl >= lo && lvl <= hi;
-      return `<button class="sheet-chip${on ? " on" : ""}" data-occ="${lvl}" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+      const n = idx + 1, on = lvl === n;
+      return `<button class="sheet-chip${on ? " on" : ""}" data-occ="${n}" style="text-align:left">${n}. ${esc(lbl)}</button>`;
     }).join("");
-    const rangeTxt = lo == null ? "Not set" : (lo === hi ? occLabel(lo) : `${occLabel(lo)} – ${occLabel(hi)}`);
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
         <button class="lnk" id="occCancel">Cancel</button>
@@ -2974,41 +2947,35 @@ function openOccasionEdit(itemId, onSaved) {
         <button class="lnk" id="occSave" style="font-weight:700">Save</button>
       </div>
       <div style="padding:14px 18px 24px">
-        <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(it.name || "Item")} — tap the lowest and highest occasions it works for.</div>
+        <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(it.name || "Item")} — tap its formality level.</div>
         <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div>
-        <div style="margin-top:14px;font-size:14px">Works for: <b>${esc(rangeTxt)}</b></div>
-        ${lo != null ? `<button class="lnk" id="occClear" style="color:var(--danger);font-size:14px;margin-top:10px">Clear</button>` : ""}
+        <div style="margin-top:14px;font-size:14px">Level: <b>${esc(lvl ? occLabel(lvl) : "Not set")}</b></div>
+        ${lvl != null ? `<button class="lnk" id="occClear" style="color:var(--danger);font-size:14px;margin-top:10px">Clear</button>` : ""}
       </div>`;
     $("#occCancel").onclick = () => { $("#logSheet").hidden = true; };
     $("#occSave").onclick = async () => {
-      const prevLo = it.min_occasion, prevHi = it.max_occasion;
-      it.min_occasion = lo; it.max_occasion = hi;
+      const prev = it.formality;
+      it.formality = lvl;
       outfits.forEach(o => { o._bucket = null; });
       $("#logSheet").hidden = true;
       try {
         await rest(`/items?id=eq.${it.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-          body: JSON.stringify({ min_occasion: lo, max_occasion: hi }),
+          body: JSON.stringify({ formality: lvl }),
         });
         toast("Formality updated");
         if (onSaved) onSaved();
       } catch (e) {
-        it.min_occasion = prevLo; it.max_occasion = prevHi;
+        it.formality = prev;
         outfits.forEach(o => { o._bucket = null; });
         toast(e.message);
       }
     };
     const oc = $("#occClear");
-    if (oc) oc.onclick = () => { lo = null; hi = null; render(); };
+    if (oc) oc.onclick = () => { lvl = null; render(); };
     $("#logInner").querySelectorAll("[data-occ]").forEach(b => {
-      b.onclick = () => {
-        const v = +b.dataset.occ;
-        if (lo == null) { lo = hi = v; }              // first tap: single level
-        else if (lo === hi) { lo = Math.min(lo, v); hi = Math.max(hi, v); }  // second: extend to range
-        else { lo = hi = v; }                          // third: reset to single
-        render();
-      };
+      b.onclick = () => { const n = +b.dataset.occ; lvl = (lvl === n) ? null : n; render(); };
     });
   };
   render();
@@ -3793,11 +3760,8 @@ function statsPool() {
     if (category.length && !category.includes(i.category)) return false;
     if (season.length && !(i.season || []).some(s => season.includes(s))) return false;
     if (formality.length) {
-      const matches = formality.some(f => {
-        const lvl = OCCASION_LADDER.indexOf(f) + 1;
-        return i.min_occasion && i.max_occasion && i.min_occasion <= lvl && i.max_occasion >= lvl;
-      });
-      if (!matches) return false;
+      const iLvl = itemFormality(i);
+      if (!formality.some(f => (OCCASION_LADDER.indexOf(f) + 1) === iLvl)) return false;
     }
     if (acqCutoff) {
       const pd = i.purchase_date;
@@ -4037,11 +4001,9 @@ const REVIEW_FIELDS = [
     edit: i => openReviewField(i, "acquisition"), value: i => i.acquisition || null },
   { key: "price", label: "Price", missing: i => i.price == null || i.price === "",
     edit: i => openReviewField(i, "price"), value: i => (i.price != null && i.price !== "") ? money(i.price) : null },
-  { key: "occasion", label: "Occasion", missing: i => !(i.min_occasion && i.max_occasion),
-    edit: i => openOccasionEdit(i.id, reviewAfterEdit),
-    value: i => (i.min_occasion && i.max_occasion)
-      ? (i.min_occasion === i.max_occasion ? occLabel(i.min_occasion) : `${occLabel(i.min_occasion)} – ${occLabel(i.max_occasion)}`)
-      : null },
+  { key: "formality", label: "Formality", missing: i => !i.formality,
+    edit: i => openReviewField(i, "formality"),
+    value: i => i.formality ? occLabel(i.formality) : null },
   { key: "purchase_date", label: "Purchase Date",
     missing: i => !i.purchase_date,
     edit: i => openReviewDateEdit(i),
@@ -4920,14 +4882,10 @@ function renderCapsuleDetail() {
   const sub = [capModeLabel(c)];
   if (dates) sub.push(dates);
 
-  // formality coverage across the 5 levels
+  // formality coverage across the 6 levels
   const covered = new Set();
   for (const i of list) {
-    if (i.min_occasion && i.max_occasion) {
-      for (let n = i.min_occasion; n <= i.max_occasion; n++) covered.add(n);
-    } else {
-      covered.add(Math.max(1, Math.min(5, Math.round(itemFormality(i)))));
-    }
+    covered.add(Math.max(1, Math.min(6, Math.round(itemFormality(i)))));
   }
   const covChips = OCCASION_LADDER.map((lbl, idx) =>
     `<span class="cap-cov-chip${covered.has(idx + 1) ? " on" : ""}">${esc(lbl)}</span>`).join("");
