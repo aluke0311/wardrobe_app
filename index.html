@@ -213,7 +213,8 @@
   .rv-cur b { font-weight: 600; }
   .rv-cur .rv-empty { color: var(--accent); font-weight: 600; }
   .rv-actions { display: flex; gap: 10px; padding: 14px; flex-wrap: wrap; }
-  .rv-set { flex: 1; padding: 14px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
+  .rv-confirm { width: 100%; padding: 14px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 600; }
+  .rv-set { flex: 1; padding: 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-size: 16px; font-weight: 600; }
   .rv-skip { padding: 14px 20px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-size: 16px; font-weight: 600; }
   .rv-edit { flex: 1; padding: 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--accent); color: var(--accent); font-size: 16px; font-weight: 600; }
   .rv-done { text-align: center; padding: 70px 32px; color: var(--muted); }
@@ -539,6 +540,7 @@
     border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .ocanvas.omini { width: 64px; height: 64px; flex: none; aspect-ratio: auto; border-radius: 10px; }
   .ocanvas.bare { border: none; border-radius: 0; background: transparent; }
+  .ocanvas.sg-canvas { max-width: 320px; margin: 0 auto; }
   .ocpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
     background: center/contain no-repeat; }
 
@@ -841,7 +843,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-25 r1";
+const APP_VERSION = "2026-06-25 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1093,6 +1095,8 @@ let outfitItemMap = new Map();   // outfit id -> [item id]
 let outfitWearMap = new Map();   // outfit id -> Set(worn_on)
 let capsuleById = new Map();     // capsule id -> capsule
 let capsuleLinkMap = new Map();  // capsule id -> [link rows {item_id, packed}]
+let exclusions = [];             // exclusion pairs {item_a, item_b, reason}
+let _excludeSet = new Set();     // "a:b" canonical pairs for O(1) lookup
 
 // PostgREST/Supabase caps a single response at 1000 rows; page through the rest.
 async function restAll(path) {
@@ -1111,13 +1115,14 @@ async function restAll(path) {
 
 async function loadData() {
   dataReady = false;
-  const [it, wr, of, oi, cp, ci] = await Promise.all([
+  const [it, wr, of, oi, cp, ci, ex] = await Promise.all([
     restAll("items?select=*&order=created_at.desc"),
     restAll("wears?select=*&order=worn_on.desc"),
     restAll("outfits?select=*&order=created_at.desc"),
     restAll("outfit_items?select=outfit_id,item_id"),
     restAll("capsules?select=*&order=created_at.desc"),
     restAll("capsule_items?select=*"),  // includes `packed` once that column exists
+    restAll("exclusions?select=*").catch(() => []),
   ]);
   items = it || [];
   wears = wr || [];
@@ -1125,8 +1130,10 @@ async function loadData() {
   outfitLinks = oi || [];
   capsules = cp || [];
   capsuleLinks = ci || [];
+  exclusions = ex || [];
   buildOutfitIndexes();
   buildCapsuleIndexes();
+  buildExcludeSet();
   dataReady = true;
 }
 
@@ -1559,7 +1566,7 @@ function openItem(id) {
 
   hydratePhotos(body);
 
-  $("#itemShuffle").onclick = () => toast("Outfit suggestions — coming soon");
+  $("#itemShuffle").onclick = () => openSuggestSheet(i.id);
   $("#itemAddLook").onclick = () => openBuilder(null, i.id);
 }
 
@@ -2596,6 +2603,311 @@ function outfitGridHtml(list) {
 }
 
 // Banner shown across Looks while a capsule scopes the view to wearable looks.
+// ---- OUTFIT SUGGESTIONS (Phase 4) ----
+
+function buildExcludeSet() {
+  _excludeSet = new Set(exclusions.map(e => [e.item_a, e.item_b].sort().join(":")));
+}
+function isExcluded(a, b) { return _excludeSet.has([a, b].sort().join(":")); }
+
+const NEUTRAL_COLORS = new Set(["White","Gray","Black","Beige","Brown","Metallic"]);
+
+// Score a candidate combo of items. Higher = better.
+function scoreCombo(its, target) {
+  const fvals = its.map(i => itemFormality(i));
+  const spread = Math.max(...fvals) - Math.min(...fvals);
+  let s = -spread * 2;                            // cohesion: tighter = better
+  if (target) {
+    const avg = fvals.reduce((a, b) => a + b, 0) / fvals.length;
+    s -= Math.abs(avg - target);                  // proximity to target
+  }
+  // color: penalize 2+ different loud colors in same outfit
+  const louds = [...new Set(its.map(i => i.color_family).filter(c => c && !NEUTRAL_COLORS.has(c)))];
+  if (louds.length >= 2) s -= 3;
+  // rotation: reward items not worn recently
+  for (const i of its) {
+    const d = daysSince(i.id);
+    s += d === null ? 3 : d > 60 ? 2 : d > 30 ? 1 : 0;
+  }
+  return s;
+}
+
+function suggestOutfits(targetLevel = null, seedItemId = null) {
+  const avail = items.filter(i => itemStatus(i) === "Available" && i.image_path);
+  const slot = (...cats) => {
+    let pool = avail.filter(i => cats.includes(i.category));
+    if (targetLevel) pool = pool.filter(i => Math.abs(itemFormality(i) - targetLevel) <= 1);
+    if (!pool.length && targetLevel) pool = avail.filter(i => cats.includes(i.category));
+    return pool.sort((a, b) => (daysSince(b.id) ?? 999) - (daysSince(a.id) ?? 999)).slice(0, 6);
+  };
+
+  const tops = slot("Tops");
+  const dresses = slot("Dresses");
+  const bottoms = slot("Bottoms");
+  const shoes = slot("Shoes");
+  const outerwear = slot("Outerwear");
+
+  const hasSeed = id => !seedItemId || id === seedItemId;
+  const exFree = its => !its.some((a, i) => its.some((b, j) => i < j && isExcluded(a.id, b.id)));
+
+  const combos = [];
+
+  // Dress + shoes + optional outerwear
+  for (const d of dresses) {
+    for (const sh of shoes) {
+      for (const ow of [null, ...outerwear.slice(0, 2)]) {
+        const its = [d, sh, ...(ow ? [ow] : [])];
+        if (!exFree(its)) continue;
+        combos.push({ pieces: its, score: scoreCombo(its, targetLevel) });
+      }
+    }
+  }
+
+  // Top + bottom + shoes + optional outerwear
+  for (const t of tops) {
+    for (const bt of bottoms) {
+      if (isExcluded(t.id, bt.id)) continue;
+      for (const sh of shoes.slice(0, 4)) {
+        const its3 = [t, bt, sh];
+        if (!exFree(its3)) continue;
+        combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel) });
+        for (const ow of outerwear.slice(0, 2)) {
+          const its4 = [t, bt, sh, ow];
+          if (exFree(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel) });
+        }
+      }
+    }
+  }
+
+  combos.sort((a, b) => {
+    // seed item always comes first
+    if (seedItemId) {
+      const ha = a.pieces.some(p => p.id === seedItemId) ? 1 : 0;
+      const hb = b.pieces.some(p => p.id === seedItemId) ? 1 : 0;
+      if (ha !== hb) return hb - ha;
+    }
+    return b.score - a.score;
+  });
+
+  // deduplicate: don't show the same set of item_ids twice
+  const seen = new Set();
+  const unique = [];
+  for (const c of combos) {
+    const key = c.pieces.map(p => p.id).sort().join(",");
+    if (!seen.has(key)) { seen.add(key); unique.push(c); }
+    if (unique.length >= 8) break;
+  }
+  return unique;
+}
+
+// Build a simple layout array for the suggestion canvas preview
+function suggestionLayout(pieces) {
+  const ORDER = ["Outerwear","Dresses","Tops","Bottoms","Shoes","Workout"];
+  const sorted = pieces.slice().sort((a, b) => ORDER.indexOf(a.category) - ORDER.indexOf(b.category));
+  const grids = [
+    [[.5,.5,.75]],
+    [[.3,.5,.45],[.72,.5,.45]],
+    [[.5,.28,.55],[.28,.72,.42],[.72,.72,.42]],
+    [[.28,.28,.44],[.72,.28,.44],[.28,.72,.44],[.72,.72,.44]],
+  ];
+  const pos = grids[Math.min(sorted.length - 1, 3)];
+  return sorted.map((it, i) => ({ item_id: it.id, x: pos[i][0], y: pos[i][1], s: pos[i][2] }));
+}
+
+// Suggestion sheet state
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null };
+
+function openSuggestSheet(seedItemId = null) {
+  _sugg.seedItemId = seedItemId;
+  _sugg.targetLevel = null;
+  _sugg.idx = 0;
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId);
+  renderSuggestSheet();
+  $("#logSheet").hidden = false;
+}
+
+function renderSuggestSheet() {
+  const res = _sugg.results;
+  const combo = res[_sugg.idx];
+  const total = res.length;
+
+  const levelChips = OCCASION_LADDER.map((lbl, i) => {
+    const lvl = i + 1, on = _sugg.targetLevel === lvl;
+    return `<button class="cap-chip${on ? " on" : ""}" data-slvl="${lvl}" style="font-size:13px">${lvl}. ${esc(lbl)}</button>`;
+  }).join("");
+
+  let preview = "";
+  if (combo) {
+    const layout = suggestionLayout(combo.pieces);
+    const fakeOutfit = { layout, formality_override: null, _bucket: null };
+    const canvas = layoutCanvasHtml(fakeOutfit, "sg-canvas");
+    preview = canvas || combo.pieces.map(p =>
+      `<div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+        ${thumbHtml(p.image_path, 40)}
+        <div><div style="font-size:14px;font-weight:500">${esc(p.name)}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(p.category)}${p.color_family ? " · " + esc(p.color_family) : ""}</div></div>
+      </div>`
+    ).join("");
+  }
+
+  const nav = total > 1 ? `<div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-top:8px">
+    <button class="icon-btn" data-sprev ${_sugg.idx === 0 ? "disabled" : ""}>
+      <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <span style="font-size:13px;color:var(--muted)">${_sugg.idx + 1} of ${total}</span>
+    <button class="icon-btn" data-snext ${_sugg.idx >= total - 1 ? "disabled" : ""}>
+      <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+  </div>` : "";
+
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="sgClose">Close</button>
+      <h2>Outfit suggestion</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div style="padding:12px 16px 4px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
+    </div>
+    <div style="padding:12px 16px">
+      ${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items to suggest an outfit. Add more items to your closet.</div>`}
+      ${nav}
+    </div>
+    ${combo ? `
+    <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
+      <button class="btn" data-swear>Wear this today</button>
+      <button class="btn btn-sec" data-sbuild>Open in builder</button>
+      <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sexclude>These two don't go together…</button>
+    </div>` : ""}`;
+
+  $("#sgClose").onclick = () => { $("#logSheet").hidden = true; };
+
+  $("#logInner").querySelectorAll("[data-slvl]").forEach(b => {
+    b.onclick = () => {
+      const lvl = +b.dataset.slvl;
+      _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
+      _sugg.idx = 0;
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId);
+      renderSuggestSheet();
+    };
+  });
+
+  const prevBtn = $("#logInner").querySelector("[data-sprev]");
+  const nextBtn = $("#logInner").querySelector("[data-snext]");
+  if (prevBtn) prevBtn.onclick = () => { _sugg.idx = Math.max(0, _sugg.idx - 1); renderSuggestSheet(); };
+  if (nextBtn) nextBtn.onclick = () => { _sugg.idx = Math.min(total - 1, _sugg.idx + 1); renderSuggestSheet(); };
+
+  const wearBtn = $("#logInner").querySelector("[data-swear]");
+  if (wearBtn && combo) wearBtn.onclick = async () => {
+    const today = todayStr();
+    try {
+      const rows = await rest("/wears", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today }))),
+      });
+      if (Array.isArray(rows)) wears.push(...rows);
+      buildOutfitWearMap();
+      $("#logSheet").hidden = true;
+      toast("Logged!");
+    } catch (e) { toast(e.message); }
+  };
+
+  const buildBtn = $("#logInner").querySelector("[data-sbuild]");
+  if (buildBtn && combo) buildBtn.onclick = () => {
+    $("#logSheet").hidden = true;
+    // seed the builder with the first piece, then open
+    openBuilder(null, combo.pieces[0].id);
+    // after builder opens, drop all pieces
+    setTimeout(() => {
+      if (!builder) return;
+      for (let i = 1; i < combo.pieces.length; i++) {
+        const p = combo.pieces[i];
+        if (!builder.pieces.find(x => x.item_id === p.id)) {
+          builder.pieces.push({ item_id: p.id, ...defaultPlacement(builder.pieces.length) });
+        }
+      }
+      renderBuilder();
+    }, 50);
+  };
+
+  const exBtn = $("#logInner").querySelector("[data-sexclude]");
+  if (exBtn && combo) exBtn.onclick = () => openExcludeSheet(combo.pieces);
+}
+
+function openNewLookSheet() {
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="nlClose">Cancel</button>
+      <h2>New look</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <button class="btn" id="nlSuggest">Suggest an outfit for me</button>
+      <button class="btn btn-sec" id="nlBuild">Build manually on canvas</button>
+    </div>`;
+  $("#logSheet").hidden = false;
+  $("#nlClose").onclick = () => { $("#logSheet").hidden = true; };
+  $("#nlSuggest").onclick = () => { $("#logSheet").hidden = true; openSuggestSheet(); };
+  $("#nlBuild").onclick = () => { $("#logSheet").hidden = true; openBuilder(); };
+}
+
+async function openExcludeSheet(pieces) {
+  // Let user pick 2 items from the combo and optionally add a reason
+  const pieceSel = new Set();
+  const renderExSheet = () => {
+    const pRows = pieces.map(p => {
+      const on = pieceSel.has(p.id);
+      return `<button class="frow${on ? " selected" : ""}" data-expick="${esc(p.id)}" style="${on ? "background:var(--accent-soft);border-radius:10px" : ""}">
+        ${thumbHtml(p.image_path, 40)}
+        <div class="fmeta"><div class="fname">${esc(p.name)}</div><div class="fcount">${esc(p.category)}</div></div>
+        ${on ? `<svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:var(--accent);stroke-width:2.5;fill:none"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+      </button>`;
+    }).join("");
+    $("#logInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="exBack">Back</button>
+        <h2>Pick 2 items</h2>
+        <button class="lnk" id="exSave" style="font-weight:700;${pieceSel.size !== 2 ? "opacity:.4;pointer-events:none" : ""}">Save</button>
+      </div>
+      <div style="padding:8px 16px 12px">
+        <div class="muted" style="font-size:13px;margin-bottom:12px">Select the two items that clash. We'll avoid pairing them in future suggestions.</div>
+        ${pRows}
+        <div style="margin-top:14px">
+          <input class="inp" id="exReason" type="text" placeholder="Reason (optional)" style="width:100%;font-size:15px" value="">
+        </div>
+      </div>`;
+    $("#exBack").onclick = () => renderSuggestSheet();
+    $("#exSave").onclick = async () => {
+      const [a, b] = [...pieceSel].sort();
+      const reason = $("#exReason").value.trim() || null;
+      try {
+        const row = await rest("/exclusions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+          body: JSON.stringify({ item_a: a, item_b: b, ...(reason ? { reason } : {}) }),
+        });
+        if (Array.isArray(row)) exclusions.push(...row);
+        else if (row && row.id) exclusions.push(row);
+        buildExcludeSet();
+        toast("Pair excluded");
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId);
+        renderSuggestSheet();
+      } catch (e) { toast(e.message); }
+    };
+    $("#logInner").querySelectorAll("[data-expick]").forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.expick;
+        if (pieceSel.has(id)) pieceSel.delete(id);
+        else if (pieceSel.size < 2) pieceSel.add(id);
+        renderExSheet();
+      };
+    });
+  };
+  renderExSheet();
+}
+
 function looksCapsuleBanner() {
   if (!activeCapsuleId) return "";
   const c = capsuleById.get(activeCapsuleId);
@@ -3424,11 +3736,11 @@ function renderCalendarDay(body) {
         </button>
       </div>
       <div class="cal-swipe-acts">
-        <button class="cal-act cal-act-copy" data-calact="copy">
+        <button class="cal-act cal-act-copy" data-calact="copy" data-wear-ids="${esc(wearIdsStr)}" data-outfit-id="${esc(g.outfitId || '')}">
           <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           Copy
         </button>
-        <button class="cal-act cal-act-move" data-calact="move">
+        <button class="cal-act cal-act-move" data-calact="move" data-wear-ids="${esc(wearIdsStr)}" data-outfit-id="${esc(g.outfitId || '')}">
           <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
           Move
         </button>
@@ -3492,7 +3804,52 @@ function renderCalendarDay(body) {
   });
 
   body.querySelectorAll('[data-calact]').forEach(btn => {
-    btn.onclick = () => toast('Coming soon');
+    btn.onclick = () => {
+      const action   = btn.dataset.calact;
+      const wearIds  = (btn.dataset.wearIds || '').split(',').filter(Boolean);
+      if (!wearIds.length) return;
+      const today = todayStr();
+      $("#logInner").innerHTML = `
+        <div class="sheet-hdr">
+          <button class="lnk" id="calCpCancel">Cancel</button>
+          <h2>${action === 'copy' ? 'Copy to…' : 'Move to…'}</h2>
+          <button class="lnk" id="calCpSave" style="font-weight:700">${action === 'copy' ? 'Copy' : 'Move'}</button>
+        </div>
+        <div style="padding:20px 18px 30px">
+          <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">New date</label>
+          <input class="inp" id="calCpDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
+          ${action === 'move' ? `<div class="muted" style="font-size:13px;margin-top:10px">Original wear entries will be removed from ${esc(calendarDay)}.</div>` : ''}
+        </div>`;
+      $("#logSheet").hidden = false;
+      $("#calCpCancel").onclick = () => { $("#logSheet").hidden = true; };
+      $("#calCpSave").onclick = async () => {
+        const newDate = $("#calCpDate").value;
+        if (!newDate || newDate === calendarDay) { toast("Pick a different date"); return; }
+        const origWears = wears.filter(w => wearIds.includes(w.id));
+        if (!origWears.length) { $("#logSheet").hidden = true; return; }
+        try {
+          const payload = origWears.map(w => ({
+            item_id: w.item_id, worn_on: newDate,
+            ...(w.outfit_id ? { outfit_id: w.outfit_id } : {}),
+          }));
+          const rows = await rest("/wears", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+            body: JSON.stringify(payload),
+          });
+          if (Array.isArray(rows)) wears.push(...rows);
+          if (action === 'move') {
+            const idList = wearIds.map(id => `"${id}"`).join(',');
+            await rest(`/wears?id=in.(${idList})`, { method: 'DELETE' });
+            wears = wears.filter(w => !wearIds.includes(w.id));
+          }
+          buildOutfitWearMap();
+          $("#logSheet").hidden = true;
+          toast(`${action === 'copy' ? 'Copied' : 'Moved'} to ${newDate}`);
+          renderCalendarDay(body);
+        } catch (e) { toast(e.message); }
+      };
+    };
   });
 
   body.querySelectorAll('[data-cal-notes]').forEach(el => {
@@ -3980,6 +4337,24 @@ const RANGE_OPTIONS = [
 
 // Closet Review: fields dealt one item at a time. `missing` = empty (or, for the
 // date, a guessed value that wants confirming). `value` renders the current value.
+// Derive a likely season from purchase_date month or wear history.
+// Returns an array (e.g. ["Summer"]) or null if no data to guess from.
+function guessSeason(item) {
+  const monthToSeason = m => m <= 2 || m === 12 ? "Winter" : m <= 5 ? "Spring" : m <= 8 ? "Summer" : "Fall";
+  if (item.purchase_date) {
+    const m = +String(item.purchase_date).slice(5, 7);
+    return [monthToSeason(m)];
+  }
+  const itemWears = wears.filter(w => w.item_id === item.id && w.worn_on);
+  if (itemWears.length) {
+    const counts = new Map();
+    for (const w of itemWears) { const s = monthToSeason(+String(w.worn_on).slice(5, 7)); counts.set(s, (counts.get(s) || 0) + 1); }
+    const max = Math.max(...counts.values());
+    return [...counts.entries()].filter(([, n]) => n >= max * 0.5).map(([s]) => s);
+  }
+  return null;
+}
+
 const REVIEW_FIELDS = [
   { key: "category", label: "Category", missing: i => !i.category,
     edit: i => openReviewMove(i), value: i => i.category || null },
@@ -3994,7 +4369,8 @@ const REVIEW_FIELDS = [
   { key: "fabric", label: "Fabric", missing: i => !(i.fabric && i.fabric.length),
     edit: i => openReviewField(i, "fabric"), value: i => (i.fabric || []).join(", ") || null },
   { key: "season", label: "Season", missing: i => !(i.season && i.season.length),
-    edit: i => openReviewField(i, "season"), value: i => (i.season || []).join(", ") || null },
+    edit: i => openReviewField(i, "season"), value: i => (i.season || []).join(", ") || null,
+    guess: i => guessSeason(i) },
   { key: "retailer", label: "Retailer", missing: i => !(i.retailer && i.retailer.trim()),
     edit: i => openReviewField(i, "retailer"), value: i => i.retailer || null },
   { key: "acquisition", label: "Acquisition", missing: i => !i.acquisition,
@@ -4217,6 +4593,65 @@ function wireDonutArrows(segments, total) {
   dnBtn.addEventListener("click", () => { statsDonutIdx = (statsDonutIdx + 1) % segments.length; update(); });
 }
 
+function closetVsLifeHtml() {
+  const avail = items.filter(i => itemStatus(i) === "Available");
+  if (!avail.length || !wears.length) return "";
+
+  // Supply: count by formality level
+  const supply = new Array(6).fill(0);
+  for (const i of avail) { const f = itemFormality(i); supply[f - 1]++; }
+  const supplyTotal = supply.reduce((a, b) => a + b, 0) || 1;
+
+  // Demand: count wears by the formality of each worn item
+  const demand = new Array(6).fill(0);
+  for (const w of wears) {
+    const it = itemById.get(w.item_id);
+    if (!it) continue;
+    const f = itemFormality(it);
+    demand[f - 1]++;
+  }
+  const demandTotal = demand.reduce((a, b) => a + b, 0) || 1;
+
+  // Find biggest gap: supply heavy vs demand
+  let biggestGap = 0, gapLevel = -1;
+  for (let i = 0; i < 6; i++) {
+    const gap = supply[i] / supplyTotal - demand[i] / demandTotal;
+    if (gap > biggestGap) { biggestGap = gap; gapLevel = i; }
+  }
+
+  const LEVEL_COLORS = ["#7c8cf8","#60b8d4","#6abf8a","#f0b429","#e07d42","#c05c7e"];
+  const rows = OCCASION_LADDER.map((lbl, i) => {
+    const sp = supply[i] / supplyTotal;
+    const dm = demand[i] / demandTotal;
+    const color = LEVEL_COLORS[i];
+    return `<div style="margin-bottom:11px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:3px">
+        <span>${i + 1}. ${esc(lbl)}</span>
+        <span>${Math.round(sp * 100)}% owned · ${Math.round(dm * 100)}% worn</span>
+      </div>
+      <div style="position:relative;height:8px;background:var(--line);border-radius:4px;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;height:100%;width:${sp * 100}%;background:${color};opacity:.35;border-radius:4px"></div>
+        <div style="position:absolute;top:0;left:0;height:100%;width:${dm * 100}%;background:${color};border-radius:4px"></div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const insight = gapLevel >= 0
+    ? `Your closet skews <b>${OCCASION_LADDER[gapLevel]}</b> but your wears don't — consider wearing those pieces more.`
+    : "Your closet and wear habits look well-balanced.";
+
+  return `<div class="stats-sec">
+    <div class="stats-sec-hdr">
+      <div class="t">Closet vs. Your Life</div>
+      <div class="s">Supply (light) vs. wear demand (solid)</div>
+    </div>
+    <div class="stats-sec-body" style="padding:14px 16px 10px">
+      ${rows}
+      <div style="font-size:13px;color:var(--muted);margin-top:4px">${insight}</div>
+    </div>
+  </div>`;
+}
+
 function renderStatsMain() {
   const avail = statsPool();
   const totalVal = avail.reduce((s, i) => s + (parseFloat(i.price) || 0), 0);
@@ -4294,6 +4729,8 @@ function renderStatsMain() {
           ${row("Acquisition", null, "field:acquisition")}
         </div>
       </div>
+
+      ${closetVsLifeHtml()}
 
       <button class="review-cta" id="statsReviewCta">
         <svg class="rc-ic" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -4563,6 +5000,7 @@ function renderReviewDeal() {
     ? `Current: <b>${esc(cur)}</b>`
     : `<span class="rv-empty">Empty — not set</span>`;
   const path = item.category ? (item.subcategory ? `${item.category} › ${item.subcategory}` : item.category) : "Uncategorized";
+  const guess = f.guess ? f.guess(item) : null;
 
   body.innerHTML = toolbar
     + `<div class="rv-prog">${reviewIdx + 1} of ${total}</div>
@@ -4577,11 +5015,13 @@ function renderReviewDeal() {
       </div>
     </div>
     <div class="rv-actions">
+      ${guess ? `<button class="rv-confirm" id="rvConfirm">Confirm · <b>${esc(guess.join(", "))}</b></button>` : ""}
       <button class="rv-set" id="rvSet">Set ${esc(f.label)}</button>
       <button class="rv-skip" id="rvSkip">Skip</button>
       <button class="rv-edit" id="rvEdit">Edit Item</button>
     </div>`;
   $("#stBack").addEventListener("click", statsNavBack);
+  if (guess) $("#rvConfirm").addEventListener("click", () => { saveField(item.id, "season", guess); reviewAfterEdit(); });
   $("#rvSet").addEventListener("click", () => f.edit(item));
   $("#rvSkip").addEventListener("click", reviewSkip);
   $("#rvEdit").addEventListener("click", () => openItemFromReview(item.id));
@@ -4589,12 +5029,14 @@ function renderReviewDeal() {
 }
 
 // Open a FIELD_CONFIGS field for review; saves to DB then advances.
+// Pre-populates with the field's guess when the item has no value yet.
 function openReviewField(i, field) {
   const cfg = FIELD_CONFIGS[field];
   if (!cfg) return;
+  const rf = REVIEW_FIELDS.find(x => x.key === field);
   _fieldEditId = i.id;
   _fieldEditKey = field;
-  _fieldPending = i[field];
+  _fieldPending = i[field] || (rf && rf.guess && !i[field] ? (rf.guess(i) || i[field]) : i[field]);
   _fieldEditItem = i;
   _fieldOnSave = (val) => { saveField(i.id, field, val); reviewAfterEdit(); };
   renderFieldSheet(i, field, cfg);
@@ -5348,7 +5790,7 @@ function openBuilder(outfitId = null, seedItemId = null) {
   } else if (seedItemId && itemById.has(seedItemId)) {
     pieces = [{ item_id: seedItemId, ...defaultPlacement(0) }];
   }
-  builder = { outfitId, name, pieces, selIdx: pieces.length ? pieces.length - 1 : -1, picking: false, pickCat: null, pickQ: "" };
+  builder = { outfitId, name, pieces, selIdx: pieces.length ? pieces.length - 1 : -1, picking: false, pickCat: null, pickSub: null, pickQ: "" };
   $("#app").classList.add("builder-mode");
   switchTab("builder");
 }
@@ -5460,17 +5902,19 @@ function deleteBuilderPiece() {
   renderBuilderCanvas();
 }
 
-// ---- + Clothing picker: closet by category folder (or search) ----
+// ---- + Clothing picker: closet by category → subcategory → item grid ----
 function renderBuilderPicker() {
   const body = $("#builderBody");
-  const inCat = builder.pickCat && !builder.pickQ.trim();
+  const q = builder.pickQ.trim();
+  const backLabel = builder.pickSub ? builder.pickCat : builder.pickCat && !q ? "Categories" : "Done";
+  const title = builder.pickSub ? builder.pickSub : builder.pickCat && !q ? builder.pickCat : "Add clothing";
   body.innerHTML = `
     <div class="bld-top">
-      <button class="lnk" id="bldPickBack">${inCat ? "Categories" : "Done"}</button>
-      <div class="bld-name" style="cursor:default">${esc(inCat ? builder.pickCat : "Add clothing")}</div>
+      <button class="lnk" id="bldPickBack">${esc(backLabel)}</button>
+      <div class="bld-name" style="cursor:default">${esc(title)}</div>
       <span style="width:48px"></span>
     </div>
-    <div style="padding:10px 14px 0"><input class="inp" id="bldPickSearch" placeholder="Search your closet…" value="${esc(builder.pickQ)}"></div>
+    <div style="padding:10px 14px 0"><input class="inp" id="bldPickSearch" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}"></div>
     <div id="bldPickResults" style="padding:8px 0 30px">${builderPickContent()}</div>`;
   hydratePhotos(body);
   window.scrollTo(0, 0);
@@ -5487,11 +5931,36 @@ function builderPickContent() {
   const pool = items.filter(i => itemStatus(i) !== "Archive" && i.image_path);
   const q = builder.pickQ.trim().toLowerCase();
   if (q) {
-    return builderItemGrid(pool.filter(i =>
-      (i.name || "").toLowerCase().includes(q) || (i.brand || "").toLowerCase().includes(q) ||
-      (i.category || "").toLowerCase().includes(q) || (i.subcategory || "").toLowerCase().includes(q)));
+    // search: scoped to current category/subcat when set
+    const hit = i => (i.name || "").toLowerCase().includes(q) || (i.brand || "").toLowerCase().includes(q) ||
+      (i.subcategory || "").toLowerCase().includes(q);
+    const scoped = pool.filter(i => {
+      if (builder.pickCat && (i.category || "Other") !== builder.pickCat) return false;
+      if (builder.pickSub && (i.subcategory || "") !== builder.pickSub) return false;
+      return hit(i);
+    });
+    return builderItemGrid(scoped);
   }
-  if (builder.pickCat) return builderItemGrid(pool.filter(i => (i.category || "Other") === builder.pickCat));
+  if (builder.pickCat) {
+    const catPool = pool.filter(i => (i.category || "Other") === builder.pickCat);
+    const subcats = [...new Set(catPool.map(i => i.subcategory).filter(Boolean))];
+    subcats.sort();
+    if (builder.pickSub) {
+      // item grid with subcat chips at top for quick switching
+      const subPool = catPool.filter(i => (i.subcategory || "") === builder.pickSub);
+      const chip = (key, lbl, n, on) => `<button class="cap-chip${on ? " on" : ""}" data-bsub="${esc(key)}">${esc(lbl)} ${n}</button>`;
+      const chips = subcats.map(s => chip(s, s, catPool.filter(i => i.subcategory === s).length, s === builder.pickSub)).join("");
+      return `<div class="cap-catbar">${chips}</div>` + builderItemGrid(subPool);
+    }
+    if (!subcats.length) return builderItemGrid(catPool);  // no subcats → flat grid
+    // subcategory folder rows
+    return subcats.map(s => {
+      const si = catPool.filter(i => i.subcategory === s);
+      return `<button class="frow" data-bsub="${esc(s)}">${thumbHtml(si[0]?.image_path || null)}
+        <div class="fmeta"><div class="fname">${esc(s)}</div><div class="fcount">${si.length} item${si.length === 1 ? "" : "s"}</div></div>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>`;
+    }).join("");
+  }
   // category folder rows
   const counts = new Map();
   for (const i of pool) { const c = i.category || "Other"; counts.set(c, (counts.get(c) || 0) + 1); }
@@ -5517,13 +5986,16 @@ function addPieceToBuilder(id) {
   const at = builder.pieces.findIndex(p => p.item_id === id);
   if (at >= 0) builder.selIdx = at;
   else { builder.pieces.push({ item_id: id, ...defaultPlacement(builder.pieces.length) }); builder.selIdx = builder.pieces.length - 1; }
-  builder.picking = false; builder.pickCat = null; builder.pickQ = "";
+  builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = "";
   renderBuilder();
 }
 
 function builderPickBack() {
-  if (builder.pickCat && !builder.pickQ.trim()) { builder.pickCat = null; return renderBuilder(); }
-  builder.picking = false; builder.pickCat = null; builder.pickQ = "";
+  const q = builder.pickQ.trim();
+  if (q) { builder.pickQ = ""; return renderBuilder(); }
+  if (builder.pickSub) { builder.pickSub = null; return renderBuilder(); }
+  if (builder.pickCat) { builder.pickCat = null; return renderBuilder(); }
+  builder.picking = false;
   renderBuilder();
 }
 
@@ -6039,7 +6511,7 @@ function wireEvents() {
   $("#looksBody").addEventListener("click", (e) => {
     if (e.target.closest("#looksBack")) return looksBack();
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; return renderLooks(); }
-    if (e.target.closest("#looksNew")) return openBuilder();
+    if (e.target.closest("#looksNew")) return openNewLookSheet();
     if (e.target.closest("#looksShuffle")) return openRandomLook();
     const lens = e.target.closest("[data-llens]");
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
@@ -6069,7 +6541,9 @@ function wireEvents() {
     if (e.target.closest("#bldAdd")) { builder.picking = true; builder.pickCat = null; builder.pickQ = ""; return renderBuilder(); }
     if (e.target.closest("#bldPickBack")) return builderPickBack();
     const bcat = e.target.closest("[data-bcat]");
-    if (bcat) { builder.pickCat = bcat.dataset.bcat; return renderBuilder(); }
+    if (bcat) { builder.pickCat = bcat.dataset.bcat; builder.pickSub = null; return renderBuilder(); }
+    const bsub = e.target.closest("[data-bsub]");
+    if (bsub) { builder.pickSub = bsub.dataset.bsub; return renderBuilder(); }
     const badd = e.target.closest("[data-badd]");
     if (badd) return addPieceToBuilder(badd.dataset.badd);
     const layer = e.target.closest("[data-blayer]");
