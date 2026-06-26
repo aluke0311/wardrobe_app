@@ -862,7 +862,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-25 r5";
+const APP_VERSION = "2026-06-25 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2713,8 +2713,9 @@ function scoreCombo(its, target) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null) {
-  const avail = items.filter(i => itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i));
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null) {
+  const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
+  const avail = base.filter(i => i.image_path && !isNoSuggest(i));
   const seed = seedItemId ? itemById.get(seedItemId) : null;
   const slot = (...cats) => {
     let pool = avail.filter(i => cats.includes(suggestSlot(i)));
@@ -2783,9 +2784,35 @@ function suggestOutfits(targetLevel = null, seedItemId = null) {
   for (const c of combos) {
     const key = c.pieces.map(p => p.id).sort().join(",");
     if (!seen.has(key)) { seen.add(key); unique.push(c); }
-    if (unique.length >= 8) break;
+    if (unique.length >= 20) break;
   }
-  return unique;
+
+  // Weighted-random shuffle (softmax) so results vary each call while still
+  // respecting score quality. Temperature t=0.5 balances variety vs. quality.
+  if (unique.length > 1) {
+    const t = 0.5;
+    const scores = unique.map(c => c.score);
+    const minS = Math.min(...scores);
+    const maxS = Math.max(...scores);
+    const norm = maxS > minS ? scores.map(s => (s - minS) / (maxS - minS)) : scores.map(() => 1);
+    const weights = norm.map(s => Math.exp(s / t));
+    const totalW = weights.reduce((a, b) => a + b, 0);
+    const probs = weights.map(w => w / totalW);
+    // weighted sample without replacement
+    const shuffled = [];
+    const avail2 = unique.map((c, i) => ({ c, p: probs[i] }));
+    while (avail2.length && shuffled.length < 8) {
+      let r = Math.random(), cumul = 0, pick = avail2.length - 1;
+      for (let k = 0; k < avail2.length; k++) { cumul += avail2[k].p; if (r < cumul) { pick = k; break; } }
+      shuffled.push(avail2[pick].c);
+      avail2.splice(pick, 1);
+      // re-normalize remaining weights
+      const rem = avail2.reduce((s, a) => s + a.p, 0);
+      if (rem > 0) avail2.forEach(a => a.p /= rem);
+    }
+    return shuffled;
+  }
+  return unique.slice(0, 8);
 }
 
 // Build a simple layout array for the suggestion canvas preview
@@ -2803,15 +2830,24 @@ function suggestionLayout(pieces) {
 }
 
 // Suggestion sheet state
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null };
 
-function openSuggestSheet(seedItemId = null) {
+function openSuggestSheet(seedItemId = null, capsuleId = null) {
   _sugg.seedItemId = seedItemId;
+  _sugg.capsuleId = capsuleId;
   _sugg.targetLevel = null;
   _sugg.idx = 0;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId);
+  const pool = capsuleId
+    ? capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available")
+    : null;
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool);
   renderSuggestSheet();
   $("#logSheet").hidden = false;
+}
+
+function _suggPool() {
+  if (!_sugg.capsuleId) return null;
+  return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
 }
 
 function renderSuggestSheet() {
@@ -2848,18 +2884,24 @@ function renderSuggestSheet() {
     </button>
   </div>` : "";
 
+  const capLabel = _sugg.capsuleId ? (() => {
+    const c = capsuleById.get(_sugg.capsuleId);
+    return c ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">From: ${esc(c.name)}</div>` : "";
+  })() : "";
+
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="sgClose">Close</button>
       <h2>Outfit suggestion</h2>
       <div style="width:48px"></div>
     </div>
+    ${capLabel}
     <div style="padding:12px 16px 4px">
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
     </div>
     <div style="padding:12px 16px">
-      ${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items to suggest an outfit. Add more items to your closet.</div>`}
+      ${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}
       ${nav}
     </div>
     ${combo ? `
@@ -2876,7 +2918,7 @@ function renderSuggestSheet() {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
       _sugg.idx = 0;
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
       renderSuggestSheet();
     };
   });
@@ -2955,7 +2997,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -3020,7 +3062,7 @@ async function openExcludeSheet(pieces) {
         else if (row && row.id) exclusions.push(row);
         buildExcludeSet();
         toast("Pair excluded");
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
     };
@@ -5648,6 +5690,10 @@ function renderCapsuleDetail() {
       <svg viewBox="0 0 24 24"><path d="M12 3l-1.5 3L4 9v11h16V9l-6.5-3z"/><path d="M12 6v14"/></svg>
       Plan outfits from this
     </button>
+    <button class="cap-plan" data-cap-suggest style="background:var(--accent);margin-top:8px">
+      <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+      Suggest an outfit
+    </button>
     <textarea class="inp" id="capDetNotes" rows="2" style="margin:16px 14px 0;width:calc(100% - 28px)" placeholder="Notes…">${esc(c.notes || "")}</textarea>
     <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
     ${orgBar}
@@ -6791,6 +6837,7 @@ function wireEvents() {
     if (e.target.closest("#capBack")) return capsuleBack();
     if (e.target.closest("[data-cap-new]")) return openCapsuleNew();
     if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);
+    if (e.target.closest("[data-cap-suggest]")) return openSuggestSheet(null, capsuleId);
     if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
     if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
