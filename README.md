@@ -9,6 +9,8 @@ and formality coverage.
 Live: https://aluke0311.github.io/wardrobe_app/  
 Repo: https://github.com/aluke0311/wardrobe_app
 
+**New to the app?** See the [User Manual](USER_MANUAL.md) for a screen-by-screen walkthrough.
+
 ---
 
 ## Features
