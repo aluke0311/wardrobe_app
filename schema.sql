@@ -1,14 +1,15 @@
 -- ===================================================================
--- Wardrobe app — Supabase schema (Phase 2 clean target)
+-- Wardrobe app — Supabase schema (clean target, 2026-06-26)
 -- Run in the Supabase SQL editor (Dashboard → SQL → New query).
 --
 -- Tables: items · wears · outfits (+ outfit_items) · capsules (+ capsule_items)
 --         · exclusions
--- Formality is the 1–6 scale (Function/Very Casual/Everyday Casual/
---   Smart Casual/Dressed Up/Formal). Constants live in index.html.
+-- Formality: items.formality is smallint[] (a SET of 1–8 levels).
+--   1=Function · 2=Very Casual · 3=Casual · 4=Polished Casual ·
+--   5=Smart Casual · 6=Dressed Up · 7=Business Professional · 8=Formal
+-- wears.formality_for is smallint (single level — demand capture).
 --
 -- The `wardrobe` storage bucket + its policies already exist.
--- For an existing DB use migration/formality_schema.sql instead.
 -- ===================================================================
 
 -- -------------------------------------------------------------------
@@ -38,7 +39,7 @@ create table if not exists items (
   size          text,
   fabric        text[] not null default '{}',
   season        text[] not null default '{}',
-  formality     smallint check (formality between 1 and 6),  -- 1=Function … 6=Formal
+  formality     smallint[],                 -- set of 1–8 levels (see scale above)
   status        text not null default 'Available'
                   check (status in ('Available','Storage','Archive')),
   tags          text[] not null default '{}',
@@ -108,7 +109,7 @@ create table if not exists wears (
   outfit_id     uuid references outfits(id)          on delete set null,
   worn_on       date not null,
   context       text,
-  formality_for smallint check (formality_for between 1 and 6),  -- demand capture
+  formality_for smallint check (formality_for between 1 and 8),  -- demand capture (single level)
   created_at    timestamptz not null default now()
 );
 
