@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-25 r6. Full rework from v25. ~6,950 lines.**
+**Current state: 2026-06-26 r1. Full rework from v25. ~7,080 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
@@ -116,17 +116,33 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 **Migrations applied to live DB** (run via Supabase SQL editor):
 - `migration/formality_schema.sql` — adds `items.formality`, `wears.formality_for`,
   `outfits.rating`, `exclusions` table.
+- `migration/formality_multiselect.sql` — converts `items.formality smallint → smallint[]`
+  (drops CHECK constraint, wraps existing values in arrays).
 - `migration/outfit_layout.sql` — adds `outfits.layout`.
 - `migration/capsule_weather.sql` — adds `capsules.locations`.
 - `migration/capsule_items_packed.sql` — adds `capsule_items.packed`.
 
 ## Design model
 
-**Formality (1–6):** Function · Very Casual · Everyday Casual · Smart Casual ·
-Dressed Up · Formal. Single value per item (field `formality`). `itemFormality(i)`
-reads `i.formality`, falls back to `SUBCAT_FORMALITY[i.subcategory] ?? CAT_FORMALITY[i.category] ?? 3`.
-Function items (1) must never appear in outfits with non-Function items — enforced by
-`formalityOk(its)` in the suggestion engine and `outfitBucket()` derivation.
+**Formality (1–8, multiselect set):**
+1. Function (workout, hiking, rain) · 2. Very Casual (home, errands) · 3. Casual
+(chorus rehearsal, casual lunch) · 4. Polished Casual (date nights, matinees, parties) ·
+5. Smart Casual (normal work day) · 6. Dressed Up (cocktail, weddings, evening) ·
+7. Business Professional (interviews, conferences) · 8. Formal (black tie).
+
+`items.formality` is `smallint[]` (a set, not a range). `itemFormalitySet(i)` is the
+source of truth — returns the explicit array, or imputes from name keywords + subcat
+seed (`SUBCAT_FORMALITY`) + co-occurrence nudge. `itemFormality(i)` returns the minimum
+of the set for backward-compat display/grouping.
+
+Suggestions: outfit valid at level L iff every piece's set contains L (pool-filtered
+before combo generation). Pure-Function items (`set == [1]`) never mix with non-function
+items — enforced by `formalityOk(its)`. L8 (Formal) is soft — no isolation.
+
+`OCCASION_HINTS` parallel array holds the context descriptions shown in chip UI.
+
+Migration: `migration/formality_multiselect.sql` — drops old CHECK constraint, converts
+`smallint → smallint[]`. Applied 2026-06-26.
 
 **`outfitBucket(o)`:** checks `o.formality_override` first, then derives from
 `itemFormality()` averages across pieces. `o._bucket` is a session cache — clear it
@@ -173,7 +189,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-06-25 r6`.
+  Currently `2026-06-26 r1`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
