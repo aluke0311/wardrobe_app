@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-26 r1. Full rework from v25. ~7,080 lines.**
+**Current state: 2026-06-26 r3. Full rework from v25. ~7,080 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
@@ -69,7 +69,10 @@ Top-of-`<script>` config, then logically grouped sections:
   swipe-left actions (Copy/Move/Delete). "+ Clothing" / "+ Look" log pickers.
 - **STYLE STATS** — `renderStats()` dispatches main/field/grid/review/outfits views.
   Filter sheet (funnel icon). Range button. Closet Review deals items one card at a time;
-  inline field picker on the deal card (no sheet-hop for most fields).
+  inline field picker on the deal card (no sheet-hop for most fields). `reviewPool()`
+  is **Available-only** (Storage + Archive excluded). Deal card is sized to fit one
+  phone screen: horizontal card (96px photo + info beside it), single-line formality
+  chips, one-row action bar.
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE.
   Active tabs: home · closet · looks · calendar · stats.
   Capsules is a Home-tile screen (not in bottom nav). Search/Add are non-tab screens.
@@ -191,7 +194,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-06-26 r1`.
+  Currently `2026-06-26 r3`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
