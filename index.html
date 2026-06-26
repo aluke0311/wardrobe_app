@@ -213,7 +213,11 @@
   .review-cta .rc-s { font-size: 13px; opacity: .9; margin-top: 1px; }
   .rv-prog { text-align: center; color: var(--muted); font-size: 13px; padding: 4px 0 2px; font-variant-numeric: tabular-nums; }
   .rv-card { margin: 8px 14px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
-  .rv-photo { width: 100%; aspect-ratio: 1/1; max-height: 46vh; background: #faf9f8 center/contain no-repeat; }
+  .rv-photo { width: 100%; aspect-ratio: 1/1; max-height: 28vh; background: #faf9f8 center/contain no-repeat; }
+  .rv-inline { padding: 10px 14px 4px; }
+  .rv-inline .sheet-chips { gap: 8px; flex-wrap: wrap; }
+  .rv-inline-col .sheet-chips { flex-direction: column; align-items: stretch; gap: 7px; }
+  .rv-inp { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font-size: 16px; background: var(--surface); color: var(--text); margin-top: 2px; }
   .rv-photo.empty { display: flex; align-items: center; justify-content: center; }
   .rv-photo.empty svg { width: 56px; height: 56px; stroke: #ccc; stroke-width: 1.3; fill: none; }
   .rv-info { padding: 14px 16px 16px; }
@@ -858,7 +862,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-25 r4";
+const APP_VERSION = "2026-06-25 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3490,12 +3494,13 @@ async function deleteSelected() {
 
 // ---- bulk edit sheet ----
 const BULK_FIELDS = [
-  { key: "color_family", label: "Color",  type: "single", opts: COLOR_FAMILIES.map(c => c[0]) },
-  { key: "fabric",       label: "Fabric", type: "multi",  opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet"] },
-  { key: "size",         label: "Size",   type: "single", opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
-  { key: "season",       label: "Season", type: "multi",  opts: SEASONS },
-  { key: "brand",        label: "Brand",  type: "text" },
-  { key: "status",       label: "Status", type: "single", opts: ["Available","Storage","Archive"] },
+  { key: "color_family", label: "Color",     type: "single",    opts: COLOR_FAMILIES.map(c => c[0]) },
+  { key: "fabric",       label: "Fabric",    type: "multi",     opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet"] },
+  { key: "size",         label: "Size",      type: "single",    opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
+  { key: "season",       label: "Season",    type: "multi",     opts: SEASONS },
+  { key: "formality",    label: "Formality", type: "formality" },
+  { key: "brand",        label: "Brand",     type: "text" },
+  { key: "status",       label: "Status",    type: "single",    opts: ["Available","Storage","Archive"] },
 ];
 
 function openBulkEdit() {
@@ -3517,12 +3522,19 @@ function renderBulkSheet() {
     const isOpen = bulkOpenField === f.key;
     const val = bulkPending[f.key];
     const hasVal = val !== undefined && (Array.isArray(val) ? val.length > 0 : val !== "");
+    const displayVal = f.type === "formality" && val ? `${val}. ${occLabel(val)}` : Array.isArray(val) ? val.join(", ") : val;
     const valHtml = hasVal
-      ? `<span style="color:var(--accent);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${Array.isArray(val) ? val.join(", ") : esc(val)}</span>`
+      ? `<span style="color:var(--accent);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(displayVal)}</span>`
       : "";
     let expansion = "";
     if (isOpen) {
-      if (f.type === "single" || f.type === "multi") {
+      if (f.type === "formality") {
+        const chips = OCCASION_LADDER.map((lbl, idx) => {
+          const lvl = idx + 1, on = val === lvl;
+          return `<button class="sheet-chip${on ? " on" : ""}" data-bc-field="formality" data-bc-val="${lvl}" data-bc-fml="1" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+        }).join("");
+        expansion = `<div class="sheet-expand" style="border:none"><div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div></div>`;
+      } else if (f.type === "single" || f.type === "multi") {
         const chips = f.opts.map(o => {
           const on = Array.isArray(val) ? val.includes(o) : val === o;
           return `<button class="sheet-chip${on ? " on" : ""}" data-bc-field="${f.key}" data-bc-val="${esc(o)}" data-bc-multi="${f.type === "multi"}">${esc(o)}</button>`;
@@ -3560,7 +3572,9 @@ function renderBulkSheet() {
   $("#bulkInner").querySelectorAll("[data-bc-field]").forEach(btn => {
     btn.onclick = (e) => {
       e.stopPropagation();
-      const field = btn.dataset.bcField, val = btn.dataset.bcVal, isMulti = btn.dataset.bcMulti === "true";
+      const field = btn.dataset.bcField, isMulti = btn.dataset.bcMulti === "true";
+      const isFml = btn.dataset.bcFml === "1";
+      const val = isFml ? +btn.dataset.bcVal : btn.dataset.bcVal;
       if (isMulti) {
         const cur = bulkPending[field] || [];
         bulkPending[field] = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val];
@@ -4206,6 +4220,7 @@ let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
 let reviewField = null;      // current field key being dealt
 let reviewQueue = [];        // item ids queued for the current field
 let reviewIdx = 0;           // position in the queue
+let _rvPending = null;       // value being edited inline on the current review card
 let _reviewMoveMode = false; // move sheet opened from review (return to deal, not item view)
 
 const PRICE_BRACKETS = [
@@ -5097,12 +5112,52 @@ function startReview(key) {
 }
 
 function reviewAfterEdit() {
-  // value was saved — advance to the next item
-  reviewIdx++;
+  reviewIdx++; _rvPending = null;
   if (statsView === "review-deal") renderStats();
 }
 
-function reviewSkip() { reviewIdx++; renderStats(); }
+function reviewSkip() { reviewIdx++; _rvPending = null; renderStats(); }
+
+// Returns HTML for the inline field editor on a review card, or "" for complex fields.
+function renderReviewInline(fieldKey) {
+  const pending = _rvPending;
+  const singleChips = (opts) => opts.map(o => {
+    const on = pending === o;
+    return `<button class="sheet-chip${on ? " on" : ""}" data-rvchip="${esc(o)}">${esc(o)}</button>`;
+  }).join("");
+  const multiChips = (opts) => opts.map(o => {
+    const on = Array.isArray(pending) && pending.includes(o);
+    return `<button class="sheet-chip${on ? " on" : ""}" data-rvchip="${esc(o)}" data-rvmulti="1">${esc(o)}</button>`;
+  }).join("");
+
+  switch (fieldKey) {
+    case "formality": {
+      const chips = OCCASION_LADDER.map((lbl, i) => {
+        const lvl = i + 1, on = pending === lvl;
+        return `<button class="sheet-chip${on ? " on" : ""}" data-rvchip="${lvl}" data-rvfml="1" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+      }).join("");
+      return `<div class="rv-inline rv-inline-col"><div class="sheet-chips">${chips}</div></div>`;
+    }
+    case "season":
+      return `<div class="rv-inline"><div class="sheet-chips">${multiChips(SEASONS)}</div></div>`;
+    case "fabric":
+      return `<div class="rv-inline"><div class="sheet-chips">${multiChips(["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet"])}</div></div>`;
+    case "color_family":
+      return `<div class="rv-inline"><div class="sheet-chips">${singleChips(COLOR_FAMILIES.map(c => c[0]))}</div></div>`;
+    case "size":
+      return `<div class="rv-inline"><div class="sheet-chips">${singleChips(["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"])}</div></div>`;
+    case "acquisition":
+      return `<div class="rv-inline"><div class="sheet-chips">${singleChips(["New","Secondhand","Gift"])}</div></div>`;
+    case "brand": case "retailer":
+      return `<div class="rv-inline"><input class="rv-inp" id="rvInpText" type="text" value="${esc(pending || "")}" placeholder="${fieldKey === "brand" ? "Brand name" : "Retailer name"}"></div>`;
+    case "price":
+      return `<div class="rv-inline"><input class="rv-inp" id="rvInpText" type="number" min="0" step="0.01" value="${esc(pending != null ? pending : "")}" placeholder="0.00" style="width:120px"></div>`;
+    case "purchase_date":
+      return `<div class="rv-inline"><input class="rv-inp" id="rvInpText" type="date" value="${esc(pending || "")}"></div>`;
+    default:
+      return ""; // category/subcategory: use Edit Item
+  }
+}
 
 function renderReviewDeal() {
   const body = $("#statsBody");
@@ -5127,12 +5182,16 @@ function renderReviewDeal() {
 
   const item = items.find(i => i.id === reviewQueue[reviewIdx]);
   if (!item) { reviewSkip(); return; }
-  const cur = f.value(item);
-  const curHtml = cur
-    ? `Current: <b>${esc(cur)}</b>`
-    : `<span class="rv-empty">Empty — not set</span>`;
-  const path = item.category ? (item.subcategory ? `${item.category} › ${item.subcategory}` : item.category) : "Uncategorized";
+
+  // Pre-populate pending with guess on first render of this card
   const guess = f.guess ? f.guess(item) : null;
+  if (_rvPending === null && guess) _rvPending = guess;
+
+  const cur = f.value(item);
+  const path = item.category ? (item.subcategory ? `${item.category} › ${item.subcategory}` : item.category) : "Uncategorized";
+  const inlineHtml = renderReviewInline(reviewField);
+  const hasInline = !!inlineHtml;
+  const hasPending = _rvPending !== null && _rvPending !== "" && !(Array.isArray(_rvPending) && !_rvPending.length);
 
   body.innerHTML = toolbar
     + `<div class="rv-prog">${reviewIdx + 1} of ${total}</div>
@@ -5143,20 +5202,60 @@ function renderReviewDeal() {
       <div class="rv-info">
         <div class="rv-name">${esc(item.name || "Untitled")}</div>
         <div class="rv-path">${esc(path)}</div>
-        <div class="rv-cur">${curHtml}</div>
+        ${cur ? `<div class="rv-cur">Current: <b>${esc(cur)}</b></div>` : ""}
       </div>
     </div>
+    ${inlineHtml}
     <div class="rv-actions">
-      ${guess ? `<button class="rv-confirm" id="rvConfirm">Confirm · <b>${esc(guess.join(", "))}</b></button>` : ""}
-      <button class="rv-set" id="rvSet">Set ${esc(f.label)}</button>
-      <button class="rv-skip" id="rvSkip">Skip</button>
-      <button class="rv-edit" id="rvEdit">Edit Item</button>
+      ${hasInline
+        ? `<button class="rv-confirm${hasPending ? "" : " rv-set"}" id="rvNext" style="${hasPending ? "" : "background:var(--surface);color:var(--text)"}">
+             ${hasPending ? "Save &amp; Next →" : "Next →"}</button>
+           <button class="rv-skip" id="rvSkip" style="flex:none;padding:14px 16px">Skip</button>`
+        : `<button class="rv-set" id="rvSet">Set ${esc(f.label)}</button>
+           <button class="rv-skip" id="rvSkip">Skip</button>`}
+      <button class="rv-edit" id="rvEdit" style="flex:none;padding:14px 16px">Edit</button>
     </div>`;
+
   $("#stBack").addEventListener("click", statsNavBack);
-  if (guess) $("#rvConfirm").addEventListener("click", () => { saveField(item.id, "season", guess); reviewAfterEdit(); });
-  $("#rvSet").addEventListener("click", () => f.edit(item));
   $("#rvSkip").addEventListener("click", reviewSkip);
   $("#rvEdit").addEventListener("click", () => openItemFromReview(item.id));
+
+  if (hasInline) {
+    const rvNext = $("#rvNext");
+    rvNext.addEventListener("click", () => {
+      if (hasPending) saveField(item.id, reviewField, _rvPending);
+      reviewAfterEdit();
+    });
+
+    // chip toggles
+    body.querySelectorAll("[data-rvchip]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const v = btn.dataset.rvchip;
+        const val = btn.dataset.rvfml === "1" ? +v : v;
+        const isMulti = btn.dataset.rvmulti === "1";
+        if (isMulti) {
+          const cur2 = Array.isArray(_rvPending) ? [..._rvPending] : [];
+          _rvPending = cur2.includes(val) ? cur2.filter(x => x !== val) : [...cur2, val];
+        } else {
+          _rvPending = _rvPending === val ? null : val;
+        }
+        renderReviewDeal();
+      });
+    });
+
+    // text / date / number input
+    const inp = $("#rvInpText");
+    if (inp) {
+      inp.addEventListener("input", () => {
+        _rvPending = reviewField === "price" ? (inp.value ? +inp.value : null) : inp.value;
+      });
+      inp.focus();
+    }
+  } else {
+    const rvSet = $("#rvSet");
+    if (rvSet) rvSet.addEventListener("click", () => f.edit(item));
+  }
+
   hydratePhotos(body);
 }
 
