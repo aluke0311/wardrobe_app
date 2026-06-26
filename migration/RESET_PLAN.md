@@ -30,7 +30,7 @@ these exact names and types. The import script reads fields by name.
 | 4 | **Brand** | Single line text | |
 | 5 | **Retailer** | Single line text | Where it was bought |
 | 6 | **Color Family** | Single select | Green, Teal, Blue, Purple, Maroon, Pink, Red, Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic |
-| 7 | **Formality** | Multiple select | `1 · Function`, `2 · Very Casual`, `3 · Casual`, `4 · Polished Casual`, `5 · Smart Casual`, `6 · Dressed Up`, `7 · Business Professional`, `8 · Formal` |
+| 7 | **Formality** | Multiple select | `1 · Function`, `2 · Very Casual`, `3 · Casual`, `4 · Polished Casual`, `5 · Smart Casual`, `6 · Dressed Up`, `7 · Business Professional`, `8 · Formal` — **field already exists** (ID `fldKIJYfSIi4v9dQr` on Clothing, `fldyRqNs3vhWjxaQh` on Archived) |
 | 8 | **Acquisition** | Single select | New, Secondhand, Gift |
 | 9 | **Size** | Single line text | S / M / 8 / 8.5 etc. |
 | 10 | **Fabric** | Multiple select | Cotton, Linen, Wool, Cashmere, Silk, Denim, Polyester, Spandex, Nylon, Fleece, Leather, Velvet |

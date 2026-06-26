@@ -34,6 +34,9 @@ AT_BASE        = env["AIRTABLE_BASE_ID"]
 BUCKET         = "wardrobe"
 CLOTHING_TABLE = env.get("AIRTABLE_CLOTHING_TABLE", "tbl8aGOLnxg7itoFe")
 ARCHIVED_TABLE = env.get("AIRTABLE_ARCHIVED_TABLE", "tblKNGlQ8flGqthsu")
+# Formality field IDs (multipleSelects, created 2026-06-26)
+FORMALITY_FIELD_CLOTHING = "fldKIJYfSIi4v9dQr"
+FORMALITY_FIELD_ARCHIVED = "fldyRqNs3vhWjxaQh"
 
 for k in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY", "AIRTABLE_TOKEN", "AIRTABLE_BASE_ID"):
     if not env.get(k):
