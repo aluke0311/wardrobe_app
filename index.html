@@ -862,7 +862,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-25 r6";
+const APP_VERSION = "2026-06-26 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -885,9 +885,17 @@ const COLOR_FAMILIES = [
 ];
 const colorHex = (name) => (COLOR_FAMILIES.find(c => c[0] === name) || [])[1] || "#ccc";
 
-// Formality scale 1-6 (index 0 = level 1). Matches outfit bucket labels.
-const OCCASION_LADDER = ["Function", "Very Casual", "Everyday Casual", "Smart Casual", "Dressed Up", "Formal"];
-const occLabel = (n) => (n >= 1 && n <= 6) ? OCCASION_LADDER[n - 1] : null;
+// Formality scale 1-8. Each level = a y/n "could I wear this here?" context.
+const OCCASION_LADDER = [
+  "Function", "Very Casual", "Casual", "Polished Casual",
+  "Smart Casual", "Dressed Up", "Business Professional", "Formal",
+];
+const OCCASION_HINTS = [
+  "workout, hiking, rain", "home, errands", "chorus rehearsal, casual lunch",
+  "date nights, matinees, parties", "normal work day",
+  "cocktail parties, weddings, evening events", "interviews, conferences", "black tie",
+];
+const occLabel = (n) => (n >= 1 && n <= 8) ? OCCASION_LADDER[n - 1] : null;
 
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
 const STATUSES = ["Available", "Storage", "Archive", "Wishlist"];
@@ -1713,7 +1721,7 @@ function openItemDetails(id) {
         <div class="det-divider"></div>
         ${detRow("Acquired", esc(i.acquisition || ""), "acquisition")}
         <div class="det-divider"></div>
-        ${detRow("Formality", i.formality ? esc(occLabel(i.formality)) : "", "formality")}
+        ${(() => { const s = itemFormalitySet(i); const lbl = s ? s.map(n => `${n}. ${occLabel(n)}`).join(" · ") : ""; return detRow("Formality", i.formality ? esc(lbl) : esc(lbl ? "est. · " + lbl : ""), "formality"); })()}
       </div>
 
       <div class="det-section-label">PRICING</div>
@@ -1923,11 +1931,15 @@ function renderFieldSheet(i, field, cfg) {
     }).join("");
     content = `<div style="padding:16px 18px"><div class="fld-color-grid">${chips}</div></div>`;
   } else if (cfg.type === "formality") {
+    const sel = Array.isArray(curVal) ? curVal : (curVal ? [+curVal] : []);
     const chips = OCCASION_LADDER.map((lbl, idx) => {
-      const lvl = idx + 1, on = curVal === lvl;
-      return `<button class="sheet-chip${on ? " on" : ""}" data-fv="${lvl}" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+      const lvl = idx + 1, on = sel.includes(lvl);
+      return `<button class="sheet-chip${on ? " on" : ""}" data-fv="${lvl}" style="text-align:left">
+        <span style="font-weight:500">${lvl}. ${esc(lbl)}</span>
+        <span style="font-size:11px;color:var(--muted);display:block;margin-top:1px">${esc(OCCASION_HINTS[idx])}</span>
+      </button>`;
     }).join("");
-    content = `<div class="sheet-expand" style="border:none"><div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div></div>`;
+    content = `<div class="sheet-expand" style="border:none"><div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:6px">${chips}</div></div>`;
   } else {
     // single or multi chips
     const isMulti = cfg.type === "multi";
@@ -2018,7 +2030,8 @@ function renderFieldSheet(i, field, cfg) {
       }
       if (cfg.type === "formality") {
         const n = +v;
-        _fieldPending = (_fieldPending === n) ? null : n;
+        const cur = Array.isArray(_fieldPending) ? _fieldPending : (_fieldPending ? [+_fieldPending] : []);
+        _fieldPending = cur.includes(n) ? cur.filter(x => x !== n) : [...cur, n].sort((a, b) => a - b);
       } else if (cfg.type === "multi") {
         const cur = Array.isArray(_fieldPending) ? _fieldPending : (Array.isArray((i || {})[field]) ? [...(i || {})[field]] : []);
         _fieldPending = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v];
@@ -2449,33 +2462,38 @@ async function saveNewItem() {
 const LOOK_LENSES = ["Formality", "Season", "Recent", "All"];
 const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phone)
 
-// Formality folders — one per level on the 1-6 scale.
+// Formality folders — one per level on the 1-8 scale.
 const FORMALITY_BUCKETS = [
-  { key: "function", label: "Function"        },  // 1
-  { key: "vcasual",  label: "Very Casual"      },  // 2
-  { key: "ecasual",  label: "Everyday Casual"  },  // 3
-  { key: "smart",    label: "Smart Casual"     },  // 4
-  { key: "dressy",   label: "Dressed Up"       },  // 5
-  { key: "formal",   label: "Formal"           },  // 6
+  { key: "function", label: "Function"             },  // 1
+  { key: "vcasual",  label: "Very Casual"           },  // 2
+  { key: "casual",   label: "Casual"                },  // 3
+  { key: "pcasual",  label: "Polished Casual"       },  // 4
+  { key: "smart",    label: "Smart Casual"          },  // 5
+  { key: "dressy",   label: "Dressed Up"            },  // 6
+  { key: "bizpro",   label: "Business Professional" },  // 7
+  { key: "formal",   label: "Formal"                },  // 8
 ];
 
-// Bucket key → target formality level (used when nudging pieces toward a look's level).
+// Bucket key → target formality level.
 const BUCKET_RANGES = {
-  function: 1, vcasual: 2, ecasual: 3, smart: 4, dressy: 5, formal: 6,
+  function: 1, vcasual: 2, casual: 3, pcasual: 4, smart: 5, dressy: 6, bizpro: 7, formal: 8,
 };
 
-// Per-subcategory / category formality seed on the 1-6 scale. Used when an item
-// has no explicit formality set (most items start unset — Closet Review fills them).
+// Per-subcategory / category formality SETS (arrays of levels) for imputation.
+// Items matching multiple contexts get multiple levels.
 const SUBCAT_FORMALITY = {
-  "Tee shirts": 2, "Graphic tees": 3, "Long-sleeve tees": 2, "Sleeveless": 3,
-  "Blouses": 4, "Sweaters": 3, "Cardigans": 3, "Sweatshirts": 2,
-  "Jeans": 3, "Pants": 4, "Shorts": 3, "Skirts": 3, "Leggings/Joggers": 2, "Tights": 3,
-  "Casual dresses": 3, "Work dresses": 4, "Cocktail dresses": 5,
-  "Blazers": 4, "Jackets": 3, "Coats": 3,
-  "Boots": 3, "Sandals": 3, "Flats": 3, "Heels": 4, "Sneakers": 3,
-  "Workout tops": 1, "Active shorts": 1, "Sports bras": 1,
+  "Tee shirts": [2,3], "Graphic tees": [2,3], "Long-sleeve tees": [2,3], "Sleeveless": [3,4],
+  "Blouses": [4,5], "Sweaters": [3,4,5], "Cardigans": [3,4,5], "Sweatshirts": [2,3],
+  "Jeans": [3,4], "Pants": [4,5,6], "Shorts": [2,3], "Skirts": [3,4,5],
+  "Leggings/Joggers": [1,2], "Tights": [3,4],
+  "Casual dresses": [3,4], "Work dresses": [5,6], "Cocktail dresses": [6],
+  "Blazers": [5,6,7], "Jackets": [3,4], "Coats": [3,4,5],
+  "Boots": [3,4,5], "Sandals": [2,3,4], "Flats": [3,4,5], "Heels": [6,8], "Sneakers": [2,3],
+  "Workout tops": [1], "Active shorts": [1], "Sports bras": [1],
 };
-const CAT_FORMALITY = { Tops: 2, Bottoms: 3, Dresses: 4, Outerwear: 3, Shoes: 3, Workout: 1 };
+const CAT_FORMALITY = {
+  Tops: [2,3], Bottoms: [3,4], Dresses: [4,5], Outerwear: [3,4,5], Shoes: [3,4], Workout: [1],
+};
 
 // Vertical stacking order for collages: outerwear/tops up top, bottoms, then shoes.
 const LAYER_ORDER = { Outerwear: 0, Tops: 1, Dresses: 1, Workout: 1, Bottoms: 2, Shoes: 3 };
@@ -2518,20 +2536,57 @@ function outfitWornCount(o) { return effectiveWearDays(o).length; }
 function outfitLastWorn(o) { const d = effectiveWearDays(o).sort(); return d.length ? d[d.length - 1] : null; }
 function outfitCost(o) { return outfitItems(o).reduce((s, i) => s + (i.price ? Number(i.price) : 0), 0); }
 
-// Returns the formality level (1-6) for an item: explicit field first, then taxonomy seed.
-function itemFormality(i) {
-  if (i.formality) return i.formality;
-  return SUBCAT_FORMALITY[i.subcategory] ?? CAT_FORMALITY[i.category] ?? 3;
+// Returns the formality SET (array of levels 1-8) for an item.
+// Source order: explicit DB field → name keywords → subcategory/category seed → co-occurrence nudge.
+function itemFormalitySet(i) {
+  if (i.formality) {
+    if (Array.isArray(i.formality)) return i.formality.length ? i.formality : null;
+    return [+i.formality]; // legacy single-value (pre-migration)
+  }
+  const seed = SUBCAT_FORMALITY[i.subcategory] ?? CAT_FORMALITY[i.category] ?? [3];
+  const set = new Set(seed);
+  const name = (i.name || "").toLowerCase();
+  if (/\bgown\b|tuxedo|\btux\b/.test(name))                 { set.clear(); set.add(8); }
+  else if (/\bheel\b|pumps?\b/.test(name))                  { set.clear(); set.add(6); set.add(8); }
+  else if (/blazer/.test(name))                             { [5,6,7].forEach(l => set.add(l)); }
+  else if (/cocktail/.test(name))                           { set.clear(); set.add(6); }
+  else if (/athletic|workout|gym|running|yoga/.test(name))  { set.clear(); set.add(1); }
+  // Co-occurrence nudge: add the most-frequent level of explicitly-tagged co-worn items
+  const coLevels = [];
+  for (const w of wears) {
+    if (w.item_id !== i.id || !w.outfit_id) continue;
+    for (const oid of (outfitItemMap.get(w.outfit_id) || [])) {
+      if (oid === i.id) continue;
+      const other = itemById.get(oid);
+      if (!other || !other.formality) continue;
+      const s = Array.isArray(other.formality) ? other.formality : [+other.formality];
+      s.forEach(l => coLevels.push(l));
+    }
+  }
+  if (coLevels.length >= 3) {
+    const freq = {};
+    for (const l of coLevels) freq[l] = (freq[l] || 0) + 1;
+    const mode = +Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
+    if (!set.has(mode)) set.add(mode);
+  }
+  return [...set].sort((a, b) => a - b);
 }
+
+// Single representative level (minimum of set) for display/grouping compatibility.
+function itemFormality(i) {
+  const s = itemFormalitySet(i);
+  return s && s.length ? s[0] : 3;
+}
+
 function outfitBucket(o) {
   if (o._bucket) return o._bucket;
   if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
   const its = outfitItems(o);
-  let key = "ecasual";
+  let key = "casual";
   if (its.length) {
     const avg = Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length);
-    const c = Math.max(1, Math.min(6, avg));
-    key = ["function", "vcasual", "ecasual", "smart", "dressy", "formal"][c - 1];
+    const c = Math.max(1, Math.min(8, avg));
+    key = ["function","vcasual","casual","pcasual","smart","dressy","bizpro","formal"][c - 1];
   }
   o._bucket = key;
   return key;
@@ -2574,10 +2629,11 @@ function outfitCollageHtml(o, max, mini) {
   return `<div class="${cls}">${cells}</div>`;
 }
 
-// Formality label for a piece: explicit formality field, else taxonomy seed.
+// Formality label for a piece: explicit set or estimated set.
 function pieceFormalityLabel(it) {
-  if (it.formality) return occLabel(it.formality);
-  return "est. · " + occLabel(Math.max(1, Math.min(6, Math.round(itemFormality(it)))));
+  const s = itemFormalitySet(it) || [3];
+  const label = s.map(n => `${n}. ${occLabel(n)}`).join(", ");
+  return it.formality ? label : "est. · " + label;
 }
 
 function emptyLooks() {
@@ -2695,12 +2751,13 @@ const NEUTRAL_COLORS = new Set(["White","Gray","Black","Beige","Brown","Metallic
 
 // Score a candidate combo of items. Higher = better.
 function scoreCombo(its, target) {
-  const fvals = its.map(i => itemFormality(i));
-  const spread = Math.max(...fvals) - Math.min(...fvals);
-  let s = -spread * 2;                            // cohesion: tighter = better
-  if (target) {
-    const avg = fvals.reduce((a, b) => a + b, 0) / fvals.length;
-    s -= Math.abs(avg - target);                  // proximity to target
+  let s = 0;
+  if (!target) {
+    // reward broader set overlap when no target level (more versatile combos rank higher)
+    const sets = its.map(i => new Set(itemFormalitySet(i) || []));
+    for (let lvl = 1; lvl <= 8; lvl++) {
+      if (sets.every(st => st.has(lvl))) s++;
+    }
   }
   // color: penalize 2+ different loud colors in same outfit
   const louds = [...new Set(its.map(i => i.color_family).filter(c => c && !NEUTRAL_COLORS.has(c)))];
@@ -2719,9 +2776,11 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   const seed = seedItemId ? itemById.get(seedItemId) : null;
   const slot = (...cats) => {
     let pool = avail.filter(i => cats.includes(suggestSlot(i)));
-    if (targetLevel) { const f = pool.filter(i => Math.abs(itemFormality(i) - targetLevel) <= 1); if (f.length) pool = f; }
+    if (targetLevel) {
+      const f = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
+      if (f.length) pool = f;
+    }
     pool = pool.sort((a, b) => (daysSince(lastWorn(b.id)) ?? 999) - (daysSince(lastWorn(a.id)) ?? 999)).slice(0, 6);
-    // always keep the seed item in its own slot so suggestions build around it
     if (seed && cats.includes(suggestSlot(seed)) && !pool.find(p => p.id === seed.id)) pool.unshift(seed);
     return pool;
   };
@@ -2733,10 +2792,11 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   const outerwear = slot("Outerwear");
 
   const exFree = its => !its.some((a, i) => its.some((b, j) => i < j && isExcluded(a.id, b.id)));
-  // Function items (formality 1) must never mix with non-function items
+  // Pure-function items (set = [1] only) must never mix with non-function items.
   const formalityOk = its => {
-    const hasFunc = its.some(p => itemFormality(p) === 1);
-    return !hasFunc || its.every(p => itemFormality(p) === 1);
+    const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
+    const hasFunc = its.some(isPureFunc);
+    return !hasFunc || its.every(p => (itemFormalitySet(p) || []).includes(1));
   };
 
   const combos = [];
@@ -2857,7 +2917,7 @@ function renderSuggestSheet() {
 
   const levelChips = OCCASION_LADDER.map((lbl, i) => {
     const lvl = i + 1, on = _sugg.targetLevel === lvl;
-    return `<button class="cap-chip${on ? " on" : ""}" data-slvl="${lvl}" style="font-size:13px">${lvl}. ${esc(lbl)}</button>`;
+    return `<button class="cap-chip${on ? " on" : ""}" data-slvl="${lvl}" style="font-size:13px;text-align:left">${lvl}. ${esc(lbl)}</button>`;
   }).join("");
 
   let preview = "";
@@ -3346,7 +3406,7 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
   const targetDefault = BUCKET_RANGES[bucketKey];
   if (!targetDefault || !its.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
 
-  let target = targetDefault; // single level 1-6
+  let target = targetDefault; // single level 1-8 to ADD to each piece's set
 
   const renderSheet = () => {
     const chips = OCCASION_LADDER.map((lbl, idx) => {
@@ -3355,9 +3415,10 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
     }).join("");
 
     const pieceRows = its.map(it => {
-      const f = itemFormality(it);
+      const s = itemFormalitySet(it) || [];
+      const alreadyHas = s.includes(target);
       return `<label style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
-        <input type="checkbox" data-nudge="${esc(it.id)}" ${f !== target ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
+        <input type="checkbox" data-nudge="${esc(it.id)}" ${!alreadyHas ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;accent-color:var(--accent)">
         <span style="flex:1;min-width:0">
           <span style="display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.name || "Untitled")}</span>
           <span style="display:block;font-size:12px;color:var(--muted)">${esc(pieceFormalityLabel(it))}</span>
@@ -3388,16 +3449,19 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
       const toNudge = [...$("#logInner").querySelectorAll("[data-nudge]:checked")].map(x => x.dataset.nudge);
       if (!toNudge.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
       try {
-        const idList = toNudge.map(iid => `"${iid}"`).join(",");
-        await rest(`/items?id=in.(${idList})`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-          body: JSON.stringify({ formality: target }),
-        });
-        toNudge.forEach(iid => {
+        // patch each item individually — each has a different existing set
+        await Promise.all(toNudge.map(async iid => {
           const it = itemById.get(iid) || items.find(x => x.id === iid);
-          if (it) { it.formality = target; }
-        });
+          if (!it) return;
+          const cur = it.formality ? (Array.isArray(it.formality) ? it.formality : [+it.formality]) : [];
+          const newSet = [...new Set([...cur, target])].sort((a, b) => a - b);
+          await rest(`/items?id=eq.${iid}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+            body: JSON.stringify({ formality: newSet }),
+          });
+          it.formality = newSet;
+        }));
         outfits.forEach(o => { o._bucket = null; });
         toast(`Formality saved · ${toNudge.length} piece${toNudge.length === 1 ? "" : "s"} updated`);
       } catch (e) { toast(e.message); }
@@ -3409,42 +3473,45 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
   renderSheet();
 }
 
-// ---- correct a piece's formality (edits items.formality — a single 1-6 level) ----
-// Called from a look's PIECE FORMALITY list.
-// Clears every outfit's cached bucket so looks re-derive after a change.
+// ---- correct a piece's formality (edits items.formality — now a set/array) ----
 function openOccasionEdit(itemId, onSaved) {
   const it = itemById.get(itemId) || items.find(x => x.id === itemId);
   if (!it) return;
-  let lvl = it.formality || null;
+  let sel = it.formality ? (Array.isArray(it.formality) ? [...it.formality] : [+it.formality]) : [];
 
   const render = () => {
     const chips = OCCASION_LADDER.map((lbl, idx) => {
-      const n = idx + 1, on = lvl === n;
-      return `<button class="sheet-chip${on ? " on" : ""}" data-occ="${n}" style="text-align:left">${n}. ${esc(lbl)}</button>`;
+      const n = idx + 1, on = sel.includes(n);
+      return `<button class="sheet-chip${on ? " on" : ""}" data-occ="${n}" style="text-align:left">
+        <span style="font-weight:500">${n}. ${esc(lbl)}</span>
+        <span style="font-size:11px;color:var(--muted);display:block;margin-top:1px">${esc(OCCASION_HINTS[idx])}</span>
+      </button>`;
     }).join("");
+    const selLabel = sel.length ? sel.map(n => `${n}. ${occLabel(n)}`).join(", ") : "Not set";
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
         <button class="lnk" id="occCancel">Cancel</button>
-        <h2>How formal?</h2>
+        <h2>When can you wear this?</h2>
         <button class="lnk" id="occSave" style="font-weight:700">Save</button>
       </div>
       <div style="padding:14px 18px 24px">
-        <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(it.name || "Item")} — tap its formality level.</div>
-        <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div>
-        <div style="margin-top:14px;font-size:14px">Level: <b>${esc(lvl ? occLabel(lvl) : "Not set")}</b></div>
-        ${lvl != null ? `<button class="lnk" id="occClear" style="color:var(--danger);font-size:14px;margin-top:10px">Clear</button>` : ""}
+        <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(it.name || "Item")} — tap all contexts that apply.</div>
+        <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:6px">${chips}</div>
+        <div style="margin-top:14px;font-size:13px;color:var(--muted)">Selected: <b style="color:var(--text)">${esc(selLabel)}</b></div>
+        ${sel.length ? `<button class="lnk" id="occClear" style="color:var(--danger);font-size:14px;margin-top:10px">Clear</button>` : ""}
       </div>`;
     $("#occCancel").onclick = () => { $("#logSheet").hidden = true; };
     $("#occSave").onclick = async () => {
       const prev = it.formality;
-      it.formality = lvl;
+      const val = sel.length ? sel : null;
+      it.formality = val;
       outfits.forEach(o => { o._bucket = null; });
       $("#logSheet").hidden = true;
       try {
         await rest(`/items?id=eq.${it.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-          body: JSON.stringify({ formality: lvl }),
+          body: JSON.stringify({ formality: val }),
         });
         toast("Formality updated");
         if (onSaved) onSaved();
@@ -3455,9 +3522,13 @@ function openOccasionEdit(itemId, onSaved) {
       }
     };
     const oc = $("#occClear");
-    if (oc) oc.onclick = () => { lvl = null; render(); };
+    if (oc) oc.onclick = () => { sel = []; render(); };
     $("#logInner").querySelectorAll("[data-occ]").forEach(b => {
-      b.onclick = () => { const n = +b.dataset.occ; lvl = (lvl === n) ? null : n; render(); };
+      b.onclick = () => {
+        const n = +b.dataset.occ;
+        sel = sel.includes(n) ? sel.filter(x => x !== n) : [...sel, n].sort((a, b) => a - b);
+        render();
+      };
     });
   };
   render();
@@ -3564,18 +3635,24 @@ function renderBulkSheet() {
     const isOpen = bulkOpenField === f.key;
     const val = bulkPending[f.key];
     const hasVal = val !== undefined && (Array.isArray(val) ? val.length > 0 : val !== "");
-    const displayVal = f.type === "formality" && val ? `${val}. ${occLabel(val)}` : Array.isArray(val) ? val.join(", ") : val;
+    const displayVal = f.type === "formality" && Array.isArray(val) && val.length
+      ? val.map(v => `${v}. ${occLabel(v)}`).join(", ")
+      : Array.isArray(val) ? val.join(", ") : val;
     const valHtml = hasVal
       ? `<span style="color:var(--accent);max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(displayVal)}</span>`
       : "";
     let expansion = "";
     if (isOpen) {
       if (f.type === "formality") {
+        const sel = Array.isArray(val) ? val : (val ? [+val] : []);
         const chips = OCCASION_LADDER.map((lbl, idx) => {
-          const lvl = idx + 1, on = val === lvl;
-          return `<button class="sheet-chip${on ? " on" : ""}" data-bc-field="formality" data-bc-val="${lvl}" data-bc-fml="1" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+          const lvl = idx + 1, on = sel.includes(lvl);
+          return `<button class="sheet-chip${on ? " on" : ""}" data-bc-field="formality" data-bc-val="${lvl}" data-bc-fml="1" style="text-align:left">
+            <span style="font-weight:500">${lvl}. ${esc(lbl)}</span>
+            <span style="font-size:11px;color:var(--muted);display:block;margin-top:1px">${esc(OCCASION_HINTS[idx])}</span>
+          </button>`;
         }).join("");
-        expansion = `<div class="sheet-expand" style="border:none"><div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:8px">${chips}</div></div>`;
+        expansion = `<div class="sheet-expand" style="border:none"><div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:6px">${chips}</div></div>`;
       } else if (f.type === "single" || f.type === "multi") {
         const chips = f.opts.map(o => {
           const on = Array.isArray(val) ? val.includes(o) : val === o;
@@ -3617,7 +3694,13 @@ function renderBulkSheet() {
       const field = btn.dataset.bcField, isMulti = btn.dataset.bcMulti === "true";
       const isFml = btn.dataset.bcFml === "1";
       const val = isFml ? +btn.dataset.bcVal : btn.dataset.bcVal;
-      if (isMulti) {
+      if (isFml) {
+        // formality is a multi-toggle array
+        const cur = Array.isArray(bulkPending[field]) ? bulkPending[field] : (bulkPending[field] ? [+bulkPending[field]] : []);
+        const next = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val].sort((a, b) => a - b);
+        bulkPending[field] = next.length ? next : undefined;
+        if (!next.length) delete bulkPending[field];
+      } else if (isMulti) {
         const cur = bulkPending[field] || [];
         bulkPending[field] = cur.includes(val) ? cur.filter(x => x !== val) : [...cur, val];
       } else {
@@ -4298,8 +4381,8 @@ function statsPool() {
     if (category.length && !category.includes(i.category)) return false;
     if (season.length && !(i.season || []).some(s => season.includes(s))) return false;
     if (formality.length) {
-      const iLvl = itemFormality(i);
-      if (!formality.some(f => (OCCASION_LADDER.indexOf(f) + 1) === iLvl)) return false;
+      const iSet = itemFormalitySet(i) || [];
+      if (!formality.some(f => iSet.includes(OCCASION_LADDER.indexOf(f) + 1))) return false;
     }
     if (acqCutoff) {
       const pd = i.purchase_date;
@@ -4424,7 +4507,7 @@ function openStatsFilters() {
         <div class="sf-label">Formality</div>
         <div class="stats-catbar">
           ${chip("formality", null, "All", !formality.length)}
-          ${OCCASION_LADDER.map(f => chip("formality", f, f, formality.includes(f))).join("")}
+          ${OCCASION_LADDER.map((f, i) => chip("formality", f, `${i+1}. ${f}`, formality.includes(f))).join("")}
         </div>
       </div>
     </div>`;
@@ -4558,9 +4641,15 @@ const REVIEW_FIELDS = [
     edit: i => openReviewField(i, "acquisition"), value: i => i.acquisition || null },
   { key: "price", label: "Price", missing: i => i.price == null || i.price === "",
     edit: i => openReviewField(i, "price"), value: i => (i.price != null && i.price !== "") ? money(i.price) : null },
-  { key: "formality", label: "Formality", missing: i => !i.formality,
+  { key: "formality", label: "Formality",
+    missing: i => !i.formality || (Array.isArray(i.formality) && !i.formality.length),
     edit: i => openReviewField(i, "formality"),
-    value: i => i.formality ? occLabel(i.formality) : null },
+    value: i => {
+      if (!i.formality) return null;
+      const s = Array.isArray(i.formality) ? i.formality : [+i.formality];
+      return s.length ? s.map(n => `${n}. ${occLabel(n)}`).join(", ") : null;
+    }
+  },
   { key: "purchase_date", label: "Purchase Date",
     missing: i => !i.purchase_date,
     edit: i => openReviewDateEdit(i),
@@ -4778,29 +4867,28 @@ function closetVsLifeHtml() {
   const avail = items.filter(i => itemStatus(i) === "Available");
   if (!avail.length || !wears.length) return "";
 
-  // Supply: count by formality level
-  const supply = new Array(6).fill(0);
-  for (const i of avail) { const f = itemFormality(i); supply[f - 1]++; }
+  // Supply: count items across all levels in their set
+  const supply = new Array(8).fill(0);
+  for (const i of avail) { for (const l of (itemFormalitySet(i) || [])) supply[l - 1]++; }
   const supplyTotal = supply.reduce((a, b) => a + b, 0) || 1;
 
-  // Demand: count wears by the formality of each worn item
-  const demand = new Array(6).fill(0);
+  // Demand: count wears by the formality set of each worn item
+  const demand = new Array(8).fill(0);
   for (const w of wears) {
     const it = itemById.get(w.item_id);
     if (!it) continue;
-    const f = itemFormality(it);
-    demand[f - 1]++;
+    for (const l of (itemFormalitySet(it) || [])) demand[l - 1]++;
   }
   const demandTotal = demand.reduce((a, b) => a + b, 0) || 1;
 
   // Find biggest gap: supply heavy vs demand
   let biggestGap = 0, gapLevel = -1;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const gap = supply[i] / supplyTotal - demand[i] / demandTotal;
     if (gap > biggestGap) { biggestGap = gap; gapLevel = i; }
   }
 
-  const LEVEL_COLORS = ["#7c8cf8","#60b8d4","#6abf8a","#f0b429","#e07d42","#c05c7e"];
+  const LEVEL_COLORS = ["#7c8cf8","#60b8d4","#6abf8a","#a8d96a","#f0b429","#e07d42","#c05c7e","#8b5cf6"];
   const rows = OCCASION_LADDER.map((lbl, i) => {
     const sp = supply[i] / supplyTotal;
     const dm = demand[i] / demandTotal;
@@ -5174,11 +5262,15 @@ function renderReviewInline(fieldKey) {
 
   switch (fieldKey) {
     case "formality": {
+      const sel = Array.isArray(pending) ? pending : (pending ? [+pending] : []);
       const chips = OCCASION_LADDER.map((lbl, i) => {
-        const lvl = i + 1, on = pending === lvl;
-        return `<button class="sheet-chip${on ? " on" : ""}" data-rvchip="${lvl}" data-rvfml="1" style="text-align:left">${lvl}. ${esc(lbl)}</button>`;
+        const lvl = i + 1, on = sel.includes(lvl);
+        return `<button class="sheet-chip${on ? " on" : ""}" data-rvchip="${lvl}" data-rvfml="1" style="text-align:left">
+          <span style="font-weight:500">${lvl}. ${esc(lbl)}</span>
+          <span style="font-size:11px;color:var(--muted);display:block;margin-top:1px">${esc(OCCASION_HINTS[i])}</span>
+        </button>`;
       }).join("");
-      return `<div class="rv-inline rv-inline-col"><div class="sheet-chips">${chips}</div></div>`;
+      return `<div class="rv-inline rv-inline-col"><div class="sheet-chips" style="gap:6px">${chips}</div></div>`;
     }
     case "season":
       return `<div class="rv-inline"><div class="sheet-chips">${multiChips(SEASONS)}</div></div>`;
@@ -5273,13 +5365,17 @@ function renderReviewDeal() {
     body.querySelectorAll("[data-rvchip]").forEach(btn => {
       btn.addEventListener("click", () => {
         const v = btn.dataset.rvchip;
-        const val = btn.dataset.rvfml === "1" ? +v : v;
+        const isFml = btn.dataset.rvfml === "1";
         const isMulti = btn.dataset.rvmulti === "1";
-        if (isMulti) {
+        if (isFml) {
+          const n = +v;
+          const cur2 = Array.isArray(_rvPending) ? [..._rvPending] : (_rvPending ? [+_rvPending] : []);
+          _rvPending = cur2.includes(n) ? cur2.filter(x => x !== n) : [...cur2, n].sort((a, b) => a - b);
+        } else if (isMulti) {
           const cur2 = Array.isArray(_rvPending) ? [..._rvPending] : [];
-          _rvPending = cur2.includes(val) ? cur2.filter(x => x !== val) : [...cur2, val];
+          _rvPending = cur2.includes(v) ? cur2.filter(x => x !== v) : [...cur2, v];
         } else {
-          _rvPending = _rvPending === val ? null : val;
+          _rvPending = _rvPending === v ? null : v;
         }
         renderReviewDeal();
       });
@@ -5399,10 +5495,11 @@ function groupByCategory(list) {
   const keys = [...map.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
   return keys.map(k => ({ key: k, items: map.get(k).sort(sortFmlName) }));
 }
-// → [{key, items}] grouped by the 5 formality levels (only non-empty)
+// → [{key, items}] grouped by formality levels (only non-empty). Items with multi-level sets
+// appear in the group for their minimum (most casual) level.
 function groupByFormality(list) {
   const buckets = OCCASION_LADDER.map(lbl => ({ key: lbl, items: [] }));
-  for (const i of list) { const lv = Math.max(1, Math.min(5, Math.round(itemFormality(i)))); buckets[lv - 1].items.push(i); }
+  for (const i of list) { const lv = Math.max(1, Math.min(8, itemFormality(i))); buckets[lv - 1].items.push(i); }
   return buckets.filter(b => b.items.length)
     .map(b => ({ key: b.key, items: b.items.sort((a, b) => (a.name || "").localeCompare(b.name || "")) }));
 }
@@ -5601,13 +5698,11 @@ function renderCapsuleDetail() {
   const sub = [capModeLabel(c)];
   if (dates) sub.push(dates);
 
-  // formality coverage across the 6 levels
+  // formality coverage across all 8 levels
   const covered = new Set();
-  for (const i of list) {
-    covered.add(Math.max(1, Math.min(6, Math.round(itemFormality(i)))));
-  }
+  for (const i of list) { for (const l of (itemFormalitySet(i) || [])) covered.add(l); }
   const covChips = OCCASION_LADDER.map((lbl, idx) =>
-    `<span class="cap-cov-chip${covered.has(idx + 1) ? " on" : ""}">${esc(lbl)}</span>`).join("");
+    `<span class="cap-cov-chip${covered.has(idx + 1) ? " on" : ""}" title="${esc(OCCASION_HINTS[idx])}">${idx + 1}. ${esc(lbl)}</span>`).join("");
 
   // rough outfit-combination estimate
   const byCat = (cat) => list.filter(i => i.category === cat).length;
