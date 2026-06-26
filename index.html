@@ -420,6 +420,7 @@
   .sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .sheet-chip { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; background: #fff; }
   .sheet-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .sheet-action-btn { width: 100%; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: 16px; font-weight: 500; text-align: center; cursor: pointer; }
   .sheet-note { color: var(--muted); font-size: 13px; padding: 12px 18px 24px; }
   /* move sheet */
   .mv-cat { width: 100%; padding: 14px 18px; border-bottom: 1px solid var(--line);
@@ -867,7 +868,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-26 r3";
+const APP_VERSION = "2026-06-26 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1454,10 +1455,12 @@ function renderClosetCategory(cat) {
 }
 
 function categoryGrid(cat, sub) {
+  const colorOrder = Object.fromEntries(COLOR_FAMILIES.map((c, i) => [c[0], i]));
+  const byColor = (a, b) => (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99);
   const inCat = cat === "Other" ? lensItems().filter(isOtherCat) : lensItems().filter(i => i.category === cat);
-  if (sub === "__all__") return inCat;
-  if (sub === "__other__") { const subs = TAXONOMY[cat] || []; return inCat.filter(i => !i.subcategory || !subs.includes(i.subcategory)); }
-  return inCat.filter(i => i.subcategory === sub);
+  if (sub === "__all__") return [...inCat].sort(byColor);
+  if (sub === "__other__") { const subs = TAXONOMY[cat] || []; return inCat.filter(i => !i.subcategory || !subs.includes(i.subcategory)).sort(byColor); }
+  return inCat.filter(i => i.subcategory === sub).sort(byColor);
 }
 
 function renderCloset() {
@@ -3283,6 +3286,10 @@ function openLook(id) {
   const lastTxt = lw ? (daysSince(lw) <= 0 ? "Today" : relDate(lw)) : "Never";
   const cost = outfitCost(o);
   const seasons = outfitSeasons(o);
+  // context: from the most recent wear date for this outfit
+  const outfitWears = wears.filter(w => w.outfit_id === id).sort((a, b) => b.worn_on.localeCompare(a.worn_on));
+  const lastWearCtx = lw ? outfitWears.filter(w => w.worn_on === lw).flatMap(w => w.context || []).filter((v, i, a) => a.indexOf(v) === i) : [];
+  const lastWearIds = lw ? outfitWears.filter(w => w.worn_on === lw).map(w => w.id) : [];
   const bucket = FORMALITY_BUCKETS.find(b => b.key === outfitBucket(o));
   const lookLvl = BUCKET_RANGES[outfitBucket(o)];
   const missingLvlPieces = its.filter(it => !(itemFormalitySet(it) || []).includes(lookLvl));
@@ -3323,6 +3330,7 @@ function openLook(id) {
         <div class="det-divider"></div>
         <div class="det-row"><span class="det-lbl">Last</span><span class="det-val">${esc(lastTxt)}</span></div>
         <div class="det-divider"></div>
+        ${lastWearIds.length ? `<button class="det-row" id="lookCtxBtn"><span class="det-lbl">Context</span><span class="det-val">${lastWearCtx.length ? esc(lastWearCtx.join(", ")) : '<span style="color:var(--muted)">—</span>'}</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button><div class="det-divider"></div>` : ""}
         <div class="det-row"><span class="det-lbl">Total</span><span class="det-val">${cost > 0 ? esc(money(cost)) : "—"}</span></div>
       </div>
 
@@ -3567,6 +3575,7 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
     };
   };
 
+  $("#logSheet").hidden = false;
   renderSheet();
 }
 
@@ -4071,10 +4080,37 @@ function renderCalendarMonth(body) {
       renderCalendarMonth(body); return;
     }
     const btn = e.target.closest('[data-calday]');
-    if (btn) { calendarDay = btn.dataset.calday; renderCalendarDay(body); }
+    if (btn) { openCalDaySheet(btn.dataset.calday, body); }
   };
 
   hydratePhotos(body);
+}
+
+function openCalDaySheet(dateStr, body) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const title = `${CAL_MONTHS[m - 1]} ${d}`;
+  const hasEntries = dayGroups(dateStr).length > 0;
+  const isFuture = new Date(y, m - 1, d + 1) > new Date();
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="calDaySheetClose">Cancel</button>
+      <h2>${esc(title)}</h2>
+      <div></div>
+    </div>
+    <div style="padding:8px 18px 30px;display:flex;flex-direction:column;gap:10px">
+      ${hasEntries ? `<button class="sheet-action-btn" id="calDaySheetView">View day</button>` : ""}
+      ${!isFuture ? `<button class="sheet-action-btn" id="calDaySheetClothing">+ Add clothing</button>` : ""}
+      ${!isFuture ? `<button class="sheet-action-btn" id="calDaySheetLook">+ Add look</button>` : ""}
+      ${!hasEntries && isFuture ? `<div class="muted" style="text-align:center;font-size:14px;padding:20px 0">Nothing logged yet.</div>` : ""}
+    </div>`;
+  $("#logSheet").hidden = false;
+  $("#calDaySheetClose").onclick = () => { $("#logSheet").hidden = true; };
+  const viewBtn = $("#calDaySheetView");
+  if (viewBtn) viewBtn.onclick = () => { $("#logSheet").hidden = true; calendarDay = dateStr; renderCalendarDay(body); };
+  const clothBtn = $("#calDaySheetClothing");
+  if (clothBtn) clothBtn.onclick = () => { $("#logSheet").hidden = true; calendarDay = dateStr; renderCalendarDay(body); openCalAddClothing(); };
+  const lookBtn = $("#calDaySheetLook");
+  if (lookBtn) lookBtn.onclick = () => { $("#logSheet").hidden = true; calendarDay = dateStr; renderCalendarDay(body); openCalAddLook(); };
 }
 
 function renderCalendarDay(body) {
@@ -7046,6 +7082,7 @@ function wireEvents() {
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
     const folder = e.target.closest("[data-lfolder]");
     if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
+    if (e.target.closest("#lookCtxBtn")) { if (lookId) { const o = outfitById.get(lookId); const lw = outfitLastWorn(o); const ows = wears.filter(w => w.outfit_id === lookId && w.worn_on === lw); const ids = ows.map(w => w.id); const cur = ows.flatMap(w => w.context || []).filter((v,i,a) => a.indexOf(v)===i); openContextSheet(ids, cur, () => openLook(lookId)); } return; }
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
     if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
     if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
