@@ -862,7 +862,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-26 r1";
+const APP_VERSION = "2026-06-26 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -901,6 +901,11 @@ const ACQUISITIONS = ["New", "Secondhand", "Gift"];
 const STATUSES = ["Available", "Storage", "Archive", "Wishlist"];
 const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
 const CAPSULE_KINDS = ["capsule", "packing", "travel"];
+
+// Named contexts stamped on a wear (wears.context). Seed list; any custom context
+// the user logs gets merged in at runtime via contextOptions() — derive-first, no storage.
+const CONTEXT_SEED = ["Work", "Symphony", "Chorus Concert", "Date Night", "Friends",
+  "Rehearsal", "Party/Shower", "Wedding", "Funeral", "Errands", "Travel", "Workout"];
 
 const MAX_DIM = 1200;          // longest edge after downscale
 const ENCODE_Q = 0.82;         // quality used for both webp + jpeg fallback
@@ -1700,6 +1705,16 @@ function openItemDetails(id) {
             <div class="det-sub">Last: ${lastWornText}</div>
           </div>
         </div>
+        ${(() => {
+          const ctx = itemContexts(i.id);
+          if (!ctx.length) return "";
+          const chips = ctx.map(c => `<span class="lk-chip">${esc(c.ctx)}${c.count > 1 ? ` ×${c.count}` : ""}</span>`).join(" ");
+          return `<div class="det-divider"></div>
+        <div class="det-row" style="align-items:flex-start">
+          <span class="det-lbl" style="flex:none;padding-top:2px">Worn for</span>
+          <span class="det-val" style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end">${chips}</span>
+        </div>`;
+        })()}
       </div>
 
       <div class="det-section-label">NOTES</div>
@@ -2067,9 +2082,78 @@ function openItemMoveSheet(id) {
   $("#moveSheet").hidden = false;
 }
 
+// ---- Contexts (wears.context — text[], multi-select) ----
+// Tolerant accessor: returns an array whether context is null, a string (legacy /
+// pre-migration), or an array (post-migration).
+const ctxArr = (w) => !w || !w.context ? [] : (Array.isArray(w.context) ? w.context : [w.context]);
+
+// Seed list + any custom contexts the user has already logged (derive-first).
+function contextOptions() {
+  const s = new Set(CONTEXT_SEED);
+  for (const w of wears) for (const c of ctxArr(w)) s.add(c);
+  return [...s];
+}
+
+// Distinct contexts an item has been worn for, with counts (most-worn first).
+function itemContexts(itemId) {
+  const counts = new Map();
+  for (const w of wears) {
+    if (w.item_id !== itemId) continue;
+    for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
+  }
+  return [...counts.entries()].map(([ctx, count]) => ({ ctx, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+// Reusable multi-select context picker for log sheets. Reads/writes the module-global
+// `_ctxSel` (array of chosen contexts). Self-re-renders into #ctxPicker so the rest of
+// the surrounding sheet (e.g. the date input) is untouched.
+let _ctxSel = [];
+function contextPickerHtml() { return `<div id="ctxPicker" style="margin-top:18px"></div>`; }
+function renderContextPicker() {
+  const wrap = $("#ctxPicker");
+  if (!wrap) return;
+  const opts = contextOptions();
+  const extra = _ctxSel.filter(c => !opts.includes(c));   // custom added this session
+  const all = [...opts, ...extra];
+  wrap.innerHTML = `
+    <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Context <span style="opacity:.6">(optional · choose any that apply)</span></label>
+    <div class="sheet-chips" style="margin-bottom:8px">
+      ${all.map(c => `<button class="sheet-chip${_ctxSel.includes(c) ? " on" : ""}" data-ctx="${esc(c)}">${esc(c)}</button>`).join("")}
+      <button class="sheet-chip" data-ctx-add="1">+ Add…</button>
+    </div>
+    <div id="ctxOtherWrap" style="display:none;gap:8px;margin-top:4px">
+      <input class="inp" id="ctxOther" placeholder="New context…" style="flex:1;font-size:15px">
+      <button class="lnk" id="ctxOtherAdd" style="font-weight:700;flex:none">Add</button>
+    </div>`;
+  wrap.querySelectorAll("[data-ctx]").forEach(b => b.onclick = () => {
+    const v = b.dataset.ctx;
+    _ctxSel = _ctxSel.includes(v) ? _ctxSel.filter(x => x !== v) : [..._ctxSel, v];
+    renderContextPicker();
+  });
+  const addBtn = wrap.querySelector("[data-ctx-add]");
+  if (addBtn) addBtn.onclick = () => {
+    const ow = wrap.querySelector("#ctxOtherWrap");
+    ow.style.display = "flex";
+    wrap.querySelector("#ctxOther").focus();
+  };
+  const commit = () => {
+    const inp = wrap.querySelector("#ctxOther");
+    const v = (inp.value || "").trim();
+    if (v && !_ctxSel.includes(v)) _ctxSel.push(v);
+    renderContextPicker();
+  };
+  const otherAdd = wrap.querySelector("#ctxOtherAdd");
+  if (otherAdd) otherAdd.onclick = commit;
+  const inp = wrap.querySelector("#ctxOther");
+  if (inp) inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } };
+}
+const ctxSelOrNull = () => _ctxSel.length ? _ctxSel : null;
+
 // ---- Log wear ----
 function openLogWear(id) {
   const today = new Date().toISOString().slice(0, 10);
+  _ctxSel = [];
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="logCancel">Cancel</button>
@@ -2079,21 +2163,24 @@ function openLogWear(id) {
     <div style="padding:20px 18px 30px">
       <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Date worn</label>
       <input class="inp" id="logDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
+      ${contextPickerHtml()}
     </div>
   `;
   $("#logSheet").hidden = false;
+  renderContextPicker();
   $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
   $("#logSave").onclick = async () => {
     const date = $("#logDate").value;
     if (!date) return;
+    const ctx = ctxSelOrNull();
     try {
       const row = await rest("/wears", {
         method: "POST",
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-        body: JSON.stringify({ item_id: id, worn_on: date }),
+        body: JSON.stringify({ item_id: id, worn_on: date, context: ctx }),
       });
       if (Array.isArray(row) && row[0]) wears.push(row[0]);
-      else wears.push({ item_id: id, worn_on: date, outfit_id: null });
+      else wears.push({ item_id: id, worn_on: date, outfit_id: null, context: ctx });
       $("#logSheet").hidden = true;
       toast(`Wear logged for ${date}`);
     } catch (e) { toast(e.message); }
@@ -3192,6 +3279,8 @@ function openLook(id) {
   const cost = outfitCost(o);
   const seasons = outfitSeasons(o);
   const bucket = FORMALITY_BUCKETS.find(b => b.key === outfitBucket(o));
+  const lookLvl = BUCKET_RANGES[outfitBucket(o)];
+  const missingLvlPieces = its.filter(it => !(itemFormalitySet(it) || []).includes(lookLvl));
 
   const lay = Array.isArray(o.layout) ? o.layout.filter(p => itemById.get(p.item_id) && itemById.get(p.item_id).image_path) : [];
   const heroBlock = lay.length
@@ -3208,9 +3297,11 @@ function openLook(id) {
 
   const pieceRows = its.map((it, idx) => `
     ${idx > 0 ? '<div class="det-divider"></div>' : ""}
-    <button class="det-row" data-occ-item="${esc(it.id)}">
-      <span class="det-val" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
-      <span class="det-lbl" style="min-width:0;flex:none">${esc(pieceFormalityLabel(it))}</span>
+    <button class="det-row" data-occ-item="${esc(it.id)}" style="align-items:center">
+      <span style="flex:1;min-width:0">
+        <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
+        <span style="display:block;color:var(--muted);font-size:12px;margin-top:2px">${esc(pieceFormalityLabel(it))}</span>
+      </span>
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`).join("");
 
@@ -3239,6 +3330,7 @@ function openLook(id) {
 
       <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit in canvas</button></div>
       <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
+      ${missingLvlPieces.length ? `<button class="lnk" id="lookAddLevel" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:8px">+ Add “${lookLvl}. ${esc(occLabel(lookLvl))}” to ${missingLvlPieces.length} piece${missingLvlPieces.length === 1 ? "" : "s"}</button>` : ""}
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
@@ -3277,6 +3369,7 @@ function openWearLook(id) {
   if (!o) return;
   const its = outfitItems(o);
   const today = todayStr();
+  _ctxSel = [];
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="logCancel">Cancel</button>
@@ -3287,14 +3380,17 @@ function openWearLook(id) {
       <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Date worn</label>
       <input class="inp" id="logDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
       <div class="muted" style="font-size:13px;margin-top:12px">Logs a wear for all ${its.length} piece${its.length === 1 ? "" : "s"} in this look.</div>
+      ${contextPickerHtml()}
     </div>`;
   $("#logSheet").hidden = false;
+  renderContextPicker();
   $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
   $("#logSave").onclick = async () => {
     const date = $("#logDate").value;
     if (!date || !its.length) { $("#logSheet").hidden = true; return; }
+    const ctx = ctxSelOrNull();
     try {
-      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id }));
+      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, context: ctx }));
       const rows = await rest("/wears", {
         method: "POST",
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
@@ -3381,13 +3477,9 @@ function openLookFormalityEdit(id) {
         headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ formality_override: selected }),
       });
-      if (selected === "workout") {
-        toast("Formality saved");
-        $("#logSheet").hidden = true;
-        openLook(id);
-      } else {
-        showNudgePiecesSheet(id, selected);
-      }
+      toast("Formality saved");
+      $("#logSheet").hidden = true;
+      openLook(id);
     } catch (e) {
       o.formality_override = prev; o._bucket = null;
       toast(e.message);
@@ -3398,7 +3490,7 @@ function openLookFormalityEdit(id) {
   $("#logSheet").hidden = false;
 }
 
-// ---- offer to nudge pieces to match the look's new formality ----
+// ---- add a formality level to a look's pieces (manual; opened from look detail) ----
 function showNudgePiecesSheet(outfitId, bucketKey) {
   const o = outfitById.get(outfitId);
   if (!o) { $("#logSheet").hidden = true; return; }
@@ -3428,18 +3520,18 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
 
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
-        <button class="lnk" id="nudgeSkip">Skip</button>
-        <h2>Nudge pieces?</h2>
-        <button class="lnk" id="nudgeApply" style="font-weight:700">Apply</button>
+        <button class="lnk" id="nudgeSkip">Cancel</button>
+        <h2>Add formality</h2>
+        <button class="lnk" id="nudgeApply" style="font-weight:700">Add</button>
       </div>
       <div style="padding:14px 18px 30px">
-        <div class="muted" style="font-size:13px;margin-bottom:10px">Tap target formality, then apply to checked pieces.</div>
+        <div class="muted" style="font-size:13px;margin-bottom:10px">Adds the chosen level to each checked piece's formality set (it won't remove any levels they already have).</div>
         <div class="sheet-chips" style="flex-direction:column;align-items:stretch;gap:6px;margin-bottom:14px">${chips}</div>
-        <div style="font-size:13px;margin-bottom:12px">Target: <b>${esc(occLabel(target))}</b></div>
+        <div style="font-size:13px;margin-bottom:12px">Adding: <b>${esc(occLabel(target))}</b></div>
         <div>${pieceRows}</div>
       </div>`;
 
-    $("#nudgeSkip").onclick = () => { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); };
+    $("#nudgeSkip").onclick = () => { $("#logSheet").hidden = true; openLook(outfitId); };
 
     $("#logInner").querySelectorAll("[data-nudgelvl]").forEach(btn => {
       btn.addEventListener("click", () => { target = +btn.dataset.nudgelvl; renderSheet(); });
@@ -3840,10 +3932,11 @@ function dayGroups(dateStr) {
   for (const w of wears) {
     if (w.worn_on !== dateStr) continue;
     const key = w.outfit_id || `__${w.item_id}`;
-    if (!byKey.has(key)) byKey.set(key, { outfitId: w.outfit_id, itemIds: [], wearIds: [] });
+    if (!byKey.has(key)) byKey.set(key, { outfitId: w.outfit_id, itemIds: [], wearIds: [], context: [] });
     const g = byKey.get(key);
     if (!g.itemIds.includes(w.item_id)) g.itemIds.push(w.item_id);
     g.wearIds.push(w.id);
+    for (const c of ctxArr(w)) if (!g.context.includes(c)) g.context.push(c);
   }
   return [...byKey.values()];
 }
@@ -3993,10 +4086,20 @@ function renderCalendarDay(body) {
     return `<div class="cal-outfit-card">
       <div class="cal-outfit-inner">
         ${collage}
-        <button class="cal-outfit-notes-btn${notes ? ' has-notes' : ''}" data-cal-notes="${esc(g.outfitId || '')}">
-          <span>${esc(notes || 'Tap to add notes')}</span>
-          <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:9px">
+          <button class="cal-outfit-notes-btn${notes ? ' has-notes' : ''}" data-cal-notes="${esc(g.outfitId || '')}" style="flex:none">
+            <span>${esc(notes || 'Tap to add notes')}</span>
+            <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+          ${(() => {
+            const has = g.context.length > 0;
+            return `<button class="cal-ctx-btn${has ? ' has-ctx' : ''}" data-cal-ctx="${esc(g.wearIds.join(','))}"
+            style="display:flex;align-items:center;gap:6px;background:none;border:none;text-align:left;padding:0;cursor:pointer">
+            <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:${has ? 'var(--accent)' : 'var(--muted)'};stroke-width:2;fill:none;flex:none"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            <span style="font-size:13px;color:${has ? 'var(--accent)' : 'var(--muted)'};font-weight:${has ? '600' : '400'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${has ? esc(g.context.join(', ')) : 'Add context'}</span>
+          </button>`;
+          })()}
+        </div>
       </div>
       <div class="cal-swipe-acts">
         <button class="cal-act cal-act-copy" data-calact="copy" data-wear-ids="${esc(wearIdsStr)}" data-outfit-id="${esc(g.outfitId || '')}">
@@ -4123,7 +4226,52 @@ function renderCalendarDay(body) {
     };
   });
 
+  body.querySelectorAll('[data-cal-ctx]').forEach(el => {
+    el.onclick = () => {
+      const wearIds = (el.dataset.calCtx || '').split(',').filter(Boolean);
+      if (!wearIds.length) return;
+      const cur = [];
+      for (const id of wearIds) {
+        const w = wears.find(x => x.id === id);
+        for (const c of ctxArr(w)) if (!cur.includes(c)) cur.push(c);
+      }
+      openContextSheet(wearIds, cur, () => renderCalendarDay(body));
+    };
+  });
+
   hydratePhotos(body);
+}
+
+// Set/change the contexts on a group of wear rows (calendar day card "after" flow).
+function openContextSheet(wearIds, current, onSaved) {
+  _ctxSel = Array.isArray(current) ? [...current] : [];
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="ctxCancel">Cancel</button>
+      <h2>Context</h2>
+      <button class="lnk" id="ctxSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:18px 18px 30px">
+      <div class="muted" style="font-size:13px;margin-bottom:4px">Where did you wear this?</div>
+      ${contextPickerHtml()}
+    </div>`;
+  $("#logSheet").hidden = false;
+  renderContextPicker();
+  $("#ctxCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#ctxSave").onclick = async () => {
+    const val = ctxSelOrNull();
+    try {
+      await rest(`/wears?id=in.(${wearIds.map(id => `"${id}"`).join(",")})`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ context: val }),
+      });
+      wears.forEach(w => { if (wearIds.includes(w.id)) w.context = val; });
+      $("#logSheet").hidden = true;
+      toast(val ? `Marked as ${val.join(", ")}` : "Context cleared");
+      if (onSaved) onSaved();
+    } catch (e) { toast(e.message); }
+  };
 }
 
 function wireCalSwipe(card) {
@@ -6895,6 +7043,7 @@ function wireEvents() {
     if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
     if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
+    if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
     const occItem = e.target.closest("[data-occ-item]");
     if (occItem) { openOccasionEdit(occItem.dataset.occItem, () => { if (lookId) openLook(lookId); }); return; }
     const piece = e.target.closest("[data-look-item]");

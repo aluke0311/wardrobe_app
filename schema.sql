@@ -108,7 +108,7 @@ create table if not exists wears (
   item_id       uuid not null references items(id)   on delete cascade,
   outfit_id     uuid references outfits(id)          on delete set null,
   worn_on       date not null,
-  context       text,
+  context       text[],         -- named contexts for this wearing (multi-select)
   formality_for smallint check (formality_for between 1 and 8),  -- demand capture (single level)
   created_at    timestamptz not null default now()
 );

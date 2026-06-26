@@ -100,8 +100,9 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
   (Available|Storage|Archive), tags (text[] — includes `"no-suggest"` tag), url,
   order_no, receipt_url, official_name, notes, image_path, created_at.
 - `wears`: id, user_id, item_id, outfit_id (nullable), worn_on (date),
-  context (text), formality_for (smallint 1–6, nullable — demand capture),
-  created_at.
+  context (text[] — named contexts, multi-select; seed list `CONTEXT_SEED` + any
+  custom ones, derived via `contextOptions()`), formality_for (smallint 1–8,
+  nullable — demand capture), created_at.
 - `outfits`: id, user_id, name, context, notes, image_path, formality_override
   (text — bucket key, nullable), **layout** (JSONB `{item_id,x,y,s}[]`),
   rating (smallint, nullable — reserved), created_at.
@@ -121,6 +122,7 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 - `migration/outfit_layout.sql` — adds `outfits.layout`.
 - `migration/capsule_weather.sql` — adds `capsules.locations`.
 - `migration/capsule_items_packed.sql` — adds `capsule_items.packed`.
+- `migration/wears_context_array.sql` — converts `wears.context text → text[]` (multi-select).
 
 ## Design model
 
