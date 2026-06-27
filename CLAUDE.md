@@ -183,7 +183,7 @@ Gala/chorus concert (5, all-black rule).
 **Taxonomy** (category → subcategories):
 - Tops: Tee shirts, Graphic tees, Long-sleeve tees, Sleeveless, Blouses, Sweaters, Cardigans, Sweatshirts
 - Bottoms: Jeans, Pants, Shorts, Skirts, Leggings/Joggers, Tights
-- Dresses: Casual dresses, Work dresses, Cocktail dresses
+- Dresses: Short, Long, Cocktail
 - Outerwear: Blazers, Jackets, Coats
 - Shoes: Boots, Sandals, Flats, Heels, Sneakers
 - Workout: Workout tops, Active shorts, Sports bras
