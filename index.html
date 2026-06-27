@@ -146,6 +146,8 @@
     max-width: 90vw;
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast-chip { display:inline-block; margin-left:10px; padding:3px 9px; background:rgba(255,255,255,.22); border-radius:999px; font-size:12.5px; font-weight:600; }
+  .log-cta { display:block; margin:12px 16px 0; padding:14px; background:var(--accent); color:#fff; border-radius:14px; font-size:16px; font-weight:600; text-align:center; }
 
   /* ---------- header add button ---------- */
   .addbtn { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
@@ -909,7 +911,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-26 r8";
+const APP_VERSION = "2026-06-26 r9";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1289,11 +1291,20 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, action) {
   const t = $("#toast");
-  t.textContent = msg; t.classList.add("show");
+  if (action) {
+    t.innerHTML = esc(msg) + ` <span class="toast-chip">${esc(action.label)}</span>`;
+    t.style.pointerEvents = "auto";
+    t.onclick = () => { t.classList.remove("show"); clearTimeout(toastTimer); action.fn(); };
+  } else {
+    t.textContent = msg;
+    t.style.pointerEvents = "";
+    t.onclick = null;
+  }
+  t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+  toastTimer = setTimeout(() => t.classList.remove("show"), action ? 5500 : 2200);
 }
 
 // Lazy photo loading: sign + set background only when a node nears the viewport.
@@ -1351,7 +1362,19 @@ function renderHome() {
       <div class="tlabel">${esc(t.label)}</div>
       <div class="tsub">${dataReady ? esc(t.sub()) : "&nbsp;"}</div>
     </button>`).join("");
-  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>`;
+  const today = todayStr();
+  const hasWearToday = dataReady && wearDayMap().has(today);
+  const cta = dataReady && !hasWearToday
+    ? `<button class="log-cta" id="homeLogCta">Log today's wear</button>`
+    : "";
+  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}`;
+  const ctaBtn = $("#homeLogCta");
+  if (ctaBtn) ctaBtn.onclick = () => {
+    switchTab("calendar");
+    calendarDay = today;
+    renderCalendarDay($("#calBody"));
+    openCalAddClothing();
+  };
 }
 
 /* ===================================================================
@@ -2264,11 +2287,17 @@ function itemContexts(itemId) {
 // `_ctxSel` (array of chosen contexts). Self-re-renders into #ctxPicker so the rest of
 // the surrounding sheet (e.g. the date input) is untouched.
 let _ctxSel = [];
+let _logItemId = null;  // item being logged, for context-chip ordering (A2)
 function contextPickerHtml() { return `<div id="ctxPicker" style="margin-top:18px"></div>`; }
 function renderContextPicker() {
   const wrap = $("#ctxPicker");
   if (!wrap) return;
-  const opts = contextOptions();
+  let opts = contextOptions();
+  // Sort this item's most-frequently-used contexts to the top (A2)
+  if (_logItemId) {
+    const freq = new Map(itemContexts(_logItemId).map(({ctx, count}) => [ctx, count]));
+    opts = [...opts].sort((a, b) => (freq.get(b) || 0) - (freq.get(a) || 0));
+  }
   const extra = _ctxSel.filter(c => !opts.includes(c));   // custom added this session
   const all = [...opts, ...extra];
   wrap.innerHTML = `
@@ -2305,8 +2334,89 @@ function renderContextPicker() {
 }
 const ctxSelOrNull = () => _ctxSel.length ? _ctxSel : null;
 
-// ---- Log wear ----
+// ---- One-tap wear today (A1): POST immediately, then offer context + formality ----
+async function logWearToday(id) {
+  const today = todayStr();
+  try {
+    const rows = await rest("/wears", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({ item_id: id, worn_on: today }),
+    });
+    const wear = Array.isArray(rows) && rows[0]
+      ? rows[0]
+      : { id: null, item_id: id, worn_on: today, outfit_id: null, context: null, formality_for: null };
+    wears.push(wear);
+    toast("Wear logged", { label: "Add context →", fn: () => openPostLogSheet([wear]) });
+  } catch (e) { toast(e.message); }
+}
+
+// ---- Post-log sheet: context + formality_for capture (A2 + E4) ----
+function openPostLogSheet(wearRows) {
+  _logItemId = wearRows.length === 1 ? wearRows[0].item_id : null;
+  _ctxSel = [];
+  let fmlFor = null;
+
+  const renderFml = () => {
+    const wrap = $("#postFmlRow");
+    if (!wrap) return;
+    wrap.innerHTML = OCCASION_LADDER.map((lbl, idx) => {
+      const lvl = idx + 1;
+      return `<button class="sheet-chip${fmlFor === lvl ? " on" : ""}" data-pfml="${lvl}" style="font-size:12px">${lvl} · ${esc(lbl)}</button>`;
+    }).join("");
+    wrap.querySelectorAll("[data-pfml]").forEach(b => b.onclick = () => {
+      const v = parseInt(b.dataset.pfml);
+      fmlFor = fmlFor === v ? null : v;
+      renderFml();
+    });
+  };
+
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="postLogCancel">Skip</button>
+      <h2>Add context</h2>
+      <button class="lnk" id="postLogSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:20px 18px 30px">
+      ${contextPickerHtml()}
+      <div style="margin-top:20px">
+        <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">How dressed up? <span style="opacity:.6">(optional)</span></label>
+        <div class="sheet-chips" id="postFmlRow"></div>
+      </div>
+    </div>`;
+  $("#logSheet").hidden = false;
+  renderContextPicker();
+  renderFml();
+
+  const close = () => { $("#logSheet").hidden = true; _logItemId = null; };
+  $("#postLogCancel").onclick = close;
+  $("#postLogSave").onclick = async () => {
+    const ctx = ctxSelOrNull();
+    const updates = {};
+    if (ctx) updates.context = ctx;
+    if (fmlFor) updates.formality_for = fmlFor;
+    if (Object.keys(updates).length) {
+      const patchable = wearRows.filter(r => r.id);
+      if (patchable.length) {
+        try {
+          await Promise.all(patchable.map(r =>
+            rest(`/wears?id=eq.${r.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(updates),
+            })
+          ));
+          patchable.forEach(r => Object.assign(r, updates));
+        } catch (_) { /* wear already logged — context/formality is best-effort */ }
+      }
+    }
+    close();
+  };
+}
+
+// ---- Log wear (with date picker, for back-dating) ----
 function openLogWear(id) {
+  _logItemId = id;
   const today = new Date().toISOString().slice(0, 10);
   _ctxSel = [];
   $("#logInner").innerHTML = `
@@ -3591,11 +3701,12 @@ function openWearLook(id) {
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
         body: JSON.stringify(payload),
       });
-      if (Array.isArray(rows)) wears.push(...rows);
+      const newWears = Array.isArray(rows) && rows.length ? rows
+        : its.map(it => ({ id: null, item_id: it.id, worn_on: date, outfit_id: id, context: null, formality_for: null }));
+      wears.push(...(Array.isArray(rows) ? rows : newWears));
       buildOutfitWearMap();
-      $("#logSheet").hidden = true;
-      toast(`Logged ${its.length} wear${its.length === 1 ? "" : "s"} for ${date}`);
       if (lookId === id) openLook(id);
+      openPostLogSheet(newWears);
     } catch (e) { toast(e.message); }
   };
 }
@@ -7376,7 +7487,7 @@ function wireEvents() {
   // item action bar (photo view)
   $("#ibEdit").addEventListener("click", () => { if (detailId) openItemDetails(detailId); });
   $("#ibMove").addEventListener("click", () => { if (detailId) openItemMoveSheet(detailId); });
-  $("#ibLog").addEventListener("click", () => { if (detailId) openLogWear(detailId); });
+  $("#ibLog").addEventListener("click", () => { if (detailId) logWearToday(detailId); });
   $("#ibDelete").addEventListener("click", () => { if (detailId) deleteItem(detailId); });
 
   // field edit sheet

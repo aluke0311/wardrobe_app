@@ -109,17 +109,15 @@ make the daily wear-logging loop a ≤1-gesture reflex, and reduce one-handed re
 → ✅ **DEPLOY** (`r8`)
 
 ### WAVE 3 — Daily logging loop
-- [ ] **One-tap "Wear today"** (A1) — `#ibLog` handler (7179): single tap →
-  POST wear today (reuse `openLogWear` POST body, 2185) → toast w/ "Add context?" chip
-  that opens the context sheet for the just-created wear. (S)
-- [ ] **Context picker ordering** (A2) — `renderContextPicker` (2121): order chips by
-  `itemContexts(currentItemId)` frequency, then remaining `contextOptions()`. (S)
-- [ ] **`wears.formality_for` capture** (E4) — after a wear/look log, one-tap "How dressed
-  up were you?" chip row (1–8, `OCCASION_LADDER`); PATCH `wears.formality_for`. Surfaces:
-  the A1 success toast/sheet + look "Wear" flow (3393). (M)
-- [ ] **Home "Log today's wear" CTA** (A4) — `renderHome` (1302): when `wearDayMap()` has
-  no entry for today, render a CTA → calendar day (today) with "+ Clothing" active. (M)
-→ ✅ **DEPLOY** (`r8`)
+- [x] **One-tap "Wear today"** (A1) — `logWearToday()`: tap Log → immediate POST → toast
+  "Wear logged" with "Add context →" chip. (shipped r9)
+- [x] **Context picker ordering** (A2) — `renderContextPicker`: `_logItemId` drives
+  per-item context frequency sort via `itemContexts()`. (shipped r9)
+- [x] **`wears.formality_for` capture** (E4) — `openPostLogSheet(wearRows)`: context chips
+  + 1–8 formality row; PATCHes all wears. Surfaces: A1 toast chip + look "Wear" flow. (shipped r9)
+- [x] **Home "Log today's wear" CTA** (A4) — `renderHome`: no-wear-today shows `.log-cta`
+  button → calendar day (today) + openCalAddClothing. (shipped r9)
+→ ✅ **DEPLOY** (`r9`)
 
 ### WAVE 4 — Gestures & reach
 - [ ] **Swipe-right-to-go-back, app-wide** — one left-edge (<24px) swipe listener;
