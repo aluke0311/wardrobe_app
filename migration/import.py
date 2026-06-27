@@ -63,7 +63,7 @@ TAXONOMY = {
     "Tops":      ["Tee shirts", "Graphic tees", "Long-sleeve tees", "Sleeveless",
                   "Blouses", "Sweaters", "Cardigans", "Sweatshirts"],
     "Bottoms":   ["Jeans", "Pants", "Shorts", "Skirts", "Leggings/Joggers", "Tights"],
-    "Dresses":   ["Casual dresses", "Work dresses", "Cocktail dresses"],
+    "Dresses":   ["Short", "Long", "Cocktail"],
     "Outerwear": ["Blazers", "Jackets", "Coats"],
     "Shoes":     ["Boots", "Sandals", "Flats", "Heels", "Sneakers"],
     "Workout":   ["Workout tops", "Active shorts", "Sports bras"],
@@ -79,15 +79,18 @@ SUBCAT_MAP = {
     "Blouses": "Blouses", "Sweaters": "Sweaters", "Cardigans": "Cardigans",
     "Sweatshirts": "Sweatshirts", "Jeans": "Jeans", "Pants": "Pants",
     "Shorts": "Shorts", "Skirts": "Skirts", "Leggings/Joggers": "Leggings/Joggers",
-    "Tights": "Tights", "Dresses": "Casual dresses", "Casual Dresses": "Casual dresses",
-    "Work Dresses": "Work dresses", "Cocktail Dresses": "Cocktail dresses",
+    "Tights": "Tights",
+    # Dresses: Short / Long / Cocktail are the canonical subcategories.
+    "Short": "Short", "Long": "Long",
+    "Cocktail Dresses": "Cocktail", "Cocktail dresses": "Cocktail", "Cocktail": "Cocktail",
+    "Dresses": None,  # generic "Dresses" has no length — import null, sort in-app
     "Blazers": "Blazers", "Jackets": "Jackets", "Coats": "Coats",
     "Boots": "Boots", "Sandals": "Sandals", "Flats": "Flats", "Heels": "Heels",
     "Tennis Shoes": "Sneakers", "Sneakers": "Sneakers",
     "Workout Tops": "Workout tops", "Active Shorts": "Active shorts",
     "Sports Bras": "Sports bras",
     # legacy nulls
-    "Archive": None, "Boxed Up": None, "Long": None, "Short": None, "Workout": None,
+    "Archive": None, "Boxed Up": None, "Workout": None,
 }
 
 STATUSES = {"Available", "Storage", "Archive"}
