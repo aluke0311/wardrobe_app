@@ -1,7 +1,157 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-06-25 r6**.
+> Current version: **2026-06-26 r4**.
+
+---
+
+## ▶ NEXT BUILD — "Unified Experience + Daily Loop" (planned 2026-06-26)
+
+**Status: APPROVED, execution-ready. All decisions locked (see below). Build in wave
+order; deploy at each ✅ checkpoint via the `deploy-wardrobe` skill (bump `APP_VERSION`,
+commit, push). When the user says "continue the build," start at the first unchecked item.**
+
+This plan came out of a 3-part product + UX + unification review. The through-line:
+the app is a collection of independent render functions that each re-decide layout,
+sorting, filtering, density, and gestures. **Unify the "many items at once" experience,
+make the daily wear-logging loop a ≤1-gesture reflex, and reduce one-handed reach.**
+
+### Locked decisions (do not re-litigate)
+- **A1** One-tap "Wear today": single tap on item photo-view Log = logs today immediately,
+  then toast "Wear logged — add context?" with a chip that re-opens context. No modal.
+- **A2** Context picker ordering: most-used contexts **for that specific item** first
+  (`itemContexts(id)`), then the rest.
+- **A3** Do NOT pre-select/pre-check a context.
+- **A4** Home: when today has 0 wears logged, show a "Log today's wear" CTA (subtile/badge).
+- **B1** Suggestion sheet: after the 8th result show a "New suggestions →" button that
+  regenerates a fresh 8 (vary the random seed).
+- **B2** Lightly downweight today's dismissed/skipped suggestion combos (session memory).
+- **C1** Closet Review landing: pin **Formality** and **Color** to top as "Suggested",
+  rest alphabetical.
+- **C2** Keep manual field choice (do NOT auto-launch a field).
+- **D1** Home calendar tile subtitle: "X wears logged today" (0 → "Nothing logged yet").
+- **D2** Move "Closet vs. Your Life" to the TOP of the Stats page.
+- **E2** Calendar day view: swipe left/right between days.
+- **E4** Build `wears.formality_for` capture: after logging a wear/look, one-tap
+  "How dressed up were you?" chip row (levels 1–8). Column already exists — no migration.
+- **U1** Build a single `itemGridView(list, config)` component to replace the 7 grid
+  wrappers. Fold into the design-system refactor.
+- **U2** One shared sort menu everywhere: Color · Name · Newest · Most/Least worn ·
+  Formality · Price. Remembered per surface. Replaces hardcoded color sort + count/name +
+  category/formality toggles.
+- **U3** One shared filter sheet callable from any grid (funnel icon). **MUST filter on
+  everything it can** — current Search covers only Color/Fabric/Size/Season/Brand/Status;
+  ADD **Formality, Category, Subcategory, Retailer, Acquisition, Price range**.
+- **U4** Expose density (per-row) control on every grid via the shared controls bar.
+- **U5** Long-press a grid tile → quick actions (Log today · Add to look · Move) without
+  entering the item.
+- **U6** One selection affordance everywhere (the dot); retire builder outline-only;
+  trip pack-tick becomes a dot variant.
+- **F1/UX-1** 44px minimum tap-target audit (item nav arrows, clback, sib buttons).
+- **F2** Extract type-scale + spacing tokens and shared render helpers
+  (`row()`, `sectionLabel()`, `chip()`, `sheet()`) before the feature wave.
+- **F3** Sheet grabber pill + swipe-down-to-dismiss.
+- **F4** Remove dev-scaffolding (`placeholder()` "We'll build this next"); give every
+  empty/zero state a friendly line + a primary action.
+- **New feature** "Make a look from today's logged items": in calendar day view, when ≥2
+  solo items (`dayGroups` entries with `outfitId === null`) exist for the day, show
+  "Create look from these N items" → creates `outfit` + `outfit_items`, back-fills
+  `wears.outfit_id` so the day re-groups. **2+ items = a Look; 1 item stays an item.**
+- **Bug** Stats "Least Expensive" must exclude $0/free items (`> 0`, not just `!= null`).
+- **Gesture** Global swipe-right-from-left-edge = back (dispatch to active screen's back fn).
+- **Rejected this round:** E1 duplicate-item, E3 swipe-log from Looks list, B3 suggest-from-search.
+
+### Guardrails (unchanged, see §0 below): single-user · heuristics-only · one `index.html`
+· plain `fetch` · `background-size: contain` · no libraries.
+
+---
+
+### WAVE 0 — Quick wins (independent, instant value) ✅ deploy after
+- [ ] **Least Expensive excludes $0** — `buildSmartList` line 4882, `least-expensive`
+  branch: filter `parseFloat(i.price) > 0`. (S)
+- [ ] **Stats label fix** — `buildSmartList` `never-worn` (line 4862) + `renderStatsMain`
+  `notLoggedLabel` (line 5128): rename "Not Logged on Calendar" → "Never Worn" (all-time) /
+  "Not Worn · past N" (range). (S)
+- [ ] **Home calendar tile subtitle** (D1) — `HOME_TILES` line 1290: `sub()` returns
+  today's wear count from `wearDayMap()`. (S)
+- [ ] **Closet-vs-Life to top of Stats** (D2) — `renderStatsMain` (5113): move
+  `closetVsLifeHtml()` (5055) above Clothing Stats section. (S)
+- [ ] **Closet Review field priority** (C1) — `renderReviewLanding` (5389): pin formality +
+  color_family rows to top under a "Suggested" label, rest alphabetical. (S)
+- [ ] **Suggestion "New suggestions →" + dismissal memory** (B1/B2) — `renderSuggestSheet`
+  (3008): add regen button at end-of-list; track shown/dismissed piece-id sets in a
+  session global, downweight in `scoreCombo` (2855). (M)
+- [ ] **44px tap-target audit** (F1) — CSS lines 434/442/148: `.item-sib-btn`,
+  `.item-nav-btn`, `.clback`/`.clsearch` → 44px hit area (padding, keep glyph small). (S)
+→ ✅ **DEPLOY** (`2026-06-26 r5`)
+
+### WAVE 1 — Foundation: tokens + helpers + grid component (behavior-preserving)
+- [ ] **Type-scale + spacing tokens** (F2/UX-2) — add `--fs-xs..xl`, `--sp-*` to `:root`
+  (line 10); migrate the worst inline-size offenders. (M)
+- [ ] **Shared render helpers** (F2) — `row()`, `sectionLabel()`, `chip()`, `sheet()`
+  (with grabber pill). Replace hand-rolled markup incrementally. (M)
+- [ ] **Sheet grabber + swipe-down dismiss** (F3) — bake into `sheet()` helper + `.sheet`
+  CSS (411); touch handler mirrors `wireCalSwipe` (4318). (M)
+- [ ] **`itemGridView(list, config)`** (U1) — unify `gridHtml` (1370), `pickerGridHtml`
+  (6210), `builderItemGrid` (6541), `capGroupsHtml` (5864), stats grid path (5327).
+  Config: density/sort/filter/group/select/selectStyle/onTap. (L)
+- [ ] **Shared grid-controls bar** (U2/U3/U4) — density picker + sort menu + filter funnel.
+  Generalize `#gridBar` (HTML 754) so any surface mounts it. (L)
+→ ✅ **DEPLOY** (`r6`) — visual + behavior unchanged; verify no regressions on every grid.
+
+### WAVE 2 — Unified rollout: sort, filter, density, selection everywhere
+- [ ] **Migrate all 7 surfaces** to `itemGridView` (closet, search, stats, capsule picker,
+  calendar log picker, builder picker, capsule detail). (L)
+- [ ] **Shared sort menu** (U2) — Color · Name · Newest · Most/Least worn · Formality ·
+  Price; per-surface remembered key. Color stays closet default. Retire `statsFieldSort`
+  count/name + `_capSort` category/formality as bespoke toggles (feed them into the menu). (M)
+- [ ] **Expanded shared filter sheet** (U3) — generalize Search's `FILTERS` (2201)/
+  `runSearch` (2259) into a reusable sheet; **ADD Formality, Category, Subcategory,
+  Retailer, Acquisition, Price range.** Callable from closet + search + pickers. (M)
+- [ ] **Unified selection affordance** (U6) — dot everywhere; pack-tick = dot variant. (S)
+- [ ] **Empty-state pass + remove scaffolding** (F4) — kill `placeholder()` "We'll build
+  this next" (1315); friendly empty states w/ primary action (closet, looks, search,
+  calendar empty day 4125, capsule). (S–M)
+→ ✅ **DEPLOY** (`r7`)
+
+### WAVE 3 — Daily logging loop
+- [ ] **One-tap "Wear today"** (A1) — `#ibLog` handler (7179): single tap →
+  POST wear today (reuse `openLogWear` POST body, 2185) → toast w/ "Add context?" chip
+  that opens the context sheet for the just-created wear. (S)
+- [ ] **Context picker ordering** (A2) — `renderContextPicker` (2121): order chips by
+  `itemContexts(currentItemId)` frequency, then remaining `contextOptions()`. (S)
+- [ ] **`wears.formality_for` capture** (E4) — after a wear/look log, one-tap "How dressed
+  up were you?" chip row (1–8, `OCCASION_LADDER`); PATCH `wears.formality_for`. Surfaces:
+  the A1 success toast/sheet + look "Wear" flow (3393). (M)
+- [ ] **Home "Log today's wear" CTA** (A4) — `renderHome` (1302): when `wearDayMap()` has
+  no entry for today, render a CTA → calendar day (today) with "+ Clothing" active. (M)
+→ ✅ **DEPLOY** (`r8`)
+
+### WAVE 4 — Gestures & reach
+- [ ] **Swipe-right-to-go-back, app-wide** — one left-edge (<24px) swipe listener;
+  dispatch to active screen's back fn (`closetBack` 1505 / `looksBack` / `statsNavBack` /
+  calendar). (M)
+- [ ] **Day-view swipe between days** (E2) — `renderCalendarDay` (4080): horizontal swipe →
+  prevD/nextD (already computed, 4127). (M)
+- [ ] **Swipe between sibling items in detail** — `openItem` (1584): swipe photo →
+  `siblingItems()` prev/next. (M)
+- [ ] **Long-press tile quick-actions** (U5) — on `itemGridView` tiles: long-press →
+  small action sheet (Log today · Add to look · Move). (M)
+→ ✅ **DEPLOY** (`r9`)
+
+### WAVE 5 — New capture feature
+- [ ] **Make-a-look from today's logged items** — `renderCalendarDay` (4080): when ≥2
+  solo groups (`dayGroups` w/ `outfitId === null`), show "Create look from these N items";
+  create `outfit` + `outfit_items`, PATCH those `wears.outfit_id`, re-render day. 1 item =
+  no button. (M)
+→ ✅ **DEPLOY** (`r10`)
+
+### Build conventions for this plan
+- One wave = one or more deploys; **always deploy at the ✅ checkpoint** before starting the
+  next wave so regressions are isolated.
+- Bump `APP_VERSION` each deploy (line 871). Same-day = increment `rN`.
+- After Wave 1, **build all new UI with the shared helpers/tokens**, never inline styles.
+- No schema changes needed anywhere in this plan (formality_for column already live).
 
 ---
 

@@ -21,9 +21,15 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-26 r3. Full rework from v25. ~7,080 lines.**
+**Current state: 2026-06-26 r4. Full rework from v25. ~7,100 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
+
+**▶ NEXT UP:** `ROADMAP.md` → "NEXT BUILD — Unified Experience + Daily Loop" (approved,
+execution-ready, 6 waves W0–W5). When the user says "continue the build," start at the
+first unchecked item and deploy at each ✅ checkpoint. Keystone = `itemGridView()` unifying
+the 7 grid wrappers + shared sort/filter/density controls (W1–W2); then daily-loop +
+gestures (W3–W4) + make-a-look-from-logged-items (W5). No schema changes needed.
 
 Top-of-`<script>` config, then logically grouped sections:
 
