@@ -11,6 +11,7 @@
     --bg: #ffffff;
     --surface: #ffffff;
     --ink: #2b2b33;
+    --text: #2b2b33;            /* alias of --ink; older styles reference --text */
     --muted: #9a9aa6;
     --line: #ececf1;
     --accent: #8b8fd0;          /* calm periwinkle, Stylebook-ish */
@@ -975,7 +976,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r8";
+const APP_VERSION = "2026-06-27 r9";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3368,6 +3369,16 @@ function suggestSlot(i) { return i.subcategory === "Cardigans" ? "Outerwear" : i
 
 const NEUTRAL_COLORS = new Set(["White","Gray","Black","Beige","Brown","Metallic"]);
 
+// No "pattern" field exists, so derive it: Graphic tees are always patterned, and
+// most prints announce themselves in the item name. Used to avoid pairing two busy
+// pieces together (the clash the user keeps hitting).
+const PATTERN_RE = /\b(floral|plaid|stripe[ds]?|print(ed)?|graphic|leopard|animal|polka|checker(ed)?|gingham|paisley|tie.?dye|camo(uflage)?|houndstooth|argyle|geometric|patterned|sequin|snake|zebra|cheetah|tartan|tweed)\b/i;
+function isPatterned(i) {
+  if (!i) return false;
+  if (i.subcategory === "Graphic tees") return true;
+  return PATTERN_RE.test(i.name || "");
+}
+
 // Score a candidate combo of items. Higher = better.
 // Combos the user has already been shown this session (key = sorted item ids).
 // Lightly downweighted so reshuffles surface fresh outfits. Cleared on reload.
@@ -3388,11 +3399,10 @@ function scoreCombo(its, target) {
   // color: penalize 2+ different loud colors in same outfit
   const louds = [...new Set(its.map(i => i.color_family).filter(c => c && !NEUTRAL_COLORS.has(c)))];
   if (louds.length >= 2) s -= 3;
-  // rotation: reward items not worn recently
-  for (const i of its) {
-    const d = daysSince(lastWorn(i.id));
-    s += d === null ? 3 : d > 60 ? 2 : d > 30 ? 1 : 0;
-  }
+  // pattern: penalize mixing 2+ patterned/printed pieces (busy clash)
+  if (its.filter(isPatterned).length >= 2) s -= 3;
+  // NOTE: no rotation/last-worn weighting by design — suggestions are random
+  // among pieces that plausibly match, not biased toward unworn items.
   return s;
 }
 
@@ -3406,7 +3416,10 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       const f = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
       if (f.length) pool = f;
     }
-    pool = pool.sort((a, b) => (daysSince(lastWorn(b.id)) ?? 999) - (daysSince(lastWorn(a.id)) ?? 999)).slice(0, 6);
+    // Random sample (Fisher–Yates) — no unworn/last-worn bias. A larger sample than
+    // before so a single batch mixes more distinct pieces (less "same item every time").
+    for (let k = pool.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [pool[k], pool[j]] = [pool[j], pool[k]]; }
+    pool = pool.slice(0, 10);
     if (seed && cats.includes(suggestSlot(seed)) && !pool.find(p => p.id === seed.id)) pool.unshift(seed);
     return pool;
   };
@@ -3442,7 +3455,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   for (const t of tops) {
     for (const bt of bottoms) {
       if (isExcluded(t.id, bt.id)) continue;
-      for (const sh of shoes.slice(0, 4)) {
+      for (const sh of shoes.slice(0, 6)) {
         const its3 = [t, bt, sh];
         if (!exFree(its3) || !formalityOk(its3)) continue;
         combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel) });
@@ -3473,28 +3486,33 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     if (unique.length >= 20) break;
   }
 
-  // Weighted-random shuffle (softmax) so results vary each call while still
-  // respecting score quality. Temperature t=0.5 balances variety vs. quality.
+  // Weighted-random sample (softmax) so results vary each call while still
+  // respecting the (small) match score. High temperature → mostly random among
+  // things that plausibly go together, which is what we want here.
   if (unique.length > 1) {
-    const t = 0.5;
+    const t = 0.8;
     const scores = unique.map(c => c.score);
     const minS = Math.min(...scores);
     const maxS = Math.max(...scores);
     const norm = maxS > minS ? scores.map(s => (s - minS) / (maxS - minS)) : scores.map(() => 1);
     const weights = norm.map(s => Math.exp(s / t));
-    const totalW = weights.reduce((a, b) => a + b, 0);
-    const probs = weights.map(w => w / totalW);
-    // weighted sample without replacement
+    // Sample without replacement, discounting combos that reuse items already
+    // shown so arrowing through the batch actually swaps pieces (not "same item
+    // every time"). A seeded item is in every combo, so it persists by design.
     const shuffled = [];
-    const avail2 = unique.map((c, i) => ({ c, p: probs[i] }));
+    const pickedItems = new Set();
+    const avail2 = unique.map((c, i) => ({ c, w: weights[i] }));
     while (avail2.length && shuffled.length < 8) {
-      let r = Math.random(), cumul = 0, pick = avail2.length - 1;
-      for (let k = 0; k < avail2.length; k++) { cumul += avail2[k].p; if (r < cumul) { pick = k; break; } }
+      const eff = avail2.map(a => {
+        const overlap = a.c.pieces.reduce((n, p) => n + (pickedItems.has(p.id) ? 1 : 0), 0);
+        return a.w * Math.pow(0.3, overlap);
+      });
+      const tot = eff.reduce((x, y) => x + y, 0) || 1;
+      let r = Math.random() * tot, cumul = 0, pick = avail2.length - 1;
+      for (let k = 0; k < avail2.length; k++) { cumul += eff[k]; if (r < cumul) { pick = k; break; } }
       shuffled.push(avail2[pick].c);
+      avail2[pick].c.pieces.forEach(p => pickedItems.add(p.id));
       avail2.splice(pick, 1);
-      // re-normalize remaining weights
-      const rem = avail2.reduce((s, a) => s + a.p, 0);
-      if (rem > 0) avail2.forEach(a => a.p /= rem);
     }
     return shuffled;
   }
@@ -3586,7 +3604,7 @@ function renderSuggestSheet() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
     </div>
-    <div style="padding:12px 16px">
+    <div style="padding:12px 16px" id="sgPreview">
       ${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}
       ${nav}
     </div>
@@ -3615,6 +3633,18 @@ function renderSuggestSheet() {
   const nextBtn = $("#logInner").querySelector("[data-snext]");
   if (prevBtn) prevBtn.onclick = () => { _sugg.idx = Math.max(0, _sugg.idx - 1); renderSuggestSheet(); };
   if (nextBtn) nextBtn.onclick = () => { _sugg.idx = Math.min(total - 1, _sugg.idx + 1); renderSuggestSheet(); };
+
+  // Swipe the preview left/right to move through the batch
+  const sw = $("#sgPreview");
+  if (sw && total > 1) {
+    let x0 = 0;
+    sw.addEventListener("touchstart", e => { x0 = e.touches[0].clientX; }, { passive: true });
+    sw.addEventListener("touchend", e => {
+      const dx = e.changedTouches[0].clientX - x0;
+      if (dx < -60 && _sugg.idx < total - 1) { _sugg.idx++; renderSuggestSheet(); }
+      else if (dx > 60 && _sugg.idx > 0) { _sugg.idx--; renderSuggestSheet(); }
+    }, { passive: true });
+  }
 
   const wearBtn = $("#logInner").querySelector("[data-swear]");
   if (wearBtn && combo) wearBtn.onclick = async () => {
