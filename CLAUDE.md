@@ -61,9 +61,11 @@ Top-of-`<script>` config, then logically grouped sections:
   Pointer drag+resize; `builder` global state. `saveBuilder()` writes `outfits.layout` JSONB.
   Migration: `migration/outfit_layout.sql`.
 - **OUTFIT SUGGESTIONS** — `suggestOutfits(targetLevel?, seedItemId?, capsulePool?)`.
-  Slot-filling engine (Top/Dress + Bottom + Shoes + optional Outerwear). Scores by
-  formality cohesion + color co-occurrence + rotation (daysSince) + exclusions. Returns
-  8 results via softmax weighted-random sampling (variety on every call). Entry points:
+  Slot-filling engine (Top/Dress + Bottom + Shoes + optional Outerwear). **By design
+  there is NO unworn/last-worn weighting** — slots random-sample and scoring is only
+  "match" signals: formality cohesion (hard filter via `formalityOk`), exclusions (hard),
+  loud-color penalty, pattern-clash penalty (`isPatterned`). Returns 8 via softmax
+  (temp 0.8) with diversity-aware selection so arrowing/swiping swaps pieces. Entry points:
   item detail shuffle button, Looks tab +, capsule "Suggest an outfit". Sheet state in `_sugg`.
 - **EXCLUSIONS** — `exclusions` table stores item pairs that shouldn't appear together.
   `buildExcludeSet()` → `_excludeSet` (Set of "a:b" canonical pairs). `isExcluded(a,b)`,
@@ -167,9 +169,12 @@ Migration: `migration/formality_multiselect.sql` — drops old CHECK constraint,
 (set null) when any piece's formality changes.
 
 **Outfit suggestions:** slot-filling (Top/Dress + Bottom + Shoes + optional Outerwear).
-Cardigans slot as "Outerwear" via `suggestSlot(i)`. Scoring: formality cohesion,
-color co-occurrence (historical), rotation (daysSince), exclusions (hard filter).
-Softmax weighted-random sampling gives variety. Capsule-scoped mode via `openSuggestSheet(null, capsuleId)`.
+Cardigans slot as "Outerwear" via `suggestSlot(i)`. **Intentionally random within things
+that plausibly match — no unworn/rotation bias.** Hard filters: formality cohesion
+(`formalityOk`), exclusions. Soft penalties only: 2+ loud colors, 2+ patterned pieces
+(`isPatterned`). Slots random-sample; softmax (temp 0.8) + diversity-aware batch selection.
+Capsule-scoped mode via `openSuggestSheet(null, capsuleId)`. A seeded item (item-detail
+shuffle) persists across the batch by design.
 
 **`NO_SUGGEST_TAG = "no-suggest"`** stored in `items.tags`. Use `isNoSuggest(i)` and
 `setNoSuggest(id, bool)` to manage. Items with this tag are excluded from all suggestions.
