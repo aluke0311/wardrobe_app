@@ -975,7 +975,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r7";
+const APP_VERSION = "2026-06-27 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1295,6 +1295,14 @@ function buildCapsuleIndexes() {
 // Item objects belonging to a capsule (skips dangling links).
 function capsuleItems(cid) {
   return (capsuleLinkMap.get(cid) || []).map(l => itemById.get(l.item_id)).filter(Boolean);
+}
+// Capsule ids an item belongs to.
+function capsulesForItem(itemId) {
+  return capsuleLinks.filter(l => l.item_id === itemId).map(l => l.capsule_id);
+}
+// Capsule names an item belongs to (for search filter matching).
+function capsuleNamesForItem(itemId) {
+  return capsulesForItem(itemId).map(cid => capsuleById.get(cid)?.name).filter(Boolean);
 }
 function capsuleItemCount(cid) { return capsuleItems(cid).length; }
 
@@ -1731,7 +1739,13 @@ function renderCloset() {
   if (hasGrid) showGridBar(searchResults ? "search" : "closet"); else hideGridBar();
   // wire "+" add button (pre-fills category context)
   const clPlus = $("#clPlus");
-  if (clPlus) clPlus.onclick = () => switchTab("add");
+  if (clPlus) clPlus.onclick = () => {
+    _addSeed = {
+      category: (closetCat && closetCat !== "Other") ? closetCat : null,
+      subcategory: (closetSub && closetSub !== "__all__" && closetSub !== "__other__") ? closetSub : null,
+    };
+    switchTab("add");
+  };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
   if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; renderCloset(); };
@@ -1795,6 +1809,8 @@ function closetBack() {
 
 // Field definitions for the edit sheet (used by openFieldEdit)
 const FIELD_CONFIGS = {
+  name:         { label: "Name",      type: "text" },
+  purchase_date:{ label: "Purchased", type: "date" },
   color_family: { label: "Color",     type: "color",     opts: COLOR_FAMILIES.map(c => c[0]) },
   fabric:       { label: "Fabric",    type: "multi",     filter: true, opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
   size:         { label: "Size",      type: "single",    opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
@@ -1804,7 +1820,7 @@ const FIELD_CONFIGS = {
   formality:    { label: "Formality", type: "formality" },
   price:        { label: "Price",     type: "price" },
   url:          { label: "URL",       type: "text" },
-  retailer:     { label: "Retailer",  type: "text" },
+  retailer:     { label: "Retailer",  type: "typeahead" },
   acquisition:  { label: "Acquired",  type: "single",    opts: ["New","Secondhand","Gift"] },
 };
 
@@ -1849,7 +1865,7 @@ function openItem(id) {
         <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
         <span>${esc(backLabel)}</span>
       </button>
-      <div class="item-nav-title">Closet</div>
+      <div class="item-nav-title">${esc(i.name || "Untitled")}</div>
       <div class="item-nav-right">
         <button class="item-nav-btn" id="itemShuffle" title="Suggest outfit">
           <svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
@@ -1945,7 +1961,7 @@ function openItemDetails(id) {
       <div class="det-header">
         <div class="det-thumb${i.image_path ? "" : " empty"}"${i.image_path ? ` data-photo="${esc(i.image_path)}"` : ""}></div>
         <div class="det-hinfo">
-          <div class="det-hname">${esc(i.name || "Untitled")}</div>
+          <button class="det-hname" data-det-field="name" style="background:none;border:none;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer">${esc(i.name || "Untitled")} <span style="color:var(--muted);font-size:13px;font-weight:400">✎</span></button>
           ${i.brand ? `<div class="det-hbrand">${esc(i.brand)}</div>` : ""}
           ${i.category ? `<div class="det-hpath">${esc(i.category)}${i.subcategory ? ` › ${esc(i.subcategory)}` : ""}</div>` : ""}
         </div>
@@ -2004,17 +2020,32 @@ function openItemDetails(id) {
           <span class="det-lbl">$/Wear</span>
           <span class="det-val">${cpw != null ? esc(money(cpw)) : "—"}</span>
         </div>
-        ${purchasedText ? `<div class="det-divider"></div>
-        <div class="det-row">
+        <div class="det-divider"></div>
+        <button class="det-row" data-det-field="purchase_date">
           <span class="det-lbl">Purchased</span>
-          <span class="det-val">${esc(purchasedText)}<span class="det-sub" style="margin-left:6px">· ${esc(timeInClosetText)} in closet</span></span>
-        </div>` : ""}
+          <span class="det-val">${purchasedText
+            ? `${esc(purchasedText)}<span class="det-sub" style="margin-left:6px">· ${esc(timeInClosetText)} in closet</span>`
+            : `<span style="color:var(--muted)">Set date</span>`}</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
         <div class="det-divider"></div>
         ${detRow("Retailer", esc(i.retailer || ""), "retailer")}
       </div>
 
       <div class="det-section-label">LINK</div>
       <div class="det-card">${detRow("URL", esc(i.url || ""), "url")}</div>
+
+      <div class="det-section-label">CAPSULES</div>
+      <div class="det-card">
+        ${(() => {
+          const names = capsuleNamesForItem(i.id);
+          return `<button class="det-row" id="detCapsules" style="width:100%;text-align:left">
+            <span class="det-lbl">Capsules</span>
+            <span class="det-val">${names.length ? esc(names.join(", ")) : `<span style="color:var(--muted)">None</span>`}</span>
+            <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+          </button>`;
+        })()}
+      </div>
 
       <div class="det-section-label">SUGGESTIONS</div>
       <div class="det-card">
@@ -2043,6 +2074,13 @@ function openItemDetails(id) {
   $("#detNoSuggest").onclick = async () => {
     await setNoSuggest(i.id, !isNoSuggest(i));
     openItemDetails(i.id);
+  };
+
+  $("#detCapsules").onclick = () => {
+    openCapsuleAssign(capsulesForItem(i.id), async (ids) => {
+      await saveItemCapsules(i.id, ids);
+      if (detailId === id && detailView === "details") openItemDetails(id);
+    });
   };
 
   // Notes auto-save (direct REST call so we skip the openItemDetails re-render)
@@ -2123,13 +2161,17 @@ async function removeItemPhoto(id) {
 async function saveField(id, field, value) {
   const i = items.find(x => x.id === id);
   if (!i) return;
+  if (field === "name" && !value) { toast("Name can't be empty"); return; }
   const prev = i[field];
   i[field] = value; // optimistic
+  const patch = { [field]: value };
+  // An explicitly-entered purchase date is no longer a guess.
+  if (field === "purchase_date") { i.date_is_guess = false; patch.date_is_guess = false; }
   try {
     await rest(`/items?id=eq.${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ [field]: value }),
+      body: JSON.stringify(patch),
     });
     // refresh details if still in details view for this item
     if (detailId === id && detailView === "details") openItemDetails(id);
@@ -2179,6 +2221,11 @@ function renderFieldSheet(i, field, cfg) {
         inputmode="${isPrice ? "decimal" : "text"}"
         value="${esc(curVal != null ? String(curVal) : "")}"
         placeholder="${esc(cfg.label)}…" style="width:100%;font-size:16px">
+    </div>`;
+  } else if (cfg.type === "date") {
+    content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
+      <input class="inp" id="fieldTextInp" type="date" max="${todayStr()}"
+        value="${esc(curVal != null ? String(curVal).slice(0, 10) : "")}" style="width:100%;font-size:16px">
     </div>`;
   } else if (cfg.type === "typeahead") {
     const suggestions = distinctScalar(field).filter(Boolean);
@@ -2244,10 +2291,11 @@ function renderFieldSheet(i, field, cfg) {
   // wire save — respects _fieldOnSave for Add form
   $("#fldSave").onclick = async () => {
     let val = _fieldPending;
-    if (cfg.type === "text" || cfg.type === "price" || cfg.type === "typeahead") {
+    if (cfg.type === "text" || cfg.type === "price" || cfg.type === "typeahead" || cfg.type === "date") {
       const inp = $("#fieldTextInp");
       val = inp ? (cfg.type === "price" ? (inp.value ? parseFloat(inp.value) : null) : (inp.value.trim() || null)) : val;
     }
+    if (_fieldEditKey === "name" && !val) { toast("Name can't be empty"); return; }
     if (_fieldOnSave) { _fieldOnSave(val); closeFieldSheet(); }
     else { await saveField(_fieldEditId, _fieldEditKey, val); closeFieldSheet(); }
   };
@@ -2590,13 +2638,14 @@ const FILTERS = [
   ["formality",  "Formality",   () => FILTER_FORMALITY_OPTS],
   ["retailer",   "Retailer",    () => distinctScalar("retailer")],
   ["acquisition","Acquisition", () => ["New","Secondhand","Gift"]],
+  ["capsule",    "Capsule",     () => capsules.map(c => c.name).sort()],
 ];
 let searchState = newSearchState();
 let searchOpenRow = null;
 function newSearchState() {
   return { q: "", color: new Set(), fabric: new Set(), size: new Set(), season: new Set(),
     brand: new Set(), status: new Set(), category: new Set(), subcategory: new Set(),
-    formality: new Set(), retailer: new Set(), acquisition: new Set() };
+    formality: new Set(), retailer: new Set(), acquisition: new Set(), capsule: new Set() };
 }
 function distinctScalar(field) { return [...new Set(items.map(i => i[field]).filter(Boolean))].sort(); }
 function distinctArr(field) { const s = new Set(); items.forEach(i => (i[field] || []).forEach(v => s.add(v))); return [...s].sort(); }
@@ -2653,7 +2702,9 @@ function runSearch() {
     if (!set.size) return true;
     return (itemFormalitySet(item) || []).some(v => set.has(String(v)));
   };
-  searchResults = items.filter(i => {
+  // When a capsule scopes the closet, search only within its members.
+  const pool = activeCapsuleId ? lensItems() : items;
+  searchResults = pool.filter(i => {
     if (q) {
       const hay = [i.name, i.brand, i.notes, i.retailer, i.category, i.subcategory].filter(Boolean).join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
@@ -2663,6 +2714,7 @@ function runSearch() {
       && hit(searchState.category, i.category) && hit(searchState.subcategory, i.subcategory)
       && hit(searchState.retailer, i.retailer) && hit(searchState.acquisition, i.acquisition)
       && hitArr(searchState.fabric, i.fabric) && hitArr(searchState.season, i.season)
+      && hitArr(searchState.capsule, capsuleNamesForItem(i.id))
       && hitFormality(searchState.formality, i);
   });
   closetCat = null; closetSub = null;
@@ -2675,6 +2727,13 @@ function runSearch() {
 let _addState = {};
 let _addPhotoBlob = null;
 let _addPhotoUrl = null; // object URL for preview (revoke on reset)
+let _addSeed = null;     // {category, subcategory} prefill when "+" is tapped inside a folder
+
+function fmtPurchaseDate(d) {
+  if (!d) return "";
+  return new Date(String(d).slice(0, 10) + "T00:00:00")
+    .toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
 
 function addFieldRow(lbl, val, field) {
   const display = val || `<span style="color:var(--muted)">${esc(lbl)}</span>`;
@@ -2688,7 +2747,8 @@ function addFieldRow(lbl, val, field) {
 function renderAdd() {
   // reset state on fresh open
   if (_addPhotoUrl) { URL.revokeObjectURL(_addPhotoUrl); _addPhotoUrl = null; }
-  _addState = { status: "Available" };
+  _addState = { status: "Available", purchase_date: todayStr() };
+  if (_addSeed) { Object.assign(_addState, _addSeed); _addSeed = null; }
   _addPhotoBlob = null;
   _renderAddBody();
 }
@@ -2738,11 +2798,15 @@ function _renderAddBody() {
       <div class="det-card" style="margin-bottom:14px">
         ${addFieldRow("Color", colorDisplay, "color_family")}
         <div class="det-divider"></div>
+        ${addFieldRow("Fabric", esc((s.fabric || []).join(", ")), "fabric")}
+        <div class="det-divider"></div>
         ${addFieldRow("Size", esc(s.size || ""), "size")}
         <div class="det-divider"></div>
         ${addFieldRow("Brand", esc(s.brand || ""), "brand")}
         <div class="det-divider"></div>
         ${addFieldRow("Season", esc((s.season || []).join(", ")), "season")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Formality", esc((s.formality || []).join(", ")), "formality")}
         <div class="det-divider"></div>
         ${addFieldRow("Status", esc(s.status || "Available"), "status")}
       </div>
@@ -2752,6 +2816,24 @@ function _renderAddBody() {
         ${addFieldRow("Price", s.price != null ? esc(money(s.price)) : "", "price")}
         <div class="det-divider"></div>
         ${addFieldRow("Acquired", esc(s.acquisition || ""), "acquisition")}
+        <div class="det-divider"></div>
+        ${addFieldRow("Purchased", esc(fmtPurchaseDate(s.purchase_date)), "purchase_date")}
+      </div>
+
+      <div class="det-section-label">LINK</div>
+      <div class="det-card" style="margin-bottom:14px">
+        ${addFieldRow("Retailer", esc(s.retailer || ""), "retailer")}
+        <div class="det-divider"></div>
+        ${addFieldRow("URL", esc(s.url || ""), "url")}
+      </div>
+
+      <div class="det-section-label">CAPSULES</div>
+      <div class="det-card" style="margin-bottom:14px">
+        <button class="det-row" id="addCapsulesBtn" style="width:100%;text-align:left">
+          <span class="det-lbl" style="min-width:80px;flex-shrink:0">Capsules</span>
+          <span class="det-val" id="addCapsulesVal" ${!(s.capsules || []).length ? 'style="color:var(--muted)"' : ""}>${(s.capsules || []).length ? esc((s.capsules || []).map(cid => capsuleById.get(cid)?.name).filter(Boolean).join(", ")) : "None"}</span>
+          <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
       </div>
 
       <div class="det-section-label">NOTES</div>
@@ -2770,6 +2852,18 @@ function _renderAddBody() {
   $("#addCancel").onclick = () => switchTab("home");
   $("#addSave").onclick = saveNewItem;
   $("#addCatBtn").onclick = openAddCatSheet;
+
+  $("#addCapsulesBtn").onclick = () => {
+    openCapsuleAssign(_addState.capsules || [], (ids) => {
+      _addState.capsules = ids;
+      const valEl = $("#addCapsulesVal");
+      if (valEl) {
+        const names = ids.map(cid => capsuleById.get(cid)?.name).filter(Boolean);
+        valEl.textContent = names.length ? names.join(", ") : "None";
+        valEl.style.color = names.length ? "" : "var(--muted)";
+      }
+    });
+  };
 
   const nameInp = $("#addName");
   nameInp.oninput = () => { _addState.name = nameInp.value; };
@@ -2822,7 +2916,9 @@ function updateAddFieldDisplay(field) {
   } else if (Array.isArray(s[field]) && s[field].length) {
     display = esc(s[field].join(", "));
   } else if (s[field] != null && s[field] !== "") {
-    display = field === "price" ? esc(money(s[field])) : esc(String(s[field]));
+    display = field === "price" ? esc(money(s[field]))
+      : field === "purchase_date" ? esc(fmtPurchaseDate(s[field]))
+      : esc(String(s[field]));
   }
   if (display) { valEl.innerHTML = display; valEl.style.color = ""; }
   else { valEl.innerHTML = `<span style="color:var(--muted)">${esc(FIELD_CONFIGS[field]?.label || field)}</span>`; }
@@ -2892,12 +2988,17 @@ async function saveNewItem() {
     if (_addState.category)    payload.category    = _addState.category;
     if (_addState.subcategory) payload.subcategory = _addState.subcategory;
     if (_addState.color_family) payload.color_family = _addState.color_family;
+    if (_addState.fabric?.length) payload.fabric   = _addState.fabric;
     if (_addState.size)        payload.size        = _addState.size;
     if (_addState.brand)       payload.brand       = _addState.brand;
     if (_addState.season?.length) payload.season   = _addState.season;
+    if (_addState.formality?.length) payload.formality = _addState.formality;
     if (_addState.status)      payload.status      = _addState.status;
     if (_addState.price != null) payload.price     = _addState.price;
     if (_addState.acquisition) payload.acquisition = _addState.acquisition;
+    if (_addState.purchase_date) payload.purchase_date = _addState.purchase_date;
+    if (_addState.retailer)    payload.retailer    = _addState.retailer;
+    if (_addState.url)         payload.url         = _addState.url;
     if (_addState.notes)       payload.notes       = _addState.notes;
 
     const rows = await rest("/items", {
@@ -2923,7 +3024,15 @@ async function saveNewItem() {
     }
 
     items.unshift(newItem);
+    itemById.set(newItem.id, newItem);
     if (newItem.image_path) signedUrlBatch([newItem.image_path]);
+
+    // capsule memberships chosen in the Add form
+    if (_addState.capsules?.length) {
+      for (const cid of _addState.capsules) {
+        try { await addItemsToCapsule(cid, [newItem.id]); } catch (_) { /* best-effort */ }
+      }
+    }
 
     toast("Item added!");
     // navigate to the new item photo view
@@ -2950,7 +3059,7 @@ async function saveNewItem() {
    The user can browse by Formality / Season / Recent / All. Most looks were
    worn once, so this reads as a library where it's useful and a log otherwise. */
 
-const LOOK_LENSES = ["Formality", "Season", "Recent", "All"];
+const LOOK_LENSES = ["Formality", "Season", "Capsule", "Recent", "All"];
 const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phone)
 
 // Formality folders — one per level on the 1-8 scale.
@@ -2992,6 +3101,7 @@ const LAYER_ORDER = { Outerwear: 0, Tops: 1, Dresses: 1, Workout: 1, Bottoms: 2,
 let looksLens = "Formality";
 let looksFolder = null;   // null = folder list (Formality/Season) | bucket key | season
 let lookId = null;        // outfit id in detail (null = none)
+let looksSearchQ = null;  // null = not searching | query string (search by piece/context)
 
 // ---- derived helpers ----
 function outfitItems(o) { return (outfitItemMap.get(o.id) || []).map(id => itemById.get(id)).filter(Boolean); }
@@ -3142,6 +3252,7 @@ function looksToolbar(title, showBack, showShuffle) {
     <div class="cltitle">${esc(title)}</div>
     ${showShuffle
       ? `<div style="display:flex;align-items:center;gap:2px">
+           <button class="clsearch" id="looksSearch" title="Search looks"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
            <button class="clsearch" id="looksNew" title="Build a look"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
            <button class="clsearch" id="looksShuffle" title="Random look"><svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></button>
          </div>`
@@ -3166,6 +3277,13 @@ function looksFolderRow(label, count, rep, attrs) {
 const repByRecency = (list) =>
   list.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")))[0];
 
+// A look "belongs to" a capsule when every one of its pieces is a capsule member.
+function outfitFullyInCapsule(o, cid) {
+  const members = new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
+  if (!members.size) return false;
+  const its = outfitItems(o);
+  return its.length > 0 && its.every(it => members.has(it.id));
+}
 function folderRowsHtml(lens) {
   const all = looksScopedOutfits();
   let rows = "";
@@ -3174,6 +3292,12 @@ function folderRowsHtml(lens) {
       const list = all.filter(o => outfitBucket(o) === b.key);
       if (!list.length) continue;
       rows += looksFolderRow(b.label, list.length, repByRecency(list), `data-lfolder="${b.key}"`);
+    }
+  } else if (lens === "Capsule") {
+    for (const c of capsules) {
+      const list = all.filter(o => outfitFullyInCapsule(o, c.id));
+      if (!list.length) continue;
+      rows += looksFolderRow(c.name, list.length, repByRecency(list), `data-lfolder="${esc(c.id)}"`);
     }
   } else {
     for (const s of SEASONS) {
@@ -3188,11 +3312,15 @@ function folderOutfits(lens, folder) {
   const all = looksScopedOutfits();
   const list = lens === "Formality"
     ? all.filter(o => outfitBucket(o) === folder)
+    : lens === "Capsule"
+    ? all.filter(o => outfitFullyInCapsule(o, folder))
     : all.filter(o => outfitSeasons(o).includes(folder));
   return list.sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
 }
 function folderLabel(lens, folder) {
-  return lens === "Formality" ? (FORMALITY_BUCKETS.find(b => b.key === folder)?.label || folder) : folder;
+  if (lens === "Formality") return FORMALITY_BUCKETS.find(b => b.key === folder)?.label || folder;
+  if (lens === "Capsule") return capsuleById.get(folder)?.name || folder;
+  return folder;
 }
 function lensOutfitsSorted() {
   const all = looksScopedOutfits();
@@ -3675,11 +3803,53 @@ function looksCapsuleBanner() {
   </div>`;
 }
 
+// Looks matching a query — by piece (name/brand/category/sub) or by context
+// (the look's own context + any context stamped on its logged wears).
+function looksSearchResults(q) {
+  const ql = q.trim().toLowerCase();
+  const all = looksScopedOutfits();
+  if (!ql) return all.slice().sort((a, b) => (b._num || 0) - (a._num || 0));
+  const ctxByOutfit = new Map();
+  for (const w of wears) {
+    if (!w.outfit_id) continue;
+    let s = ctxByOutfit.get(w.outfit_id);
+    if (!s) { s = new Set(); ctxByOutfit.set(w.outfit_id, s); }
+    for (const c of ctxArr(w)) s.add(String(c).toLowerCase());
+  }
+  return all.filter(o => {
+    if (o.context && String(o.context).toLowerCase().includes(ql)) return true;
+    const cs = ctxByOutfit.get(o.id);
+    if (cs && [...cs].some(c => c.includes(ql))) return true;
+    return outfitItems(o).some(it =>
+      [it.name, it.brand, it.category, it.subcategory].filter(Boolean).join(" ").toLowerCase().includes(ql));
+  });
+}
+
 function renderLooks() {
   lookId = null;
   $("#itemBar").hidden = true;
   const body = $("#looksBody");
   const banner = looksCapsuleBanner();
+  if (looksSearchQ !== null) {
+    const results = looksSearchResults(looksSearchQ);
+    body.innerHTML = looksToolbar("Search looks", true, false) + banner + `
+      <div style="padding:10px 14px 0"><input class="inp" id="looksSearchInp" placeholder="Search by piece or context…" value="${esc(looksSearchQ)}"></div>
+      <div id="looksSearchCount" style="padding:6px 14px 2px;font-size:13px;color:var(--muted)">${results.length} look${results.length === 1 ? "" : "s"}</div>
+      <div id="looksSearchResults">${outfitGridHtml(results)}</div>`;
+    hydratePhotos(body);
+    const inp = $("#looksSearchInp");
+    if (inp) {
+      inp.oninput = () => {
+        looksSearchQ = inp.value;
+        const r = looksSearchResults(looksSearchQ);
+        const wrap = $("#looksSearchResults");
+        if (wrap) { wrap.innerHTML = outfitGridHtml(r); hydratePhotos(body); }
+        const cnt = $("#looksSearchCount"); if (cnt) cnt.textContent = `${r.length} look${r.length === 1 ? "" : "s"}`;
+      };
+      setTimeout(() => inp.focus(), 80);
+    }
+    return;
+  }
   if (looksLens === "Recent" || looksLens === "All") {
     const full = lensOutfitsSorted();
     const list = full.slice(0, LOOKS_FLAT_CAP);
@@ -3696,6 +3866,7 @@ function renderLooks() {
 }
 
 function looksBack() {
+  if (looksSearchQ !== null) { looksSearchQ = null; return renderLooks(); }
   if (lookId) { lookId = null; return renderLooks(); }
   if (looksFolder) { looksFolder = null; return renderLooks(); }
   renderLooks();
@@ -4883,6 +5054,8 @@ function openCalAddClothing() {
   _capPick = new Set();
   _capPickFilter = "";
   _capPickCat = null;
+  _capPickSub = null;          // reset so a stale subcategory filter can't hide items
+  _capPickStatus = "Available"; // reset so a stale status lens can't hide items
   renderCalClothingPicker();
 }
 
@@ -4896,8 +5069,10 @@ function renderCalClothingPicker() {
     </div>
     <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
     <div style="padding:6px 14px 0"><input class="inp" id="calLogSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
+    ${(() => { const b = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${l}</button>`;
+      return `<div class="cap-catbar" style="padding-top:6px">${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
     <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
-    <div id="calLogResults">${pickerCatBar()}${pickerGridHtml(pickerPool())}</div>
+    <div id="calLogResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
   </div>`;
   hydratePhotos(body);
   window.scrollTo(0, 0);
@@ -4906,8 +5081,12 @@ function renderCalClothingPicker() {
   body.onclick = (e) => {
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
     if (e.target.closest('#calLogDone')) return saveCalClothingLog();
+    const ps = e.target.closest('[data-pick-status]');
+    if (ps) { _capPickStatus = ps.dataset.pickStatus; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
     const pc = e.target.closest('[data-pickcat]');
-    if (pc) { _capPickCat = pc.dataset.pickcat === '__all__' ? null : pc.dataset.pickcat; return renderCalLogGrid(); }
+    if (pc) { _capPickCat = pc.dataset.pickcat === '__all__' ? null : pc.dataset.pickcat; _capPickSub = null; return renderCalClothingPicker(); }
+    const psub = e.target.closest('[data-picksub]');
+    if (psub) { _capPickSub = psub.dataset.picksub || null; return renderCalClothingPicker(); }
     const pk = e.target.closest('[data-pick]');
     if (pk) return togglePick(pk.dataset.pick);  // updates #capPickCount + tile
   };
@@ -4917,7 +5096,7 @@ function renderCalClothingPicker() {
 function renderCalLogGrid() {
   const cnt = $('#capPickCount'); if (cnt) cnt.textContent = `${_capPick.size} selected`;
   const wrap = $('#calLogResults');
-  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerGridHtml(pickerPool()); hydratePhotos($('#calendarBody')); }
+  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerSubBar() + pickerGridHtml(pickerPool()); hydratePhotos($('#calendarBody')); }
 }
 
 async function saveCalClothingLog() {
@@ -6844,6 +7023,57 @@ async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
   buildCapsuleIndexes();
 }
 
+// ---- assign a single item to capsules (multi-select toggle sheet, reuses #moveSheet) ----
+// currentIds: array of capsule ids the item is in. onSave(newIds[]) is called with the
+// chosen set when the user taps Save. Used by item detail and the Add form.
+function openCapsuleAssign(currentIds, onSave) {
+  const sel = new Set(currentIds);
+  const render = () => {
+    const rows = capsules.map(c => {
+      const on = sel.has(c.id);
+      return `<button class="sheet-row" data-cap-tog="${esc(c.id)}">
+        <span>${esc(c.name)}</span>
+        <span class="rt" style="color:${on ? "var(--accent)" : "var(--muted)"};font-weight:${on ? "700" : "400"}">${on ? "✓ In" : "Add"}</span>
+      </button>`;
+    }).join("");
+    $("#moveInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="capAssignCancel">Cancel</button>
+        <h2>Capsules</h2>
+        <button class="lnk" id="capAssignSave" style="font-weight:700">Save</button>
+      </div>
+      ${rows || `<div class="sheet-note">No capsules yet. Create one from the Capsules screen.</div>`}`;
+    $("#capAssignCancel").onclick = () => { $("#moveSheet").hidden = true; };
+    $("#capAssignSave").onclick = () => { $("#moveSheet").hidden = true; onSave([...sel]); };
+    $("#moveInner").querySelectorAll("[data-cap-tog]").forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.capTog;
+        sel.has(id) ? sel.delete(id) : sel.add(id);
+        render();
+      };
+    });
+  };
+  render();
+  $("#moveSheet").hidden = false;
+}
+
+// Diff an item's capsule membership against a chosen set, writing capsule_items rows.
+async function saveItemCapsules(itemId, newIds) {
+  const current = new Set(capsulesForItem(itemId));
+  const next = new Set(newIds);
+  const toAdd = [...next].filter(id => !current.has(id));
+  const toRemove = [...current].filter(id => !next.has(id));
+  try {
+    for (const cid of toAdd) await addItemsToCapsule(cid, [itemId]);
+    for (const cid of toRemove) {
+      await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=eq.${itemId}`, { method: "DELETE" });
+      capsuleLinks = capsuleLinks.filter(l => !(l.capsule_id === cid && l.item_id === itemId));
+    }
+    if (toRemove.length) buildCapsuleIndexes();
+    if (toAdd.length || toRemove.length) toast("Capsules updated");
+  } catch (e) { toast(e.message); }
+}
+
 // ---- bulk "add to capsule" from closet select mode (reuses #moveSheet) ----
 function openCapsuleSheet() {
   if (!selectedIds.size) return;
@@ -7577,6 +7807,15 @@ const TAB_TITLES = {
   builder: "Build a Look", settings: "Settings",
 };
 
+// Tapping a bottom-nav / Home tile should land on the top level of that tab,
+// not resume a deep subpage left over from last visit. (Programmatic switchTab
+// calls that pre-set folder state and then openItem() don't go through here.)
+function resetTabRoot(name) {
+  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; }
+  else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; }
+  else if (name === "calendar") { calendarDay = null; }
+}
+
 function switchTab(name) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
@@ -7638,13 +7877,13 @@ function wireEvents() {
   // bottom nav
   $("#tabbar").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-tab]");
-    if (b) switchTab(b.dataset.tab);
+    if (b) { resetTabRoot(b.dataset.tab); switchTab(b.dataset.tab); }
   });
 
   // home launcher tiles
   $("#homeBody").addEventListener("click", (e) => {
     const t = e.target.closest("[data-go]");
-    if (t) switchTab(t.dataset.go);
+    if (t) { resetTabRoot(t.dataset.go); switchTab(t.dataset.go); }
   });
 
   // closet: lens / folders / subcategories / items / back / search
@@ -7669,6 +7908,7 @@ function wireEvents() {
   $("#looksBody").addEventListener("click", (e) => {
     if (e.target.closest("#looksBack")) return looksBack();
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; return renderLooks(); }
+    if (e.target.closest("#looksSearch")) { looksSearchQ = ""; return renderLooks(); }
     if (e.target.closest("#looksNew")) return openNewLookSheet();
     if (e.target.closest("#looksShuffle")) return openRandomLook();
     const lens = e.target.closest("[data-llens]");
