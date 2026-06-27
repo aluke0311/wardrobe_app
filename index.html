@@ -975,7 +975,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r6";
+const APP_VERSION = "2026-06-27 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -6213,6 +6213,7 @@ let _capNotesTimer = null;
 let _capSort = "category";       // detail grid grouping: "category" | "formality"
 let _capUnpackedOnly = false;    // trip detail: show only not-yet-packed items
 let _capPickCat = null;          // picker category filter (null = all)
+let _capPickSub = null;          // picker subcategory filter (null = all within cat)
 let _capPickStatus = "Available"; // picker status lens: "Available" | "Storage" | "All"
 
 // canonical category order for grouping (packing-friendly)
@@ -6717,6 +6718,7 @@ function openCapsulePicker(id) {
   _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
   _capPickFilter = "";
   _capPickCat = null;
+  _capPickSub = null;
   _capPickStatus = "Available";
   capsuleView = "pick";
   renderCapsules();
@@ -6738,7 +6740,22 @@ function pickerPoolBase() {
 function pickerPool() {
   let pool = pickerPoolBase();
   if (_capPickCat) pool = pool.filter(i => (i.category || "Other") === _capPickCat);
+  if (_capPickSub) pool = pool.filter(i => (i.subcategory || "") === _capPickSub);
   return sortItems(pool);
+}
+
+// subcategory chips (shown when a category is selected)
+function pickerSubBar() {
+  if (!_capPickCat) return "";
+  const subs = TAXONOMY[_capPickCat] || [];
+  if (!subs.length) return "";
+  const catPool = pickerPoolBase().filter(i => (i.category || "Other") === _capPickCat);
+  const counts = new Map();
+  for (const i of catPool) { const s = i.subcategory || ""; if (s) counts.set(s, (counts.get(s) || 0) + 1); }
+  const chip = (key, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-picksub="${esc(key)}">${esc(lbl)}${counts.has(key) ? " " + counts.get(key) : ""}</button>`;
+  const visibleSubs = subs.filter(s => counts.has(s));
+  if (!visibleSubs.length) return "";
+  return `<div class="cap-catbar" style="padding-top:0">${chip("", "All", !_capPickSub)}${visibleSubs.map(s => chip(s, s, _capPickSub === s)).join("")}</div>`;
 }
 
 // horizontal category jump-chips with counts (built from the keyword-filtered pool)
@@ -6775,7 +6792,7 @@ function renderCapsulePicker() {
     <div style="padding:10px 14px 0"><input class="inp" id="capPickSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
     <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
     <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
-    <div id="capPickResults">${pickerCatBar()}${pickerGridHtml(pickerPool())}</div>
+    <div id="capPickResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
     <div id="capPickSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
       ${["color","name","newest","most-worn","least-worn","formality","price"].map(k =>
         `<button data-cpsort="${k}" style="display:block;width:100%;padding:13px 20px;text-align:left;font-size:15px${k===sortKey?";color:var(--accent);font-weight:600":""}">${{color:"Color",name:"Name",newest:"Newest first","most-worn":"Most worn","least-worn":"Least worn",formality:"Formality",price:"Price"}[k]}</button>`
@@ -7209,7 +7226,7 @@ function wireCapsules() {
     if (s) s.oninput = () => { _capPickFilter = s.value; renderPickerGrid(); };
     const done = $("#capPickDone"); if (done) done.onclick = saveCapsulePicker;
     body.querySelectorAll("[data-pick-status]").forEach(b => {
-      b.onclick = () => { _capPickStatus = b.dataset.pickStatus; _capPickCat = null; renderPickerGrid(); };
+      b.onclick = () => { _capPickStatus = b.dataset.pickStatus; _capPickCat = null; _capPickSub = null; renderPickerGrid(); };
     });
     const sortBtn = $("#capPickSort");
     const sortPop = $("#capPickSortPop");
@@ -7230,7 +7247,7 @@ function renderPickerGrid() {
   const body = $("#capsulesBody");
   const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
   const wrap = $("#capPickResults");
-  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerGridHtml(pickerPool()); hydratePhotos(body); }
+  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerSubBar() + pickerGridHtml(pickerPool()); hydratePhotos(body); }
   // update lens chip active state
   const lens = $("#capPickLens");
   if (lens) lens.querySelectorAll("[data-pick-status]").forEach(b => b.classList.toggle("on", b.dataset.pickStatus === _capPickStatus));
@@ -7717,7 +7734,9 @@ function wireEvents() {
     if (sortBtn) { _capSort = sortBtn.dataset.capsort; return renderCapsules(); }
     if (e.target.closest("[data-cap-unpacked]")) { _capUnpackedOnly = !_capUnpackedOnly; return renderCapsules(); }
     const pickCat = e.target.closest("[data-pickcat]");
-    if (pickCat) { _capPickCat = pickCat.dataset.pickcat === "__all__" ? null : pickCat.dataset.pickcat; return renderPickerGrid(); }
+    if (pickCat) { _capPickCat = pickCat.dataset.pickcat === "__all__" ? null : pickCat.dataset.pickcat; _capPickSub = null; return renderPickerGrid(); }
+    const pickSub = e.target.closest("[data-picksub]");
+    if (pickSub) { _capPickSub = pickSub.dataset.picksub === "" ? null : pickSub.dataset.picksub; return renderPickerGrid(); }
     const pack = e.target.closest("[data-pack]");
     if (pack) { e.stopPropagation(); return togglePack(pack.dataset.pack); }
     const capItem = e.target.closest("[data-cap-item]");
