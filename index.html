@@ -19,6 +19,15 @@
     --radius: 16px;
     --nav-h: 64px;
     --safe-b: env(safe-area-inset-bottom, 0px);
+    /* type scale — use these for new UI instead of ad-hoc px sizes */
+    --fs-xs: 12px;   /* captions, chip text, sub-labels */
+    --fs-sm: 13px;   /* secondary text, counts */
+    --fs-base: 15px; /* body / row text */
+    --fs-md: 17px;   /* row titles, sheet headers */
+    --fs-lg: 22px;   /* section headers */
+    --fs-xl: 28px;   /* KPI numbers */
+    /* spacing scale */
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
@@ -409,9 +418,14 @@
   /* ---------- bottom sheets ---------- */
   .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 300; touch-action: none; }
   .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
-    border-radius: 18px 18px 0 0; max-height: 88vh; overflow-y: auto; z-index: 301; }
+    border-radius: 18px 18px 0 0; max-height: 88vh; overflow-y: auto; z-index: 301;
+    transition: transform .25s ease; }
+  .sheet.dragging { transition: none; }
+  /* grabber pill — pinned to the top of the (fixed) sheet, above the sticky header */
+  .sheet::before { content: ""; position: absolute; top: 7px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 5px; border-radius: 3px; background: #d4d4dc; z-index: 3; pointer-events: none; }
   .sheet-hdr { display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 18px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #fff; }
+    padding: 18px 18px 12px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #fff; }
   .sheet-hdr h2 { font-size: 17px; font-weight: 600; }
   .sheet-row { width: 100%; display: flex; align-items: center; justify-content: space-between;
     padding: 16px 18px; border-bottom: 1px solid var(--line); text-align: left; font-size: 16px; }
@@ -868,7 +882,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-26 r5";
+const APP_VERSION = "2026-06-26 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -7232,6 +7246,37 @@ function wireEvents() {
 
   // header gear -> settings
   $("#headerGear").addEventListener("click", () => switchTab("settings"));
+
+  // bottom-sheet swipe-down-to-dismiss (each .sheet has a sibling .sheet-bg whose
+  // click handler does the real cleanup — we just trigger it past a drag threshold)
+  [["bulkInner","bulkBg"],["moveInner","moveBg"],["fieldInner","fieldBg"],
+   ["logInner","logBg"],["statsFilterInner","statsFilterBg"],["statsRangeInner","statsRangeBg"]]
+    .forEach(([s, b]) => wireSheetSwipe(s, b));
+}
+
+// Swipe-down on a bottom sheet to dismiss it. Only engages when the sheet is
+// scrolled to the top, so it doesn't fight with scrolling long sheet content.
+function wireSheetSwipe(sheetId, bgId) {
+  const sheet = document.getElementById(sheetId);
+  if (!sheet) return;
+  let startY = 0, dragging = false, dy = 0;
+  sheet.addEventListener("touchstart", e => {
+    if (sheet.scrollTop > 0) { dragging = false; return; }
+    startY = e.touches[0].clientY; dragging = true; dy = 0;
+    sheet.classList.add("dragging");
+  }, { passive: true });
+  sheet.addEventListener("touchmove", e => {
+    if (!dragging) return;
+    dy = Math.max(0, e.touches[0].clientY - startY);
+    sheet.style.transform = dy ? `translateY(${dy}px)` : "";
+  }, { passive: true });
+  sheet.addEventListener("touchend", () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.classList.remove("dragging");
+    sheet.style.transform = "";
+    if (dy > 90) { const bg = document.getElementById(bgId); if (bg) bg.click(); }
+  });
 }
 
 /* ===================================================================
