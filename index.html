@@ -450,6 +450,13 @@
   .sheet-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
   .sheet-action-btn { width: 100%; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: 16px; font-weight: 500; text-align: center; cursor: pointer; }
   .sheet-note { color: var(--muted); font-size: 13px; padding: 12px 18px 24px; }
+  /* make-a-look CTA (day view) */
+  .cal-make-look-btn { display:flex; align-items:center; justify-content:center; gap:8px;
+    width:calc(100% - 32px); margin:8px 16px; padding:13px 18px;
+    background:var(--accent); color:#fff; border-radius:12px;
+    font-size:15px; font-weight:600; }
+  .cal-make-look-btn svg { width:18px; height:18px; stroke:#fff; stroke-width:2.5; fill:none; }
+
   /* quick-action sheet (long-press tile) */
   .qa-row { width:100%; display:flex; align-items:center; gap:14px; padding:16px 20px;
     border-bottom:1px solid var(--line); font-size:16px; text-align:left; }
@@ -942,7 +949,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r1";
+const APP_VERSION = "2026-06-27 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4542,6 +4549,16 @@ function renderCalendarDay(body) {
       <button class="cal-day-nav-btn" id="calDayNext"${isFuture ? ' disabled style="opacity:.4"' : ''}><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
     </div>
     ${cardsHtml}
+    ${(() => {
+      const soloGroups = groups.filter(g => !g.outfitId);
+      const soloCount  = [...new Set(soloGroups.flatMap(g => g.itemIds))].length;
+      return soloCount >= 2
+        ? `<button class="cal-make-look-btn" id="calMakeLook">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            Create look from these ${soloCount} items
+           </button>`
+        : '';
+    })()}
     <div class="cal-day-foot">
       <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
       <div class="cal-day-foot-add">
@@ -4558,6 +4575,8 @@ function renderCalendarDay(body) {
   if (!isFuture) $('#calDayNext').onclick = () => { calendarDay = nextD; renderCalendarDay(body); };
   $('#calAddClothing').onclick = () => openCalAddClothing();
   $('#calAddLook').onclick     = () => openCalAddLook();
+  const makeLookBtn = $('#calMakeLook');
+  if (makeLookBtn) makeLookBtn.onclick = () => makeLookFromDay(dateStr, body);
 
   // Horizontal swipe to navigate days; skip if touch starts on a swipeable card
   const _dayTb = body.querySelector('.tabbody');
@@ -4726,6 +4745,53 @@ function wireCalSwipe(card) {
     inner.style.transform = opened ? `translateX(-${W}px)` : 'translateX(0)';
     acts.style.transform  = opened ? 'translateX(0)' : 'translateX(100%)';
   }, { passive: true });
+}
+
+/* ---- make-a-look from solo items on a day ---- */
+async function makeLookFromDay(dateStr, body) {
+  const soloGroups = dayGroups(dateStr).filter(g => !g.outfitId);
+  const itemIds = [...new Set(soloGroups.flatMap(g => g.itemIds))];
+  const wearIds = soloGroups.flatMap(g => g.wearIds);
+  if (itemIds.length < 2) return;
+
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const name = new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+  try {
+    // Create the outfit record
+    const oRows = await rest("/outfits?select=*", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({ name }),
+    });
+    const newOutfit = Array.isArray(oRows) ? oRows[0] : oRows;
+    if (!newOutfit?.id) throw new Error("Could not create look");
+
+    // Link items
+    const links = itemIds.map(item_id => ({ outfit_id: newOutfit.id, item_id }));
+    await rest("/outfit_items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify(links),
+    });
+
+    // Stamp wears with the new outfit_id
+    const inList = `(${wearIds.map(id => `"${id}"`).join(',')})`;
+    await rest(`/wears?id=in.${inList}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ outfit_id: newOutfit.id }),
+    });
+
+    // Update local state
+    outfits.push(newOutfit);
+    outfitLinks = outfitLinks.concat(links);
+    for (const w of wears) { if (wearIds.includes(w.id)) w.outfit_id = newOutfit.id; }
+    buildOutfitIndexes();
+
+    renderCalendarDay(body);
+    toast("Look created", { label: "View →", fn: () => { switchTab("looks"); openLook(newOutfit.id); } });
+  } catch (e) { toast(e.message); }
 }
 
 /* ---- log a wear from the calendar day view (+ Clothing / + Look) ---- */

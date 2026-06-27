@@ -132,11 +132,11 @@ make the daily wear-logging loop a ≤1-gesture reflex, and reduce one-handed re
 → ✅ **DEPLOY** (`r1` 2026-06-27)
 
 ### WAVE 5 — New capture feature
-- [ ] **Make-a-look from today's logged items** — `renderCalendarDay` (4080): when ≥2
-  solo groups (`dayGroups` w/ `outfitId === null`), show "Create look from these N items";
-  create `outfit` + `outfit_items`, PATCH those `wears.outfit_id`, re-render day. 1 item =
-  no button. (M)
-→ ✅ **DEPLOY** (`r10`)
+- [x] **Make-a-look from today's logged items** — `renderCalendarDay`: when ≥2 unique
+  items in solo groups (`outfitId === null`), shows accent "Create look from these N items"
+  button; POSTs outfit + outfit_items, PATCHes wears.outfit_id, rebuilds indexes,
+  re-renders day. Toast with "View →" shortcut to Looks tab. (shipped r2 2026-06-27)
+→ ✅ **DEPLOY** (`r2` 2026-06-27)
 
 ### Build conventions for this plan
 - One wave = one or more deploys; **always deploy at the ✅ checkpoint** before starting the
