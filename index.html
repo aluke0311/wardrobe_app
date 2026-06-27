@@ -414,6 +414,17 @@
   #gridPickerPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
   #gridPickerPop button.on { color: var(--accent); font-weight: 600; }
   #gridPickerPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
+  /* sort + filter stubs (wired in Wave 2) */
+  .gb-sort svg, .gb-filter svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
+  .gb-sort, .gb-filter { padding: 4px; display: flex; align-items: center; }
+  /* shared render helpers */
+  .section-label { font-size: var(--fs-xs); font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--muted); padding: 18px 16px 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px;
+    border-radius: 20px; font-size: var(--fs-sm); background: var(--bg2);
+    border: 1px solid var(--line); white-space: nowrap; }
+  .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .chip-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 
   /* ---------- bottom sheets ---------- */
   .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 300; touch-action: none; }
@@ -782,6 +793,12 @@
       <span id="gbCount" class="gb-count"></span>
     </div>
     <div class="gb-right" style="margin-left:auto">
+      <button class="gb-sort" id="gbSort" title="Sort" hidden>
+        <svg viewBox="0 0 24 24"><path d="M3 6h18M7 12h10M11 18h2"/></svg>
+      </button>
+      <button class="gb-filter" id="gbFilter" title="Filter" hidden>
+        <svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
+      </button>
       <button id="gbGrid" title="Grid density">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       </button>
@@ -882,7 +899,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-26 r6";
+const APP_VERSION = "2026-06-26 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1407,6 +1424,92 @@ function gridHtml(list, subtitleFn = null, opts = {}) {
   }).join("")}</div>`;
 }
 
+// ---- shared render helpers ----
+function sectionLabel(txt) {
+  return `<div class="section-label">${esc(txt)}</div>`;
+}
+function chip(txt, cls = "", attrs = "") {
+  return `<span class="chip${cls ? " " + cls : ""}"${attrs ? " " + attrs : ""}>${esc(txt)}</span>`;
+}
+
+// ---- unified item grid (Wave 1 keystone; surfaces migrate in Wave 2) ----
+// cfg: { cols, group, select, selSet, onTap, metricOnly, subtitleFn,
+//        packedSet, trip, emptyMsg }
+function itemGridView(list, cfg = {}) {
+  const {
+    cols       = gridCols,
+    group      = null,         // null | 'category' | 'formality'
+    select     = false,
+    selSet     = null,         // Set of selected ids; falls back to selectedIds
+    onTap      = "item",       // data-* attribute name for delegation
+    metricOnly = false,
+    subtitleFn = null,
+    packedSet  = null,         // Set → show pack-tick; null → no tick
+    trip       = false,
+    emptyMsg   = "No items here",
+  } = cfg;
+
+  if (!list.length) return `<div class="placeholder"><b>${esc(emptyMsg)}</b></div>`;
+
+  const activeSelSet = selSet ?? (select ? selectedIds : new Set());
+
+  const tileHtml = (i) => {
+    if (packedSet) {
+      const isPacked = packedSet.has(i.id);
+      return `<button class="gtile${isPacked ? " packed" : ""}" data-${onTap}="${esc(i.id)}">
+        <div class="pack-tick" data-pack="${esc(i.id)}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>
+        ${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div>
+      </button>`;
+    }
+    const sel = select && activeSelSet.has(i.id);
+    const sub = subtitleFn ? subtitleFn(i) : "";
+    if (metricOnly) {
+      return `<button class="gtile" data-${onTap}="${esc(i.id)}">
+        ${thumbHtml(i.image_path, "gphoto")}
+        <div class="gtile-metric">${esc(sub)}</div>
+      </button>`;
+    }
+    const chk = `<div class="sel-dot${sel ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
+    return `<button class="gtile${sel ? " selected" : ""}" data-${onTap}="${esc(i.id)}">
+      ${select ? chk : ""}
+      ${thumbHtml(i.image_path, "gphoto")}
+      <div class="gname">${esc(i.name || "Untitled")}</div>
+      ${sub ? `<div class="gtile-sub">${esc(sub)}</div>` : ""}
+    </button>`;
+  };
+
+  const gridDiv = (items) =>
+    `<div class="grid" style="--grid-cols:${cols}">${items.map(tileHtml).join("")}</div>`;
+
+  if (!group) return gridDiv(list);
+
+  const groups = group === "formality" ? groupByFormality(list) : groupByCategory(list);
+  return groups.map(g => {
+    let cnt;
+    if (trip && packedSet) {
+      const packed = g.items.filter(i => packedSet.has(i.id)).length;
+      cnt = `<span class="g-cnt${packed === g.items.length ? " done" : ""}" data-grp-cnt>${packed}/${g.items.length} packed</span>`;
+    } else {
+      cnt = `<span class="g-cnt">${g.items.length} item${g.items.length === 1 ? "" : "s"}</span>`;
+    }
+    return `<div class="cap-grp" data-grp="${esc(g.key)}">
+      <div class="cap-grp-hdr"><span class="g-name">${esc(g.key)}</span>${cnt}</div>
+      ${gridDiv(g.items)}
+    </div>`;
+  }).join("");
+}
+
+// ---- grid bar show/hide ----
+function showGridBar() {
+  $("#gridBar").hidden = false;
+  $("#app").classList.add("has-gridbar");
+  updateGridBar();
+}
+function hideGridBar() {
+  $("#gridBar").hidden = true;
+  $("#app").classList.remove("has-gridbar");
+}
+
 function clToolbar(title, showBack, showPlus) {
   const right = showPlus
     ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>`
@@ -1509,9 +1612,7 @@ function renderCloset() {
   }
   hydratePhotos(body);
   const hasGrid = !!body.querySelector(".grid");
-  $("#gridBar").hidden = !hasGrid;
-  $("#app").classList.toggle("has-gridbar", hasGrid);
-  updateGridBar();
+  if (hasGrid) showGridBar(); else hideGridBar();
   // wire "+" add button (pre-fills category context)
   const clPlus = $("#clPlus");
   if (clPlus) clPlus.onclick = () => switchTab("add");
@@ -1645,8 +1746,7 @@ function openItem(id) {
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#ccc;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
   `;
 
-  $("#gridBar").hidden = true;
-  $("#app").classList.remove("has-gridbar");
+  hideGridBar();
   $("#itemBar").hidden = false;
   $("#app").classList.add("detail-photo");
 
@@ -5392,8 +5492,7 @@ function openItemFromStats(id) {
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "closet"));
   $("#title").textContent = "";
   $("#headerAdd").hidden = true;
-  $("#gridBar").hidden = true;
-  $("#app").classList.remove("has-gridbar");
+  hideGridBar();
   openItem(id);
 }
 
@@ -5698,8 +5797,7 @@ function openItemFromReview(itemId) {
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "closet"));
   $("#title").textContent = "";
   $("#headerAdd").hidden = true;
-  $("#gridBar").hidden = true;
-  $("#app").classList.remove("has-gridbar");
+  hideGridBar();
   openItem(itemId);
 }
 
@@ -7040,8 +7138,7 @@ function switchTab(name) {
   $("#title").textContent = TAB_TITLES[name] || "Wardrobe";
   $("#headerAdd").hidden = name !== "home";
   if (name !== "closet") {
-    $("#gridBar").hidden = true;
-    $("#app").classList.remove("has-gridbar");
+    hideGridBar();
     exitSelectMode();
     $("#gridPickerPop").hidden = true;
     $("#itemBar").hidden = true;
