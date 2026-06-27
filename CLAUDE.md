@@ -207,7 +207,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-06-26 r3`.
+  Currently `2026-06-27 r8`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
@@ -246,9 +246,13 @@ writes a new column/table before its migration is confirmed.**
   `#itemBar` (z-index 25, bottom:0) replaces it. Add in `openItem()`; remove in
   `renderCloset()`, `closetBack()` (photo exit), and `switchTab()`.
 - **`FIELD_CONFIGS`** maps field key → `{label, type, opts?, filter?}`. Types: `color`,
-  `multi`, `single`, `formality`, `text`, `price`, `typeahead`. Add new fields here before
-  wiring in `openItemDetails`. Current fields: color_family, fabric (filter), size, season,
-  brand (typeahead), status, formality, price, url, retailer, acquisition.
+  `multi`, `single`, `formality`, `text`, `price`, `typeahead`, `date`. Add new fields here
+  before wiring in `openItemDetails`. Current fields: name, purchase_date (date), color_family,
+  fabric (filter), size, season, brand (typeahead), status, formality, price, url,
+  retailer (typeahead), acquisition. Name is tappable in the detail header (rename);
+  `saveField` blocks empty name and clears `date_is_guess` when `purchase_date` is set.
+  Capsule membership is NOT a `FIELD_CONFIGS` field — it's a join table, edited via
+  `openCapsuleAssign`/`saveItemCapsules` (item detail) and `_addState.capsules` (Add form).
 - **Field sheet dual-mode**: `_fieldEditItem` = item OR `_addState`; `_fieldOnSave` = null
   (save to DB) or callback fn (Add form). Clear both in `closeFieldSheet()`.
 - **Add Item state**: `_addState`, `_addPhotoBlob`, `_addPhotoUrl`. `#moveSheet` reused for
