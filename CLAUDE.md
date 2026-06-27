@@ -21,15 +21,15 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-26 r4. Full rework from v25. ~7,100 lines.**
+**Current state: 2026-06-26 r9. Full rework from v25. ~7,250 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
-**▶ NEXT UP:** `ROADMAP.md` → "NEXT BUILD — Unified Experience + Daily Loop" (approved,
-execution-ready, 6 waves W0–W5). When the user says "continue the build," start at the
-first unchecked item and deploy at each ✅ checkpoint. Keystone = `itemGridView()` unifying
-the 7 grid wrappers + shared sort/filter/density controls (W1–W2); then daily-loop +
-gestures (W3–W4) + make-a-look-from-logged-items (W5). No schema changes needed.
+**▶ NEXT UP:** `ROADMAP.md` → Wave 4 (gestures). W0–W3 are fully shipped.
+When the user says "continue the build," start at the first unchecked item and deploy at
+each ✅ checkpoint. Wave 4 = swipe-right-to-back (app-wide), day-view swipe between days,
+swipe between sibling items in detail, long-press tile quick-actions. Wave 5 = make-a-look
+from today's logged items. No schema changes needed anywhere.
 
 Top-of-`<script>` config, then logically grouped sections:
 
@@ -79,6 +79,13 @@ Top-of-`<script>` config, then logically grouped sections:
   is **Available-only** (Storage + Archive excluded). Deal card is sized to fit one
   phone screen: horizontal card (96px photo + info beside it), single-line formality
   chips, one-row action bar.
+- **DAILY LOOP** — `logWearToday(id)`: one-tap wear log from item photo view (no modal).
+  POSTs today immediately; toast shows "Wear logged" + "Add context →" chip (interactive).
+  `openPostLogSheet(wearRows[])`: context multi-select + 1–8 formality row; PATCHes
+  `wears.formality_for`. Fires after solo item log AND after look wear. `_logItemId`
+  (module-global) tells `renderContextPicker` which item's frequent contexts to sort first.
+  Home shows `.log-cta` button when 0 wears today → calendar day + openCalAddClothing.
+  `toast(msg, {label, fn})`: optional action chip (interactive inline pill in the toast).
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE.
   Active tabs: home · closet · looks · calendar · stats.
   Capsules is a Home-tile screen (not in bottom nav). Search/Add are non-tab screens.
