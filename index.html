@@ -408,12 +408,13 @@
   .gb-right { display: flex; align-items: center; gap: 14px; position: relative; }
   #gbGrid svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   #gbSelect { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px; }
-  #gridPickerPop { position: absolute; bottom: calc(100% + 6px); right: 40px;
+  #gridPickerPop, #sortMenuPop { position: absolute; bottom: calc(100% + 6px); right: 0;
     background: #fff; border: 1px solid var(--line); border-radius: 12px;
-    box-shadow: 0 6px 24px rgba(0,0,0,.13); overflow: hidden; z-index: 200; min-width: 150px; }
-  #gridPickerPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
-  #gridPickerPop button.on { color: var(--accent); font-weight: 600; }
-  #gridPickerPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
+    box-shadow: 0 6px 24px rgba(0,0,0,.13); overflow: hidden; z-index: 200; min-width: 160px; }
+  #gridPickerPop { right: 40px; }
+  #gridPickerPop button, #sortMenuPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
+  #gridPickerPop button.on, #sortMenuPop button.on { color: var(--accent); font-weight: 600; }
+  #gridPickerPop button:not(:last-child), #sortMenuPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
   /* sort + filter stubs (wired in Wave 2) */
   .gb-sort svg, .gb-filter svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   .gb-sort, .gb-filter { padding: 4px; display: flex; align-items: center; }
@@ -802,6 +803,15 @@
       <button id="gbGrid" title="Grid density">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       </button>
+      <div id="sortMenuPop" hidden>
+        <button data-sort="color">Color</button>
+        <button data-sort="name">Name</button>
+        <button data-sort="newest">Newest first</button>
+        <button data-sort="most-worn">Most worn</button>
+        <button data-sort="least-worn">Least worn</button>
+        <button data-sort="formality">Formality</button>
+        <button data-sort="price">Price</button>
+      </div>
       <div id="gridPickerPop" hidden>
         <button data-cols="2">2 per row</button>
         <button data-cols="3">3 per row</button>
@@ -899,7 +909,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-26 r7";
+const APP_VERSION = "2026-06-26 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1371,6 +1381,37 @@ let _fromStats = false;   // item detail opened from stats (closetBack returns t
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
 let selectMode = false;   // multi-select active
+
+// ---- sort system (shared across all grid surfaces) ----
+const SORT_OPTS = [
+  { key: "color",     label: "Color" },
+  { key: "name",      label: "Name" },
+  { key: "newest",    label: "Newest first" },
+  { key: "most-worn", label: "Most worn" },
+  { key: "least-worn",label: "Least worn" },
+  { key: "formality", label: "Formality" },
+  { key: "price",     label: "Price" },
+];
+let _gridSurface = "closet";
+let _gridSortKeys = {};   // surface → sort key; defaults to "color"
+function gridSortKey(surface) { return _gridSortKeys[surface ?? _gridSurface] || "color"; }
+function setGridSort(key) {
+  _gridSortKeys[_gridSurface] = key;
+  store.setItem(`wardrobe.sort.${_gridSurface}`, key);
+}
+function sortItems(list, key) {
+  const k = key ?? gridSortKey();
+  const colorOrder = Object.fromEntries(COLOR_FAMILIES.map((c, i) => [c[0], i]));
+  switch (k) {
+    case "name":      return [...list].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    case "newest":    return [...list].sort((a, b) => (b.purchase_date || "").localeCompare(a.purchase_date || ""));
+    case "most-worn": return [...list].sort((a, b) => wearCount(b.id) - wearCount(a.id));
+    case "least-worn":return [...list].sort((a, b) => wearCount(a.id) - wearCount(b.id));
+    case "formality": return [...list].sort((a, b) => itemFormality(a) - itemFormality(b));
+    case "price":     return [...list].sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
+    default:          return [...list].sort((a, b) => (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99));
+  }
+}
 let selectedIds = new Set();
 let bulkPending = {};     // bulk edit: field -> pending value
 let bulkOpenField = null; // which field row is expanded in bulk edit sheet
@@ -1403,25 +1444,11 @@ function rowHtml(thumb, name, count, attrs = "") {
   </button>`;
 }
 function gridHtml(list, subtitleFn = null, opts = {}) {
-  if (!list.length) return `<div class="placeholder"><b>No items here</b></div>`;
-  const chk = `<div class="sel-dot"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
-  return `<div class="grid" style="--grid-cols:${gridCols}">${list.map(i => {
-    const sel = selectMode && selectedIds.has(i.id);
-    const sub = subtitleFn ? subtitleFn(i) : "";
-    if (opts.metricOnly) {
-      // number-only tile (Stylebook worn-history / cpw / price grids)
-      return `<button class="gtile" data-item="${esc(i.id)}">
-        ${thumbHtml(i.image_path, "gphoto")}
-        <div class="gtile-metric">${esc(sub)}</div>
-      </button>`;
-    }
-    return `<button class="gtile${sel ? " selected" : ""}" data-item="${esc(i.id)}">
-      ${selectMode ? chk.replace("sel-dot", "sel-dot" + (sel ? " on" : "")) : ""}
-      ${thumbHtml(i.image_path, "gphoto")}
-      <div class="gname">${esc(i.name || "Untitled")}</div>
-      ${sub ? `<div class="gtile-sub">${esc(sub)}</div>` : ""}
-    </button>`;
-  }).join("")}</div>`;
+  return itemGridView(list, {
+    select: selectMode,
+    subtitleFn,
+    metricOnly: !!opts.metricOnly,
+  });
 }
 
 // ---- shared render helpers ----
@@ -1500,7 +1527,9 @@ function itemGridView(list, cfg = {}) {
 }
 
 // ---- grid bar show/hide ----
-function showGridBar() {
+function showGridBar(surface) {
+  if (surface) _gridSurface = surface;
+  $("#gbSort").hidden = false;
   $("#gridBar").hidden = false;
   $("#app").classList.add("has-gridbar");
   updateGridBar();
@@ -1508,6 +1537,8 @@ function showGridBar() {
 function hideGridBar() {
   $("#gridBar").hidden = true;
   $("#app").classList.remove("has-gridbar");
+  $("#sortMenuPop").hidden = true;
+  $("#gridPickerPop").hidden = true;
 }
 
 function clToolbar(title, showBack, showPlus) {
@@ -1576,12 +1607,10 @@ function renderClosetCategory(cat) {
 }
 
 function categoryGrid(cat, sub) {
-  const colorOrder = Object.fromEntries(COLOR_FAMILIES.map((c, i) => [c[0], i]));
-  const byColor = (a, b) => (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99);
   const inCat = cat === "Other" ? lensItems().filter(isOtherCat) : lensItems().filter(i => i.category === cat);
-  if (sub === "__all__") return [...inCat].sort(byColor);
-  if (sub === "__other__") { const subs = TAXONOMY[cat] || []; return inCat.filter(i => !i.subcategory || !subs.includes(i.subcategory)).sort(byColor); }
-  return inCat.filter(i => i.subcategory === sub).sort(byColor);
+  if (sub === "__all__") return sortItems(inCat);
+  if (sub === "__other__") { const subs = TAXONOMY[cat] || []; return sortItems(inCat.filter(i => !i.subcategory || !subs.includes(i.subcategory))); }
+  return sortItems(inCat.filter(i => i.subcategory === sub));
 }
 
 function renderCloset() {
@@ -1591,7 +1620,7 @@ function renderCloset() {
   $("#app").classList.remove("detail-photo");
   const body = $("#closetBody");
   if (searchResults) {
-    body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(searchResults);
+    body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(sortItems(searchResults, gridSortKey("search")));
   } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
@@ -1612,7 +1641,7 @@ function renderCloset() {
   }
   hydratePhotos(body);
   const hasGrid = !!body.querySelector(".grid");
-  if (hasGrid) showGridBar(); else hideGridBar();
+  if (hasGrid) showGridBar(searchResults ? "search" : "closet"); else hideGridBar();
   // wire "+" add button (pre-fills category context)
   const clPlus = $("#clPlus");
   if (clPlus) clPlus.onclick = () => switchTab("add");
@@ -2316,17 +2345,27 @@ function openLogWear(id) {
 /* ===================================================================
    SEARCH  (keyword + Color/Fabric/Size/Season/Brand/Status filters)
    =================================================================== */
+const FILTER_FORMALITY_OPTS = ["1","2","3","4","5","6","7","8"];
 const FILTERS = [
-  ["color",  "Color",  () => COLOR_FAMILIES.map(c => c[0])],
-  ["fabric", "Fabric", () => distinctArr("fabric")],
-  ["size",   "Size",   () => distinctScalar("size")],
-  ["season", "Season", () => SEASONS],
-  ["brand",  "Brand",  () => distinctScalar("brand")],
-  ["status", "Status", () => STATUSES],
+  ["color",      "Color",       () => COLOR_FAMILIES.map(c => c[0])],
+  ["fabric",     "Fabric",      () => distinctArr("fabric")],
+  ["size",       "Size",        () => distinctScalar("size")],
+  ["season",     "Season",      () => SEASONS],
+  ["brand",      "Brand",       () => distinctScalar("brand")],
+  ["status",     "Status",      () => STATUSES],
+  ["category",   "Category",    () => Object.keys(TAXONOMY)],
+  ["subcategory","Subcategory", () => distinctScalar("subcategory")],
+  ["formality",  "Formality",   () => FILTER_FORMALITY_OPTS],
+  ["retailer",   "Retailer",    () => distinctScalar("retailer")],
+  ["acquisition","Acquisition", () => ["New","Secondhand","Gift"]],
 ];
 let searchState = newSearchState();
 let searchOpenRow = null;
-function newSearchState() { return { q: "", color: new Set(), fabric: new Set(), size: new Set(), season: new Set(), brand: new Set(), status: new Set() }; }
+function newSearchState() {
+  return { q: "", color: new Set(), fabric: new Set(), size: new Set(), season: new Set(),
+    brand: new Set(), status: new Set(), category: new Set(), subcategory: new Set(),
+    formality: new Set(), retailer: new Set(), acquisition: new Set() };
+}
 function distinctScalar(field) { return [...new Set(items.map(i => i[field]).filter(Boolean))].sort(); }
 function distinctArr(field) { const s = new Set(); items.forEach(i => (i[field] || []).forEach(v => s.add(v))); return [...s].sort(); }
 
@@ -2378,14 +2417,21 @@ function runSearch() {
   const q = searchState.q.trim().toLowerCase();
   const hit = (set, val) => set.size === 0 || (val != null && set.has(val));
   const hitArr = (set, arr) => set.size === 0 || (arr || []).some(v => set.has(v));
+  const hitFormality = (set, item) => {
+    if (!set.size) return true;
+    return (itemFormalitySet(item) || []).some(v => set.has(String(v)));
+  };
   searchResults = items.filter(i => {
     if (q) {
-      const hay = [i.name, i.brand, i.notes, i.category, i.subcategory].filter(Boolean).join(" ").toLowerCase();
+      const hay = [i.name, i.brand, i.notes, i.retailer, i.category, i.subcategory].filter(Boolean).join(" ").toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return hit(searchState.color, i.color_family) && hit(searchState.size, i.size)
       && hit(searchState.brand, i.brand) && hit(searchState.status, itemStatus(i))
-      && hitArr(searchState.fabric, i.fabric) && hitArr(searchState.season, i.season);
+      && hit(searchState.category, i.category) && hit(searchState.subcategory, i.subcategory)
+      && hit(searchState.retailer, i.retailer) && hit(searchState.acquisition, i.acquisition)
+      && hitArr(searchState.fabric, i.fabric) && hitArr(searchState.season, i.season)
+      && hitFormality(searchState.formality, i);
   });
   closetCat = null; closetSub = null;
   switchTab("closet");
@@ -3815,10 +3861,26 @@ function toggleSelect(id) {
 }
 
 // ---- grid density picker ----
+function renderCurrentGrid() {
+  if (_gridSurface === "closet") renderCloset();
+  else if (_gridSurface === "search") { searchResults = sortItems(searchResults || []); renderCloset(); }
+}
+
+function openSortMenu() {
+  const pop = $("#sortMenuPop");
+  pop.hidden = !pop.hidden;
+  if (!pop.hidden) {
+    $("#gridPickerPop").hidden = true;
+    const cur = gridSortKey();
+    pop.querySelectorAll("[data-sort]").forEach(b => b.classList.toggle("on", b.dataset.sort === cur));
+  }
+}
+
 function openGridPicker() {
   const pop = $("#gridPickerPop");
   pop.hidden = !pop.hidden;
   if (!pop.hidden) {
+    $("#sortMenuPop").hidden = true;
     pop.querySelectorAll("[data-cols]").forEach(b => b.classList.toggle("on", +b.dataset.cols === gridCols));
   }
 }
@@ -6001,30 +6063,17 @@ function openCapsule(id) {
   renderCapsules();
 }
 
-function capItemTileHtml(i, trip, packedSet) {
-  const isPacked = trip && packedSet.has(i.id);
-  const tick = trip ? `<div class="pack-tick" data-pack="${esc(i.id)}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>` : "";
-  return `<button class="gtile${isPacked ? " packed" : ""}" data-cap-item="${esc(i.id)}">
-    ${tick}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`;
-}
+
 
 // category- or formality-grouped grid with per-group counts (and packed counts for trips)
 function capGroupsHtml(list, trip, packedSet) {
   if (!list.length) return `<div class="placeholder" style="padding:40px 32px"><b>No items yet</b><div>Add pieces to start planning.</div></div>`;
-  const groups = _capSort === "formality" ? groupByFormality(list) : groupByCategory(list);
-  return groups.map(g => {
-    let cnt;
-    if (trip) {
-      const packed = g.items.filter(i => packedSet.has(i.id)).length;
-      cnt = `<span class="g-cnt${packed === g.items.length ? " done" : ""}" data-grp-cnt>${packed}/${g.items.length} packed</span>`;
-    } else {
-      cnt = `<span class="g-cnt">${g.items.length} item${g.items.length === 1 ? "" : "s"}</span>`;
-    }
-    return `<div class="cap-grp" data-grp="${esc(g.key)}">
-      <div class="cap-grp-hdr"><span class="g-name">${esc(g.key)}</span>${cnt}</div>
-      <div class="grid" style="--grid-cols:${gridCols}">${g.items.map(i => capItemTileHtml(i, trip, packedSet)).join("")}</div>
-    </div>`;
-  }).join("");
+  return itemGridView(list, {
+    group: _capSort,
+    onTap: "cap-item",
+    packedSet: trip ? packedSet : null,
+    trip,
+  });
 }
 
 function renderCapsuleDetail() {
@@ -6356,15 +6405,13 @@ function pickerCatBar() {
 
 // category-grouped selectable grid for the picker
 function pickerGridHtml(pool) {
-  if (!pool.length) return `<div class="placeholder"><b>No matches</b></div>`;
-  return groupByCategory(pool).map(g => `<div class="cap-grp" data-grp="${esc(g.key)}">
-    <div class="cap-grp-hdr"><span class="g-name">${esc(g.key)}</span><span class="g-cnt">${g.items.length}</span></div>
-    <div class="grid" style="--grid-cols:${gridCols}">${g.items.map(i => {
-      const on = _capPick.has(i.id);
-      const chk = `<div class="sel-dot${on ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
-      return `<button class="gtile${on ? " selected" : ""}" data-pick="${esc(i.id)}">${chk}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`;
-    }).join("")}</div>
-  </div>`).join("");
+  return itemGridView(pool, {
+    group: "category",
+    select: true,
+    selSet: _capPick,
+    onTap: "pick",
+    emptyMsg: "No matches",
+  });
 }
 
 function renderCapsulePicker() {
@@ -6687,11 +6734,13 @@ function builderPickContent() {
 }
 
 function builderItemGrid(list) {
-  if (!list.length) return `<div class="placeholder"><b>No items</b></div>`;
   const have = new Set(builder.pieces.map(p => p.item_id));
-  return `<div class="grid" style="--grid-cols:${gridCols};padding:0 12px">${list.map(i =>
-    `<button class="gtile${have.has(i.id) ? " selected" : ""}" data-badd="${esc(i.id)}">${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div></button>`
-  ).join("")}</div>`;
+  return `<div style="padding:0 12px">${itemGridView(list, {
+    select: true,
+    selSet: have,
+    onTap: "badd",
+    emptyMsg: "No items",
+  })}</div>`;
 }
 
 function addPieceToBuilder(id) {
@@ -7296,20 +7345,24 @@ function wireEvents() {
 
   // grid action bar
   $("#gbSelect").addEventListener("click", toggleSelectMode);
+  $("#gbSort").addEventListener("click", openSortMenu);
   $("#gbGrid").addEventListener("click", openGridPicker);
   $("#gbEdit").addEventListener("click", () => { if (selectedIds.size) openBulkEdit(); });
   $("#gbDelete").addEventListener("click", () => { if (selectedIds.size) deleteSelected(); });
   $("#gbMove").addEventListener("click", () => { if (selectedIds.size) openMoveSheet(); });
   $("#gbCapsule").addEventListener("click", () => { if (selectedIds.size) openCapsuleSheet(); });
+  $("#sortMenuPop").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sort]");
+    if (b) { setGridSort(b.dataset.sort); $("#sortMenuPop").hidden = true; renderCurrentGrid(); }
+  });
   $("#gridPickerPop").addEventListener("click", (e) => {
     const b = e.target.closest("[data-cols]");
     if (b) setGridCols(+b.dataset.cols);
   });
-  // close grid picker on outside tap
+  // close sort/density pops on outside tap
   document.addEventListener("click", (e) => {
-    if (!e.target.closest("#gbGrid") && !e.target.closest("#gridPickerPop")) {
-      $("#gridPickerPop").hidden = true;
-    }
+    if (!e.target.closest("#gbSort") && !e.target.closest("#sortMenuPop")) $("#sortMenuPop").hidden = true;
+    if (!e.target.closest("#gbGrid") && !e.target.closest("#gridPickerPop")) $("#gridPickerPop").hidden = true;
   }, true);
   // bulk edit sheet
   $("#bulkBg").addEventListener("click", closeBulkEdit);
@@ -7420,6 +7473,10 @@ window.retryLoad = retryLoad;
   $$(".appver").forEach(el => el.textContent = APP_VERSION);
   const savedCols = parseInt(store.getItem("wardrobe.gridCols") || "0");
   if (savedCols >= 2 && savedCols <= 5) gridCols = savedCols;
+  ["closet", "search"].forEach(s => {
+    const k = store.getItem(`wardrobe.sort.${s}`);
+    if (k) _gridSortKeys[s] = k;
+  });
   wireEvents();
   loadSession();
   if (session?.access_token) bootApp();

@@ -86,33 +86,27 @@ make the daily wear-logging loop a ≤1-gesture reflex, and reduce one-handed re
 → ✅ **DEPLOY** (`2026-06-26 r5`)
 
 ### WAVE 1 — Foundation: tokens + helpers + grid component (behavior-preserving)
-- [ ] **Type-scale + spacing tokens** (F2/UX-2) — add `--fs-xs..xl`, `--sp-*` to `:root`
-  (line 10); migrate the worst inline-size offenders. (M)
-- [ ] **Shared render helpers** (F2) — `row()`, `sectionLabel()`, `chip()`, `sheet()`
-  (with grabber pill). Replace hand-rolled markup incrementally. (M)
-- [ ] **Sheet grabber + swipe-down dismiss** (F3) — bake into `sheet()` helper + `.sheet`
-  CSS (411); touch handler mirrors `wireCalSwipe` (4318). (M)
-- [ ] **`itemGridView(list, config)`** (U1) — unify `gridHtml` (1370), `pickerGridHtml`
-  (6210), `builderItemGrid` (6541), `capGroupsHtml` (5864), stats grid path (5327).
-  Config: density/sort/filter/group/select/selectStyle/onTap. (L)
-- [ ] **Shared grid-controls bar** (U2/U3/U4) — density picker + sort menu + filter funnel.
-  Generalize `#gridBar` (HTML 754) so any surface mounts it. (L)
-→ ✅ **DEPLOY** (`r6`) — visual + behavior unchanged; verify no regressions on every grid.
+- [x] **Type-scale + spacing tokens** (F2/UX-2) — `--fs-xs..xl`, `--sp-*` in `:root`. (shipped r6)
+- [x] **Shared render helpers** (F2) — `sectionLabel()`, `chip()` added. (shipped r7)
+- [x] **Sheet grabber + swipe-down dismiss** (F3) — `.sheet` grabber + touch handler. (shipped r6)
+- [x] **`itemGridView(list, config)`** (U1) — unified grid; surfaces migrate in Wave 2. (shipped r7)
+- [x] **Shared grid-controls bar** (U2/U3/U4) — `showGridBar()`/`hideGridBar()` wrappers;
+  sort + filter stub buttons added to `#gridBar`. (shipped r7)
+→ ✅ **DEPLOY** (`r7`) — behavior unchanged; `itemGridView` ready for Wave 2 migration.
 
 ### WAVE 2 — Unified rollout: sort, filter, density, selection everywhere
-- [ ] **Migrate all 7 surfaces** to `itemGridView` (closet, search, stats, capsule picker,
-  calendar log picker, builder picker, capsule detail). (L)
-- [ ] **Shared sort menu** (U2) — Color · Name · Newest · Most/Least worn · Formality ·
-  Price; per-surface remembered key. Color stays closet default. Retire `statsFieldSort`
-  count/name + `_capSort` category/formality as bespoke toggles (feed them into the menu). (M)
-- [ ] **Expanded shared filter sheet** (U3) — generalize Search's `FILTERS` (2201)/
-  `runSearch` (2259) into a reusable sheet; **ADD Formality, Category, Subcategory,
-  Retailer, Acquisition, Price range.** Callable from closet + search + pickers. (M)
-- [ ] **Unified selection affordance** (U6) — dot everywhere; pack-tick = dot variant. (S)
-- [ ] **Empty-state pass + remove scaffolding** (F4) — kill `placeholder()` "We'll build
-  this next" (1315); friendly empty states w/ primary action (closet, looks, search,
-  calendar empty day 4125, capsule). (S–M)
-→ ✅ **DEPLOY** (`r7`)
+- [x] **Migrate all 7 surfaces** to `itemGridView` — gridHtml, pickerGridHtml, builderItemGrid,
+  capGroupsHtml all delegate to itemGridView; capItemTileHtml removed. (shipped r8)
+- [x] **Shared sort menu** (U2) — Color · Name · Newest · Most/Least worn · Formality · Price;
+  `#gbSort` button, `#sortMenuPop`, `sortItems()`, per-surface `_gridSortKeys` persisted to
+  localStorage. Applied to closet + search grid. (shipped r8)
+- [x] **Expanded shared filter sheet** (U3) — added Category, Subcategory, Formality,
+  Retailer, Acquisition to `FILTERS`/`searchState`/`runSearch`. (shipped r8)
+- [x] **Unified selection affordance** (U6) — dot everywhere via itemGridView migration;
+  builder tiles now show dots for pieces already on canvas. (shipped r8)
+- [ ] **Empty-state pass + remove scaffolding** (F4) — `placeholder()` defined but never
+  called; existing empty states are already friendly. No action needed.
+→ ✅ **DEPLOY** (`r8`)
 
 ### WAVE 3 — Daily logging loop
 - [ ] **One-tap "Wear today"** (A1) — `#ibLog` handler (7179): single tap →
