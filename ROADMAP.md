@@ -120,16 +120,16 @@ make the daily wear-logging loop a ≤1-gesture reflex, and reduce one-handed re
 → ✅ **DEPLOY** (`r9`)
 
 ### WAVE 4 — Gestures & reach
-- [ ] **Swipe-right-to-go-back, app-wide** — one left-edge (<24px) swipe listener;
-  dispatch to active screen's back fn (`closetBack` 1505 / `looksBack` / `statsNavBack` /
-  calendar). (M)
-- [ ] **Day-view swipe between days** (E2) — `renderCalendarDay` (4080): horizontal swipe →
-  prevD/nextD (already computed, 4127). (M)
-- [ ] **Swipe between sibling items in detail** — `openItem` (1584): swipe photo →
-  `siblingItems()` prev/next. (M)
-- [ ] **Long-press tile quick-actions** (U5) — on `itemGridView` tiles: long-press →
-  small action sheet (Log today · Add to look · Move). (M)
-→ ✅ **DEPLOY** (`r9`)
+- [x] **Swipe-right-to-go-back, app-wide** — one left-edge (<24px) swipe listener;
+  dispatch to active screen's back fn (`closetBack` / `looksBack` / `statsNavBack` /
+  calendar). (shipped r1 2026-06-27)
+- [x] **Day-view swipe between days** (E2) — `renderCalendarDay`: horizontal swipe →
+  prevD/nextD; skips if touch starts on a cal-outfit-card. (shipped r1 2026-06-27)
+- [x] **Swipe between sibling items in detail** — `openItem`: swipe photo →
+  `siblingItems()` prev/next. (shipped r1 2026-06-27)
+- [x] **Long-press tile quick-actions** (U5) — 500 ms long-press on `.gtile[data-item]` →
+  `#quickActSheet` (Log today · Add to look · Move to folder). (shipped r1 2026-06-27)
+→ ✅ **DEPLOY** (`r1` 2026-06-27)
 
 ### WAVE 5 — New capture feature
 - [ ] **Make-a-look from today's logged items** — `renderCalendarDay` (4080): when ≥2
