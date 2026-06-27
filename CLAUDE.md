@@ -310,8 +310,9 @@ writes a new column/table before its migration is confirmed.**
 - Wear-logging loop overhaul (multi-select fast logger, long-press grid log, Home CTA)
 
 **Shipped 2026-06-27 r3:**
-- Multi-exclude UI — `openExcludeSheet` is multi-select (pick the clashing subset, 2+); writes every
-  pairwise exclusion among the selected (skips existing). It is NOT "none of these go together".
+- Multi-exclude UI (r4) — `openExcludeSheet` lists every unordered PAIR among the shown pieces as a
+  toggle row (`.ex-pair`, `data-expair="<a:b>"`); user ticks the specific clashing pairs (A×B without
+  A×C). Already-excluded pairs render locked. Each ticked pair → its own exclusion. NOT subset-pairwise.
 - Context typeahead — `renderContextPicker` "+ Add…" input live-filters `contextOptions()` + tap to
   pick/create. `_ctxAddOpen` tracks the expanded state (reset in every picker opener).
 - `wears.formality_for` capture — `openPostLogSheet` now also fires after suggestion "Wear today",

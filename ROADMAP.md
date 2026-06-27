@@ -174,9 +174,10 @@ These are agreed-on ideas parked for a future session. No timeline.
 
 **Features:**
 - Capsule suggestions improvements: variety seeding, multi-anchor ("these jeans AND these boots"), constraints ("no heels today"), context picker
-- ✅ Multi-exclude UI — shipped r3 2026-06-27. `openExcludeSheet` is now multi-select (pick the
-  subset that clashes, 2+); saves every pairwise exclusion among the selected items (skips
-  existing). NOT "none of these" — user picks which ones clash.
+- ✅ Multi-exclude UI — shipped r3, reworked r4 2026-06-27. `openExcludeSheet` lists every unordered
+  PAIR among the shown pieces as a toggle row (thumbnails + names); the user ticks only the specific
+  pairs that clash (A×B can be excluded while A×C stays fine). Already-excluded pairs show locked.
+  Each ticked pair → its own exclusion row. NOT subset-pairwise, NOT "none of these".
 - ✅ Context typeahead — shipped r3 2026-06-27. `renderContextPicker` "+ Add…" input now live-filters
   known contexts (`contextOptions()`) and offers tap-to-pick or "+ Create". Routed into suggestion
   "Wear today" + calendar +Clothing/+Look flows via `openPostLogSheet`.

@@ -448,6 +448,21 @@
   .sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .sheet-chip { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; background: #fff; }
   .sheet-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* exclude-pair rows (suggestion feedback) */
+  .ex-pair { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; text-align: left; background: #fff; }
+  .ex-pair.on { border-color: var(--accent); background: var(--accent-soft); }
+  .ex-pair.ex-locked { opacity: .55; }
+  .ex-pair-imgs { display: flex; align-items: center; gap: 4px; flex: none; }
+  .ex-thumb { width: 36px; height: 36px; flex: none; border-radius: 7px; background: #faf9f8 center/contain no-repeat; }
+  .ex-thumb.empty { display: flex; align-items: center; justify-content: center; background: #f4f4f7; }
+  .ex-thumb.empty svg { width: 18px; height: 18px; stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .ex-x { color: var(--muted); font-size: 13px; }
+  .ex-pair-names { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; }
+  .ex-tick { flex: none; width: 22px; display: flex; justify-content: center; }
+  .ex-already { flex: none; font-size: 11px; color: var(--muted); font-weight: 600; }
+
   /* context typeahead suggestions */
   .ctx-typeahead { display: flex; flex-direction: column; gap: 4px; }
   .ctx-ta-row { text-align: left; padding: 9px 12px; border: 1px solid var(--line);
@@ -960,7 +975,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r3";
+const APP_VERSION = "2026-06-27 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3409,7 +3424,7 @@ function renderSuggestSheet() {
     const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas");
     preview = canvas || combo.pieces.map(p =>
       `<div style="display:flex;align-items:center;gap:10px;padding:6px 0">
-        ${thumbHtml(p.image_path, 40)}
+        ${thumbHtml(p.image_path)}
         <div><div style="font-size:14px;font-weight:500">${esc(p.name)}</div>
         <div style="font-size:12px;color:var(--muted)">${esc(p.category)}${p.color_family ? " · " + esc(p.color_family) : ""}</div></div>
       </div>`
@@ -3527,7 +3542,7 @@ function openFeedbackSheet(pieces) {
   const rows = pieces.map(p => {
     const off = isNoSuggest(p);
     return `<div class="frow" style="align-items:center">
-      ${thumbHtml(p.image_path, 40)}
+      ${thumbHtml(p.image_path)}
       <div class="fmeta"><div class="fname">${esc(p.name)}</div><div class="fcount">${esc(p.category)}</div></div>
       <button class="rv-set" style="flex:none;width:auto;padding:8px 14px;font-size:13px" data-nosug="${esc(p.id)}">
         ${off ? "Suggest again" : "Don't suggest"}
@@ -3578,67 +3593,73 @@ function openNewLookSheet() {
 }
 
 async function openExcludeSheet(pieces) {
-  // Let user pick 2 items from the combo and optionally add a reason
-  const pieceSel = new Set();
+  // Mark individual clashing PAIRS among the shown pieces. Every unordered pair is
+  // listed; the user ticks only the specific pairs that don't go together (e.g. A×B
+  // clashes but A×C is fine). Each ticked pair becomes its own exclusion.
+  const pairKey = (a, b) => [a, b].sort().join(":");
+  const allPairs = [];
+  for (let i = 0; i < pieces.length; i++)
+    for (let j = i + 1; j < pieces.length; j++) allPairs.push([pieces[i], pieces[j]]);
+  const pairSel = new Set();  // canonical "a:b" keys the user has marked this session
+
   const renderExSheet = () => {
-    const pRows = pieces.map(p => {
-      const on = pieceSel.has(p.id);
-      return `<button class="frow${on ? " selected" : ""}" data-expick="${esc(p.id)}" style="${on ? "background:var(--accent-soft);border-radius:10px" : ""}">
-        ${thumbHtml(p.image_path, 40)}
-        <div class="fmeta"><div class="fname">${esc(p.name)}</div><div class="fcount">${esc(p.category)}</div></div>
-        ${on ? `<svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:var(--accent);stroke-width:2.5;fill:none"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
+    const rows = allPairs.map(([p, q]) => {
+      const key = pairKey(p.id, q.id);
+      const already = isExcluded(p.id, q.id);
+      const on = pairSel.has(key);
+      return `<button class="ex-pair${on ? " on" : ""}${already ? " ex-locked" : ""}" data-expair="${esc(key)}"${already ? " disabled" : ""}>
+        <div class="ex-pair-imgs">${thumbHtml(p.image_path, "ex-thumb")}<span class="ex-x">×</span>${thumbHtml(q.image_path, "ex-thumb")}</div>
+        <div class="ex-pair-names">${esc(p.name)} <span class="ex-x">×</span> ${esc(q.name)}</div>
+        ${already
+          ? `<span class="ex-already">Excluded</span>`
+          : `<span class="ex-tick">${on ? `<svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:var(--accent);stroke-width:2.5;fill:none"><polyline points="20 6 9 17 4 12"/></svg>` : ""}</span>`}
       </button>`;
     }).join("");
-    const n = pieceSel.size;
+    const n = pairSel.size;
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
         <button class="lnk" id="exBack">Back</button>
-        <h2>Pick clashing items</h2>
-        <button class="lnk" id="exSave" style="font-weight:700;${n < 2 ? "opacity:.4;pointer-events:none" : ""}">Save</button>
+        <h2>Which pairs clash?</h2>
+        <button class="lnk" id="exSave" style="font-weight:700;${n < 1 ? "opacity:.4;pointer-events:none" : ""}">Save</button>
       </div>
       <div style="padding:8px 16px 12px">
-        <div class="muted" style="font-size:13px;margin-bottom:12px">Tap every item that clashes — pick just the ones that don't go together. We'll avoid pairing any two of them in future suggestions.${n >= 2 ? ` <b style="color:var(--text)">${n} selected → ${n * (n - 1) / 2} pair${n * (n - 1) / 2 === 1 ? "" : "s"}</b>` : ""}</div>
-        ${pRows}
+        <div class="muted" style="font-size:13px;margin-bottom:12px">Tap each pair that doesn't go together. Only the pairs you mark are excluded — every other combination stays available.${n >= 1 ? ` <b style="color:var(--text)">${n} marked</b>` : ""}</div>
+        ${rows}
         <div style="margin-top:14px">
           <input class="inp" id="exReason" type="text" placeholder="Reason (optional)" style="width:100%;font-size:15px" value="">
         </div>
       </div>`;
     $("#exBack").onclick = () => openFeedbackSheet(pieces);
     $("#exSave").onclick = async () => {
-      const sel = [...pieceSel];
-      if (sel.length < 2) return;
+      if (!pairSel.size) return;
       const reason = $("#exReason").value.trim() || null;
-      // Build every unordered pair among the selected items, skipping ones already excluded.
-      const pairs = [];
-      for (let i = 0; i < sel.length; i++)
-        for (let j = i + 1; j < sel.length; j++) {
-          const [a, b] = [sel[i], sel[j]].sort();
-          if (!isExcluded(a, b)) pairs.push({ item_a: a, item_b: b, ...(reason ? { reason } : {}) });
-        }
-      if (!pairs.length) { toast("Those pairs are already excluded"); return renderSuggestSheet(); }
+      const payload = [...pairSel].map(k => {
+        const [a, b] = k.split(":");
+        return { item_a: a, item_b: b, ...(reason ? { reason } : {}) };
+      });
       try {
-        const rows = await rest("/exclusions", {
+        const res = await rest("/exclusions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-          body: JSON.stringify(pairs),
+          body: JSON.stringify(payload),
         });
-        if (Array.isArray(rows)) exclusions.push(...rows);
-        else if (rows && rows.id) exclusions.push(rows);
+        if (Array.isArray(res)) exclusions.push(...res);
+        else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
-        toast(pairs.length === 1 ? "Pair excluded" : `Excluded ${pairs.length} pairs`);
+        toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
         _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
     };
-    $("#logInner").querySelectorAll("[data-expick]").forEach(b => {
+    $("#logInner").querySelectorAll("[data-expair]").forEach(b => {
       b.onclick = () => {
-        const id = b.dataset.expick;
-        if (pieceSel.has(id)) pieceSel.delete(id);
-        else pieceSel.add(id);   // no cap — select as many clashing items as needed
+        const k = b.dataset.expair;
+        if (pairSel.has(k)) pairSel.delete(k); else pairSel.add(k);
         renderExSheet();
       };
     });
+    hydratePhotos($("#logInner"));
   };
   renderExSheet();
 }
