@@ -975,7 +975,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r5";
+const APP_VERSION = "2026-06-27 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1738,6 +1738,7 @@ function renderCloset() {
 }
 
 function closetBack() {
+  if (selectMode) { exitSelectMode(); renderCloset(); return; }
   if (detailId && detailView === "details") { openItem(detailId); return; }
   if (detailId && _reviewMode) {
     _reviewMode = false;
@@ -4284,7 +4285,7 @@ async function saveBulkEdit() {
   const ids = [...selectedIds];
   const inList = `(${ids.map(id => `"${id}"`).join(",")})`;
   try {
-    await rest(`/items?id=in.${inList}`, { method: "PATCH", body: JSON.stringify(patch) });
+    await rest(`/items?id=in.${inList}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
     // update local state
     items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
     closeBulkEdit();
@@ -4347,7 +4348,7 @@ async function applyMove(cat, sub) {
   const patch = { category: cat, subcategory: sub };
   const isSingleItem = _moveItemId != null;
   try {
-    await rest(`/items?id=in.${inList}`, { method: "PATCH", body: JSON.stringify(patch) });
+    await rest(`/items?id=in.${inList}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
     items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
     const reviewMode = _reviewMoveMode;
     closeMoveSheet();
@@ -6212,6 +6213,7 @@ let _capNotesTimer = null;
 let _capSort = "category";       // detail grid grouping: "category" | "formality"
 let _capUnpackedOnly = false;    // trip detail: show only not-yet-packed items
 let _capPickCat = null;          // picker category filter (null = all)
+let _capPickStatus = "Available"; // picker status lens: "Available" | "Storage" | "All"
 
 // canonical category order for grouping (packing-friendly)
 const CAP_CAT_ORDER = ["Outerwear", "Tops", "Dresses", "Bottoms", "Shoes", "Workout"];
@@ -6715,13 +6717,16 @@ function openCapsulePicker(id) {
   _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
   _capPickFilter = "";
   _capPickCat = null;
+  _capPickStatus = "Available";
   capsuleView = "pick";
   renderCapsules();
 }
 
 // status + keyword filtered (before category chip filter)
 function pickerPoolBase() {
-  let pool = items.filter(i => itemStatus(i) !== "Archive");
+  let pool = _capPickStatus === "All"
+    ? items.filter(i => itemStatus(i) !== "Archive")
+    : items.filter(i => itemStatus(i) === _capPickStatus);
   const q = _capPickFilter.trim().toLowerCase();
   if (q) pool = pool.filter(i =>
     (i.name || "").toLowerCase().includes(q) ||
@@ -6733,7 +6738,7 @@ function pickerPoolBase() {
 function pickerPool() {
   let pool = pickerPoolBase();
   if (_capPickCat) pool = pool.filter(i => (i.category || "Other") === _capPickCat);
-  return pool;
+  return sortItems(pool);
 }
 
 // horizontal category jump-chips with counts (built from the keyword-filtered pool)
@@ -6759,11 +6764,23 @@ function pickerGridHtml(pool) {
 
 function renderCapsulePicker() {
   const c = capsuleById.get(capsuleId);
-  const right = `<button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>`;
+  const sortKey = gridSortKey();
+  const sortLabel = { color: "Color", name: "Name", newest: "Newest", "most-worn": "Most worn", "least-worn": "Least worn", formality: "Formality", price: "Price" }[sortKey] || "Sort";
+  const right = `<div style="display:flex;align-items:center;gap:8px">
+    <button id="capPickSort" style="font-size:13px;color:var(--muted);padding:4px 6px;border:1px solid var(--line);border-radius:20px">${esc(sortLabel)}</button>
+    <button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>
+  </div>`;
+  const lensBtn = (s, lbl) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${lbl}</button>`;
   return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
     <div style="padding:10px 14px 0"><input class="inp" id="capPickSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
-    <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
-    <div id="capPickResults">${pickerCatBar()}${pickerGridHtml(pickerPool())}</div>`;
+    <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
+    <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
+    <div id="capPickResults">${pickerCatBar()}${pickerGridHtml(pickerPool())}</div>
+    <div id="capPickSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
+      ${["color","name","newest","most-worn","least-worn","formality","price"].map(k =>
+        `<button data-cpsort="${k}" style="display:block;width:100%;padding:13px 20px;text-align:left;font-size:15px${k===sortKey?";color:var(--accent);font-weight:600":""}">${{color:"Color",name:"Name",newest:"Newest first","most-worn":"Most worn","least-worn":"Least worn",formality:"Formality",price:"Price"}[k]}</button>`
+      ).join("")}
+    </div>`;
 }
 
 function togglePick(id) {
@@ -7189,8 +7206,19 @@ function wireCapsules() {
   }
   if (capsuleView === "pick") {
     const s = $("#capPickSearch");
-    if (s) s.oninput = () => { _capPickFilter = s.value; const g = body.querySelector(".grid"); /* light re-render of grid only */ renderPickerGrid(); };
+    if (s) s.oninput = () => { _capPickFilter = s.value; renderPickerGrid(); };
     const done = $("#capPickDone"); if (done) done.onclick = saveCapsulePicker;
+    body.querySelectorAll("[data-pick-status]").forEach(b => {
+      b.onclick = () => { _capPickStatus = b.dataset.pickStatus; _capPickCat = null; renderPickerGrid(); };
+    });
+    const sortBtn = $("#capPickSort");
+    const sortPop = $("#capPickSortPop");
+    if (sortBtn && sortPop) {
+      sortBtn.onclick = (e) => { e.stopPropagation(); sortPop.hidden = !sortPop.hidden; };
+      sortPop.querySelectorAll("[data-cpsort]").forEach(b => {
+        b.onclick = () => { setGridSort(b.dataset.cpsort); sortPop.hidden = true; renderPickerGrid(); };
+      });
+    }
     return;
   }
   const dn = $("#capDetNotes");
@@ -7203,6 +7231,13 @@ function renderPickerGrid() {
   const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
   const wrap = $("#capPickResults");
   if (wrap) { wrap.innerHTML = pickerCatBar() + pickerGridHtml(pickerPool()); hydratePhotos(body); }
+  // update lens chip active state
+  const lens = $("#capPickLens");
+  if (lens) lens.querySelectorAll("[data-pick-status]").forEach(b => b.classList.toggle("on", b.dataset.pickStatus === _capPickStatus));
+  // update sort button label
+  const sortKey = gridSortKey();
+  const sortBtn = $("#capPickSort");
+  if (sortBtn) sortBtn.textContent = { color: "Color", name: "Name", newest: "Newest", "most-worn": "Most worn", "least-worn": "Least worn", formality: "Formality", price: "Price" }[sortKey] || "Sort";
 }
 
 /* ===================================================================
@@ -7713,6 +7748,7 @@ function wireEvents() {
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#gbSort") && !e.target.closest("#sortMenuPop")) $("#sortMenuPop").hidden = true;
     if (!e.target.closest("#gbGrid") && !e.target.closest("#gridPickerPop")) $("#gridPickerPop").hidden = true;
+    const csp = $("#capPickSortPop"); if (csp && !e.target.closest("#capPickSort") && !e.target.closest("#capPickSortPop")) csp.hidden = true;
   }, true);
   // bulk edit sheet
   $("#bulkBg").addEventListener("click", closeBulkEdit);
