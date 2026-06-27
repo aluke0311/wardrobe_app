@@ -303,17 +303,25 @@ writes a new column/table before its migration is confirmed.**
 ## Back-burner (not in current round)
 
 - Reorder capsules (needs an `order` column)
-- Auto-refresh trip weather
-- Wear-logging loop overhaul (multi-select fast logger, long-press grid log, Home CTA)
 - Crop/rotate photo editor
 - Outfit feedback (👍/👎 — `outfits.rating` column exists, UI deferred)
 - Outfit of the day on Home connected to weather
 - Capsule-scoped suggestions improvements: variety seeding, multi-anchor, constraints
-- Multi-exclude UI ("none of this works" → pairwise excludes all shown)
-- Context typeahead on suggestion sheet + calendar log flow
-- `wears.formality_for` capture UI (one-tap post-wear demand capture)
-- Phase 3a: builder subcategory drill + scoped search
-- Phase 3c: season derive-and-confirm in Closet Review
+- Wear-logging loop overhaul (multi-select fast logger, long-press grid log, Home CTA)
+
+**Shipped 2026-06-27 r3:**
+- Multi-exclude UI — `openExcludeSheet` is multi-select (pick the clashing subset, 2+); writes every
+  pairwise exclusion among the selected (skips existing). It is NOT "none of these go together".
+- Context typeahead — `renderContextPicker` "+ Add…" input live-filters `contextOptions()` + tap to
+  pick/create. `_ctxAddOpen` tracks the expanded state (reset in every picker opener).
+- `wears.formality_for` capture — `openPostLogSheet` now also fires after suggestion "Wear today",
+  calendar +Clothing (`saveCalClothingLog`), and calendar +Look (`logLookOnDay`).
+- Guessed-value indication — `REVIEW_FIELDS` season + formality carry `guess`/`guessLabel`;
+  `renderReviewDeal` pre-fills the derived value and shows a `.rv-guess-hint` that clears on edit.
+  `date_is_guess` intentionally NOT routed to review (would flood the queue).
+- Builder subcat drill + scoped search (Phase 3a) — confirmed already implemented in `builderPickContent`.
+- Auto-refresh trip weather — `_wxAutoTimer` re-fetches every `WX_TTL` while a trip detail is open
+  (cleared in `renderCapsules` + `switchTab`); manual ↻ button (`[data-wx-refresh]`) in Locations header.
 
 ## Deploy
 

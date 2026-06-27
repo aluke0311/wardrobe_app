@@ -174,19 +174,35 @@ These are agreed-on ideas parked for a future session. No timeline.
 
 **Features:**
 - Capsule suggestions improvements: variety seeding, multi-anchor ("these jeans AND these boots"), constraints ("no heels today"), context picker
-- Multi-exclude UI: "none of this works" → pairwise-excludes all shown items
-- Context typeahead on suggestion sheet + calendar log flow
-- `wears.formality_for` capture UI (one-tap demand capture after logging a wear)
-- Builder subcategory drill + scoped search (Phase 3a)
-- Season derive-and-confirm in Closet Review (Phase 3c)
+- ✅ Multi-exclude UI — shipped r3 2026-06-27. `openExcludeSheet` is now multi-select (pick the
+  subset that clashes, 2+); saves every pairwise exclusion among the selected items (skips
+  existing). NOT "none of these" — user picks which ones clash.
+- ✅ Context typeahead — shipped r3 2026-06-27. `renderContextPicker` "+ Add…" input now live-filters
+  known contexts (`contextOptions()`) and offers tap-to-pick or "+ Create". Routed into suggestion
+  "Wear today" + calendar +Clothing/+Look flows via `openPostLogSheet`.
+- ✅ `wears.formality_for` capture — shipped r3 2026-06-27. `openPostLogSheet` (context + 1–8 formality)
+  now also fires after suggestion "Wear today", calendar +Clothing, and calendar +Look (previously
+  only solo-log + look-detail wear).
+- ✅ Builder subcategory drill + scoped search (Phase 3a) — already implemented in `builderPickContent`
+  (cat → subcat folders → grid, scoped search, quick-switch subcat chips). Verified r3 2026-06-27.
+- ✅ Season derive-and-confirm in Closet Review (Phase 3c) — shipped r3 2026-06-27. Season + Formality
+  REVIEW_FIELDS now carry `guess`/`guessLabel`; the deal card pre-fills the derived value and shows a
+  "✨ Guessed from… — confirm or change" hint that clears once the user edits.
 - Outfit 👍/👎 rating (`outfits.rating` exists, UI not built)
 - "Outfit of the day" on Home connected to weather
 - Wear-logging loop overhaul: multi-select fast logger from day view, long-press grid log
 
+**Guessed-value indication (r3 2026-06-27):** Formality imputation (`itemFormalitySet`) shows `est.`
+in detail/looks AND now pre-fills + labels in Closet Review. Season guess (`guessSeason`) labeled in
+review. `date_is_guess` deliberately left OUT of review (476 imported items would flood the queue;
+already indicated via month-only display).
+
 **Infrastructure:**
 - Reorder capsules (needs an `order` column on `capsules`)
 - Crop/rotate photo editor
-- Auto-refresh trip weather
+- ✅ Auto-refresh trip weather — shipped r3 2026-06-27. `_wxAutoTimer` re-fetches the weather strip
+  every `WX_TTL` (10 min) while a trip detail is open (cleared on re-render + tab switch); manual ↻
+  refresh button added to the Locations header.
 
 ---
 

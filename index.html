@@ -448,6 +448,17 @@
   .sheet-chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .sheet-chip { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; background: #fff; }
   .sheet-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  /* context typeahead suggestions */
+  .ctx-typeahead { display: flex; flex-direction: column; gap: 4px; }
+  .ctx-ta-row { text-align: left; padding: 9px 12px; border: 1px solid var(--line);
+    border-radius: 9px; font-size: 14px; background: #fff; }
+  .ctx-ta-row:active { background: var(--accent-soft); }
+  .ctx-ta-new { color: var(--accent); font-weight: 600; }
+  /* derived-value guess hint (closet review) */
+  .rv-guess-hint { margin: 0 16px 10px; padding: 9px 12px; background: var(--accent-soft);
+    color: var(--accent); border-radius: 10px; font-size: 13px; font-weight: 500;
+    display: flex; align-items: center; gap: 7px; }
+  .rv-guess-hint svg { width: 15px; height: 15px; stroke: var(--accent); stroke-width: 2; fill: none; flex: none; }
   .sheet-action-btn { width: 100%; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: 16px; font-weight: 500; text-align: center; cursor: pointer; }
   .sheet-note { color: var(--muted); font-size: 13px; padding: 12px 18px 24px; }
   /* make-a-look CTA (day view) */
@@ -949,7 +960,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r2";
+const APP_VERSION = "2026-06-27 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2351,6 +2362,7 @@ function itemContexts(itemId) {
 // `_ctxSel` (array of chosen contexts). Self-re-renders into #ctxPicker so the rest of
 // the surrounding sheet (e.g. the date input) is untouched.
 let _ctxSel = [];
+let _ctxAddOpen = false;  // whether the "+ Add…" typeahead input is expanded
 let _logItemId = null;  // item being logged, for context-chip ordering (A2)
 function contextPickerHtml() { return `<div id="ctxPicker" style="margin-top:18px"></div>`; }
 function renderContextPicker() {
@@ -2370,31 +2382,61 @@ function renderContextPicker() {
       ${all.map(c => `<button class="sheet-chip${_ctxSel.includes(c) ? " on" : ""}" data-ctx="${esc(c)}">${esc(c)}</button>`).join("")}
       <button class="sheet-chip" data-ctx-add="1">+ Add…</button>
     </div>
-    <div id="ctxOtherWrap" style="display:none;gap:8px;margin-top:4px">
-      <input class="inp" id="ctxOther" placeholder="New context…" style="flex:1;font-size:15px">
-      <button class="lnk" id="ctxOtherAdd" style="font-weight:700;flex:none">Add</button>
+    <div id="ctxOtherWrap" style="display:${_ctxAddOpen ? "flex" : "none"};flex-direction:column;gap:8px;margin-top:6px">
+      <div style="display:flex;gap:8px">
+        <input class="inp" id="ctxOther" placeholder="Type to find or add a context…" style="flex:1;font-size:15px" autocomplete="off">
+        <button class="lnk" id="ctxOtherAdd" style="font-weight:700;flex:none">Add</button>
+      </div>
+      <div id="ctxSuggest" class="ctx-typeahead"></div>
     </div>`;
   wrap.querySelectorAll("[data-ctx]").forEach(b => b.onclick = () => {
     const v = b.dataset.ctx;
     _ctxSel = _ctxSel.includes(v) ? _ctxSel.filter(x => x !== v) : [..._ctxSel, v];
+    _ctxAddOpen = false;
     renderContextPicker();
   });
   const addBtn = wrap.querySelector("[data-ctx-add]");
   if (addBtn) addBtn.onclick = () => {
+    _ctxAddOpen = true;
     const ow = wrap.querySelector("#ctxOtherWrap");
     ow.style.display = "flex";
     wrap.querySelector("#ctxOther").focus();
+  };
+  // Live typeahead: filter known contexts as the user types; tap to pick or create.
+  const renderSuggest = (q) => {
+    const box = wrap.querySelector("#ctxSuggest");
+    if (!box) return;
+    const ql = q.trim().toLowerCase();
+    if (!ql) { box.innerHTML = ""; return; }
+    const matches = contextOptions().filter(c => !_ctxSel.includes(c) && c.toLowerCase().includes(ql)).slice(0, 6);
+    const exact = contextOptions().some(c => c.toLowerCase() === ql) || _ctxSel.some(c => c.toLowerCase() === ql);
+    box.innerHTML = matches.map(c => `<button class="ctx-ta-row" data-ctx-pick="${esc(c)}">${esc(c)}</button>`).join("")
+      + (!exact ? `<button class="ctx-ta-row ctx-ta-new" data-ctx-new="${esc(q.trim())}">+ Create “${esc(q.trim())}”</button>` : "");
+    box.querySelectorAll("[data-ctx-pick]").forEach(b => b.onclick = () => {
+      _ctxSel.push(b.dataset.ctxPick); _ctxAddOpen = false; renderContextPicker();
+    });
+    const nb = box.querySelector("[data-ctx-new]");
+    if (nb) nb.onclick = () => {
+      const v = nb.dataset.ctxNew;
+      if (v && !_ctxSel.includes(v)) _ctxSel.push(v);
+      _ctxAddOpen = false; renderContextPicker();
+    };
   };
   const commit = () => {
     const inp = wrap.querySelector("#ctxOther");
     const v = (inp.value || "").trim();
     if (v && !_ctxSel.includes(v)) _ctxSel.push(v);
+    _ctxAddOpen = false;
     renderContextPicker();
   };
   const otherAdd = wrap.querySelector("#ctxOtherAdd");
   if (otherAdd) otherAdd.onclick = commit;
   const inp = wrap.querySelector("#ctxOther");
-  if (inp) inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } };
+  if (inp) {
+    inp.oninput = () => renderSuggest(inp.value);
+    inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } };
+    if (_ctxAddOpen) inp.focus();
+  }
 }
 const ctxSelOrNull = () => _ctxSel.length ? _ctxSel : null;
 
@@ -2418,7 +2460,7 @@ async function logWearToday(id) {
 // ---- Post-log sheet: context + formality_for capture (A2 + E4) ----
 function openPostLogSheet(wearRows) {
   _logItemId = wearRows.length === 1 ? wearRows[0].item_id : null;
-  _ctxSel = [];
+  _ctxSel = []; _ctxAddOpen = false;
   let fmlFor = null;
 
   const renderFml = () => {
@@ -2482,7 +2524,7 @@ function openPostLogSheet(wearRows) {
 function openLogWear(id) {
   _logItemId = id;
   const today = new Date().toISOString().slice(0, 10);
-  _ctxSel = [];
+  _ctxSel = []; _ctxAddOpen = false;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="logCancel">Cancel</button>
@@ -3441,8 +3483,9 @@ function renderSuggestSheet() {
       });
       if (Array.isArray(rows)) wears.push(...rows);
       buildOutfitWearMap();
-      $("#logSheet").hidden = true;
-      toast("Logged!");
+      // Route into the context + formality capture sheet (shared with daily-loop logging)
+      if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
+      else { $("#logSheet").hidden = true; toast("Logged!"); }
     } catch (e) { toast(e.message); }
   };
 
@@ -3500,7 +3543,7 @@ function openFeedbackSheet(pieces) {
     <div style="padding:8px 16px 16px">
       <div class="muted" style="font-size:13px;margin-bottom:10px">Never suggest an item again, or tell us two pieces don't go together.</div>
       ${rows}
-      <button class="btn btn-sec" id="fbPair" style="margin-top:16px">These two don't go together…</button>
+      <button class="btn btn-sec" id="fbPair" style="margin-top:16px">These don't go together…</button>
     </div>`;
   $("#fbBack").onclick = () => renderSuggestSheet();
   $("#fbPair").onclick = () => openExcludeSheet(pieces);
@@ -3546,14 +3589,15 @@ async function openExcludeSheet(pieces) {
         ${on ? `<svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:var(--accent);stroke-width:2.5;fill:none"><polyline points="20 6 9 17 4 12"/></svg>` : ""}
       </button>`;
     }).join("");
+    const n = pieceSel.size;
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
         <button class="lnk" id="exBack">Back</button>
-        <h2>Pick 2 items</h2>
-        <button class="lnk" id="exSave" style="font-weight:700;${pieceSel.size !== 2 ? "opacity:.4;pointer-events:none" : ""}">Save</button>
+        <h2>Pick clashing items</h2>
+        <button class="lnk" id="exSave" style="font-weight:700;${n < 2 ? "opacity:.4;pointer-events:none" : ""}">Save</button>
       </div>
       <div style="padding:8px 16px 12px">
-        <div class="muted" style="font-size:13px;margin-bottom:12px">Select the two items that clash. We'll avoid pairing them in future suggestions.</div>
+        <div class="muted" style="font-size:13px;margin-bottom:12px">Tap every item that clashes — pick just the ones that don't go together. We'll avoid pairing any two of them in future suggestions.${n >= 2 ? ` <b style="color:var(--text)">${n} selected → ${n * (n - 1) / 2} pair${n * (n - 1) / 2 === 1 ? "" : "s"}</b>` : ""}</div>
         ${pRows}
         <div style="margin-top:14px">
           <input class="inp" id="exReason" type="text" placeholder="Reason (optional)" style="width:100%;font-size:15px" value="">
@@ -3561,19 +3605,29 @@ async function openExcludeSheet(pieces) {
       </div>`;
     $("#exBack").onclick = () => openFeedbackSheet(pieces);
     $("#exSave").onclick = async () => {
-      const [a, b] = [...pieceSel].sort();
+      const sel = [...pieceSel];
+      if (sel.length < 2) return;
       const reason = $("#exReason").value.trim() || null;
+      // Build every unordered pair among the selected items, skipping ones already excluded.
+      const pairs = [];
+      for (let i = 0; i < sel.length; i++)
+        for (let j = i + 1; j < sel.length; j++) {
+          const [a, b] = [sel[i], sel[j]].sort();
+          if (!isExcluded(a, b)) pairs.push({ item_a: a, item_b: b, ...(reason ? { reason } : {}) });
+        }
+      if (!pairs.length) { toast("Those pairs are already excluded"); return renderSuggestSheet(); }
       try {
-        const row = await rest("/exclusions", {
+        const rows = await rest("/exclusions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-          body: JSON.stringify({ item_a: a, item_b: b, ...(reason ? { reason } : {}) }),
+          body: JSON.stringify(pairs),
         });
-        if (Array.isArray(row)) exclusions.push(...row);
-        else if (row && row.id) exclusions.push(row);
+        if (Array.isArray(rows)) exclusions.push(...rows);
+        else if (rows && rows.id) exclusions.push(rows);
         buildExcludeSet();
-        toast("Pair excluded");
+        toast(pairs.length === 1 ? "Pair excluded" : `Excluded ${pairs.length} pairs`);
         _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
+        if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
     };
@@ -3581,7 +3635,7 @@ async function openExcludeSheet(pieces) {
       b.onclick = () => {
         const id = b.dataset.expick;
         if (pieceSel.has(id)) pieceSel.delete(id);
-        else if (pieceSel.size < 2) pieceSel.add(id);
+        else pieceSel.add(id);   // no cap — select as many clashing items as needed
         renderExSheet();
       };
     });
@@ -3738,7 +3792,7 @@ function openWearLook(id) {
   if (!o) return;
   const its = outfitItems(o);
   const today = todayStr();
-  _ctxSel = [];
+  _ctxSel = []; _ctxAddOpen = false;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="logCancel">Cancel</button>
@@ -4684,7 +4738,7 @@ function renderCalendarDay(body) {
 
 // Set/change the contexts on a group of wear rows (calendar day card "after" flow).
 function openContextSheet(wearIds, current, onSaved) {
-  _ctxSel = Array.isArray(current) ? [...current] : [];
+  _ctxSel = Array.isArray(current) ? [...current] : []; _ctxAddOpen = false;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="ctxCancel">Cancel</button>
@@ -4859,7 +4913,8 @@ async function saveCalClothingLog() {
     else payload.forEach(p => wears.push({ ...p, outfit_id: null }));
     buildOutfitWearMap();
     renderCalendarDay(body);
-    toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`);
+    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
+    else toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`);
   } catch (e) { toast(e.message); }
 }
 
@@ -4926,7 +4981,8 @@ async function logLookOnDay(id) {
     else payload.forEach(p => wears.push(p));
     buildOutfitWearMap();
     renderCalendarDay($('#calendarBody'));
-    toast(`Logged ${outfitName(o)} for ${date}`);
+    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
+    else toast(`Logged ${outfitName(o)} for ${date}`);
   } catch (e) { toast(e.message); }
 }
 
@@ -5269,7 +5325,7 @@ const REVIEW_FIELDS = [
     edit: i => openReviewField(i, "fabric"), value: i => (i.fabric || []).join(", ") || null },
   { key: "season", label: "Season", missing: i => !(i.season && i.season.length),
     edit: i => openReviewField(i, "season"), value: i => (i.season || []).join(", ") || null,
-    guess: i => guessSeason(i) },
+    guess: i => guessSeason(i), guessLabel: "Guessed from purchase date & wear history" },
   { key: "retailer", label: "Retailer", missing: i => !(i.retailer && i.retailer.trim()),
     edit: i => openReviewField(i, "retailer"), value: i => i.retailer || null },
   { key: "acquisition", label: "Acquisition", missing: i => !i.acquisition,
@@ -5283,7 +5339,8 @@ const REVIEW_FIELDS = [
       if (!i.formality) return null;
       const s = Array.isArray(i.formality) ? i.formality : [+i.formality];
       return s.length ? s.map(n => `${n}. ${occLabel(n)}`).join(", ") : null;
-    }
+    },
+    guess: i => itemFormalitySet(i), guessLabel: "Estimated from item type & similar outfits"
   },
   { key: "purchase_date", label: "Purchase Date",
     missing: i => !i.purchase_date,
@@ -5974,6 +6031,13 @@ function renderReviewDeal() {
   const inlineHtml = renderReviewInline(reviewField);
   const hasInline = !!inlineHtml;
   const hasPending = _rvPending !== null && _rvPending !== "" && !(Array.isArray(_rvPending) && !_rvPending.length);
+  // Show the "this is a guess" banner only while the pending value still equals the
+  // derived guess (and the item has no stored value) — it clears once the user edits.
+  const showGuessHint = cur == null && guess != null && f.guessLabel
+    && JSON.stringify(_rvPending) === JSON.stringify(guess);
+  const guessHintHtml = showGuessHint
+    ? `<div class="rv-guess-hint"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7.4L12 16.7 5.3 21.4l2.3-7.4-6-4.6h7.6z"/></svg>${esc(f.guessLabel)} — confirm or change</div>`
+    : "";
 
   body.innerHTML = toolbar
     + `<div class="rv-prog">${reviewIdx + 1} of ${total}</div>
@@ -5987,6 +6051,7 @@ function renderReviewDeal() {
         ${cur ? `<div class="rv-cur">Current: <b>${esc(cur)}</b></div>` : ""}
       </div>
     </div>
+    ${guessHintHtml}
     ${inlineHtml}
     <div class="rv-actions">
       ${hasInline
@@ -6178,6 +6243,7 @@ function capCollageHtml(cid) {
 
 function renderCapsules() {
   const body = $("#capsulesBody");
+  clearInterval(_wxAutoTimer); _wxAutoTimer = null;  // any prior trip-detail auto-refresh
   if (capsuleView === "form")      body.innerHTML = renderCapsuleForm();
   else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
   else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
@@ -6188,6 +6254,11 @@ function renderCapsules() {
     const c = capsuleById.get(capsuleId);
     if (c && isTrip(c) && c.start_date && c.end_date && (c.locations || []).length) {
       loadTripWeather(c);
+      // Auto-refresh the live strip while this trip detail stays open (cleared on any re-render / tab switch)
+      _wxAutoTimer = setInterval(() => {
+        delete _wxCache[c.id];
+        loadTripWeather(c);
+      }, WX_TTL);
     }
   }
 }
@@ -6373,7 +6444,10 @@ function renderCapsuleDetail() {
     wxHtml = `<div class="wx-section">
       <div class="wx-sec-hdr">
         <div class="wx-sec-title">Locations</div>
-        <button class="wx-add-btn" data-loc-add>＋ Add</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${locs.length ? `<button class="wx-add-btn" data-wx-refresh aria-label="Refresh weather"><svg viewBox="0 0 24 24" style="width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;vertical-align:-2px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg></button>` : ""}
+          <button class="wx-add-btn" data-loc-add>＋ Add</button>
+        </div>
       </div>
       ${locRows || `<div class="wx-no-locs">No locations yet — add one to see weather.</div>`}
       ${wxContent}
@@ -7115,6 +7189,7 @@ function renderPickerGrid() {
    =================================================================== */
 const _wxCache = {};  // capsuleId → {days, ts}
 const WX_TTL = 600000; // 10 min
+let _wxAutoTimer = null;  // interval that re-fetches weather while a trip detail is open
 let _locSheet = null;  // {cid, step:"search"|"range", searchQ, results, loc, from, to}
 
 function wmoEmoji(code) {
@@ -7444,6 +7519,7 @@ function switchTab(name) {
   }
 
   if (name !== "builder") { $("#app").classList.remove("builder-mode"); builder = null; }
+  if (name !== "capsules") { clearInterval(_wxAutoTimer); _wxAutoTimer = null; }  // stop weather auto-refresh
 
   if (name === "home") renderHome();
   else if (name === "closet")   renderCloset();
@@ -7573,6 +7649,11 @@ function wireEvents() {
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
     if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);
     if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);
+    if (e.target.closest("[data-wx-refresh]")) {
+      const c = capsuleById.get(capsuleId);
+      if (c) { delete _wxCache[c.id]; const el = $("#wxStrip"); if (el) el.innerHTML = `<div class="wx-loading muted">Refreshing…</div>`; loadTripWeather(c); }
+      return;
+    }
     if (e.target.closest("[data-loc-add]")) return openLocationSheet(capsuleId);
     const locDel = e.target.closest("[data-loc-del]");
     if (locDel) { e.stopPropagation(); return removeLocation(capsuleId, parseInt(locDel.dataset.locDel)); }
