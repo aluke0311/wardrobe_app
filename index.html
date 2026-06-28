@@ -983,7 +983,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r11";
+const APP_VERSION = "2026-06-27 r12";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1453,7 +1453,7 @@ function renderHome() {
   if (ctaBtn) ctaBtn.onclick = () => {
     switchTab("calendar");
     calendarDay = today;
-    renderCalendarDay($("#calBody"));
+    renderCalendarDay($("#calendarBody"));
     openCalAddClothing();
   };
 }
@@ -8225,7 +8225,7 @@ function wireEvents() {
     if (document.getElementById('clBack'))     closetBack();
     else if (document.getElementById('looksBack')) looksBack();
     else if (document.getElementById('stBack'))    statsNavBack();
-    else if (calendarDay) { calendarDay = null; renderCalendarMonth($("#calBody")); }
+    else if (calendarDay) { calendarDay = null; renderCalendarMonth($("#calendarBody")); }
   }, { passive: true });
 
   // Long-press on grid tile (500 ms) → quick-action sheet
