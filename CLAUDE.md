@@ -64,8 +64,11 @@ Top-of-`<script>` config, then logically grouped sections:
   Slot-filling engine (Top/Dress + Bottom + Shoes + optional Outerwear). **By design
   there is NO unworn/last-worn weighting** — slots random-sample and scoring is only
   "match" signals: formality cohesion (hard filter via `formalityOk`), exclusions (hard),
-  loud-color penalty, pattern-clash penalty (`isPatterned`). Returns 8 via softmax
-  (temp 0.8) with diversity-aware selection so arrowing/swiping swaps pieces. Entry points:
+  loud-color penalty, pattern-clash penalty (`isPatterned`), and a capped SOFT boost
+  for color-pair + item-pair affinity learned from saved outfits (`buildSuggestIndexes`
+  → `_colorPairFreq`/`_itemPairFreq`). Returns 8 via softmax (temp 0.8) with diversity-aware
+  selection so arrowing/swiping swaps pieces. Pieces are tappable (open item); swipe slides
+  (`sg-anim-*`). Entry points:
   item detail shuffle button, Looks tab +, capsule "Suggest an outfit". Sheet state in `_sugg`.
 - **EXCLUSIONS** — `exclusions` table stores item pairs that shouldn't appear together.
   `buildExcludeSet()` → `_excludeSet` (Set of "a:b" canonical pairs). `isExcluded(a,b)`,
@@ -172,9 +175,11 @@ Migration: `migration/formality_multiselect.sql` — drops old CHECK constraint,
 Cardigans slot as "Outerwear" via `suggestSlot(i)`. **Intentionally random within things
 that plausibly match — no unworn/rotation bias.** Hard filters: formality cohesion
 (`formalityOk`), exclusions. Soft penalties only: 2+ loud colors, 2+ patterned pieces
-(`isPatterned`). Slots random-sample; softmax (temp 0.8) + diversity-aware batch selection.
-Capsule-scoped mode via `openSuggestSheet(null, capsuleId)`. A seeded item (item-detail
-shuffle) persists across the batch by design.
+(`isPatterned`). Soft boost: color-pair + item-pair affinity learned from saved outfits
+(`buildSuggestIndexes`, capped). Slots random-sample; softmax (temp 0.8) + diversity-aware
+batch selection. Capsule-scoped mode via `openSuggestSheet(null, capsuleId)`. A seeded item
+(item-detail shuffle) persists across the batch by design. Suggestion/builder pieces are
+tappable to open the item (builder restores in-progress look via `_fromBuilder`).
 
 **`NO_SUGGEST_TAG = "no-suggest"`** stored in `items.tags`. Use `isNoSuggest(i)` and
 `setNoSuggest(id, bool)` to manage. Items with this tag are excluded from all suggestions.
