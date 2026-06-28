@@ -633,6 +633,31 @@
   /* look hero rendered from a saved canvas layout */
   .lk-canvas { position: relative; width: 100%; max-width: 360px; margin: 6px auto 4px; aspect-ratio: 3 / 4;
     background: #fafafa; border-radius: 12px; }
+  /* Stylebook-style look view: clean canvas + bottom action toolbar */
+  .lk-canvas-wrap { padding: 6px 0 96px; min-height: 50vh; }
+  .lk-actbar { position: fixed; left: 0; right: 0; bottom: calc(var(--nav-h) + var(--safe-b));
+    display: flex; justify-content: space-around; align-items: flex-start;
+    background: rgba(255,255,255,.97); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--line); padding: 8px 4px; z-index: 20; }
+  .lk-act { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1;
+    background: none; border: none; color: var(--accent); font-size: 10.5px; cursor: pointer; padding: 3px 0; }
+  .lk-act svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8;
+    stroke-linecap: round; stroke-linejoin: round; }
+  .lk-act.danger { color: var(--danger); }
+  /* builder "+ Clothing" item rail: bottom slider over a visible canvas (Stylebook) */
+  .bld-pick-overlay { position: fixed; left: 0; right: 0; bottom: 0; top: 0; z-index: 30;
+    display: flex; pointer-events: none; }
+  .bld-rail { pointer-events: auto; margin-top: auto; width: 100%; background: rgba(255,255,255,.98);
+    backdrop-filter: blur(8px); border-top: 1px solid var(--line); box-shadow: 0 -4px 18px rgba(0,0,0,.12);
+    padding-bottom: var(--safe-b); }
+  .bld-rail-hdr { display: flex; align-items: center; gap: 8px; padding: 9px 12px 4px; }
+  .bld-rail-title { flex: 1; text-align: center; font-weight: 600; font-size: 14px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bld-rail-scroll { display: flex; gap: 10px; overflow-x: auto; padding: 6px 12px 12px;
+    -webkit-overflow-scrolling: touch; }
+  .bld-rail-item { flex: none; width: 84px; height: 102px; border: 1px solid var(--line); border-radius: 10px;
+    background: #fff center/contain no-repeat; cursor: pointer; }
+  .bld-rail-item.in { outline: 2px solid var(--accent); outline-offset: -2px; }
   .lk-cpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
     background: center/contain no-repeat; }
   /* canvas-style collage (saved layout) reused on looks tiles / folder reps / calendar */
@@ -990,7 +1015,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r1";
+const APP_VERSION = "2026-06-28 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3157,6 +3182,7 @@ const LAYER_ORDER = { Outerwear: 0, Tops: 1, Dresses: 1, Workout: 1, Bottoms: 2,
 let looksLens = "Formality";
 let looksFolder = null;   // null = folder list (Formality/Season) | bucket key | season
 let lookId = null;        // outfit id in detail (null = none)
+let lookView = "canvas";  // when lookId set: "canvas" | "details" | "wears"
 let looksSearchQ = null;  // null = not searching | query string (search by piece/context)
 
 // ---- derived helpers ----
@@ -3995,7 +4021,7 @@ function looksSearchResults(q) {
 }
 
 function renderLooks() {
-  lookId = null;
+  lookId = null; lookView = "canvas";
   $("#itemBar").hidden = true;
   const body = $("#looksBody");
   const banner = looksCapsuleBanner();
@@ -4036,7 +4062,11 @@ function renderLooks() {
 
 function looksBack() {
   if (looksSearchQ !== null) { looksSearchQ = null; return renderLooks(); }
-  if (lookId) { lookId = null; return renderLooks(); }
+  if (lookId) {
+    if (lookView === "wears") return openLookDetails(lookId);   // wears → details
+    if (lookView === "details") return openLook(lookId);        // details → canvas
+    lookId = null; lookView = "canvas"; return renderLooks();   // canvas → list
+  }
   if (looksFolder) { looksFolder = null; return renderLooks(); }
   renderLooks();
 }
@@ -4047,37 +4077,61 @@ function openRandomLook() {
 }
 
 // ---- outfit detail ----
+// Shared hero: a saved canvas layout, else a grid of piece photos.
+function lookHeroBlock(o) {
+  const lay = Array.isArray(o.layout) ? o.layout.filter(p => itemById.get(p.item_id) && itemById.get(p.item_id).image_path) : [];
+  if (lay.length) return `<div class="lk-canvas">${lay.map((p, idx) => {
+    const it = itemById.get(p.item_id);
+    return `<div class="lk-cpiece" data-look-item="${esc(it.id)}" data-photo="${esc(it.image_path)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${idx + 1}"></div>`;
+  }).join("")}</div>`;
+  const pieces = outfitPieces(o);
+  if (pieces.length) return `<div class="lk-hero${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) => {
+    const span = (pieces.length === 3 && idx === 2) ? " span2" : "";
+    return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path)}"></div>`;
+  }).join("")}</div>`;
+  return `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
+}
+
+// Look view: clean canvas + bottom action toolbar (Stylebook-style).
 function openLook(id) {
   const o = outfitById.get(id);
   if (!o) return;
-  lookId = id;
-
+  lookId = id; lookView = "canvas";
   const its = outfitItems(o);
-  const pieces = outfitPieces(o);
+  const ic = (svg, label, act, cls) =>
+    `<button class="lk-act${cls ? ` ${cls}` : ""}" data-lkact="${act}"><svg viewBox="0 0 24 24">${svg}</svg><span>${label}</span></button>`;
+  const body = $("#looksBody");
+  body.innerHTML = `
+    ${looksToolbar(esc(outfitName(o)), true, false)}
+    <div class="lk-canvas-wrap">
+      ${lookHeroBlock(o)}
+      <div class="center muted" style="font-size:12.5px;margin-top:4px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it</div>
+    </div>
+    <div class="lk-actbar">
+      ${ic('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>', "Details", "details")}
+      ${ic('<path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>', "Formality", "folder")}
+      ${ic('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', "Duplicate", "duplicate")}
+      ${ic('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/>', "Calendar", "calendar")}
+      ${ic('<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>', "Delete", "delete", "danger")}
+    </div>`;
+  $("#itemBar").hidden = true;
+  hydratePhotos(body);
+  window.scrollTo(0, 0);
+}
+
+// Look "Details" metadata page (Edit button on the canvas view).
+function openLookDetails(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  lookId = id; lookView = "details";
+  const its = outfitItems(o);
   const n = outfitWornCount(o), lw = outfitLastWorn(o);
   const lastTxt = lw ? (daysSince(lw) <= 0 ? "Today" : relDate(lw)) : "Never";
   const cost = outfitCost(o);
   const seasons = outfitSeasons(o);
-  // context: from the most recent wear date for this outfit
-  const outfitWears = wears.filter(w => w.outfit_id === id).sort((a, b) => b.worn_on.localeCompare(a.worn_on));
-  const lastWearCtx = lw ? outfitWears.filter(w => w.worn_on === lw).flatMap(w => w.context || []).filter((v, i, a) => a.indexOf(v) === i) : [];
-  const lastWearIds = lw ? outfitWears.filter(w => w.worn_on === lw).map(w => w.id) : [];
   const bucket = FORMALITY_BUCKETS.find(b => b.key === outfitBucket(o));
   const lookLvl = BUCKET_RANGES[outfitBucket(o)];
   const missingLvlPieces = its.filter(it => !(itemFormalitySet(it) || []).includes(lookLvl));
-
-  const lay = Array.isArray(o.layout) ? o.layout.filter(p => itemById.get(p.item_id) && itemById.get(p.item_id).image_path) : [];
-  const heroBlock = lay.length
-    ? `<div class="lk-canvas">${lay.map((p, idx) => {
-        const it = itemById.get(p.item_id);
-        return `<div class="lk-cpiece" data-look-item="${esc(it.id)}" data-photo="${esc(it.image_path)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${idx + 1}"></div>`;
-      }).join("")}</div>`
-    : pieces.length
-    ? `<div class="lk-hero${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) => {
-        const span = (pieces.length === 3 && idx === 2) ? " span2" : "";
-        return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path)}"></div>`;
-      }).join("")}</div>`
-    : `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
 
   const pieceRows = its.map((it, idx) => `
     ${idx > 0 ? '<div class="det-divider"></div>' : ""}
@@ -4091,18 +4145,14 @@ function openLook(id) {
 
   const body = $("#looksBody");
   body.innerHTML = `
-    ${looksToolbar(esc(outfitName(o)), true, false)}
+    ${looksToolbar("Details", true, false)}
     <div class="det-body">
-      ${heroBlock}
-      <div class="center muted" style="font-size:12.5px;margin-bottom:8px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it</div>
-
       <div class="det-section-label">WEAR</div>
       <div class="det-card">
-        <div class="det-row"><span class="det-lbl">Worn</span><span class="det-val">${n} time${n === 1 ? "" : "s"}</span></div>
+        <button class="det-row" id="lookWearsBtn"><span class="det-lbl">Worn</span><span class="det-val">${n} time${n === 1 ? "" : "s"}${lw ? ` · last ${esc(lastTxt)}` : ""}</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
         <div class="det-divider"></div>
-        <div class="det-row"><span class="det-lbl">Last</span><span class="det-val">${esc(lastTxt)}</span></div>
+        <div class="det-row"><span class="det-lbl">Pieces</span><span class="det-val">${its.length} item${its.length === 1 ? "" : "s"}</span></div>
         <div class="det-divider"></div>
-        ${lastWearIds.length ? `<button class="det-row" id="lookCtxBtn"><span class="det-lbl">Context</span><span class="det-val">${lastWearCtx.length ? esc(lastWearCtx.join(", ")) : '<span style="color:var(--muted)">—</span>'}</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button><div class="det-divider"></div>` : ""}
         <div class="det-row"><span class="det-lbl">Total</span><span class="det-val">${cost > 0 ? esc(money(cost)) : "—"}</span></div>
       </div>
 
@@ -4113,18 +4163,13 @@ function openLook(id) {
         <div class="det-row"><span class="det-lbl">Season</span><span class="det-val">${seasons.length ? seasons.map(s => `<span class="lk-chip">${esc(s)}</span>`).join(" ") : "—"}</span></div>
       </div>
 
-      <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit in canvas</button></div>
+      <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit arrangement</button></div>
       <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
       ${missingLvlPieces.length ? `<button class="lnk" id="lookAddLevel" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:8px">+ Add “${lookLvl}. ${esc(occLabel(lookLvl))}” to ${missingLvlPieces.length} piece${missingLvlPieces.length === 1 ? "" : "s"}</button>` : ""}
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
-    </div>
-    <div class="det-footer">
-      <button class="lnk" id="lookWear" style="font-weight:600">Wear this look</button>
-      <button class="lnk" id="lookDelete" style="color:var(--danger)">Delete</button>
-    </div>
-  `;
+    </div>`;
   $("#itemBar").hidden = true;
   hydratePhotos(body);
   window.scrollTo(0, 0);
@@ -4146,6 +4191,68 @@ function openLook(id) {
       } catch (e) { o.notes = prev; toast(e.message); }
     }, 900);
   });
+}
+
+// "When You Wore It" — this look's wear dates; tap a day to set its context.
+function openLookWears(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  lookId = id; lookView = "wears";
+  const byDate = new Map();
+  for (const w of wears) {
+    if (w.outfit_id !== id) continue;
+    let a = byDate.get(w.worn_on); if (!a) { a = []; byDate.set(w.worn_on, a); }
+    a.push(w);
+  }
+  const dates = [...byDate.keys()].sort((a, b) => b.localeCompare(a));
+  const rows = dates.map(d => {
+    const ws = byDate.get(d);
+    const ctx = ws.flatMap(w => ctxArr(w)).filter((v, i, a) => a.indexOf(v) === i);
+    const dt = new Date(d + "T00:00:00");
+    const dlabel = dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    const dow = dt.toLocaleDateString(undefined, { weekday: "long" });
+    return `<button class="det-row" data-wear-date="${esc(d)}" style="align-items:center">
+      <span style="flex:1;min-width:0">
+        <span style="display:block">${esc(dlabel)}</span>
+        <span style="display:block;color:var(--muted);font-size:12.5px;margin-top:2px">${esc(dow)}${ctx.length ? ` · ${esc(ctx.join(", "))}` : ""}</span>
+      </span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join("");
+  const body = $("#looksBody");
+  body.innerHTML = `
+    ${looksToolbar("When You Wore It", true, false)}
+    <div class="det-body">
+      ${dates.length
+        ? `<div class="det-card">${rows}</div><div class="center muted" style="font-size:12px;margin-top:8px">Tap a day to set its context.</div>`
+        : `<div class="muted center" style="padding:30px">Never worn yet.</div>`}
+    </div>`;
+  $("#itemBar").hidden = true;
+  hydratePhotos(body);
+  window.scrollTo(0, 0);
+}
+
+// Duplicate a look (copies name+"copy", layout, formality override, pieces).
+async function duplicateLook(id) {
+  const o = outfitById.get(id); if (!o) return;
+  const itemIds = (outfitItemMap.get(id) || []).slice();
+  try {
+    const rows = await rest("/outfits?select=*", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify({ name: o.name ? `${o.name} copy` : null, layout: o.layout || null, formality_override: o.formality_override || null }),
+    });
+    const no = Array.isArray(rows) ? rows[0] : rows;
+    if (!no || !no.id) throw new Error("Could not duplicate look");
+    outfits.push(no);
+    if (itemIds.length) {
+      const links = itemIds.map(item_id => ({ outfit_id: no.id, item_id }));
+      await rest("/outfit_items", { method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" }, body: JSON.stringify(links) });
+      outfitLinks = outfitLinks.concat(links);
+    }
+    buildOutfitIndexes();
+    toast("Look duplicated");
+    openLook(no.id);
+  } catch (e) { toast(e.message); }
 }
 
 // ---- wear this look (one wear row per piece, linked to the outfit) ----
@@ -7355,8 +7462,51 @@ function openBuilder(outfitId = null, seedItemId = null) {
 
 function renderBuilder() {
   if (!builder) return;
-  if (builder.picking) renderBuilderPicker();
-  else renderBuilderCanvas();
+  if (builder.picking && builderInItemMode()) {
+    renderBuilderCanvas();    // canvas stays visible behind the rail
+    renderBuilderRail();
+  } else if (builder.picking) {
+    renderBuilderPicker();    // full-screen category / subfolder list
+  } else {
+    renderBuilderCanvas();
+  }
+}
+
+// True once we're down to an item list (a subfolder, or a flat category with no
+// subcategories) — that's when we show the bottom rail over the canvas.
+function builderInItemMode() {
+  if (!builder.pickCat || builder.pickQ.trim()) return false;  // category list / search stay full-screen
+  if (builder.pickSub) return true;
+  const catPool = items.filter(i => itemStatus(i) !== "Archive" && i.image_path && (i.category || "Other") === builder.pickCat);
+  return ![...new Set(catPool.map(i => i.subcategory).filter(Boolean))].length;  // flat category
+}
+
+function builderRailPool() {
+  const pool = items.filter(i => itemStatus(i) !== "Archive" && i.image_path && (i.category || "Other") === builder.pickCat);
+  return builder.pickSub ? pool.filter(i => (i.subcategory || "") === builder.pickSub) : pool;
+}
+
+// Bottom item slider over the visible canvas; tap an item to drop it in (rail stays open).
+function renderBuilderRail() {
+  const body = $("#builderBody");
+  const list = builderRailPool();
+  const have = new Set(builder.pieces.map(p => p.item_id));
+  const cells = list.length
+    ? list.map(i => `<div class="bld-rail-item${have.has(i.id) ? " in" : ""}" data-railadd="${esc(i.id)}" data-photo="${esc(i.image_path)}"></div>`).join("")
+    : `<div class="muted" style="padding:20px 12px;font-size:13px">No items</div>`;
+  const ov = document.createElement("div");
+  ov.className = "bld-pick-overlay";
+  ov.innerHTML = `
+    <div class="bld-rail">
+      <div class="bld-rail-hdr">
+        <button class="lnk" data-railback>‹ ${esc(builder.pickCat || "Folders")}</button>
+        <div class="bld-rail-title">${esc(builder.pickSub || builder.pickCat || "Items")} · ${list.length}</div>
+        <button class="lnk" data-railclose style="font-weight:700">Done</button>
+      </div>
+      <div class="bld-rail-scroll">${cells}</div>
+    </div>`;
+  body.appendChild(ov);
+  hydratePhotos(ov);
 }
 
 function renderBuilderCanvas() {
@@ -7542,12 +7692,13 @@ function builderItemGrid(list) {
   })}</div>`;
 }
 
-function addPieceToBuilder(id) {
+function addPieceToBuilder(id, keepPicking) {
   if (!itemById.has(id)) return;
   const at = builder.pieces.findIndex(p => p.item_id === id);
   if (at >= 0) builder.selIdx = at;
   else { builder.pieces.push({ item_id: id, ...defaultPlacement(builder.pieces.length) }); builder.selIdx = builder.pieces.length - 1; }
-  builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = "";
+  // From the bottom rail we keep picking so several pieces can be added in a row.
+  if (!keepPicking) { builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = ""; }
   renderBuilder();
 }
 
@@ -8107,12 +8258,31 @@ function wireEvents() {
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
     const folder = e.target.closest("[data-lfolder]");
     if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
-    if (e.target.closest("#lookCtxBtn")) { if (lookId) { const o = outfitById.get(lookId); const lw = outfitLastWorn(o); const ows = wears.filter(w => w.outfit_id === lookId && w.worn_on === lw); const ids = ows.map(w => w.id); const cur = ows.flatMap(w => w.context || []).filter((v,i,a) => a.indexOf(v)===i); openContextSheet(ids, cur, () => openLook(lookId)); } return; }
+    const lkact = e.target.closest("[data-lkact]");
+    if (lkact && lookId) {
+      const a = lkact.dataset.lkact;
+      if (a === "details")   return openLookDetails(lookId);
+      if (a === "folder")    return openLookFormalityEdit(lookId);
+      if (a === "duplicate") return duplicateLook(lookId);
+      if (a === "calendar")  return openWearLook(lookId);
+      if (a === "delete")    return deleteLook(lookId);
+      return;
+    }
+    if (e.target.closest("#lookWearsBtn")) { if (lookId) openLookWears(lookId); return; }
+    const wearDate = e.target.closest("[data-wear-date]");
+    if (wearDate && lookId) {
+      const d = wearDate.dataset.wearDate;
+      const ows = wears.filter(w => w.outfit_id === lookId && w.worn_on === d);
+      const ids = ows.map(w => w.id).filter(Boolean);
+      const cur = ows.flatMap(w => ctxArr(w)).filter((v, i, a) => a.indexOf(v) === i);
+      if (ids.length) openContextSheet(ids, cur, () => openLookWears(lookId));
+      return;
+    }
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
     if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
     if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
     const occItem = e.target.closest("[data-occ-item]");
-    if (occItem) { openOccasionEdit(occItem.dataset.occItem, () => { if (lookId) openLook(lookId); }); return; }
+    if (occItem) { openOccasionEdit(occItem.dataset.occItem, () => { if (lookId) openLookDetails(lookId); }); return; }
     const piece = e.target.closest("[data-look-item]");
     if (piece) {
       const it = itemById.get(piece.dataset.lookItem);
@@ -8121,8 +8291,6 @@ function wireEvents() {
     }
     const look = e.target.closest("[data-look]");
     if (look) return openLook(look.dataset.look);
-    if (e.target.closest("#lookWear")) { if (lookId) openWearLook(lookId); return; }
-    if (e.target.closest("#lookDelete")) { if (lookId) deleteLook(lookId); return; }
   });
 
   // build-a-look canvas: toolbar, picker, piece controls
@@ -8136,6 +8304,10 @@ function wireEvents() {
     if (bcat) { builder.pickCat = bcat.dataset.bcat; builder.pickSub = null; return renderBuilder(); }
     const bsub = e.target.closest("[data-bsub]");
     if (bsub) { builder.pickSub = bsub.dataset.bsub; return renderBuilder(); }
+    const railadd = e.target.closest("[data-railadd]");
+    if (railadd) return addPieceToBuilder(railadd.dataset.railadd, true);  // keep rail open
+    if (e.target.closest("[data-railback]")) return builderPickBack();
+    if (e.target.closest("[data-railclose]")) { builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = ""; return renderBuilder(); }
     const badd = e.target.closest("[data-badd]");
     if (badd) return addPieceToBuilder(badd.dataset.badd);
     const layer = e.target.closest("[data-blayer]");
