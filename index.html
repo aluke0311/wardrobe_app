@@ -32,6 +32,9 @@
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; }
+  /* No accidental text selection / iOS long-press callout on chrome; inputs stay selectable. */
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  input, textarea, select, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
   body {
     background: var(--bg);
     color: var(--ink);
@@ -80,16 +83,17 @@
   .bar {
     position: sticky; top: 0; z-index: 10;
     display: flex; align-items: center; justify-content: center;
-    height: 52px; padding: 0 14px;
+    height: calc(52px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 14px 0;
     background: rgba(255,255,255,.92); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
   }
   .bar h1 { font-size: 17px; letter-spacing: .14em; text-transform: uppercase; }
+  /* absolute icons sit in the visible bar area, below the status-bar inset */
   .bar .gear {
-    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    position: absolute; right: 12px; top: calc(50% + env(safe-area-inset-top) / 2); transform: translateY(-50%);
     font-size: 19px; color: var(--muted); width: 34px; height: 34px;
   }
-  .ver { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--muted); }
+  .ver { position: absolute; left: 12px; top: calc(50% + env(safe-area-inset-top) / 2); transform: translateY(-50%); font-size: 10px; color: var(--muted); }
 
   .tabbody { padding-bottom: calc(var(--nav-h) + var(--safe-b)); }
   .screen { display: none; }
@@ -151,7 +155,7 @@
   .log-cta { display:block; margin:12px 16px 0; padding:14px; background:var(--accent); color:#fff; border-radius:14px; font-size:16px; font-weight:600; text-align:center; }
 
   /* ---------- header add button ---------- */
-  .addbtn { position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  .addbtn { position: absolute; left: 10px; top: calc(50% + env(safe-area-inset-top) / 2); transform: translateY(-50%);
     font-size: 26px; color: var(--accent); width: 36px; height: 36px; line-height: 1; }
   .addbtn[hidden] { display: none; }
 
@@ -1015,7 +1019,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r7";
+const APP_VERSION = "2026-06-28 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2318,12 +2322,19 @@ function closeFieldSheet() {
 
 function renderFieldSheet(i, field, cfg) {
   const curVal = _fieldPending !== undefined ? _fieldPending : i[field];
+  // Per-field keyboard hints: URLs want the url keyboard + no autocorrect; proper
+  // nouns (name/brand/retailer) capitalize words and skip autocorrect/spellcheck.
+  const isUrl = field === "url";
+  const capWords = field === "name" || field === "brand" || field === "retailer";
+  const textAttrs = isUrl
+    ? `type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false"`
+    : `type="text" inputmode="text" autocapitalize="${capWords ? "words" : "sentences"}" autocorrect="${capWords ? "off" : "on"}" spellcheck="${capWords ? "false" : "true"}"`;
   let content = "";
   if (cfg.type === "text" || cfg.type === "price") {
     const isPrice = cfg.type === "price";
+    const attrs = isPrice ? `type="number" inputmode="decimal"` : textAttrs;
     content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
-      <input class="inp" id="fieldTextInp" type="${isPrice ? "number" : "text"}"
-        inputmode="${isPrice ? "decimal" : "text"}"
+      <input class="inp" id="fieldTextInp" ${attrs}
         value="${esc(curVal != null ? String(curVal) : "")}"
         placeholder="${esc(cfg.label)}…" style="width:100%;font-size:16px">
     </div>`;
@@ -2340,7 +2351,7 @@ function renderFieldSheet(i, field, cfg) {
            `<button class="sheet-chip${s === curVal ? " on" : ""}" data-fv="${esc(s)}">${esc(s)}</button>`).join("")}</div>`
       : "";
     content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
-      <input class="inp" id="fieldTextInp" type="text" inputmode="text"
+      <input class="inp" id="fieldTextInp" ${textAttrs}
         value="${esc(curVal != null ? String(curVal) : "")}"
         placeholder="${esc(cfg.label)}…" style="width:100%;font-size:16px">
     </div>${suggestHtml}`;
