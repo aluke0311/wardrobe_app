@@ -1015,7 +1015,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r6";
+const APP_VERSION = "2026-06-28 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1994,7 +1994,7 @@ function openItemDetails(id) {
   detailId = id;
   detailView = "details";
 
-  const n = wearCount(i.id), lw = lastWorn(i.id), cpw = costPerWear(i), oc = outfitCount(i.id);
+  const n = wearCount(i.id), lw = lastWorn(i.id), cpw = costPerWear(i), oc = outfitsForItem(i.id).length;
   const ds = lw ? daysSince(lw) : null;
   const lastWornText = lw ? (ds === 0 ? "Today" : `${ds} day${ds === 1 ? "" : "s"} ago`) : "Never";
 
@@ -2048,9 +2048,10 @@ function openItemDetails(id) {
       </div>
 
       <div class="det-card" style="margin-bottom:14px">
-        <div class="det-row">
-          <span class="det-val" style="color:var(--muted)">Used in ${oc} outfit${oc === 1 ? "" : "s"}</span>
-        </div>
+        <button class="det-row" id="detOutfits"${oc ? "" : " disabled"} style="width:100%;text-align:left">
+          <span class="det-val"${oc ? "" : ' style="color:var(--muted)"'}>Used in ${oc} look${oc === 1 ? "" : "s"}</span>
+          ${oc ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
+        </button>
         <div class="det-divider"></div>
         <div class="det-row">
           <div>
@@ -2172,6 +2173,9 @@ function openItemDetails(id) {
     openItemDetails(i.id);
   };
 
+  const outfitsBtn = $("#detOutfits");
+  if (outfitsBtn && oc) outfitsBtn.onclick = () => { looksItemFilter = i.id; switchTab("looks"); };
+
   $("#detCapsules").onclick = () => {
     openCapsuleAssign(capsulesForItem(i.id), async (ids) => {
       await saveItemCapsules(i.id, ids);
@@ -2263,6 +2267,11 @@ async function saveField(id, field, value) {
   const patch = { [field]: value };
   // An explicitly-entered purchase date is no longer a guess.
   if (field === "purchase_date") { i.date_is_guess = false; patch.date_is_guess = false; }
+  // Changing a piece's formality re-categorizes every look it's in (unless the
+  // look has a manual override) — drop their cached buckets so they re-derive.
+  if (field === "formality") {
+    for (const o of outfits) if ((outfitItemMap.get(o.id) || []).includes(id)) o._bucket = null;
+  }
   try {
     await rest(`/items?id=eq.${id}`, {
       method: "PATCH",
@@ -3207,12 +3216,19 @@ let looksFolder = null;   // null = folder list (Formality/Season) | bucket key 
 let lookId = null;        // outfit id in detail (null = none)
 let lookView = "canvas";  // when lookId set: "canvas" | "details" | "wears"
 let looksSearchQ = null;  // null = not searching | query string (search by piece/context)
+let looksItemFilter = null;  // item id → Looks shows only looks containing that piece (from item detail)
 
 // ---- derived helpers ----
 function outfitItems(o) { return (outfitItemMap.get(o.id) || []).map(id => itemById.get(id)).filter(Boolean); }
 // A look needs 2+ real (still-existing) pieces to show anywhere.
 function displayOutfits() { return outfits.filter(o => (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id)).length >= 2); }
 // Looks the user hasn't archived (archived ones are hidden from browse/pickers).
+// Every look this item is a member of (active + archived), newest-worn first.
+function outfitsForItem(itemId) {
+  return displayOutfits()
+    .filter(o => (outfitItemMap.get(o.id) || []).includes(itemId))
+    .sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
+}
 function activeOutfits() { return displayOutfits().filter(o => !o.archived); }
 function archivedOutfits() { return displayOutfits().filter(o => o.archived); }
 // Looks pool, scoped to the active capsule when planning: only looks wearable
@@ -4058,6 +4074,19 @@ function renderLooks() {
   lookId = null; lookView = "canvas";
   $("#itemBar").hidden = true;
   const body = $("#looksBody");
+  // Scoped to a single item (opened from its detail page): just its looks.
+  if (looksItemFilter) {
+    const it = itemById.get(looksItemFilter);
+    if (it) {
+      const list = outfitsForItem(looksItemFilter);
+      body.innerHTML = looksToolbar(`In “${esc(it.name || "Untitled")}”`, true, false)
+        + `<div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)">${list.length} look${list.length === 1 ? "" : "s"} with this piece</div>`
+        + outfitGridHtml(list);
+      hydratePhotos(body);
+      return;
+    }
+    looksItemFilter = null;
+  }
   const banner = looksCapsuleBanner();
   if (looksSearchQ !== null) {
     const results = looksSearchResults(looksSearchQ);
@@ -4106,8 +4135,10 @@ function looksBack() {
   if (lookId) {
     if (lookView === "wears") return openLookDetails(lookId);   // wears → details
     if (lookView === "details") return openLook(lookId);        // details → canvas
-    lookId = null; lookView = "canvas"; return renderLooks();   // canvas → list
+    lookId = null; lookView = "canvas"; return renderLooks();   // canvas → list (stays filtered if scoped)
   }
+  // From the item-scoped looks list, back returns to that item's detail.
+  if (looksItemFilter) { const id = looksItemFilter; looksItemFilter = null; switchTab("closet"); return openItemDetails(id); }
   if (looksFolder) { looksFolder = null; return renderLooks(); }
   renderLooks();
 }
@@ -8244,7 +8275,7 @@ const TAB_TITLES = {
 // calls that pre-set folder state and then openItem() don't go through here.)
 function resetTabRoot(name) {
   if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; }
-  else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; }
+  else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; looksItemFilter = null; }
   else if (name === "calendar") { calendarDay = null; }
 }
 
