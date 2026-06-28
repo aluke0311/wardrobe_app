@@ -54,12 +54,21 @@ Top-of-`<script>` config, then logically grouped sections:
   `_fieldEditItem`/`_fieldOnSave` dual-mode (DB save vs. callback).
 - **ADD ITEM** — `renderAdd()`/`_renderAddBody()`/`saveNewItem()`. State in `_addState`.
 - **SEARCH** — `openSearch()`/`renderSearch()`/`runSearch()`. Keyword + 6 filter rows.
-- **LOOKS** — `renderLooks()`/`openLook()`/`openLookFormalityEdit()`/`showNudgePiecesSheet()`.
-  Lens switcher (Formality/Season/Recent/All). `layoutCanvasHtml(o, wrapCls)` is the
-  single renderer for saved Build-a-look arrangements (all thumbnails use it).
+- **LOOKS** — `renderLooks()` + 3-view look detail keyed by `lookView`:
+  `openLook()` (clean canvas + bottom action toolbar: Details/Formality/Duplicate/
+  Calendar/Archive/Delete) → `openLookDetails()` (metadata page: wear/pieces/cost,
+  formality, season, per-piece formality, notes) → `openLookWears()` ("When You Wore
+  It" — every wear date; tap a day → `openContextSheet` to set that wear's context).
+  `looksBack()` walks wears→details→canvas→list. `duplicateLook()`/`archiveLook()`.
+  Lens switcher (Formality/Season/Capsule/Recent/All/**Archived**). `activeOutfits()`
+  (non-archived) feeds browse + calendar +Look picker; `archivedOutfits()` feeds the
+  Archived lens. `layoutCanvasHtml(o, wrapCls)` / `lookHeroBlock(o)` render arrangements.
 - **BUILD-A-LOOK** — Stylebook canvas on `#tab-builder`. `openBuilder(outfitId?, seedItemId?)`.
   Pointer drag+resize; `builder` global state. `saveBuilder()` writes `outfits.layout` JSONB.
-  Migration: `migration/outfit_layout.sql`.
+  "+ Clothing" picker: category/subfolder browsing is full-screen (`renderBuilderPicker`);
+  once at an item list (`builderInItemMode` → subfolder or flat category) it switches to a
+  bottom item rail over the visible canvas (`renderBuilderRail`, `.bld-rail`); rail taps
+  `addPieceToBuilder(id, true)` keep it open. Migration: `migration/outfit_layout.sql`.
 - **OUTFIT SUGGESTIONS** — `suggestOutfits(targetLevel?, seedItemId?, capsulePool?)`.
   Slot-filling engine (Top/Dress + Bottom + Shoes + optional Outerwear). **By design
   there is NO unworn/last-worn weighting** — slots random-sample and scoring is only
@@ -126,7 +135,8 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
   nullable — demand capture), created_at.
 - `outfits`: id, user_id, name, context, notes, image_path, formality_override
   (text — bucket key, nullable), **layout** (JSONB `{item_id,x,y,s}[]`),
-  rating (smallint, nullable — reserved), created_at.
+  rating (smallint, nullable — reserved), **archived** (boolean default false —
+  hides the look from browse/pickers; kept in history), created_at.
   Join table: `outfit_items(outfit_id, item_id, user_id)`.
 - `capsules`: id, user_id, name, kind (capsule|packing|travel), start_date,
   end_date, notes, locations (JSONB `{name,lat,lon,from,to}[]`), created_at.
@@ -144,6 +154,7 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 - `migration/capsule_weather.sql` — adds `capsules.locations`.
 - `migration/capsule_items_packed.sql` — adds `capsule_items.packed`.
 - `migration/wears_context_array.sql` — converts `wears.context text → text[]` (multi-select).
+- `migration/outfit_archived.sql` — adds `outfits.archived` (boolean). Applied 2026-06-28.
 
 ## Design model
 
