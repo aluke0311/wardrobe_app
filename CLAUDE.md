@@ -181,8 +181,12 @@ batch selection. Capsule-scoped mode via `openSuggestSheet(null, capsuleId)`. A 
 (item-detail shuffle) persists across the batch by design. Suggestion/builder pieces are
 tappable to open the item (builder restores in-progress look via `_fromBuilder`).
 
-**`NO_SUGGEST_TAG = "no-suggest"`** stored in `items.tags`. Use `isNoSuggest(i)` and
-`setNoSuggest(id, bool)` to manage. Items with this tag are excluded from all suggestions.
+**Sentinel tags in `items.tags`** (managed via `setItemTag(id, tag, bool)`):
+- **`NO_SUGGEST_TAG = "no-suggest"`** — `isNoSuggest(i)`/`setNoSuggest`. Excluded from all suggestions.
+- **`LAYER_TAG = "layer"`** — `isLayer(i)`/`setLayer`. A Top flagged as layerable (e.g. a
+  button-up) is eligible for the Outerwear/layer slot in `suggestOutfits` as well as the
+  Top slot (combos guard against an item being its own layer). Toggle in item detail
+  SUGGESTIONS card, shown only when `category === "Tops"`.
 
 **Contexts** — 13 named occasions stamped on wears/outfits (not items). Formality
 ranges: Function/garden (1) · WFH (1) · Errands (1–2) · Friends/rehearsal (2) ·
