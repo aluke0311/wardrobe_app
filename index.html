@@ -634,6 +634,11 @@
   .ocanvas.omini { width: 64px; height: 64px; flex: none; aspect-ratio: auto; border-radius: 10px; }
   .ocanvas.bare { border: none; border-radius: 0; background: transparent; }
   .ocanvas.sg-canvas { max-width: 320px; margin: 0 auto; }
+  .ocpiece[data-canvas-item] { cursor: pointer; }
+  @keyframes sgInRight { from { transform: translateX(34px); opacity: .15; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes sgInLeft  { from { transform: translateX(-34px); opacity: .15; } to { transform: translateX(0); opacity: 1; } }
+  .sg-anim-next { animation: sgInRight .22s ease; }
+  .sg-anim-prev { animation: sgInLeft .22s ease; }
   .ocpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
     background: center/contain no-repeat; }
 
@@ -976,7 +981,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r9";
+const APP_VERSION = "2026-06-27 r10";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1280,6 +1285,7 @@ async function loadData() {
   buildOutfitIndexes();
   buildCapsuleIndexes();
   buildExcludeSet();
+  buildSuggestIndexes();
   dataReady = true;
 }
 
@@ -1474,6 +1480,7 @@ let searchResults = null; // null = not in search-results mode; else array of it
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
 let _fromStats = false;   // item detail opened from stats (closetBack returns to stats)
+let _fromBuilder = null;  // stashed builder state when an item is opened from the builder
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
 let selectMode = false;   // multi-select active
@@ -1779,6 +1786,16 @@ function closetBack() {
     $("#title").textContent = "Style Stats";
     $("#headerAdd").hidden = true;
     renderStats(); return;
+  }
+  if (detailId && _fromBuilder) {
+    const stash = _fromBuilder; _fromBuilder = null;
+    detailId = null; detailView = null;
+    $("#itemBar").hidden = true;
+    $("#app").classList.remove("detail-photo");
+    builder = stash;
+    $("#app").classList.add("builder-mode");
+    switchTab("builder");
+    return;
   }
   if (detailId && _fromCapsule) {
     const cid = _fromCapsule; _fromCapsule = null;
@@ -3212,7 +3229,7 @@ function layoutCanvasHtml(o, wrapCls) {
   if (!lay.length) return null;
   const cells = lay.map((p, i) => {
     const it = itemById.get(p.item_id);
-    return `<div class="ocpiece" data-photo="${esc(it.image_path)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
+    return `<div class="ocpiece" data-photo="${esc(it.image_path)}" data-canvas-item="${esc(p.item_id)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
   }).join("");
   return `<div class="${wrapCls}">${cells}</div>`;
 }
@@ -3348,6 +3365,33 @@ function outfitGridHtml(list) {
 function buildExcludeSet() {
   _excludeSet = new Set(exclusions.map(e => [e.item_a, e.item_b].sort().join(":")));
 }
+
+// Learn what actually goes together from saved outfits: how often each color pair
+// and each item pair has been worn together. Used as a SOFT boost in scoreCombo so
+// suggestions lean toward the user's real taste (not hardcoded color rules). Built
+// once on load; degrades gracefully when history/color coverage is sparse.
+let _colorPairFreq = new Map();
+let _itemPairFreq = new Map();
+const _pairKey = (a, b) => a < b ? a + "|" + b : b + "|" + a;
+function buildSuggestIndexes() {
+  _colorPairFreq = new Map();
+  _itemPairFreq = new Map();
+  for (const o of outfits) {
+    const its = outfitItems(o);
+    if (its.length < 2) continue;
+    for (let i = 0; i < its.length; i++) {
+      for (let j = i + 1; j < its.length; j++) {
+        const A = its[i], B = its[j];
+        const ik = _pairKey(A.id, B.id);
+        _itemPairFreq.set(ik, (_itemPairFreq.get(ik) || 0) + 1);
+        if (A.color_family && B.color_family && A.color_family !== B.color_family) {
+          const ck = _pairKey(A.color_family, B.color_family);
+          _colorPairFreq.set(ck, (_colorPairFreq.get(ck) || 0) + 1);
+        }
+      }
+    }
+  }
+}
 function isExcluded(a, b) { return _excludeSet.has([a, b].sort().join(":")); }
 
 // "Never suggest this item" — stored as a sentinel tag (no schema change needed).
@@ -3401,6 +3445,22 @@ function scoreCombo(its, target) {
   if (louds.length >= 2) s -= 3;
   // pattern: penalize mixing 2+ patterned/printed pieces (busy clash)
   if (its.filter(isPatterned).length >= 2) s -= 3;
+  // learned affinity (soft): nudge toward color pairs + item pairs the user
+  // actually wears together, mined from saved outfits. Capped so it stays a
+  // nudge — suggestions remain random among things that plausibly match.
+  let aff = 0;
+  for (let i = 0; i < its.length; i++) {
+    for (let j = i + 1; j < its.length; j++) {
+      const A = its[i], B = its[j];
+      const ip = _itemPairFreq.get(_pairKey(A.id, B.id)) || 0;
+      if (ip) aff += Math.min(1.0, 0.4 * Math.log1p(ip));
+      if (A.color_family && B.color_family && A.color_family !== B.color_family) {
+        const cp = _colorPairFreq.get(_pairKey(A.color_family, B.color_family)) || 0;
+        if (cp) aff += Math.min(0.8, 0.3 * Math.log1p(cp));
+      }
+    }
+  }
+  s += Math.min(3, aff);
   // NOTE: no rotation/last-worn weighting by design — suggestions are random
   // among pieces that plausibly match, not biased toward unworn items.
   return s;
@@ -3535,6 +3595,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state
 let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null };
+let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
 
 function openSuggestSheet(seedItemId = null, capsuleId = null) {
   _sugg.seedItemId = seedItemId;
@@ -3570,7 +3631,7 @@ function renderSuggestSheet() {
     const fakeOutfit = { layout, formality_override: null, _bucket: null };
     const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas");
     preview = canvas || combo.pieces.map(p =>
-      `<div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+      `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer" data-canvas-item="${esc(p.id)}">
         ${thumbHtml(p.image_path)}
         <div><div style="font-size:14px;font-weight:500">${esc(p.name)}</div>
         <div style="font-size:12px;color:var(--muted)">${esc(p.category)}${p.color_family ? " · " + esc(p.color_family) : ""}</div></div>
@@ -3605,7 +3666,8 @@ function renderSuggestSheet() {
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
     </div>
     <div style="padding:12px 16px" id="sgPreview">
-      ${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}
+      <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
+      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
     </div>
     ${combo ? `
@@ -3629,22 +3691,44 @@ function renderSuggestSheet() {
     };
   });
 
+  const go = (dir) => {
+    if (dir === "next" && _sugg.idx < total - 1) { _suggSlideDir = "next"; _sugg.idx++; renderSuggestSheet(); }
+    else if (dir === "prev" && _sugg.idx > 0) { _suggSlideDir = "prev"; _sugg.idx--; renderSuggestSheet(); }
+  };
   const prevBtn = $("#logInner").querySelector("[data-sprev]");
   const nextBtn = $("#logInner").querySelector("[data-snext]");
-  if (prevBtn) prevBtn.onclick = () => { _sugg.idx = Math.max(0, _sugg.idx - 1); renderSuggestSheet(); };
-  if (nextBtn) nextBtn.onclick = () => { _sugg.idx = Math.min(total - 1, _sugg.idx + 1); renderSuggestSheet(); };
+  if (prevBtn) prevBtn.onclick = () => go("prev");
+  if (nextBtn) nextBtn.onclick = () => go("next");
+
+  // Apply the slide-in animation on the freshly rendered preview content
+  const inner = $("#sgPreviewInner");
+  if (inner && _suggSlideDir) {
+    inner.classList.add(_suggSlideDir === "next" ? "sg-anim-next" : "sg-anim-prev");
+    _suggSlideDir = null;
+  }
 
   // Swipe the preview left/right to move through the batch
   const sw = $("#sgPreview");
   if (sw && total > 1) {
-    let x0 = 0;
-    sw.addEventListener("touchstart", e => { x0 = e.touches[0].clientX; }, { passive: true });
+    let x0 = 0, y0 = 0;
+    sw.addEventListener("touchstart", e => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
     sw.addEventListener("touchend", e => {
-      const dx = e.changedTouches[0].clientX - x0;
-      if (dx < -60 && _sugg.idx < total - 1) { _sugg.idx++; renderSuggestSheet(); }
-      else if (dx > 60 && _sugg.idx > 0) { _sugg.idx--; renderSuggestSheet(); }
+      const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+      if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;  // ignore taps / vertical scrolls
+      go(dx < 0 ? "next" : "prev");
     }, { passive: true });
   }
+
+  // Tap a piece (canvas or fallback row) to open that item
+  $("#sgPreview").querySelectorAll("[data-canvas-item]").forEach(el => {
+    el.addEventListener("click", () => {
+      const it = itemById.get(el.dataset.canvasItem);
+      if (!it) return;
+      $("#logSheet").hidden = true;
+      closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null;
+      switchTab("closet"); openItem(it.id);
+    });
+  });
 
   const wearBtn = $("#logInner").querySelector("[data-swear]");
   if (wearBtn && combo) wearBtn.onclick = async () => {
@@ -7214,6 +7298,7 @@ function renderBuilderCanvas() {
     <div>Tap “+ Clothing” to start</div></div>`;
   const selBar = p.length ? `
     <div class="bld-sel-bar">
+      <button data-bview="1"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>View item</button>
       <button data-blayer="back"><svg viewBox="0 0 24 24"><path d="M4 8l8-4 8 4-8 4z"/></svg>Send back</button>
       <button data-blayer="front"><svg viewBox="0 0 24 24"><path d="M4 16l8 4 8-4M4 8l8-4 8 4-8 4z"/></svg>Bring front</button>
       <button class="danger" data-bdelete="1"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>Remove</button>
@@ -7857,7 +7942,7 @@ function switchTab(name) {
     $("#gridPickerPop").hidden = true;
     $("#itemBar").hidden = true;
     $("#app").classList.remove("detail-photo");
-    detailId = null; detailView = null; _fromStats = false; _fromCapsule = null;
+    detailId = null; detailView = null; _fromStats = false; _fromCapsule = null; _fromBuilder = null;
   }
 
   if (name !== "builder") { $("#app").classList.remove("builder-mode"); builder = null; }
@@ -7979,6 +8064,16 @@ function wireEvents() {
     const layer = e.target.closest("[data-blayer]");
     if (layer) return layerPiece(layer.dataset.blayer);
     if (e.target.closest("[data-bdelete]")) return deleteBuilderPiece();
+    if (e.target.closest("[data-bview]")) {
+      const i = builder.selIdx;
+      if (i < 0) { toast("Tap a piece first"); return; }
+      const it = itemById.get(builder.pieces[i].item_id);
+      if (!it) return;
+      _fromBuilder = JSON.parse(JSON.stringify(builder));  // stash to restore on back
+      closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null;
+      switchTab("closet"); openItem(it.id);
+      return;
+    }
   });
 
   // capsules: list / detail / form / picker
