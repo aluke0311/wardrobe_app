@@ -541,6 +541,13 @@
   .det-val { flex: 1; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
   .det-val.placeholder { color: var(--muted); }
   .det-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  /* iOS-style toggle switch (item-detail SUGGESTIONS rows) */
+  .tgl { width: 46px; height: 28px; border-radius: 14px; background: var(--line);
+    position: relative; flex: none; transition: background .15s; margin-left: auto; }
+  .tgl.on { background: var(--accent); }
+  .tgl-knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
+    border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: left .15s; }
+  .tgl.on .tgl-knob { left: 21px; }
   .det-divider { height: 1px; background: var(--line); margin: 0 16px; }
   .det-notes-val { font-size: 15px; color: var(--ink); line-height: 1.5; padding: 14px 16px; }
   .det-footer { position: sticky; bottom: 0; background: rgba(255,255,255,.95);
@@ -983,7 +990,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r12";
+const APP_VERSION = "2026-06-28 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2083,14 +2090,14 @@ function openItemDetails(id) {
       <div class="det-section-label">SUGGESTIONS</div>
       <div class="det-card">
         <button class="det-row" id="detNoSuggest" style="width:100%;text-align:left">
-          <span class="det-lbl">Don't suggest in outfits</span>
-          <span class="det-val">${isNoSuggest(i) ? "On" : "Off"}</span>
+          <span class="det-lbl" style="flex:1;min-width:0">Don't suggest in outfits</span>
+          <span class="tgl${isNoSuggest(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
         </button>
         ${i.category === "Tops" ? `
         <div class="det-divider"></div>
         <button class="det-row" id="detLayer" style="width:100%;text-align:left">
-          <span class="det-lbl">Use as a layer<span class="det-sub" style="display:block">e.g. an open button-up over a tee</span></span>
-          <span class="det-val">${isLayer(i) ? "On" : "Off"}</span>
+          <span class="det-lbl" style="flex:1;min-width:0">Use as a layer<span class="det-sub" style="display:block">e.g. an open button-up over a tee</span></span>
+          <span class="tgl${isLayer(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
         </button>` : ""}
       </div>
 
@@ -2110,14 +2117,18 @@ function openItemDetails(id) {
   const rmImg = $("#detRemoveImg");
   if (rmImg) rmImg.onclick = () => removeItemPhoto(i.id);
 
-  $("#detNoSuggest").onclick = async () => {
-    await setNoSuggest(i.id, !isNoSuggest(i));
+  $("#detNoSuggest").onclick = async (e) => {
+    const next = !isNoSuggest(i);
+    e.currentTarget.querySelector(".tgl")?.classList.toggle("on", next);  // instant feedback
+    await setNoSuggest(i.id, next);
     openItemDetails(i.id);
   };
 
   const layerBtn = $("#detLayer");
-  if (layerBtn) layerBtn.onclick = async () => {
-    await setLayer(i.id, !isLayer(i));
+  if (layerBtn) layerBtn.onclick = async (e) => {
+    const next = !isLayer(i);
+    e.currentTarget.querySelector(".tgl")?.classList.toggle("on", next);  // instant feedback
+    await setLayer(i.id, next);
     openItemDetails(i.id);
   };
 
@@ -3228,12 +3239,21 @@ function outfitBucket(o) {
   if (o._bucket) return o._bucket;
   if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
   const its = outfitItems(o);
-  let key = "casual";
+  const KEYS = ["function","vcasual","casual","pcasual","smart","dressy","bizpro","formal"];
+  const fs = i => itemFormalitySet(i) || [3];   // a piece's formality set (defaults to Casual)
+  let level = 3;
   if (its.length) {
-    const avg = Math.round(its.reduce((s, i) => s + itemFormality(i), 0) / its.length);
-    const c = Math.max(1, Math.min(8, avg));
-    key = ["function","vcasual","casual","pcasual","smart","dressy","bizpro","formal"][c - 1];
+    const sets = its.map(i => new Set(fs(i)));
+    // Dressiest level every piece can do (set intersection). Mirrors how
+    // suggestOutfits judges fit: a look is valid at L iff every piece's set has L.
+    // Averaging was wrong — formality isn't a true linear scale.
+    let shared = null;
+    for (let L = 8; L >= 1; L--) { if (sets.every(s => s.has(L))) { shared = L; break; } }
+    // No level shared by all → fall back to the most-casual piece's ceiling:
+    // a look is only as dressy as its most casual piece allows.
+    level = shared ?? Math.min(...its.map(i => Math.max(...fs(i))));
   }
+  const key = KEYS[Math.max(1, Math.min(8, level)) - 1];
   o._bucket = key;
   return key;
 }
@@ -4895,7 +4915,7 @@ function renderCalendarDay(body) {
     const wearIdsStr = g.wearIds.join(',');
     return `<div class="cal-outfit-card">
       <div class="cal-outfit-inner">
-        ${collage}
+        ${g.outfitId ? `<div data-open-look="${esc(g.outfitId)}" style="cursor:pointer">${collage}</div>` : collage}
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:9px">
           <button class="cal-outfit-notes-btn${notes ? ' has-notes' : ''}" data-cal-notes="${esc(g.outfitId || '')}" style="flex:none">
             <span>${esc(notes || 'Tap to add notes')}</span>
@@ -5054,6 +5074,13 @@ function renderCalendarDay(body) {
     };
   });
 
+  body.querySelectorAll('[data-open-look]').forEach(el => {
+    el.onclick = () => {
+      const id = el.dataset.openLook;
+      if (id && outfitById.has(id)) openLookFromStats(id);  // switch to Looks tab + open detail
+    };
+  });
+
   body.querySelectorAll('[data-cal-notes]').forEach(el => {
     el.onclick = () => {
       const outfitId = el.dataset.calNotes;
@@ -5208,8 +5235,12 @@ function openCalAddClothing() {
   renderCalClothingPicker();
 }
 
+const PICK_SORT_OPTS = ["color","name","newest","most-worn","least-worn","formality","price"];
+const PICK_SORT_LABELS = { color:"Color", name:"Name", newest:"Newest", "most-worn":"Most worn", "least-worn":"Least worn", formality:"Formality", price:"Price" };
+
 function renderCalClothingPicker() {
   const body = $('#calendarBody');
+  const sortKey = gridSortKey();
   body.innerHTML = `<div class="tabbody">
     <div class="cal-day-header">
       <button id="calLogCancel" style="color:var(--accent);font-size:15px;font-weight:500">Cancel</button>
@@ -5220,14 +5251,25 @@ function renderCalClothingPicker() {
     <div style="padding:6px 14px 0"><input class="inp" id="calLogSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
     ${(() => { const b = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${l}</button>`;
       return `<div class="cap-catbar" style="padding-top:6px">${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
-    <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px">
+      <span style="font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</span>
+      <button id="calLogSort" style="font-size:13px;color:var(--muted);padding:4px 10px;border:1px solid var(--line);border-radius:20px">${esc(PICK_SORT_LABELS[sortKey] || "Sort")}</button>
+    </div>
     <div id="calLogResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
+    <div id="calLogSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
+      ${PICK_SORT_OPTS.map(k => `<button data-cpsort="${k}" style="display:block;width:100%;padding:13px 20px;text-align:left;font-size:15px${k===sortKey?";color:var(--accent);font-weight:600":""}">${PICK_SORT_LABELS[k]}</button>`).join("")}
+    </div>
   </div>`;
   hydratePhotos(body);
   window.scrollTo(0, 0);
   const s = $('#calLogSearch');
   if (s) s.oninput = () => { _capPickFilter = s.value; renderCalLogGrid(); };
   body.onclick = (e) => {
+    const sortPop = $('#calLogSortPop');
+    if (e.target.closest('#calLogSort')) { if (sortPop) sortPop.hidden = !sortPop.hidden; return; }
+    const sortOpt = e.target.closest('[data-cpsort]');
+    if (sortOpt) { setGridSort(sortOpt.dataset.cpsort); if (sortPop) sortPop.hidden = true; return renderCalClothingPicker(); }
+    if (sortPop && !sortPop.hidden) sortPop.hidden = true;  // any other tap closes the menu
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
     if (e.target.closest('#calLogDone')) return saveCalClothingLog();
     const ps = e.target.closest('[data-pick-status]');
