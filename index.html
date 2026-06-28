@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <title>Wardrobe</title>
 <style>
@@ -432,8 +432,8 @@
 
   /* ---------- bottom sheets ---------- */
   .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 300; touch-action: none; }
-  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
-    border-radius: 18px 18px 0 0; max-height: 88vh; overflow-y: auto; z-index: 301;
+  .sheet { position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); background: #fff;
+    border-radius: 18px 18px 0 0; max-height: 85vh; overflow-y: auto; z-index: 301;
     transition: transform .25s ease; }
   .sheet.dragging { transition: none; }
   /* grabber pill — pinned to the top of the (fixed) sheet, above the sticky header */
@@ -1015,7 +1015,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r3";
+const APP_VERSION = "2026-06-28 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1403,6 +1403,20 @@ const parseList = (s) => String(s || "").split(",").map(x => x.trim()).filter(Bo
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+// Track the on-screen keyboard height into --kb so bottom sheets sit above it
+// (iOS anchors fixed bottom:0 to the layout viewport, so the keyboard covers them).
+(function trackKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const update = () => {
+    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty("--kb", kb + "px");
+  };
+  vv.addEventListener("resize", update);
+  vv.addEventListener("scroll", update);
+  update();
+})();
+
 let toastTimer;
 function toast(msg, action) {
   const t = $("#toast");
@@ -1680,9 +1694,10 @@ function hideGridBar() {
 }
 
 function clToolbar(title, showBack, showPlus) {
-  const right = showPlus
-    ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>`
-    : `<button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>`;
+  const right = `<div style="display:flex;align-items:center;gap:2px">
+    <button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+    ${showPlus ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>` : ""}
+  </div>`;
   return `<div class="cltoolbar">
     ${showBack
       ? `<button class="clback" id="clBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
@@ -1708,7 +1723,7 @@ function renderClosetRoot() {
   if (other.length) rows += rowHtml(folderThumb(other), "Other", other.length, `data-cat="Other"`);
   if (!rows) rows = `<div class="placeholder"><b>Nothing here</b></div>`;
   const top = activeCapsuleId ? "" : lensHtml();
-  return clToolbar(activeCapsuleId ? "Closet" : "Closet", false) + top + `<div class="frows">${rows}</div>`;
+  return clToolbar("Closet", false, true) + top + `<div class="frows">${rows}</div>`;
 }
 
 // Banner shown across Closet screens while a capsule scopes the view.
@@ -1741,7 +1756,7 @@ function renderClosetCategory(cat) {
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   // categories with no subcategory taxonomy (Other) jump straight to a grid
-  return clToolbar(cat, true) + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(inCat));
+  return clToolbar(cat, true, true) + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(inCat));
 }
 
 function categoryGrid(cat, sub) {
@@ -1866,7 +1881,7 @@ const FIELD_CONFIGS = {
   purchase_date:{ label: "Purchased", type: "date" },
   color_family: { label: "Color",     type: "color",     opts: COLOR_FAMILIES.map(c => c[0]) },
   fabric:       { label: "Fabric",    type: "multi",     filter: true, opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet","Modal","Rayon","Acrylic"] },
-  size:         { label: "Size",      type: "single",    opts: ["XXS","XS","S","M","L","XL","XXL","0","2","4","6","8","10","12","14","One size"] },
+  size:         { label: "Size",      type: "single",    opts: ["XXS","XS","S","M","L","XL","XXL","00","0","2","4","6","8","10","12","14","16","18","23","24","25","26","27","28","29","30","31","32","33","34","36","One size"] },
   season:       { label: "Season",    type: "multi",     opts: SEASONS },
   brand:        { label: "Brand",     type: "typeahead" },
   status:       { label: "Status",    type: "single",    opts: ["Available","Storage","Archive"] },
@@ -2313,7 +2328,7 @@ function renderFieldSheet(i, field, cfg) {
     const suggestHtml = suggestions.length
       ? `<div class="fld-sugg-lbl">Previously entered</div>
          <div class="fld-suggestions">${suggestions.map(s =>
-           `<button class="sheet-chip" data-fv="${esc(s)}">${esc(s)}</button>`).join("")}</div>`
+           `<button class="sheet-chip${s === curVal ? " on" : ""}" data-fv="${esc(s)}">${esc(s)}</button>`).join("")}</div>`
       : "";
     content = `<div class="sheet-expand" style="border:none;background:#fff;padding:16px 18px">
       <input class="inp" id="fieldTextInp" type="text" inputmode="text"
@@ -2423,10 +2438,12 @@ function renderFieldSheet(i, field, cfg) {
     btn.onclick = () => {
       const v = btn.dataset.fv;
       if (cfg.type === "typeahead") {
-        // fill text input, don't re-render
+        // fill text input + highlight the chosen chip; don't re-render
         _fieldPending = v;
         const inp = $("#fieldTextInp");
-        if (inp) { inp.value = v; inp.focus(); }
+        if (inp) inp.value = v;
+        $("#fieldInner").querySelectorAll(".fld-suggestions .sheet-chip")
+          .forEach(c => c.classList.toggle("on", c.dataset.fv === v));
         return;
       }
       if (cfg.type === "formality") {
@@ -2828,7 +2845,7 @@ function addFieldRow(lbl, val, field) {
 function renderAdd() {
   // reset state on fresh open
   if (_addPhotoUrl) { URL.revokeObjectURL(_addPhotoUrl); _addPhotoUrl = null; }
-  _addState = { status: "Available", purchase_date: todayStr() };
+  _addState = { status: "Available" };  // purchase date left blank — user sets it if they want
   if (_addSeed) { Object.assign(_addState, _addSeed); _addSeed = null; }
   _addPhotoBlob = null;
   _renderAddBody();
@@ -3218,8 +3235,15 @@ function effectiveWearDays(o) {
   return o.created_at ? [String(o.created_at).slice(0, 10)] : [];
 }
 function outfitSeasons(o) { return [...new Set(effectiveWearDays(o).map(seasonOf))]; }
-function outfitWornCount(o) { return effectiveWearDays(o).length; }
-function outfitLastWorn(o) { const d = effectiveWearDays(o).sort(); return d.length ? d[d.length - 1] : null; }
+// Wear count + last-worn are REAL wears only (no created_at fallback) — a freshly
+// built look must read "never worn", not "worn today". (Seasons still use the
+// created-date fallback above so unworn looks land in a season folder.)
+function outfitWornCount(o) { const s = outfitWearMap.get(o.id); return s ? s.size : 0; }
+function outfitLastWorn(o) {
+  const s = outfitWearMap.get(o.id);
+  if (!s || !s.size) return null;
+  let m = null; for (const d of s) if (!m || d > m) m = d; return m;
+}
 function outfitCost(o) { return outfitItems(o).reduce((s, i) => s + (i.price ? Number(i.price) : 0), 0); }
 
 // Returns the formality SET (array of levels 1-8) for an item.
