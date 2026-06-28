@@ -639,6 +639,8 @@
   @keyframes sgInLeft  { from { transform: translateX(-34px); opacity: .15; } to { transform: translateX(0); opacity: 1; } }
   .sg-anim-next { animation: sgInRight .22s ease; }
   .sg-anim-prev { animation: sgInLeft .22s ease; }
+  .itm-anim-next { animation: sgInRight .24s ease; }
+  .itm-anim-prev { animation: sgInLeft .24s ease; }
   .ocpiece { position: absolute; aspect-ratio: 1 / 1; transform: translate(-50%, -50%);
     background: center/contain no-repeat; }
 
@@ -981,7 +983,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-27 r10";
+const APP_VERSION = "2026-06-27 r11";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1481,6 +1483,7 @@ let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
 let _fromStats = false;   // item detail opened from stats (closetBack returns to stats)
 let _fromBuilder = null;  // stashed builder state when an item is opened from the builder
+let _itemSlideDir = null; // "next" | "prev" → slide-in animation for sibling navigation
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
 let selectMode = false;   // multi-select active
@@ -1903,23 +1906,35 @@ function openItem(id) {
 
   hydratePhotos(body);
 
+  // Slide-in animation when arriving via sibling navigation
+  const photoForAnim = body.querySelector('.item-photo');
+  if (photoForAnim && _itemSlideDir) {
+    photoForAnim.classList.add(_itemSlideDir === "next" ? "itm-anim-next" : "itm-anim-prev");
+    _itemSlideDir = null;
+  }
+
   $("#itemShuffle").onclick = () => openSuggestSheet(i.id);
   $("#itemAddLook").onclick = () => openBuilder(null, i.id);
 
+  const goSib = (dir) => {
+    const s = siblingItems(); const idx = s.findIndex(x => x.id === id);
+    if (dir === "next" && idx < s.length - 1) { _itemSlideDir = "next"; openItem(s[idx + 1].id); }
+    else if (dir === "prev" && idx > 0) { _itemSlideDir = "prev"; openItem(s[idx - 1].id); }
+  };
   const prevBtn = $("#itemPrev"), nextBtn = $("#itemNext");
-  if (prevBtn) prevBtn.onclick = () => { const s = siblingItems(); const idx = s.findIndex(x => x.id === id); if (idx > 0) openItem(s[idx - 1].id); };
-  if (nextBtn) nextBtn.onclick = () => { const s = siblingItems(); const idx = s.findIndex(x => x.id === id); if (idx < s.length - 1) openItem(s[idx + 1].id); };
+  if (prevBtn) prevBtn.onclick = () => goSib("prev");
+  if (nextBtn) nextBtn.onclick = () => goSib("next");
 
   // Swipe photo left/right to navigate siblings
   if (sibs.length > 1) {
     const photoEl = body.querySelector('.item-photo');
     if (photoEl) {
-      let _psx = 0;
-      photoEl.addEventListener('touchstart', e => { _psx = e.touches[0].clientX; }, { passive: true });
+      let _psx = 0, _psy = 0;
+      photoEl.addEventListener('touchstart', e => { _psx = e.touches[0].clientX; _psy = e.touches[0].clientY; }, { passive: true });
       photoEl.addEventListener('touchend', e => {
-        const dx = e.changedTouches[0].clientX - _psx;
-        if (dx > 60 && sibIdx > 0) openItem(sibs[sibIdx - 1].id);
-        else if (dx < -60 && sibIdx < sibs.length - 1) openItem(sibs[sibIdx + 1].id);
+        const dx = e.changedTouches[0].clientX - _psx, dy = e.changedTouches[0].clientY - _psy;
+        if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+        goSib(dx < 0 ? "next" : "prev");
       }, { passive: true });
     }
   }
@@ -2071,6 +2086,12 @@ function openItemDetails(id) {
           <span class="det-lbl">Don't suggest in outfits</span>
           <span class="det-val">${isNoSuggest(i) ? "On" : "Off"}</span>
         </button>
+        ${i.category === "Tops" ? `
+        <div class="det-divider"></div>
+        <button class="det-row" id="detLayer" style="width:100%;text-align:left">
+          <span class="det-lbl">Use as a layer<span class="det-sub" style="display:block">e.g. an open button-up over a tee</span></span>
+          <span class="det-val">${isLayer(i) ? "On" : "Off"}</span>
+        </button>` : ""}
       </div>
 
     </div>
@@ -2091,6 +2112,12 @@ function openItemDetails(id) {
 
   $("#detNoSuggest").onclick = async () => {
     await setNoSuggest(i.id, !isNoSuggest(i));
+    openItemDetails(i.id);
+  };
+
+  const layerBtn = $("#detLayer");
+  if (layerBtn) layerBtn.onclick = async () => {
+    await setLayer(i.id, !isLayer(i));
     openItemDetails(i.id);
   };
 
@@ -3394,18 +3421,22 @@ function buildSuggestIndexes() {
 }
 function isExcluded(a, b) { return _excludeSet.has([a, b].sort().join(":")); }
 
-// "Never suggest this item" — stored as a sentinel tag (no schema change needed).
+// Sentinel tags stored in items.tags (no schema change needed).
 const NO_SUGGEST_TAG = "no-suggest";
+const LAYER_TAG = "layer";  // a top that doubles as a layer (e.g. a button-up over a tee)
 function isNoSuggest(i) { return !!i && (i.tags || []).includes(NO_SUGGEST_TAG); }
-async function setNoSuggest(id, on) {
+function isLayer(i) { return !!i && (i.tags || []).includes(LAYER_TAG); }
+async function setItemTag(id, tag, on) {
   const i = itemById.get(id); if (!i) return;
-  const tags = (i.tags || []).filter(t => t !== NO_SUGGEST_TAG);
-  if (on) tags.push(NO_SUGGEST_TAG);
+  const tags = (i.tags || []).filter(t => t !== tag);
+  if (on) tags.push(tag);
   i.tags = tags;  // optimistic
   try {
     await rest(`/items?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags }) });
   } catch (e) { toast(e.message); }
 }
+async function setNoSuggest(id, on) { return setItemTag(id, NO_SUGGEST_TAG, on); }
+async function setLayer(id, on) { return setItemTag(id, LAYER_TAG, on); }
 
 // Slot a piece falls into for suggestions. Cardigans dress like outerwear,
 // so they never fill the "shirt" slot.
@@ -3471,7 +3502,10 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   const avail = base.filter(i => i.image_path && !isNoSuggest(i));
   const seed = seedItemId ? itemById.get(seedItemId) : null;
   const slot = (...cats) => {
-    let pool = avail.filter(i => cats.includes(suggestSlot(i)));
+    // Layerable tops (e.g. button-ups, flagged via isLayer) double as the outerwear
+    // layer, so they're eligible for the Outerwear slot in addition to the Tops slot.
+    let pool = avail.filter(i => cats.includes(suggestSlot(i)) ||
+      (cats.includes("Outerwear") && isLayer(i) && i.category === "Tops"));
     if (targetLevel) {
       const f = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
       if (f.length) pool = f;
@@ -3520,6 +3554,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
         if (!exFree(its3) || !formalityOk(its3)) continue;
         combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel) });
         for (const ow of outerwear.slice(0, 2)) {
+          if (ow.id === t.id) continue;  // a layerable top can't be its own layer
           const its4 = [t, bt, sh, ow];
           if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel) });
         }
