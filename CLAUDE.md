@@ -155,6 +155,10 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 - `migration/capsule_items_packed.sql` — adds `capsule_items.packed`.
 - `migration/wears_context_array.sql` — converts `wears.context text → text[]` (multi-select).
 - `migration/outfit_archived.sql` — adds `outfits.archived` (boolean). Applied 2026-06-28.
+- `migration/merge_duplicate_outfits.sql` — DATA cleanup (not schema): collapses outfits
+  with identical item-sets into one survivor, re-pointing wears. Survivor = non-archived >
+  has-layout > oldest. Idempotent. Pairs with the save-time dedup guard in `saveBuilder`
+  (`findDuplicateOutfit`/`itemSetKey`). Run once after deploying 2026-06-28 r5.
 
 ## Design model
 

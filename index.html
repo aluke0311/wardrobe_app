@@ -1015,7 +1015,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r4";
+const APP_VERSION = "2026-06-28 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2324,7 +2324,7 @@ function renderFieldSheet(i, field, cfg) {
         value="${esc(curVal != null ? String(curVal).slice(0, 10) : "")}" style="width:100%;font-size:16px">
     </div>`;
   } else if (cfg.type === "typeahead") {
-    const suggestions = distinctScalar(field).filter(Boolean);
+    const suggestions = distinctByFreq(field);  // most-used first
     const suggestHtml = suggestions.length
       ? `<div class="fld-sugg-lbl">Previously entered</div>
          <div class="fld-suggestions">${suggestions.map(s =>
@@ -2746,6 +2746,12 @@ function newSearchState() {
     formality: new Set(), retailer: new Set(), acquisition: new Set(), capsule: new Set() };
 }
 function distinctScalar(field) { return [...new Set(items.map(i => i[field]).filter(Boolean))].sort(); }
+// Like distinctScalar but ordered by how often each value occurs (most-used first).
+function distinctByFreq(field) {
+  const counts = new Map();
+  for (const i of items) { const v = i[field]; if (v) counts.set(v, (counts.get(v) || 0) + 1); }
+  return [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
+}
 function distinctArr(field) { const s = new Set(); items.forEach(i => (i[field] || []).forEach(v => s.add(v))); return [...s].sort(); }
 
 function openSearch() { searchOpenRow = null; switchTab("search"); }
@@ -7770,16 +7776,47 @@ function builderCancel() {
   if (oid) openLook(oid);
 }
 
+// Canonical key for an item-set (order-independent, dedup-safe).
+function itemSetKey(ids) { return [...new Set(ids)].sort().join("|"); }
+// Find a non-archived outfit with an identical item-set (excludeId optional).
+function findDuplicateOutfit(itemIds, excludeId) {
+  const key = itemSetKey(itemIds);
+  for (const o of outfits) {
+    if (o.id === excludeId || o.archived) continue;
+    const ids = outfitItemMap.get(o.id) || [];
+    if (ids.length && itemSetKey(ids) === key) return o;
+  }
+  return null;
+}
+
 async function saveBuilder() {
   if (!builder) return;
   const p = builder.pieces;
-  if (!p.length) { toast("Add at least one piece"); return; }
+  if (p.length < 2) { toast("A look needs at least 2 pieces"); return; }
   const layout = p.map(pc => ({ item_id: pc.item_id, x: +pc.x.toFixed(4), y: +pc.y.toFixed(4), s: +pc.s.toFixed(4) }));
   const itemIds = p.map(pc => pc.item_id);
   const name = builder.name.trim() || null;
   const wasNew = !builder.outfitId;
   try {
     let id = builder.outfitId;
+    // Dedup guard: a new look (or one re-edited to an existing set) merges into
+    // the matching outfit instead of creating a duplicate. Latest arrangement wins.
+    const dup = findDuplicateOutfit(itemIds, builder.outfitId || null);
+    if (dup) {
+      await rest(`/outfits?id=eq.${dup.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify(name ? { name, layout } : { layout }),
+      });
+      dup.layout = layout; if (name) dup.name = name; dup._bucket = null;
+      buildOutfitIndexes();
+      builder = null;
+      $("#app").classList.remove("builder-mode");
+      looksLens = "All"; looksFolder = null;
+      switchTab("looks");
+      openLook(dup.id);
+      toast("Merged into existing look");
+      return;
+    }
     if (!id) {
       const rows = await rest("/outfits?select=*", {
         method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
