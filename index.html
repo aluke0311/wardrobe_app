@@ -1015,7 +1015,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r5";
+const APP_VERSION = "2026-06-28 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3210,7 +3210,8 @@ let looksSearchQ = null;  // null = not searching | query string (search by piec
 
 // ---- derived helpers ----
 function outfitItems(o) { return (outfitItemMap.get(o.id) || []).map(id => itemById.get(id)).filter(Boolean); }
-function displayOutfits() { return outfits.filter(o => (outfitItemMap.get(o.id) || []).some(id => itemById.has(id))); }
+// A look needs 2+ real (still-existing) pieces to show anywhere.
+function displayOutfits() { return outfits.filter(o => (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id)).length >= 2); }
 // Looks the user hasn't archived (archived ones are hidden from browse/pickers).
 function activeOutfits() { return displayOutfits().filter(o => !o.archived); }
 function archivedOutfits() { return displayOutfits().filter(o => o.archived); }
