@@ -31,7 +31,7 @@
     --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; height: 100%; overflow-x: hidden; max-width: 100%; }
   /* No accidental text selection / iOS long-press callout on chrome; inputs stay selectable. */
   body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   input, textarea, select, [contenteditable="true"] { -webkit-user-select: text; user-select: text; }
@@ -41,6 +41,8 @@
     font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     overscroll-behavior-y: none;
     -webkit-font-smoothing: antialiased;
+    /* stop double-tap-to-zoom + accidental pinch-driven horizontal scroll */
+    touch-action: manipulation;
   }
   h1, h2, h3 { margin: 0; font-weight: 600; }
   button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; }
@@ -515,7 +517,7 @@
   .item-nav-btn svg { width: 20px; height: 20px; stroke: var(--accent); stroke-width: 1.8; fill: none; }
   .item-add-look { color: var(--accent); font-size: 15px; font-weight: 500; padding: 4px; }
   .item-photo { width: 100%; background: #fafafa center/contain no-repeat;
-    height: calc(100dvh - 52px - 48px - 58px - var(--safe-b)); min-height: 200px; }
+    flex: 1 1 auto; min-height: 0; }
   .item-photo.empty { display: flex; align-items: center; justify-content: center; }
 
   /* ---------- item action bar ---------- */
@@ -528,6 +530,15 @@
   #itemBar button.danger svg { stroke: var(--danger); }
   /* hide tab bar in photo view so item bar has the full bottom chrome */
   #app.detail-photo .tabbar { display: none !important; }
+  /* photo view fills exactly one viewport: no tabbody bottom padding (tab bar is
+     hidden), and the body is a flex column so the photo grows to fill the gap
+     between the nav row and the fixed #itemBar — no magic-number height calc. */
+  #app.detail-photo .tabbody { padding-bottom: 0; }
+  #app.detail-photo #closetBody {
+    display: flex; flex-direction: column; box-sizing: border-box;
+    height: calc(100dvh - 52px - env(safe-area-inset-top));
+    padding-bottom: calc(56px + var(--safe-b));
+  }
 
   /* ---------- details view ---------- */
   .det-body { padding: 14px 16px calc(60px + var(--safe-b)); }
@@ -1019,7 +1030,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-28 r8";
+const APP_VERSION = "2026-06-29 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3322,6 +3333,32 @@ function itemFormality(i) {
   return s && s.length ? s[0] : 3;
 }
 
+const currentSeason = () => seasonOf(new Date().toISOString().slice(0, 10));
+
+// Wearable SEASONS for an item — same derive-first idea as itemFormalitySet.
+// Source order: explicit DB field → seasons it's actually been worn in (the
+// "when worn" signal) → null = unknown (treated as all-season so a sparse
+// wardrobe is never over-filtered). Year-round basics (jeans, plain tees)
+// naturally span all four seasons via their wear months and stay eligible.
+function itemSeasonSet(i) {
+  if (i.season && i.season.length) return i.season;
+  const ws = wears.filter(w => w.item_id === i.id && w.worn_on);
+  if (ws.length >= 3) {
+    const counts = new Map();
+    for (const w of ws) { const s = seasonOf(w.worn_on); counts.set(s, (counts.get(s) || 0) + 1); }
+    // keep any season accounting for ≥15% of this item's wears
+    const keep = [...counts.entries()].filter(([, n]) => n / ws.length >= 0.15).map(([s]) => s);
+    if (keep.length) return keep;
+  }
+  return null;
+}
+// An item is eligible for a season if its set includes it, or its season is unknown.
+function inSeason(i, season) {
+  if (!season) return true;
+  const s = itemSeasonSet(i);
+  return !s || s.includes(season);
+}
+
 function outfitBucket(o) {
   if (o._bucket) return o._bucket;
   if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
@@ -3567,7 +3604,7 @@ function isPatterned(i) {
 const _suggSeen = new Set();
 const comboKey = pieces => pieces.map(p => p.id).sort().join(",");
 
-function scoreCombo(its, target) {
+function scoreCombo(its, target, season = null) {
   let s = 0;
   // dismissal memory: gently penalize combos already shown this session
   if (_suggSeen.has(comboKey(its))) s -= 4;
@@ -3581,8 +3618,27 @@ function scoreCombo(its, target) {
   // color: penalize 2+ different loud colors in same outfit
   const louds = [...new Set(its.map(i => i.color_family).filter(c => c && !NEUTRAL_COLORS.has(c)))];
   if (louds.length >= 2) s -= 3;
+  // color coherence (positive): tonal/neutral palettes and neutral-base-plus-one-accent
+  // read as intentional, not just "didn't clash". Single accent over neutrals is the
+  // classic rule; an all-neutral or monochrome look is reliably safe.
+  const fams = [...new Set(its.map(i => i.color_family).filter(Boolean))];
+  if (fams.length >= 2 && louds.length <= 1) s += 1.5;
+  if (fams.length === 1 && its.length >= 2) s += 1;
   // pattern: penalize mixing 2+ patterned/printed pieces (busy clash)
   if (its.filter(isPatterned).length >= 2) s -= 3;
+  // layer appropriateness: bias WHETHER a layer belongs by season + dressiness,
+  // instead of treating "+ outerwear" as a coin-flip. A blazer-level piece (set
+  // reaches 6) justifies layering even in summer.
+  if (season) {
+    const hasLayer = its.some(i => i.category === "Outerwear" || i.subcategory === "Cardigans")
+      || its.filter(i => i.category === "Tops").length >= 2;
+    const dressy = its.some(i => Math.max(...(itemFormalitySet(i) || [3])) >= 6);
+    if (season === "Summer") { if (hasLayer && !dressy) s -= 3; }
+    else if (season === "Winter") { s += hasLayer ? 2 : -2; }
+    // don't stack heat: outerwear over a sweater/sweatshirt only makes sense in winter
+    const heavyTop = its.some(i => i.subcategory === "Sweaters" || i.subcategory === "Sweatshirts");
+    if (heavyTop && its.some(i => i.category === "Outerwear") && season !== "Winter") s -= 2;
+  }
   // learned affinity (soft): nudge toward color pairs + item pairs the user
   // actually wears together, mined from saved outfits. Capped so it stays a
   // nudge — suggestions remain random among things that plausibly match.
@@ -3604,7 +3660,7 @@ function scoreCombo(its, target) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason()) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   const avail = base.filter(i => i.image_path && !isNoSuggest(i));
   const seed = seedItemId ? itemById.get(seedItemId) : null;
@@ -3613,6 +3669,12 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     // layer, so they're eligible for the Outerwear slot in addition to the Tops slot.
     let pool = avail.filter(i => cats.includes(suggestSlot(i)) ||
       (cats.includes("Outerwear") && isLayer(i) && i.category === "Tops"));
+    // Season filter (soft): keep only in-season pieces, but fall back to the full
+    // slot if that would empty it (e.g. a slot with no seasonal coverage yet).
+    if (season) {
+      const inS = pool.filter(i => inSeason(i, season));
+      if (inS.length) pool = inS;
+    }
     if (targetLevel) {
       const f = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
       if (f.length) pool = f;
@@ -3620,7 +3682,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     // Random sample (Fisher–Yates) — no unworn/last-worn bias. A larger sample than
     // before so a single batch mixes more distinct pieces (less "same item every time").
     for (let k = pool.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [pool[k], pool[j]] = [pool[j], pool[k]]; }
-    pool = pool.slice(0, 10);
+    pool = pool.slice(0, 12);
     if (seed && cats.includes(suggestSlot(seed)) && !pool.find(p => p.id === seed.id)) pool.unshift(seed);
     return pool;
   };
@@ -3647,7 +3709,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       for (const ow of [null, ...outerwear.slice(0, 2)]) {
         const its = [d, sh, ...(ow ? [ow] : [])];
         if (!exFree(its) || !formalityOk(its)) continue;
-        combos.push({ pieces: its, score: scoreCombo(its, targetLevel) });
+        combos.push({ pieces: its, score: scoreCombo(its, targetLevel, season) });
       }
     }
   }
@@ -3659,11 +3721,11 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       for (const sh of shoes.slice(0, 6)) {
         const its3 = [t, bt, sh];
         if (!exFree(its3) || !formalityOk(its3)) continue;
-        combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel) });
+        combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel, season) });
         for (const ow of outerwear.slice(0, 2)) {
           if (ow.id === t.id) continue;  // a layerable top can't be its own layer
           const its4 = [t, bt, sh, ow];
-          if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel) });
+          if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel, season) });
         }
       }
     }
@@ -3685,7 +3747,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   for (const c of combos) {
     const key = c.pieces.map(p => p.id).sort().join(",");
     if (!seen.has(key)) { seen.add(key); unique.push(c); }
-    if (unique.length >= 20) break;
+    if (unique.length >= 60) break;
   }
 
   // Weighted-random sample (softmax) so results vary each call while still
@@ -3697,26 +3759,40 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     const minS = Math.min(...scores);
     const maxS = Math.max(...scores);
     const norm = maxS > minS ? scores.map(s => (s - minS) / (maxS - minS)) : scores.map(() => 1);
-    const weights = norm.map(s => Math.exp(s / t));
-    // Sample without replacement, discounting combos that reuse items already
-    // shown so arrowing through the batch actually swaps pieces (not "same item
-    // every time"). A seeded item is in every combo, so it persists by design.
-    const shuffled = [];
-    const pickedItems = new Set();
-    const avail2 = unique.map((c, i) => ({ c, w: weights[i] }));
-    while (avail2.length && shuffled.length < 8) {
-      const eff = avail2.map(a => {
-        const overlap = a.c.pieces.reduce((n, p) => n + (pickedItems.has(p.id) ? 1 : 0), 0);
-        return a.w * Math.pow(0.3, overlap);
-      });
-      const tot = eff.reduce((x, y) => x + y, 0) || 1;
-      let r = Math.random() * tot, cumul = 0, pick = avail2.length - 1;
-      for (let k = 0; k < avail2.length; k++) { cumul += eff[k]; if (r < cumul) { pick = k; break; } }
-      shuffled.push(avail2[pick].c);
-      avail2[pick].c.pieces.forEach(p => pickedItems.add(p.id));
-      avail2.splice(pick, 1);
-    }
-    return shuffled;
+    const baseW = norm.map(s => Math.exp(s / t));
+    // Weighted sample without replacement, with a HARD per-item cap so no single
+    // piece dominates the batch (the "same two items in the whole set" bug). The
+    // seed is exempt — it's meant to appear in every result. A first pass honors
+    // the cap; a second pass tops up to 8 if the cap left us short.
+    const MAX_PER_ITEM = 2;
+    const picked = [];
+    const used = new Array(unique.length).fill(false);
+    const itemUse = new Map();
+    const seedOk = c => seedItemId && c.pieces.some(p => p.id === seedItemId);
+    const fill = (cap) => {
+      while (picked.length < 8) {
+        const eff = new Array(unique.length).fill(0);
+        let tot = 0;
+        for (let k = 0; k < unique.length; k++) {
+          if (used[k]) continue;
+          const c = unique[k];
+          if (cap && !seedOk(c) && c.pieces.some(p => (itemUse.get(p.id) || 0) >= MAX_PER_ITEM)) continue;
+          const overlap = c.pieces.reduce((n, p) => n + (itemUse.get(p.id) ? 1 : 0), 0);
+          const w = baseW[k] * Math.pow(0.35, overlap);
+          eff[k] = w; tot += w;
+        }
+        if (tot <= 0) break;
+        let r = Math.random() * tot, cumul = 0, pick = -1;
+        for (let k = 0; k < unique.length; k++) { if (!eff[k]) continue; cumul += eff[k]; if (r < cumul) { pick = k; break; } }
+        if (pick < 0) break;
+        used[pick] = true;
+        picked.push(unique[pick]);
+        unique[pick].pieces.forEach(p => itemUse.set(p.id, (itemUse.get(p.id) || 0) + 1));
+      }
+    };
+    fill(true);
+    fill(false);
+    return picked;
   }
   return unique.slice(0, 8);
 }
@@ -3736,18 +3812,19 @@ function suggestionLayout(pieces) {
 }
 
 // Suggestion sheet state
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason() };
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
 
 function openSuggestSheet(seedItemId = null, capsuleId = null) {
   _sugg.seedItemId = seedItemId;
   _sugg.capsuleId = capsuleId;
   _sugg.targetLevel = null;
+  _sugg.season = currentSeason();
   _sugg.idx = 0;
   const pool = capsuleId
     ? capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available")
     : null;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool);
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season);
   renderSuggestSheet();
   $("#logSheet").hidden = false;
 }
@@ -3755,6 +3832,68 @@ function openSuggestSheet(seedItemId = null, capsuleId = null) {
 function _suggPool() {
   if (!_sugg.capsuleId) return null;
   return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
+}
+
+// Friendly slot name for the swap chips.
+function suggSlotLabel(i) {
+  const slot = suggestSlot(i);
+  if (slot === "Outerwear") return "Layer";
+  return ({ Tops: "Top", Bottoms: "Bottom", Dresses: "Dress", Shoes: "Shoes" })[slot] || slot;
+}
+
+// Swap just ONE piece of the current suggestion, keeping the rest — a targeted
+// re-roll instead of re-rolling the whole outfit. Same filters the engine uses:
+// slot, season, exclusions, target level, and pure-function isolation.
+function swapSuggestionPiece(pieceId) {
+  const combo = _sugg.results[_sugg.idx];
+  if (!combo) return;
+  const old = itemById.get(pieceId);
+  if (!old) return;
+  const slot = suggestSlot(old);
+  const others = combo.pieces.filter(p => p.id !== pieceId);
+  const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
+  const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
+  let cands = pool.filter(i =>
+    i.image_path && !isNoSuggest(i) && i.id !== pieceId &&
+    (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
+    inSeason(i, _sugg.season) &&
+    !others.some(o => isExcluded(i.id, o.id)));
+  if (_sugg.targetLevel) {
+    const f = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
+    if (f.length) cands = f;
+  }
+  cands = cands.filter(i => {
+    const test = [...others, i];
+    const hasFunc = test.some(isPureFunc);
+    return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
+  });
+  if (!cands.length) { toast(`No other ${suggSlotLabel(old).toLowerCase()} fits`); return; }
+  const pick = cands[Math.floor(Math.random() * cands.length)];
+  combo.pieces = combo.pieces.map(p => p.id === pieceId ? pick : p);
+  renderSuggestSheet();
+}
+
+// One-line rationale shown under a suggestion so the randomness reads as intentional.
+function suggestionWhy(combo) {
+  const its = combo.pieces;
+  const bits = [];
+  let lvl = _sugg.targetLevel;
+  if (!lvl) {
+    const sets = its.map(i => new Set(itemFormalitySet(i) || [3]));
+    for (let L = 8; L >= 1; L--) if (sets.every(s => s.has(L))) { lvl = L; break; }
+  }
+  if (lvl) bits.push(occLabel(lvl));
+  if (_sugg.season) bits.push(_sugg.season.toLowerCase());
+  let best = null, bestN = 0;
+  for (let i = 0; i < its.length; i++) for (let j = i + 1; j < its.length; j++) {
+    const A = its[i], B = its[j];
+    if (A.color_family && B.color_family && A.color_family !== B.color_family) {
+      const n = _colorPairFreq.get(_pairKey(A.color_family, B.color_family)) || 0;
+      if (n > bestN) { bestN = n; best = `${A.color_family.toLowerCase()} + ${B.color_family.toLowerCase()}`; }
+    }
+  }
+  if (best && bestN >= 2) bits.push(`${best} you wear together`);
+  return bits.join(" · ");
 }
 
 function renderSuggestSheet() {
@@ -3807,9 +3946,20 @@ function renderSuggestSheet() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
     </div>
+    <div style="padding:4px 16px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Season</div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
+        ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
+        <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
+      </div>
+    </div>
     <div style="padding:12px 16px" id="sgPreview">
       <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
-      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
+      ${combo ? `<div class="center" style="font-size:12px;color:var(--accent);padding:8px 0 0;font-weight:500">${esc(suggestionWhy(combo))}</div>` : ""}
+      ${combo ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
+        ${combo.pieces.map(p => `<button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px">↻ ${esc(suggSlotLabel(p))}</button>`).join("")}
+      </div>` : ""}
+      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · swap a slot above${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
     </div>
     ${combo ? `
@@ -3828,9 +3978,22 @@ function renderSuggestSheet() {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
       _sugg.idx = 0;
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
       renderSuggestSheet();
     };
+  });
+
+  $("#logInner").querySelectorAll("[data-sseason]").forEach(b => {
+    b.onclick = () => {
+      _sugg.season = b.dataset.sseason || null;
+      _sugg.idx = 0;
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
+      renderSuggestSheet();
+    };
+  });
+
+  $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
   });
 
   const go = (dir) => {
@@ -3915,7 +4078,7 @@ function renderSuggestSheet() {
   if (newBtn) newBtn.onclick = () => {
     _sugg.results.forEach(c => _suggSeen.add(comboKey(c.pieces)));
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
     renderSuggestSheet();
   };
 
@@ -3951,7 +4114,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -4032,7 +4195,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool());
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
