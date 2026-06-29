@@ -82,9 +82,18 @@ Top-of-`<script>` config, then logically grouped sections:
 - **EXCLUSIONS** — `exclusions` table stores item pairs that shouldn't appear together.
   `buildExcludeSet()` → `_excludeSet` (Set of "a:b" canonical pairs). `isExcluded(a,b)`,
   `addExclusion(a,b,reason)`. Loaded in `loadData()`.
-- **CAPSULES** — `renderCapsules()` dispatches by `capsuleView`. Two modes: Capsule +
-  Trip (packing checklist, weather strip). "Plan outfits from this" sets `activeCapsuleId`
-  (scopes Closet + Looks). "Suggest an outfit" opens suggestion sheet scoped to capsule members.
+- **CAPSULES** — `renderCapsules()` dispatches by `capsuleView` (list/detail/form/pick/**plan**).
+  Two modes: Capsule + Trip (packing checklist, weather strip). "Plan outfits from this" sets
+  `activeCapsuleId` (scopes Closet + Looks). "Suggest an outfit" opens suggestion sheet scoped to
+  capsule members.
+  **Trip by-day planner** (`capsuleView="plan"`, `renderCapsulePlan()`): one card per trip date
+  with that day's weather (`_planWx` from `buildTripWeather`). Per day: Assign a saved Look
+  (`openPlanLookPicker`, scoped to `outfitFullyInCapsule`), Suggest (`openSuggestSheet(null,cid,
+  {capsuleId,date})` — season = trip date, saves combo via `saveComboAsOutfit`), or Build
+  (`openBuilder(null,null,{capsuleId,date})` — picker scoped to capsule via `builderPool()`).
+  Saving in any of those calls `addPlanLook`. Plans live in `capsules.plan` JSONB (intentions,
+  NOT wears — `migration/capsule_plan.sql`); "Wore it" (`planWoreIt`) converts a day to a real
+  wear. `finishBuilder(id,msg)` routes a builder save back to the plan when `builder.planCtx` set.
 - **CALENDAR** — `renderCalendar()` dispatches month/day views. Day view: outfit groups,
   swipe-left actions (Copy/Move/Delete). "+ Clothing" / "+ Look" log pickers.
 - **STYLE STATS** — `renderStats()` dispatches main/field/grid/review/outfits views.
@@ -155,6 +164,8 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 - `migration/capsule_items_packed.sql` — adds `capsule_items.packed`.
 - `migration/wears_context_array.sql` — converts `wears.context text → text[]` (multi-select).
 - `migration/outfit_archived.sql` — adds `outfits.archived` (boolean). Applied 2026-06-28.
+- `migration/capsule_plan.sql` — adds `capsules.plan` (jsonb) for trip per-day outfit
+  planning (`{ "<date>": ["<outfitId>", ...] }`). **Run before using the by-day planner.**
 - `migration/merge_duplicate_outfits.sql` — DATA cleanup (not schema): collapses outfits
   with identical item-sets into one survivor, re-pointing wears. Survivor = non-archived >
   has-layout > oldest. Idempotent. Pairs with the save-time dedup guard in `saveBuilder`
