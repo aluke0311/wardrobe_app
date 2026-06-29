@@ -125,8 +125,18 @@ Status changes happen on the item detail move bar only.
 - `searchResults` — null = browsing | array = search-result grid
 - `detailId` — item id in detail view (null = none)
 
-`closetBack()` pops the stack: if `_reviewMode` → review deal; if `_fromStats` → stats;
-else: details view → photo view → grid → subcategory list → category list → root.
+`closetBack()` pops the stack: details view → photo view; then `_reviewMode` → review
+deal; `_fromBuilder` → restore builder; **`_itemReturn` → return to origin screen**;
+else: grid → subcategory list → category list → root.
+
+**Item-detail back is app-wide via `_itemReturn`** (a restore thunk). Item detail always
+renders into the closet screen, so any NON-closet entry point opens via `openItemFrom(id)`,
+which captures the active screen (`makeItemReturn`) and brings the closet forward without
+`switchTab`. `closetBack` invokes the thunk (`restoreTab(tab)` re-renders that tab from its
+preserved view-state). `switchTab` clears `_itemReturn` (a real tab tap abandons the return).
+The builder is the one exception — it needs a full state stash, so it keeps `_fromBuilder`.
+Plain closet-grid taps use bare `openItem` (origin IS closet → default back). Migrated entry
+points: stats (`openItemFromStats`), look piece tap, suggestion piece tap, capsule item tap.
 
 ## Data model
 
@@ -253,6 +263,20 @@ writes a new column/table before its migration is confirmed.**
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
 - All item photos use **`background-size: contain`** everywhere. Never `cover`/`fill`.
 
+## Filtering
+
+**Canonical filter predicates** (single source of truth, `index.html` ~`matchesSeason`):
+`matchesFormality(i, level)` (numeric 1–8) and `matchesSeason(i, season)` (DERIVED via
+`itemSeasonSet`; unknown season = no match). Search (`runSearch`) and Stats (`statsPool`)
+both call these. **Status is always read via `itemStatus(i)`** (null → "Available"); an
+empty status filter excludes Archive. `STATUSES` no longer includes Wishlist.
+`inSeason()` (suggestions) is intentionally separate — unknown = all-season-eligible.
+
+**Cross-app filter unification is IN PROGRESS** — see `FILTER_UNIFICATION.md`. Phase 1
+(shared predicates + status/derived-season/Wishlist decisions) shipped r3. Phase 2 (one
+unified filter sheet folded into Closet/Stats/Looks, capsule as a dimension, retire the
+standalone Search screen) is specced but NOT built. Read that doc before touching filters.
+
 ## Known gotchas
 
 - **`localStorage` in restricted contexts**: `data:` URL open throws "Storage is
@@ -268,9 +292,11 @@ writes a new column/table before its migration is confirmed.**
   garment PNGs show cleanly on tile backgrounds.
 - **GitHub Pages caches hard** — hard-refresh (`Cmd+Shift+R`) after deploy.
 - **Status is a lens, not a category** — always change status on the item detail move bar.
-- **`closetBack()` priority stack**: `_reviewMode` → review deal card; `_fromStats` →
-  stats; else: `detailView==="details"` → photo view; `detailId` set → closet grid;
-  `searchResults` → sub → cat → root.
+- **`closetBack()` priority stack**: `detailView==="details"` → photo view; `_reviewMode`
+  → review deal card; `_fromBuilder` → restore builder; `_itemReturn` → origin screen
+  (`restoreTab`); `detailId` set → closet grid; `searchResults` → sub → cat → root.
+- **Open an item from a non-closet screen via `openItemFrom(id)`** (never bare
+  `switchTab("closet")` + `openItem`) so back returns to the origin, not the closet.
 - **`closetSub` special values**: `"__other__"` = no recognized subcategory;
   `"__all__"` = flat grid of whole category. Handle both in `categoryGrid()`.
 - **`[hidden]` vs CSS specificity**: always include `[hidden] { display: none !important }`
@@ -327,7 +353,9 @@ writes a new column/table before its migration is confirmed.**
   Far-future dates use 3-yr historical average (gray "avg" card). `_wxCache` 10-min TTL.
 - **`activeCapsuleId`** scopes Closet (`lensItems()` returns only capsule members) AND
   Looks (`looksScopedOutfits()` keeps only wearable looks). Does **not** clear on tab switch.
-  Cleared only by banner ✕ (`[data-cap-clear]`) or deleting the capsule.
+  Set by `planFromCapsule(id)` — from the capsule detail ("Plan outfits from this") OR from
+  the **closet root** "Filter by capsule or trip" button (`openClosetCapsuleFilter`, shown
+  when not already scoped). Cleared only by banner ✕ (`[data-cap-clear]`) or deleting the capsule.
 - **Capsules: nested-button gotcha** — inner tap targets inside `.gtile` must be `<div>`,
   not `<button>`. Parser hoists nested buttons as siblings; `.gtile .pack-tick` won't match.
 - **`capsule_items.packed`**: inserts omit it (pre-migration safe); only `togglePack()`

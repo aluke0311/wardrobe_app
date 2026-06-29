@@ -169,6 +169,10 @@
   .lens { display: flex; gap: 4px; margin: 2px 14px 8px; background: #f4f4f7; border-radius: 11px; padding: 3px; }
   .lens button { flex: 1; padding: 7px 4px; border-radius: 9px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
   .lens button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .cl-capbtn { display: flex; align-items: center; gap: 7px; margin: 0 14px 10px; padding: 9px 12px;
+    width: calc(100% - 28px); border: 1px solid var(--line); border-radius: 11px; background: #fff;
+    color: var(--accent); font-size: 13.5px; font-weight: 600; }
+  .cl-capbtn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.9; fill: none; }
 
   /* ---------- folder rows ---------- */
   .frows { padding: 0 14px 16px; }
@@ -1051,7 +1055,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-29 r2";
+const APP_VERSION = "2026-06-29 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1087,7 +1091,7 @@ const OCCASION_HINTS = [
 const occLabel = (n) => (n >= 1 && n <= 8) ? OCCASION_LADDER[n - 1] : null;
 
 const ACQUISITIONS = ["New", "Secondhand", "Gift"];
-const STATUSES = ["Available", "Storage", "Archive", "Wishlist"];
+const STATUSES = ["Available", "Storage", "Archive"];
 const SEASONS = ["Spring", "Summer", "Fall", "Winter"];
 const CAPSULE_KINDS = ["capsule", "packing", "travel"];
 
@@ -1563,8 +1567,13 @@ let closetSub = null;     // null = subcategory list | subcategory | "__other__"
 let searchResults = null; // null = not in search-results mode; else array of items
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
-let _fromStats = false;   // item detail opened from stats (closetBack returns to stats)
 let _fromBuilder = null;  // stashed builder state when an item is opened from the builder
+// App-wide "return to where I came from". Item detail always renders into the
+// closet screen, so without this, back always lands in the closet. Any non-closet
+// entry point captures its origin screen here via openItemFrom(); closetBack()
+// invokes it. The builder is the one exception (it needs a full state stash, so it
+// keeps _fromBuilder). Cleared by genuine tab navigation.
+let _itemReturn = null;
 let _itemSlideDir = null; // "next" | "prev" → slide-in animation for sibling navigation
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
@@ -1759,7 +1768,38 @@ function renderClosetRoot() {
   if (other.length) rows += rowHtml(folderThumb(other), "Other", other.length, `data-cat="Other"`);
   if (!rows) rows = `<div class="placeholder"><b>Nothing here</b></div>`;
   const top = activeCapsuleId ? "" : lensHtml();
-  return clToolbar("Closet", false, true) + top + `<div class="frows">${rows}</div>`;
+  const capFilter = (!activeCapsuleId && capsules.length)
+    ? `<button class="cl-capbtn" data-cap-filter>
+        <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
+        Filter by capsule or trip</button>`
+    : "";
+  return clToolbar("Closet", false, true) + top + capFilter + `<div class="frows">${rows}</div>`;
+}
+
+// Pick a capsule/trip to scope the closet to (reuses the same activeCapsuleId path
+// as "Plan outfits from this"; the banner + ✕ then show across closet + looks).
+function openClosetCapsuleFilter() {
+  const rows = capsules.map(c => {
+    const n = capsuleItemCount(c.id);
+    const rep = capsuleItems(c.id).find(i => i.image_path);
+    return `<button class="frow" data-capfilterpick="${esc(c.id)}">${thumbHtml(rep ? rep.image_path : null)}
+      <div class="fmeta"><div class="fname">${esc(c.name)}</div>
+      <div class="fcount">${esc(capModeLabel(c))} · ${n} item${n === 1 ? "" : "s"}</div></div>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="capFilterCancel">Cancel</button>
+      <h2>Filter by capsule</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 0 30px">${rows || `<div class="cal-day-empty" style="padding:24px 16px;text-align:center;color:var(--muted)">No capsules or trips yet.</div>`}</div>`;
+  $("#logSheet").hidden = false;
+  hydratePhotos($("#logInner"));
+  $("#capFilterCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logInner").querySelectorAll("[data-capfilterpick]").forEach(b => {
+    b.onclick = () => { $("#logSheet").hidden = true; planFromCapsule(b.dataset.capfilterpick); };
+  });
 }
 
 // Banner shown across Closet screens while a capsule scopes the view.
@@ -1845,6 +1885,47 @@ function renderCloset() {
   if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; renderCloset(); };
 }
 
+// Snapshot the screen currently showing so back can return there. null when we're
+// already in the closet (the default closet-grid back behavior is then correct).
+function makeItemReturn() {
+  const active = document.querySelector(".screen.active");
+  const tab = active ? active.id.replace("tab-", "") : "closet";
+  if (tab === "closet") return null;
+  return () => restoreTab(tab);
+}
+
+// Re-show a tab from its PRESERVED view-state (unlike switchTab, which resets
+// per-tab view globals like capsuleView/statsView). Used to return from item detail.
+function restoreTab(tab) {
+  $$(".screen").forEach(s => s.classList.toggle("active", s.id === `tab-${tab}`));
+  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  $("#title").textContent = TAB_TITLES[tab] || "";
+  $("#headerAdd").hidden = tab !== "home";
+  $("#itemBar").hidden = true;
+  $("#app").classList.remove("detail-photo");
+  hideGridBar();
+  if (tab === "capsules")      renderCapsules();
+  else if (tab === "stats")    renderStats();
+  else if (tab === "looks")    renderLooks();
+  else if (tab === "calendar") renderCalendar();
+  else if (tab === "home")     renderHome();
+  else                         renderCloset();
+}
+
+// Open an item while remembering the origin screen. Use from any non-closet entry
+// point (looks, capsules, stats, suggestions, calendar…) instead of bare
+// switchTab("closet") + openItem, so back returns to where the item was opened.
+function openItemFrom(id) {
+  _itemReturn = makeItemReturn();           // capture BEFORE we bring the closet forward
+  builder = null; $("#app").classList.remove("builder-mode");
+  $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-closet"));
+  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "closet"));
+  $("#title").textContent = "";
+  $("#headerAdd").hidden = true;
+  hideGridBar();
+  openItem(id);
+}
+
 function closetBack() {
   if (selectMode) { exitSelectMode(); renderCloset(); return; }
   if (detailId && detailView === "details") { openItem(detailId); return; }
@@ -1861,18 +1942,6 @@ function closetBack() {
     statsView = "review-deal";
     renderStats(); return;
   }
-  if (detailId && _fromStats) {
-    _fromStats = false;
-    detailId = null; detailView = null;
-    $("#itemBar").hidden = true;
-    $("#app").classList.remove("detail-photo");
-    // Switch to stats screen without resetting statsView
-    $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-stats"));
-    $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "stats"));
-    $("#title").textContent = "Style Stats";
-    $("#headerAdd").hidden = true;
-    renderStats(); return;
-  }
   if (detailId && _fromBuilder) {
     const stash = _fromBuilder; _fromBuilder = null;
     detailId = null; detailView = null;
@@ -1883,17 +1952,12 @@ function closetBack() {
     switchTab("builder");
     return;
   }
-  if (detailId && _fromCapsule) {
-    const cid = _fromCapsule; _fromCapsule = null;
+  if (detailId && _itemReturn) {
+    const r = _itemReturn; _itemReturn = null;
     detailId = null; detailView = null;
     $("#itemBar").hidden = true;
     $("#app").classList.remove("detail-photo");
-    $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-capsules"));
-    $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "capsules"));
-    $("#title").textContent = "Capsules";
-    $("#headerAdd").hidden = true;
-    capsuleId = cid; capsuleView = "detail";
-    renderCapsules(); return;
+    r(); return;
   }
   if (detailId) {
     detailId = null; detailView = null;
@@ -2854,10 +2918,11 @@ function runSearch() {
   const q = searchState.q.trim().toLowerCase();
   const hit = (set, val) => set.size === 0 || (val != null && set.has(val));
   const hitArr = (set, arr) => set.size === 0 || (arr || []).some(v => set.has(v));
-  const hitFormality = (set, item) => {
-    if (!set.size) return true;
-    return (itemFormalitySet(item) || []).some(v => set.has(String(v)));
-  };
+  // Season + formality match on DERIVED values (shared predicates), so e.g. a
+  // summer-worn-but-untagged piece shows under a Summer search. Promote derived →
+  // explicit in Closet Review.
+  const hitSeason = (set, item) => !set.size || [...set].some(s => matchesSeason(item, s));
+  const hitFormality = (set, item) => !set.size || [...set].some(v => matchesFormality(item, +v));
   // When a capsule scopes the closet, search only within its members.
   const pool = activeCapsuleId ? lensItems() : items;
   searchResults = pool.filter(i => {
@@ -2869,7 +2934,7 @@ function runSearch() {
       && hit(searchState.brand, i.brand) && hit(searchState.status, itemStatus(i))
       && hit(searchState.category, i.category) && hit(searchState.subcategory, i.subcategory)
       && hit(searchState.retailer, i.retailer) && hit(searchState.acquisition, i.acquisition)
-      && hitArr(searchState.fabric, i.fabric) && hitArr(searchState.season, i.season)
+      && hitArr(searchState.fabric, i.fabric) && hitSeason(searchState.season, i)
       && hitArr(searchState.capsule, capsuleNamesForItem(i.id))
       && hitFormality(searchState.formality, i);
   });
@@ -3379,6 +3444,14 @@ function inSeason(i, season) {
   const s = itemSeasonSet(i);
   return !s || s.includes(season);
 }
+
+// ---- canonical filter predicates (single source of truth for every surface) ----
+// Formality is always a numeric level 1–8; season uses the DERIVED set (explicit
+// field → wear-history → null). For a positive filter, unknown season = no match
+// (you asked for "summer", an item with no season signal shouldn't qualify), while
+// suggestions keep using inSeason() which treats unknown as all-season-eligible.
+function matchesFormality(i, level) { return (itemFormalitySet(i) || []).includes(level); }
+function matchesSeason(i, season) { const s = itemSeasonSet(i); return !!s && s.includes(season); }
 
 function outfitBucket(o) {
   if (o._bucket) return o._bucket;
@@ -4053,7 +4126,7 @@ function renderSuggestSheet() {
       if (!it) return;
       $("#logSheet").hidden = true;
       closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null;
-      switchTab("closet"); openItem(it.id);
+      openItemFrom(it.id);
     });
   });
 
@@ -5858,17 +5931,15 @@ function statsPool() {
   const { status, category, season, formality } = statsFilters;
   const acqCutoff = acqRangeStart();
   return items.filter(i => {
+    const st = itemStatus(i);                         // null → "Available" (universal default)
     if (status.length) {
-      if (!status.includes(i.status)) return false;
+      if (!status.includes(st)) return false;
     } else {
-      if (i.status === "Archive") return false;
+      if (st === "Archive") return false;
     }
     if (category.length && !category.includes(i.category)) return false;
-    if (season.length && !(i.season || []).some(s => season.includes(s))) return false;
-    if (formality.length) {
-      const iSet = itemFormalitySet(i) || [];
-      if (!formality.some(f => iSet.includes(OCCASION_LADDER.indexOf(f) + 1))) return false;
-    }
+    if (season.length && !season.some(s => matchesSeason(i, s))) return false;   // derived
+    if (formality.length && !formality.some(f => matchesFormality(i, OCCASION_LADDER.indexOf(f) + 1))) return false;
     if (acqCutoff) {
       const pd = i.purchase_date;
       if (acqCutoff.older) { if (!pd || pd >= acqCutoff.cutoff) return false; }
@@ -6144,7 +6215,7 @@ const REVIEW_FIELDS = [
       : null },
 ];
 
-function reviewPool() { return items.filter(i => i.status === "Available"); }
+function reviewPool() { return items.filter(i => itemStatus(i) === "Available"); }
 function reviewCount(f) { return reviewPool().filter(f.missing).length; }
 function reviewTotalItems() { return reviewPool().filter(i => REVIEW_FIELDS.some(f => f.missing(i))).length; }
 
@@ -6648,13 +6719,7 @@ function renderStatsGridPage() {
 }
 
 function openItemFromStats(id) {
-  _fromStats = true;
-  $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-closet"));
-  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "closet"));
-  $("#title").textContent = "";
-  $("#headerAdd").hidden = true;
-  hideGridBar();
-  openItem(id);
+  openItemFrom(id);  // captures the stats screen as the return target
 }
 
 function renderStatsOutfitsPage() {
@@ -6979,7 +7044,6 @@ let _capForm = null;             // {name, kind, start_date, end_date, notes} du
 let _capPick = new Set();        // selected item ids in the add-items picker
 let _capPickFilter = "";         // keyword filter in the picker
 let _capSheetMode = false;       // bulk "add to capsule" sheet open (reuses #moveSheet)
-let _fromCapsule = null;         // item opened from a capsule (closetBack returns here)
 let _pendingAddIds = null;       // items to fold into a capsule right after creation
 let _capNotesTimer = null;
 let _capSort = "category";       // detail grid grouping: "category" | "formality"
@@ -7977,7 +8041,9 @@ function builderInItemMode() {
 }
 
 function builderRailPool() {
-  const pool = items.filter(i => itemStatus(i) !== "Archive" && i.image_path && (i.category || "Other") === builder.pickCat);
+  // builderPool() honors builder.scopeCapsuleId (trip-day planning), so the rail
+  // stays scoped to the trip's pieces — same as the folder/subfolder lists.
+  const pool = builderPool().filter(i => (i.category || "Other") === builder.pickCat);
   return builder.pickSub ? pool.filter(i => (i.subcategory || "") === builder.pickSub) : pool;
 }
 
@@ -8713,13 +8779,16 @@ function switchTab(name) {
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   $("#title").textContent = TAB_TITLES[name] || "Wardrobe";
   $("#headerAdd").hidden = name !== "home";
+  // A genuine tab tap abandons any pending item-return (even to the closet tab,
+  // whose block below is skipped). openItemFrom() does NOT route through switchTab.
+  _itemReturn = null;
   if (name !== "closet") {
     hideGridBar();
     exitSelectMode();
     $("#gridPickerPop").hidden = true;
     $("#itemBar").hidden = true;
     $("#app").classList.remove("detail-photo");
-    detailId = null; detailView = null; _fromStats = false; _fromCapsule = null; _fromBuilder = null;
+    detailId = null; detailView = null; _fromBuilder = null; _itemReturn = null;
   }
 
   if (name !== "builder") { $("#app").classList.remove("builder-mode"); builder = null; }
@@ -8783,6 +8852,7 @@ function wireEvents() {
     if (e.target.closest("#clBack")) return closetBack();
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
+    if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
@@ -8836,7 +8906,7 @@ function wireEvents() {
     const piece = e.target.closest("[data-look-item]");
     if (piece) {
       const it = itemById.get(piece.dataset.lookItem);
-      if (it) { closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null; switchTab("closet"); openItem(it.id); }
+      if (it) { closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null; openItemFrom(it.id); }
       return;
     }
     const look = e.target.closest("[data-look]");
@@ -8917,7 +8987,7 @@ function wireEvents() {
     const pack = e.target.closest("[data-pack]");
     if (pack) { e.stopPropagation(); return togglePack(pack.dataset.pack); }
     const capItem = e.target.closest("[data-cap-item]");
-    if (capItem) { _fromCapsule = capsuleId; closetCat = null; closetSub = null; searchResults = null; switchTab("closet"); return openItem(capItem.dataset.capItem); }
+    if (capItem) { closetCat = null; closetSub = null; searchResults = null; return openItemFrom(capItem.dataset.capItem); }
     const pick = e.target.closest("[data-pick]");
     if (pick) return togglePick(pick.dataset.pick);
     const card = e.target.closest("[data-cap]");
