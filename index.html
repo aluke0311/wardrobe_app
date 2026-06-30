@@ -1056,7 +1056,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-30 r3";
+const APP_VERSION = "2026-06-30 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -8257,6 +8257,11 @@ function renderBuilderPicker() {
   const q = builder.pickQ.trim();
   const backLabel = builder.pickSub ? builder.pickCat : builder.pickCat && !q ? "Categories" : "Done";
   const title = builder.pickSub ? builder.pickSub : builder.pickCat && !q ? builder.pickCat : "Add clothing";
+  let capBar = "";
+  if (!builder.planCtx && capsules.length) {
+    const chip = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
+    capBar = `<div class="cap-catbar" style="padding-top:6px">${chip("", "All", !builder.scopeCapsuleId)}${capsules.map(c => chip(c.id, c.name, builder.scopeCapsuleId === c.id)).join("")}</div>`;
+  }
   body.innerHTML = `
     <div class="bld-top">
       <button class="lnk" id="bldPickBack">${esc(backLabel)}</button>
@@ -8264,6 +8269,7 @@ function renderBuilderPicker() {
       <span style="width:48px"></span>
     </div>
     <div style="padding:10px 14px 0"><input class="inp" id="bldPickSearch" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}"></div>
+    ${capBar}
     <div id="bldPickResults" style="padding:8px 0 30px">${builderPickContent()}</div>`;
   hydratePhotos(body);
   window.scrollTo(0, 0);
@@ -9002,6 +9008,8 @@ function wireEvents() {
     if (bcat) { builder.pickCat = bcat.dataset.bcat; builder.pickSub = null; return renderBuilder(); }
     const bsub = e.target.closest("[data-bsub]");
     if (bsub) { builder.pickSub = bsub.dataset.bsub; return renderBuilder(); }
+    const bcap = e.target.closest("[data-bcap]");
+    if (bcap) { builder.scopeCapsuleId = bcap.dataset.bcap || null; builder.pickCat = null; builder.pickSub = null; return renderBuilder(); }
     const railadd = e.target.closest("[data-railadd]");
     if (railadd) return addPieceToBuilder(railadd.dataset.railadd, true);  // keep rail open
     if (e.target.closest("[data-railback]")) return builderPickBack();
