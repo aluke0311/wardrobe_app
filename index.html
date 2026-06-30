@@ -876,11 +876,6 @@
       <div id="statsBody"></div>
     </section>
 
-    <!-- SEARCH -->
-    <section class="screen" id="tab-search">
-      <div id="searchBody"></div>
-    </section>
-
     <!-- ADD / EDIT ITEM -->
     <section class="screen" id="tab-add">
       <div id="addBody"></div>
@@ -1041,6 +1036,12 @@
   <div class="sheet" id="statsFilterInner" style="max-height:80vh;overflow-y:auto"></div>
 </div>
 
+<!-- ===== UNIFIED FILTER SHEET ===== -->
+<div id="filterSheet" hidden>
+  <div class="sheet-bg" id="filterSheetBg"></div>
+  <div class="sheet" id="filterSheetInner" style="max-height:85vh;overflow-y:auto"></div>
+</div>
+
 <div id="statsRangeSheet" hidden>
   <div class="sheet-bg" id="statsRangeBg"></div>
   <div class="sheet" id="statsRangeInner" style="max-height:80vh;overflow-y:auto"></div>
@@ -1055,7 +1056,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-29 r3";
+const APP_VERSION = "2026-06-30 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1618,11 +1619,16 @@ let activeCapsuleId = null; // when set, Closet is scoped to this capsule's item
 // Items in the current lens. An active capsule overrides the status lens entirely
 // (you want to see everything you packed, regardless of Available/Storage).
 function lensItems() {
+  let base;
   if (activeCapsuleId) {
     const ids = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
-    return items.filter(i => ids.has(i.id));
+    base = items.filter(i => ids.has(i.id));
+  } else {
+    base = closetLens === "All" ? items : items.filter(i => itemStatus(i) === closetLens);
   }
-  return closetLens === "All" ? items : items.filter(i => itemStatus(i) === closetLens);
+  if (!hasActiveFilter(closetFilter)) return base;
+  // noStatusDefault: lens already handles status; don't double-apply archive exclusion
+  return base.filter(i => itemMatchesFilter(i, closetFilter, { noStatusDefault: true }));
 }
 const isOtherCat = (i) => !i.category || !CATEGORIES.includes(i.category);
 function folderThumb(list) { const f = list.find(i => i.image_path); return f ? f.image_path : null; }
@@ -1739,8 +1745,12 @@ function hideGridBar() {
 }
 
 function clToolbar(title, showBack, showPlus) {
+  const filterN = filterActiveCount(closetFilter);
   const right = `<div style="display:flex;align-items:center;gap:2px">
-    <button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+    <div style="position:relative">
+      <button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
+      ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
+    </div>
     ${showPlus ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>` : ""}
   </div>`;
   return `<div class="cltoolbar">
@@ -1848,9 +1858,7 @@ function renderCloset() {
   $("#itemBar").hidden = true;
   $("#app").classList.remove("detail-photo");
   const body = $("#closetBody");
-  if (searchResults) {
-    body.innerHTML = clToolbar(`Results · ${searchResults.length}`, true) + gridHtml(sortItems(searchResults, gridSortKey("search")));
-  } else if (closetCat && closetSub) {
+  if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
       + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
@@ -1864,13 +1872,13 @@ function renderCloset() {
   if (activeCapsuleId && closetCat) {
     const tb = body.querySelector(".cltoolbar");
     if (tb) tb.insertAdjacentHTML("afterend", capsuleBanner());
-  } else if (activeCapsuleId && !closetCat && !searchResults) {
+  } else if (activeCapsuleId && !closetCat) {
     const lens = body.querySelector(".cltoolbar");
     if (lens) lens.insertAdjacentHTML("afterend", capsuleBanner());
   }
   hydratePhotos(body);
   const hasGrid = !!body.querySelector(".grid");
-  if (hasGrid) showGridBar(searchResults ? "search" : "closet"); else hideGridBar();
+  if (hasGrid) showGridBar("closet"); else hideGridBar();
   // wire "+" add button (pre-fills category context)
   const clPlus = $("#clPlus");
   if (clPlus) clPlus.onclick = () => {
@@ -1965,8 +1973,7 @@ function closetBack() {
     $("#app").classList.remove("detail-photo");
     renderCloset(); return;
   }
-  if (searchResults) { searchResults = null; }
-  else if (closetSub) { closetSub = null; }
+  if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }
   renderCloset();
 }
@@ -1994,7 +2001,6 @@ const FIELD_CONFIGS = {
 
 // Items visible in the current subcategory/grid context (for prev/next navigation).
 function siblingItems() {
-  if (searchResults) return searchResults;
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -2854,8 +2860,38 @@ const FILTERS = [
   ["acquisition","Acquisition", () => ["New","Secondhand","Gift"]],
   ["capsule",    "Capsule",     () => capsules.map(c => c.name).sort()],
 ];
+// Per-surface filter dims: closet uses lens for status and folders for category/subcategory;
+// stats and looks include everything except category/subcategory (handled elsewhere or irrelevant).
+const CLOSET_FILTER_DIMS = FILTERS.filter(([k]) => !["status","category","subcategory","capsule"].includes(k));
+const STATS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].includes(k));
+const LOOKS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].includes(k));
+
 let searchState = newSearchState();
 let searchOpenRow = null;
+
+// ---- unified filter state (persists across renders per surface) ----
+function newFilterState(overrides) {
+  const s = { q: "", color: new Set(), fabric: new Set(), size: new Set(),
+    season: new Set(), brand: new Set(), status: new Set(), category: new Set(),
+    subcategory: new Set(), formality: new Set(), retailer: new Set(),
+    acquisition: new Set(), capsule: new Set() };
+  if (overrides) Object.assign(s, overrides);
+  return s;
+}
+function hasActiveFilter(f) {
+  if (f.q) return true;
+  return ["color","fabric","size","season","brand","status","category","subcategory",
+          "formality","retailer","acquisition","capsule"].some(k => f[k] instanceof Set && f[k].size > 0);
+}
+function filterActiveCount(f) {
+  let n = f.q ? 1 : 0;
+  for (const k of ["color","fabric","size","season","brand","status","category","subcategory",
+                   "formality","retailer","acquisition","capsule"]) if (f[k]?.size) n++;
+  return n;
+}
+let closetFilter = newFilterState();
+let statsFilter  = newFilterState();
+let looksFilter  = newFilterState();
 function newSearchState() {
   return { q: "", color: new Set(), fabric: new Set(), size: new Set(), season: new Set(),
     brand: new Set(), status: new Set(), category: new Set(), subcategory: new Set(),
@@ -2870,76 +2906,84 @@ function distinctByFreq(field) {
 }
 function distinctArr(field) { const s = new Set(); items.forEach(i => (i[field] || []).forEach(v => s.add(v))); return [...s].sort(); }
 
-function openSearch() { searchOpenRow = null; switchTab("search"); }
-
-function renderSearch() {
-  const rowSummary = (key) => {
-    const set = searchState[key];
-    return set.size === 0 ? "Any" : (set.size === 1 ? [...set][0] : `${set.size} selected`);
-  };
-  const rows = FILTERS.map(([key, label]) => {
-    const open = searchOpenRow === key;
-    const chips = open ? `<div class="schips">${FILTERS.find(f => f[0] === key)[2]().map(opt =>
-      `<button class="schip ${searchState[key].has(opt) ? "on" : ""}" data-chip="${key}|${esc(opt)}">${esc(opt)}</button>`).join("") || `<span class="muted" style="font-size:13px">None recorded yet</span>`}</div>` : "";
-    return `<button class="srow" data-row="${key}">
-      <span>${label}</span>
-      <span class="rt">${esc(rowSummary(key))} ›</span>
-    </button>${chips}`;
-  }).join("");
-  $("#searchBody").innerHTML = `
-    <div class="schead">
-      <button class="lnk" id="scCancel">Cancel</button>
-      <span style="font-weight:600">Search</span>
-      <button class="lnk" id="scRun">Search</button>
-    </div>
-    <div class="sbody">
-      <input class="inp" id="scQuery" placeholder="e.g. keywords and category names" value="${esc(searchState.q)}">
-      <div class="snote">Searches names, brands, notes and category names.</div>
-      <div class="srows">${rows}</div>
-      <div style="text-align:right;margin-top:14px"><button class="lnk" id="scReset">Reset</button></div>
-    </div>`;
-  $("#scQuery").oninput = (e) => { searchState.q = e.target.value; };
-  $("#scCancel").onclick = () => switchTab("closet");
-  $("#scReset").onclick = () => { searchState = newSearchState(); searchOpenRow = null; renderSearch(); };
-  $("#scRun").onclick = runSearch;
-  $("#searchBody").querySelector(".srows").onclick = (e) => {
-    const chip = e.target.closest("[data-chip]");
-    if (chip) {
-      const [key, val] = chip.dataset.chip.split("|");
-      searchState[key].has(val) ? searchState[key].delete(val) : searchState[key].add(val);
-      renderSearch(); return;
-    }
-    const row = e.target.closest("[data-row]");
-    if (row) { searchOpenRow = searchOpenRow === row.dataset.row ? null : row.dataset.row; renderSearch(); }
-  };
+function openSearch() {
+  openFilterSheet(closetFilter, { onApply: renderCloset, title: "Filter Closet", dims: CLOSET_FILTER_DIMS });
 }
 
-function runSearch() {
-  const q = searchState.q.trim().toLowerCase();
-  const hit = (set, val) => set.size === 0 || (val != null && set.has(val));
-  const hitArr = (set, arr) => set.size === 0 || (arr || []).some(v => set.has(v));
-  // Season + formality match on DERIVED values (shared predicates), so e.g. a
-  // summer-worn-but-untagged piece shows under a Summer search. Promote derived →
-  // explicit in Closet Review.
-  const hitSeason = (set, item) => !set.size || [...set].some(s => matchesSeason(item, s));
-  const hitFormality = (set, item) => !set.size || [...set].some(v => matchesFormality(item, +v));
-  // When a capsule scopes the closet, search only within its members.
-  const pool = activeCapsuleId ? lensItems() : items;
-  searchResults = pool.filter(i => {
-    if (q) {
-      const hay = [i.name, i.brand, i.notes, i.retailer, i.category, i.subcategory].filter(Boolean).join(" ").toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return hit(searchState.color, i.color_family) && hit(searchState.size, i.size)
-      && hit(searchState.brand, i.brand) && hit(searchState.status, itemStatus(i))
-      && hit(searchState.category, i.category) && hit(searchState.subcategory, i.subcategory)
-      && hit(searchState.retailer, i.retailer) && hit(searchState.acquisition, i.acquisition)
-      && hitArr(searchState.fabric, i.fabric) && hitSeason(searchState.season, i)
-      && hitArr(searchState.capsule, capsuleNamesForItem(i.id))
-      && hitFormality(searchState.formality, i);
-  });
-  closetCat = null; closetSub = null;
-  switchTab("closet");
+// Retired standalone search screen — logic folded into openFilterSheet + itemMatchesFilter.
+function renderSearch() {}
+function runSearch() {}
+
+function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } = {}) {
+  const activeDims = dims || FILTERS;
+  let openRow = null;
+
+  function renderBody() {
+    const rowSummary = (key) => {
+      const set = state[key];
+      if (!set || set.size === 0) return "Any";
+      return set.size === 1 ? [...set][0] : `${set.size} selected`;
+    };
+    const rows = activeDims.map(([key, label, optsF]) => {
+      const open = openRow === key;
+      const opts = optsF();
+      const chips = open
+        ? `<div class="schips">${opts.map(opt => {
+            const chipLabel = key === "formality" ? `${opt}. ${OCCASION_LADDER[+opt - 1]}` : opt;
+            return `<button class="schip ${state[key]?.has(opt) ? "on" : ""}" data-chip="${key}|${esc(opt)}">${esc(chipLabel)}</button>`;
+          }).join("") || `<span style="color:var(--muted);font-size:13px">None recorded yet</span>`}</div>`
+        : "";
+      return `<button class="srow" data-row="${key}">
+        <span>${label}</span>
+        <span class="rt">${esc(rowSummary(key))} ›</span>
+      </button>${chips}`;
+    }).join("");
+
+    const activeN = filterActiveCount(state);
+    $("#filterSheetInner").innerHTML = `
+      <div class="schead">
+        <button class="lnk" id="fsReset" style="color:var(--danger)">Reset</button>
+        <span style="font-weight:600">${esc(title)}</span>
+        <button class="lnk" id="fsDone" style="font-weight:700">Done</button>
+      </div>
+      <div class="sbody">
+        <input class="inp" id="fsQuery" placeholder="Keyword search…" value="${esc(state.q || "")}">
+        <div class="srows" id="fsRows">${rows}</div>
+        ${activeN ? `<div style="text-align:right;margin-top:14px"><button class="lnk" id="fsReset2" style="color:var(--danger)">Reset all</button></div>` : ""}
+      </div>`;
+
+    $("#fsQuery").oninput = (e) => { state.q = e.target.value; onApply(); };
+
+    const doReset = () => {
+      for (const [key] of activeDims) { if (state[key] instanceof Set) state[key] = new Set(); }
+      state.q = "";
+      openRow = null;
+      onApply();
+      renderBody();
+    };
+    $("#fsReset").onclick = doReset;
+    const r2 = $("#fsReset2"); if (r2) r2.onclick = doReset;
+    $("#fsDone").onclick = () => { $("#filterSheet").hidden = true; };
+
+    $("#fsRows").onclick = (e) => {
+      const chip = e.target.closest("[data-chip]");
+      if (chip) {
+        const raw = chip.dataset.chip;
+        const sep = raw.indexOf("|");
+        const key = raw.slice(0, sep), val = raw.slice(sep + 1);
+        if (state[key].has(val)) state[key].delete(val); else state[key].add(val);
+        onApply();
+        renderBody();
+        return;
+      }
+      const row = e.target.closest("[data-row]");
+      if (row) { openRow = openRow === row.dataset.row ? null : row.dataset.row; renderBody(); }
+    };
+  }
+
+  renderBody();
+  $("#filterSheetBg").onclick = () => { $("#filterSheet").hidden = true; };
+  $("#filterSheet").hidden = false;
 }
 
 /* ===================================================================
@@ -3342,13 +3386,16 @@ function archivedOutfits() { return displayOutfits().filter(o => o.archived); }
 // Looks pool, scoped to the active capsule when planning: only looks wearable
 // entirely from that capsule's items (every piece is a member). Excludes archived.
 function looksScopedOutfits() {
-  const list = activeOutfits();
-  if (!activeCapsuleId) return list;
-  const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
-  return list.filter(o => {
-    const ids = (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id));
-    return ids.length && ids.every(id => set.has(id));
-  });
+  let list = activeOutfits();
+  if (activeCapsuleId) {
+    const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
+    list = list.filter(o => {
+      const ids = (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id));
+      return ids.length && ids.every(id => set.has(id));
+    });
+  }
+  if (hasActiveFilter(looksFilter)) list = list.filter(o => outfitMatchesFilter(o, looksFilter));
+  return list;
 }
 function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
 function outfitPieces(o) {
@@ -3453,6 +3500,62 @@ function inSeason(i, season) {
 function matchesFormality(i, level) { return (itemFormalitySet(i) || []).includes(level); }
 function matchesSeason(i, season) { const s = itemSeasonSet(i); return !!s && s.includes(season); }
 
+// Universal item filter — checks all active dims in state.
+// opts.noStatusDefault: skip the default "empty status = exclude Archive" logic
+// (used by Closet where the lens already handles status).
+function itemMatchesFilter(i, state, opts) {
+  const { q="", color, fabric, size, season, brand, status, category, subcategory,
+          formality, retailer, acquisition, capsule } = state;
+  const st = itemStatus(i);
+  if (status?.size) { if (!status.has(st)) return false; }
+  else if (!opts?.noStatusDefault) { if (st === "Archive") return false; }
+  if (q) {
+    const hay = [i.name, i.brand, i.notes, i.retailer, i.category, i.subcategory].filter(Boolean).join(" ").toLowerCase();
+    if (!hay.includes(q.toLowerCase())) return false;
+  }
+  if (color?.size    && !color.has(i.color_family)) return false;
+  if (size?.size     && !size.has(i.size)) return false;
+  if (brand?.size    && !brand.has(i.brand)) return false;
+  if (category?.size && !category.has(i.category)) return false;
+  if (subcategory?.size && !subcategory.has(i.subcategory)) return false;
+  if (retailer?.size && !retailer.has(i.retailer)) return false;
+  if (acquisition?.size && !acquisition.has(i.acquisition)) return false;
+  if (fabric?.size   && !(i.fabric || []).some(f => fabric.has(f))) return false;
+  if (season?.size   && ![...season].some(s => matchesSeason(i, s))) return false;
+  if (capsule?.size  && ![...capsule].some(c => capsuleNamesForItem(i.id).includes(c))) return false;
+  if (formality?.size && ![...formality].some(v => matchesFormality(i, +v))) return false;
+  return true;
+}
+// Outfit filter for the Looks surface.
+// ALL-pieces semantics: formality, capsule, status (when explicitly set).
+// ANY-piece semantics: color, season, brand, fabric, size, retailer, acquisition, category, subcategory.
+// No default archive-exclude — outfits may contain archived pieces.
+function outfitMatchesFilter(o, state) {
+  if (!hasActiveFilter(state)) return true;
+  const { q="", color, fabric, size, season, brand, status, category, subcategory,
+          formality, retailer, acquisition, capsule } = state;
+  if (q) {
+    const hay = [o.name, o.notes].filter(Boolean).join(" ").toLowerCase();
+    if (!hay.includes(q.toLowerCase())) return false;
+  }
+  const its = outfitItems(o);
+  if (its.length) {
+    if (status?.size  && !its.every(i => status.has(itemStatus(i)))) return false;
+    if (formality?.size && !its.every(i => [...formality].some(v => matchesFormality(i, +v)))) return false;
+    if (capsule?.size && !its.every(i => [...capsule].some(c => capsuleNamesForItem(i.id).includes(c)))) return false;
+    if (color?.size   && !its.some(i => color.has(i.color_family))) return false;
+    if (season?.size  && !its.some(i => [...season].some(s => matchesSeason(i, s)))) return false;
+    if (brand?.size   && !its.some(i => brand.has(i.brand))) return false;
+    if (fabric?.size  && !its.some(i => (i.fabric || []).some(f => fabric.has(f)))) return false;
+    if (size?.size    && !its.some(i => size.has(i.size))) return false;
+    if (retailer?.size && !its.some(i => retailer.has(i.retailer))) return false;
+    if (acquisition?.size && !its.some(i => acquisition.has(i.acquisition))) return false;
+    if (category?.size && !its.some(i => category.has(i.category))) return false;
+    if (subcategory?.size && !its.some(i => subcategory.has(i.subcategory))) return false;
+  }
+  return true;
+}
+
 function outfitBucket(o) {
   if (o._bucket) return o._bucket;
   if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
@@ -3528,6 +3631,7 @@ function emptyLooks() {
 
 // ---- toolbar / lens row ----
 function looksToolbar(title, showBack, showShuffle) {
+  const filterN = filterActiveCount(looksFilter);
   return `<div class="cltoolbar">
     ${showBack
       ? `<button class="clback" id="looksBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
@@ -3535,7 +3639,10 @@ function looksToolbar(title, showBack, showShuffle) {
     <div class="cltitle">${esc(title)}</div>
     ${showShuffle
       ? `<div style="display:flex;align-items:center;gap:2px">
-           <button class="clsearch" id="looksSearch" title="Search looks"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+           <div style="position:relative">
+             <button class="clsearch" id="looksFilter" title="Filter looks"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
+             ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
+           </div>
            <button class="clsearch" id="looksNew" title="Build a look"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
            <button class="clsearch" id="looksShuffle" title="Random look"><svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></button>
          </div>`
@@ -4388,7 +4495,8 @@ function renderLooks() {
     return;
   }
   if (looksLens === "Archived") {
-    const list = archivedOutfits().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
+    let list = archivedOutfits().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
+    if (hasActiveFilter(looksFilter)) list = list.filter(o => outfitMatchesFilter(o, looksFilter));
     body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml()
       + (list.length ? outfitGridHtml(list) : `<div class="placeholder"><b>No archived looks</b><div>Archive a look from its screen to tuck it away here.</div></div>`);
     hydratePhotos(body);
@@ -5895,7 +6003,6 @@ let statsFromField = false;
 let statsListKey = null;    // key of current smart list (to re-derive on filter change)
 let statsDonutIdx = 0;      // active donut segment index
 let statsFieldSort = "count"; // "count" | "name" — sort order for field breakdown list
-let statsFilters = { status: [], category: [], season: [], formality: [] }; // multi-select arrays
 let statsDateRange = "all"; // "all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"
 let statsAcqRange = "all";  // "all"|"1yr"|"2yr"|"3yr"|"5yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
@@ -5928,18 +6035,9 @@ const STATS_FIELD_LABELS = {
 };
 
 function statsPool() {
-  const { status, category, season, formality } = statsFilters;
   const acqCutoff = acqRangeStart();
   return items.filter(i => {
-    const st = itemStatus(i);                         // null → "Available" (universal default)
-    if (status.length) {
-      if (!status.includes(st)) return false;
-    } else {
-      if (st === "Archive") return false;
-    }
-    if (category.length && !category.includes(i.category)) return false;
-    if (season.length && !season.some(s => matchesSeason(i, s))) return false;   // derived
-    if (formality.length && !formality.some(f => matchesFormality(i, OCCASION_LADDER.indexOf(f) + 1))) return false;
+    if (!itemMatchesFilter(i, statsFilter)) return false;
     if (acqCutoff) {
       const pd = i.purchase_date;
       if (acqCutoff.older) { if (!pd || pd >= acqCutoff.cutoff) return false; }
@@ -5980,9 +6078,7 @@ function acqRangeStart() {
 }
 
 function statsActiveFilterCount() {
-  const { status, category, season, formality } = statsFilters;
-  let n = (status.length ? 1 : 0) + (category.length ? 1 : 0) +
-          (season.length ? 1 : 0) + (formality.length ? 1 : 0);
+  let n = filterActiveCount(statsFilter);
   if (statsAcqRange !== "all") n++;
   return n;
 }
@@ -6002,109 +6098,11 @@ function statsRebuild() {
 }
 
 function openStatsFilters() {
-  const all = items.filter(i => i.status !== "Archive");
-  const cats = CATEGORIES.filter(c => all.some(i => i.category === c));
-  const { status, category, season, formality } = statsFilters;
-
-  const chip = (dim, val, label, active) =>
-    `<button class="stats-catbtn${active ? " on" : ""}" data-sf="${dim}" data-sv="${val ?? "__all__"}">${esc(label)}</button>`;
-  const acqChip = (val, label) =>
-    `<button class="stats-catbtn${statsAcqRange === val ? " on" : ""}" data-sar="${val}">${esc(label)}</button>`;
-
-  $("#statsFilterInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="sfReset" style="color:var(--danger)">Reset</button>
-      <h2>Filters</h2>
-      <button class="lnk" id="sfDone" style="font-weight:700">Done</button>
-    </div>
-    <div style="padding-bottom:34px">
-      <div class="sf-section">
-        <div class="sf-label">Status</div>
-        <div class="stats-catbar">
-          ${chip("status", null, "Avail + Storage", !status.length)}
-          ${chip("status", "Available", "Available", status.includes("Available"))}
-          ${chip("status", "Storage", "Storage", status.includes("Storage"))}
-        </div>
-      </div>
-      <div class="sf-section">
-        <div class="sf-label">Acquired within</div>
-        <div class="stats-catbar">
-          ${acqChip("all", "All time")}
-          ${acqChip("w1yr", "1 year")}
-          ${acqChip("w2yr", "2 years")}
-          ${acqChip("w3yr", "3 years")}
-          ${acqChip("w5yr", "5 years")}
-        </div>
-      </div>
-      <div class="sf-section">
-        <div class="sf-label">Acquired more than … ago</div>
-        <div class="stats-catbar">
-          ${acqChip("o1yr", "1 year")}
-          ${acqChip("o2yr", "2 years")}
-          ${acqChip("o3yr", "3 years")}
-          ${acqChip("o5yr", "5 years")}
-        </div>
-      </div>
-      <div class="sf-section">
-        <div class="sf-label">Category</div>
-        <div class="stats-catbar">
-          ${chip("category", null, "All", !category.length)}
-          ${cats.map(c => chip("category", c, c, category.includes(c))).join("")}
-        </div>
-      </div>
-      <div class="sf-section">
-        <div class="sf-label">Season</div>
-        <div class="stats-catbar">
-          ${chip("season", null, "All Seasons", !season.length)}
-          ${SEASONS.map(s => chip("season", s, s, season.includes(s))).join("")}
-        </div>
-      </div>
-      <div class="sf-section">
-        <div class="sf-label">Formality</div>
-        <div class="stats-catbar">
-          ${chip("formality", null, "All", !formality.length)}
-          ${OCCASION_LADDER.map((f, i) => chip("formality", f, `${i+1}. ${f}`, formality.includes(f))).join("")}
-        </div>
-      </div>
-    </div>`;
-
-  const close = () => { $("#statsFilterSheet").hidden = true; };
-
-  $("#sfDone").onclick = close;
-  $("#sfReset").onclick = () => {
-    statsFilters = { status: [], category: [], season: [], formality: [] };
-    statsDateRange = "all"; statsAcqRange = "all";
-    statsRebuild();
-    close();
-  };
-  $("#statsFilterBg").onclick = close;
-
-  $("#statsFilterInner").querySelectorAll("[data-sf]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const dim = btn.dataset.sf, val = btn.dataset.sv;
-      if (val === "__all__") { statsFilters[dim] = []; }
-      else {
-        const arr = statsFilters[dim], idx = arr.indexOf(val);
-        if (idx >= 0) arr.splice(idx, 1); else arr.push(val);
-      }
-      // surgical active state update in the sheet
-      btn.closest(".stats-catbar").querySelectorAll("[data-sf]").forEach(b => {
-        const v = b.dataset.sv, arr = statsFilters[dim];
-        b.classList.toggle("on", v === "__all__" ? !arr.length : arr.includes(v));
-      });
-      statsRebuild();
-      // update badge in toolbar (already re-rendered by statsRebuild)
-    });
+  openFilterSheet(statsFilter, {
+    onApply: statsRebuild,
+    title: "Filter",
+    dims: STATS_FILTER_DIMS,
   });
-  $("#statsFilterInner").querySelectorAll("[data-sar]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      statsAcqRange = btn.dataset.sar;
-      btn.closest(".stats-catbar").querySelectorAll("[data-sar]").forEach(b =>
-        b.classList.toggle("on", b.dataset.sar === statsAcqRange));
-      statsRebuild();
-    });
-  });
-  $("#statsFilterSheet").hidden = false;
 }
 
 function wireStatsToolbar() {
@@ -6117,6 +6115,8 @@ function wireStatsToolbar() {
 }
 
 function openStatsRange() {
+  const acqChip = (val, label) =>
+    `<button class="stats-catbtn${statsAcqRange === val ? " on" : ""}" data-sar="${val}">${esc(label)}</button>`;
   $("#statsRangeInner").innerHTML = `
     <div class="sheet-hdr">
       <span style="width:48px"></span>
@@ -6124,16 +6124,38 @@ function openStatsRange() {
       <button class="lnk" id="srDone" style="font-weight:700">Done</button>
     </div>
     <div style="padding-bottom:24px">
-      ${RANGE_OPTIONS.map(([v, l]) => `<button class="sheet-row" data-srv="${v}">
-        <span>${esc(l)}</span>
-        ${statsDateRange === v ? `<svg class="rng-chk" viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg>` : ""}
-      </button>`).join("")}
+      <div class="sf-section"><div class="sf-label">Wear date range</div>
+        ${RANGE_OPTIONS.map(([v, l]) => `<button class="sheet-row" data-srv="${v}">
+          <span>${esc(l)}</span>
+          ${statsDateRange === v ? `<svg class="rng-chk" viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg>` : ""}
+        </button>`).join("")}
+      </div>
+      <div class="sf-section"><div class="sf-label">Acquired within</div>
+        <div class="stats-catbar">
+          ${acqChip("all", "All time")} ${acqChip("w1yr", "1 year")} ${acqChip("w2yr", "2 years")}
+          ${acqChip("w3yr", "3 years")} ${acqChip("w5yr", "5 years")}
+        </div>
+      </div>
+      <div class="sf-section"><div class="sf-label">Acquired more than … ago</div>
+        <div class="stats-catbar">
+          ${acqChip("o1yr", "1 year")} ${acqChip("o2yr", "2 years")}
+          ${acqChip("o3yr", "3 years")} ${acqChip("o5yr", "5 years")}
+        </div>
+      </div>
     </div>`;
   const close = () => { $("#statsRangeSheet").hidden = true; };
   $("#srDone").onclick = close;
   $("#statsRangeBg").onclick = close;
   $("#statsRangeInner").querySelectorAll("[data-srv]").forEach(btn => {
     btn.addEventListener("click", () => { statsDateRange = btn.dataset.srv; close(); statsRebuild(); });
+  });
+  $("#statsRangeInner").querySelectorAll("[data-sar]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      statsAcqRange = btn.dataset.sar;
+      btn.closest(".stats-catbar").querySelectorAll("[data-sar]").forEach(b =>
+        b.classList.toggle("on", b.dataset.sar === statsAcqRange));
+      statsRebuild();
+    });
   });
   $("#statsRangeSheet").hidden = false;
 }
@@ -8796,7 +8818,6 @@ function switchTab(name) {
 
   if (name === "home") renderHome();
   else if (name === "closet")   renderCloset();
-  else if (name === "search")   renderSearch();
   else if (name === "add")      renderAdd();
   else if (name === "builder")  renderBuilder();
   else if (name === "looks")    renderLooks();
@@ -8870,7 +8891,7 @@ function wireEvents() {
   $("#looksBody").addEventListener("click", (e) => {
     if (e.target.closest("#looksBack")) return looksBack();
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; return renderLooks(); }
-    if (e.target.closest("#looksSearch")) { looksSearchQ = ""; return renderLooks(); }
+    if (e.target.closest("#looksFilter")) { return openFilterSheet(looksFilter, { onApply: () => { looksSearchQ = null; renderLooks(); }, title: "Filter Looks", dims: LOOKS_FILTER_DIMS }); }
     if (e.target.closest("#looksNew")) return openNewLookSheet();
     if (e.target.closest("#looksShuffle")) return openRandomLook();
     const lens = e.target.closest("[data-llens]");
