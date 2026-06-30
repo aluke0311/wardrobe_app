@@ -1056,7 +1056,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-30 r1";
+const APP_VERSION = "2026-06-30 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2860,10 +2860,11 @@ const FILTERS = [
   ["acquisition","Acquisition", () => ["New","Secondhand","Gift"]],
   ["capsule",    "Capsule",     () => capsules.map(c => c.name).sort()],
 ];
-// Per-surface filter dims: closet uses lens for status and folders for category/subcategory;
-// stats and looks include everything except category/subcategory (handled elsewhere or irrelevant).
+// Per-surface filter dims: closet uses lens for status + folders for category/subcategory (not in funnel).
+// Stats includes category (useful: filter to Tops only), but not subcategory (too granular).
+// Looks has no category/subcategory dims (outfits are cross-category by design).
 const CLOSET_FILTER_DIMS = FILTERS.filter(([k]) => !["status","category","subcategory","capsule"].includes(k));
-const STATS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].includes(k));
+const STATS_FILTER_DIMS  = FILTERS.filter(([k]) => k !== "subcategory"); // keep category: "show Tops only" is a useful stats lens
 const LOOKS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].includes(k));
 
 let searchState = newSearchState();
@@ -2922,7 +2923,10 @@ function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } =
     const rowSummary = (key) => {
       const set = state[key];
       if (!set || set.size === 0) return "Any";
-      return set.size === 1 ? [...set][0] : `${set.size} selected`;
+      if (set.size > 1) return `${set.size} selected`;
+      const val = [...set][0];
+      if (key === "formality") return `${val}. ${OCCASION_LADDER[+val - 1]}`;
+      return val;
     };
     const rows = activeDims.map(([key, label, optsF]) => {
       const open = openRow === key;
