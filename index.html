@@ -1056,7 +1056,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-30 r2";
+const APP_VERSION = "2026-06-30 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1607,7 +1607,10 @@ function sortItems(list, key) {
     case "least-worn":return [...list].sort((a, b) => wearCount(a.id) - wearCount(b.id));
     case "formality": return [...list].sort((a, b) => itemFormality(a) - itemFormality(b));
     case "price":     return [...list].sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
-    default:          return [...list].sort((a, b) => (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99));
+    default:          return [...list].sort((a, b) => {
+      const cd = (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99);
+      return cd !== 0 ? cd : (a.name || "").localeCompare(b.name || "");
+    });
   }
 }
 let selectedIds = new Set();
@@ -1842,7 +1845,7 @@ function renderClosetCategory(cat) {
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   // categories with no subcategory taxonomy (Other) jump straight to a grid
-  return clToolbar(cat, true, true) + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(inCat));
+  return clToolbar(cat, true, true) + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(sortItems(inCat)));
 }
 
 function categoryGrid(cat, sub) {
@@ -7396,6 +7399,7 @@ function renderCapsuleDetail() {
     <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
     ${orgBar}
     ${grid}
+    ${renderCapsuleLooksSection(capsuleId)}
     <div class="cap-footer">
       <div class="cap-actions">
         <button class="cap-act2" data-cap-rename>Rename</button>
@@ -7404,6 +7408,55 @@ function renderCapsuleDetail() {
       </div>
       <button class="cap-del" data-cap-del>Delete capsule</button>
     </div>`;
+}
+
+function renderCapsuleLooksSection(cid) {
+  const looks = activeOutfits().filter(o => outfitFullyInCapsule(o, cid))
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const tilesHtml = looks.length
+    ? `<div class="ogrid" style="padding:0 14px 4px">${looks.map(o =>
+        `<button class="otile" data-cap-look="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div></button>`
+      ).join("")}</div>`
+    : `<div class="placeholder" style="padding:16px 16px 8px;font-size:13px;color:var(--muted)">No saved looks use only these pieces yet — add a look to bring its pieces in.</div>`;
+  return `<div class="cap-secrow"><div class="t">Looks</div><button class="a" data-cap-look-add>＋ Add looks</button></div>${tilesHtml}`;
+}
+
+function openCapsuleLookPicker() {
+  const cid = capsuleId;
+  const looks = activeOutfits()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const grid = looks.length
+    ? `<div class="ogrid">${looks.map(o => {
+        const inCap = outfitFullyInCapsule(o, cid);
+        return `<button class="otile${inCap ? " selected" : ""}" data-lkpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div>${inCap ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">In capsule</div>` : ""}</button>`;
+      }).join("")}</div>`
+    : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">No saved looks yet.</div>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="lkPickCancel">Cancel</button>
+      <h2>Add a Look</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 16px 0;font-size:13px;color:var(--muted)">Tap a look to add its pieces to this capsule.</div>
+    <div style="padding:6px 0 30px">${grid}</div>`;
+  $("#logSheet").hidden = false;
+  hydratePhotos($("#logInner"));
+  $("#lkPickCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logInner").querySelectorAll("[data-lkpick]").forEach(b => {
+    b.onclick = async () => {
+      const o = outfitById.get(b.dataset.lkpick);
+      if (!o) return;
+      if (outfitFullyInCapsule(o, cid)) { toast("Already in capsule"); return; }
+      const itemIds = outfitItems(o).map(i => i.id);
+      if (!itemIds.length) return;
+      try {
+        await addItemsToCapsule(cid, itemIds);
+        $("#logSheet").hidden = true;
+        renderCapsules();
+        toast("Look's pieces added to capsule");
+      } catch (err) { toast(err.message); }
+    };
+  });
 }
 
 /* ===================================================================
@@ -8990,6 +9043,9 @@ function wireEvents() {
     const planBuild = e.target.closest("[data-plan-build]");
     if (planBuild) return openBuilder(null, null, { capsuleId, date: planBuild.dataset.planBuild });
     if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
+    if (e.target.closest("[data-cap-look-add]")) return openCapsuleLookPicker();
+    const capLook = e.target.closest("[data-cap-look]");
+    if (capLook) { looksLens = "All"; looksFolder = null; switchTab("looks"); return openLook(capLook.dataset.capLook); }
     if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
     if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);
