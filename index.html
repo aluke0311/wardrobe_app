@@ -1056,7 +1056,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-06-30 r4";
+const APP_VERSION = "2026-07-01 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5771,39 +5771,47 @@ async function makeLookFromDay(dateStr, body) {
   const name = new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
   try {
-    // Create the outfit record
-    const oRows = await rest("/outfits?select=*", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify({ name }),
-    });
-    const newOutfit = Array.isArray(oRows) ? oRows[0] : oRows;
-    if (!newOutfit?.id) throw new Error("Could not create look");
+    // Dedup guard: merge into an existing non-archived look with the same item-set
+    // instead of creating a duplicate outfit record (mirrors saveBuilder/saveComboAsOutfit).
+    const dup = findDuplicateOutfit(itemIds, null);
+    let outfitId, isNew = false;
+    if (dup) {
+      outfitId = dup.id;
+    } else {
+      const oRows = await rest("/outfits?select=*", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({ name }),
+      });
+      const newOutfit = Array.isArray(oRows) ? oRows[0] : oRows;
+      if (!newOutfit?.id) throw new Error("Could not create look");
+      outfitId = newOutfit.id;
+      isNew = true;
+      outfits.push(newOutfit);
 
-    // Link items
-    const links = itemIds.map(item_id => ({ outfit_id: newOutfit.id, item_id }));
-    await rest("/outfit_items", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify(links),
-    });
+      const links = itemIds.map(item_id => ({ outfit_id: outfitId, item_id }));
+      await rest("/outfit_items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify(links),
+      });
+      outfitLinks = outfitLinks.concat(links);
+    }
 
-    // Stamp wears with the new outfit_id
+    // Stamp wears with the outfit_id
     const inList = `(${wearIds.map(id => `"${id}"`).join(',')})`;
     await rest(`/wears?id=in.${inList}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ outfit_id: newOutfit.id }),
+      body: JSON.stringify({ outfit_id: outfitId }),
     });
 
     // Update local state
-    outfits.push(newOutfit);
-    outfitLinks = outfitLinks.concat(links);
-    for (const w of wears) { if (wearIds.includes(w.id)) w.outfit_id = newOutfit.id; }
+    for (const w of wears) { if (wearIds.includes(w.id)) w.outfit_id = outfitId; }
     buildOutfitIndexes();
 
     renderCalendarDay(body);
-    toast("Look created", { label: "View →", fn: () => { switchTab("looks"); openLook(newOutfit.id); } });
+    toast(isNew ? "Look created" : "Merged into existing look", { label: "View →", fn: () => { switchTab("looks"); openLook(outfitId); } });
   } catch (e) { toast(e.message); }
 }
 
