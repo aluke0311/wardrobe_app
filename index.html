@@ -1081,7 +1081,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r5";
+const APP_VERSION = "2026-07-06 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4150,14 +4150,39 @@ function suggestionLayout(pieces) {
 }
 
 // Suggestion sheet state
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null };
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
+
+// C1: context chips on the suggestion sheet. Seed values (tweak here) for when a
+// context has under 3 formality_for-tagged wears to trust an empirical read.
+const CONTEXT_FORMALITY_SEED = {
+  "Work": 5, "Symphony": 4, "Chorus Concert": 6, "Date Night": 4, "Friends": 2,
+  "Rehearsal": 2, "Party/Shower": 4, "Wedding": 6, "Funeral": 4, "Errands": 2,
+  "Travel": 3, "Workout": 1,
+};
+function topContextsByWearCount(limit = 6) {
+  const counts = new Map();
+  for (const w of wears) for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([c]) => c);
+}
+// Most common formality_for level among this context's wears (min 3 to trust);
+// falls back to the seed constant above.
+function contextFormalityLevel(context) {
+  const levels = wears.filter(w => ctxArr(w).includes(context) && w.formality_for).map(w => w.formality_for);
+  if (levels.length >= 3) {
+    const freq = {};
+    for (const l of levels) freq[l] = (freq[l] || 0) + 1;
+    return +Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
+  }
+  return CONTEXT_FORMALITY_SEED[context] || null;
+}
 
 function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.seedItemId = seedItemId;
   _sugg.capsuleId = capsuleId;
   _sugg.planCtx = planCtx || null;
   _sugg.targetLevel = null;
+  _sugg.activeContext = null;
   _sugg.season = planCtx ? seasonOf(planCtx.date) : currentSeason();
   _sugg.idx = 0;
   const pool = capsuleId
@@ -4274,6 +4299,15 @@ function renderSuggestSheet() {
     return c ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">From: ${esc(c.name)}</div>` : "";
   })() : "";
 
+  // C1: her top contexts by wear count, above the formality chips. Picking one sets
+  // the target formality level from empirical wear data (or the seed fallback).
+  const topContexts = topContextsByWearCount(6);
+  const contextChipsHtml = topContexts.length ? `<div style="padding:12px 16px 4px">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Context</div>
+    <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${topContexts.map(c =>
+      `<button class="cap-chip${_sugg.activeContext === c ? " on" : ""}" data-sctx="${esc(c)}" style="font-size:13px">${esc(c)}</button>`).join("")}</div>
+  </div>` : "";
+
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="sgClose">Close</button>
@@ -4281,6 +4315,7 @@ function renderSuggestSheet() {
       <div style="width:48px"></div>
     </div>
     ${capLabel}
+    ${contextChipsHtml}
     <div style="padding:12px 16px 4px">
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
@@ -4316,6 +4351,22 @@ function renderSuggestSheet() {
     b.onclick = () => {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
+      _sugg.activeContext = null; // manual formality pick supersedes a context chip
+      _sugg.idx = 0;
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
+      renderSuggestSheet();
+    };
+  });
+
+  $("#logInner").querySelectorAll("[data-sctx]").forEach(b => {
+    b.onclick = () => {
+      const c = b.dataset.sctx;
+      if (_sugg.activeContext === c) { _sugg.activeContext = null; }
+      else {
+        _sugg.activeContext = c;
+        const lvl = contextFormalityLevel(c);
+        if (lvl) _sugg.targetLevel = lvl;
+      }
       _sugg.idx = 0;
       _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
       renderSuggestSheet();
@@ -6116,8 +6167,10 @@ async function saveCalClothingLogAsLook() {
 }
 
 // + Look: pick a saved look → one wear row per piece, linked to the outfit
+let calLookFilter = newFilterState(); // P3: funnel for the calendar +Look picker
 function openCalAddLook() {
   _calLookQ = "";
+  calLookFilter = newFilterState();
   renderCalLookPicker();
 }
 
@@ -6127,6 +6180,7 @@ function calLookListHtml() {
   let list = activeOutfits().slice()
     .sort((a, b) => (b.rating === 1 ? 1 : 0) - (a.rating === 1 ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
   if (q) list = list.filter(o => outfitName(o).toLowerCase().includes(q));
+  if (hasActiveFilter(calLookFilter)) list = list.filter(o => outfitMatchesFilter(o, calLookFilter));
   const capped = list.slice(0, 150);
   if (!capped.length) return `<div class="cal-day-empty">No looks found.</div>`;
   const more = list.length > capped.length
@@ -6145,7 +6199,10 @@ function renderCalLookPicker() {
       <span style="width:54px"></span>
     </div>
     <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
-    <div style="padding:6px 14px 8px"><input class="inp" id="calLookSearch" placeholder="Search looks…" value="${esc(_calLookQ)}"></div>
+    <div style="padding:6px 14px 8px;display:flex;gap:8px;align-items:center">
+      <input class="inp" id="calLookSearch" style="flex:1" placeholder="Search looks…" value="${esc(_calLookQ)}">
+      ${funnelBtnHtml("calLookFilterBtn", calLookFilter)}
+    </div>
     <div id="calLookResults">${calLookListHtml()}</div>
   </div>`;
   hydratePhotos(body);
@@ -6158,6 +6215,7 @@ function renderCalLookPicker() {
   };
   body.onclick = (e) => {
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
+    if (e.target.closest('#calLookFilterBtn')) return openFilterSheet(calLookFilter, { onApply: renderCalLookPicker, title: "Filter Looks", dims: LOOKS_FILTER_DIMS });
     const lk = e.target.closest('[data-callook]');
     if (lk) return logLookOnDay(lk.dataset.callook);
   };
@@ -6287,6 +6345,7 @@ let statsDateRange = "all"; // "all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"
 let statsAcqRange = "all";  // "all"|"1yr"|"2yr"|"3yr"|"5yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
 let statsOutfitsMode = "most-worn"; // "most-worn" | "liked-neglected" — which outfits list renderStatsOutfitsPage shows
+let statsContextSel = null; // C2: selected context on the Contexts detail page
 // closet review state
 let reviewField = null;      // current field key being dealt
 let reviewQueue = [];        // item ids queued for the current field
@@ -6597,6 +6656,8 @@ function renderStats() {
   if (statsView === "field")       { renderStatsFieldPage();   return; }
   if (statsView === "grid")        { renderStatsGridPage();    return; }
   if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
+  if (statsView === "contexts")    { renderStatsContextsPage(); return; }
+  if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "review")      { renderReviewLanding();    return; }
   if (statsView === "review-deal") { renderReviewDeal();       return; }
   renderStatsMain();
@@ -6624,6 +6685,7 @@ function statsNavBack() {
     renderStats(); return;
   }
   if (statsView === "review") { statsView = "main"; renderStats(); return; }
+  if (statsView === "context-detail") { statsView = "contexts"; statsContextSel = null; renderStats(); return; }
   if (statsView === "grid" && statsFromField) {
     statsView = "field"; statsGridItems = []; statsGridTitle = "";
   } else {
@@ -6807,6 +6869,8 @@ function renderStatsMain() {
   const topLookSub = topLook ? `Most worn: ${outfitWornCount(topLook)} time${outfitWornCount(topLook) === 1 ? "" : "s"}` : "By wear count";
   const likedCount = displayOutfits().filter(o => o.rating === 1).length;
   const neglectedCount = likedNeglectedOutfits().length;
+  const ctxCount = new Set(wears.flatMap(w => ctxArr(w))).size;
+  const contextsRowSub = ctxCount ? `${ctxCount} context${ctxCount === 1 ? "" : "s"} logged` : "By occasion";
   const reviewToReview = reviewTotalItems();
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
@@ -6850,6 +6914,7 @@ function renderStatsMain() {
           </div>
           ${row("Most Worn Looks", topLookSub, "looks:most-worn")}
           ${row("Liked Looks", `${likedCount} look${likedCount === 1 ? "" : "s"}${neglectedCount ? ` · ${neglectedCount} neglected` : ""}`, "looks:liked-neglected")}
+          ${row("Contexts", contextsRowSub, "looks:contexts")}
         </div>
       </div>
 
@@ -6894,6 +6959,9 @@ function renderStatsMain() {
       }
       if (action === "looks:liked-neglected") {
         statsOutfitsMode = "liked-neglected"; statsView = "outfits"; renderStats(); return;
+      }
+      if (action === "looks:contexts") {
+        statsView = "contexts"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -7079,6 +7147,99 @@ function openLookFromStats(id) {
   $("#title").textContent = TAB_TITLES.looks;
   $("#headerAdd").hidden = true;
   openLook(id);
+}
+
+/* ---- C2: Contexts stats page ---- */
+// Wear count per context, respecting the stats date range.
+function contextWearCounts() {
+  const cutoff = rangeStart();
+  const counts = new Map();
+  for (const w of wears) {
+    if (cutoff && w.worn_on < cutoff) continue;
+    for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
+  }
+  return counts;
+}
+// Formality demand for a context: avg + spread of formality_for, range-scoped.
+function contextFormalityStats(context) {
+  const cutoff = rangeStart();
+  const levels = wears
+    .filter(w => (!cutoff || w.worn_on >= cutoff) && w.formality_for && ctxArr(w).includes(context))
+    .map(w => w.formality_for);
+  if (!levels.length) return null;
+  return { avg: levels.reduce((a, b) => a + b, 0) / levels.length, min: Math.min(...levels), max: Math.max(...levels), n: levels.length };
+}
+function contextTopItems(context, limit = 12) {
+  const cutoff = rangeStart();
+  const counts = new Map();
+  for (const w of wears) {
+    if (cutoff && w.worn_on < cutoff) continue;
+    if (!ctxArr(w).includes(context)) continue;
+    counts.set(w.item_id, (counts.get(w.item_id) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit)
+    .map(([id, n]) => ({ item: itemById.get(id), n })).filter(x => x.item);
+}
+function contextTopLooks(context, limit = 12) {
+  const cutoff = rangeStart();
+  const counts = new Map();
+  for (const w of wears) {
+    if (cutoff && w.worn_on < cutoff) continue;
+    if (!w.outfit_id || !ctxArr(w).includes(context)) continue;
+    counts.set(w.outfit_id, (counts.get(w.outfit_id) || 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit)
+    .map(([id, n]) => ({ outfit: outfitById.get(id), n })).filter(x => x.outfit);
+}
+
+function renderStatsContextsPage() {
+  const counts = contextWearCounts();
+  const ctxs = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
+  const rows = ctxs.map(c => {
+    const n = counts.get(c);
+    const fs = contextFormalityStats(c);
+    const sub = fs
+      ? `avg ${fs.avg.toFixed(1)}${fs.min !== fs.max ? ` · levels ${fs.min}–${fs.max}` : ""}`
+      : "no formality data yet";
+    return `<button class="frow" data-sctxrow="${esc(c)}">
+      <div class="fmeta"><div class="fname">${esc(c)}</div><div class="fcount">${n} wear${n === 1 ? "" : "s"} · ${esc(sub)}</div></div>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join("");
+  $("#statsBody").innerHTML = statsToolbar("Contexts", true, true)
+    + (rows ? `<div class="frows" style="padding-top:4px">${rows}</div>`
+             : `<div class="placeholder"><b>No context data yet</b><div>Add context when you log a wear and it'll show up here.</div></div>`);
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-sctxrow]").forEach(el => {
+    el.addEventListener("click", () => { statsContextSel = el.dataset.sctxrow; statsView = "context-detail"; renderStats(); });
+  });
+}
+
+function renderStatsContextDetailPage() {
+  const c = statsContextSel;
+  const topItems = contextTopItems(c, 12);
+  const items = topItems.map(({ item }) => item);
+  const itemWearCounts = new Map(topItems.map(({ item, n }) => [item.id, n]));
+  const itemSub = (i) => { const n = itemWearCounts.get(i.id) || 0; return `${n} wear${n === 1 ? "" : "s"}`; };
+  const looks = contextTopLooks(c, 12);
+  const looksHtml = looks.length
+    ? `<div class="ogrid" style="padding:0 14px">${looks.map(({ outfit, n }) => `<button class="otile" data-sctx-look="${esc(outfit.id)}">
+        ${outfitCollageHtml(outfit, 4)}
+        <div class="oname">${esc(outfitName(outfit))}</div>
+        <div class="ometa">${n} wear${n === 1 ? "" : "s"}</div>
+      </button>`).join("")}</div>`
+    : `<div class="stats-note" style="padding:8px 18px">No looks logged with this context yet.</div>`;
+  $("#statsBody").innerHTML = statsToolbar(c || "Context", true, false)
+    + `<div class="sf-label">TOP ITEMS</div>${itemGridView(items, { subtitleFn: itemSub, emptyMsg: "No items logged with this context yet" })}
+       <div class="sf-label">TOP LOOKS</div>${looksHtml}`;
+  wireStatsToolbar();
+  hydratePhotos($("#statsBody"));
+  $("#statsBody").querySelectorAll(".gtile").forEach(btn => {
+    btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
+  });
+  $("#statsBody").querySelectorAll("[data-sctx-look]").forEach(el => {
+    el.addEventListener("click", () => openLookFromStats(el.dataset.sctxLook));
+  });
 }
 
 /* ---- Closet Review ---- */
@@ -7906,24 +8067,39 @@ function renderCapsulePlan() {
 
 // Assign a saved look to a trip day — scoped to looks built entirely from the
 // trip's pieces (falls back to a hint when none qualify).
-function openPlanLookPicker(date) {
-  const c = capsuleById.get(capsuleId);
+let _planPickQ = ""; // P3: keyword search in the plan look picker
+function planPickGridHtml() {
+  const q = _planPickQ.trim().toLowerCase();
   // L5: liked looks first, then most-recently-created.
-  const looks = activeOutfits().filter(o => outfitFullyInCapsule(o, capsuleId))
+  let looks = activeOutfits().filter(o => outfitFullyInCapsule(o, capsuleId))
     .sort((a, b) => (b.rating === 1 ? 1 : 0) - (a.rating === 1 ? 1 : 0) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
-  const grid = looks.length
+  if (q) looks = looks.filter(o => outfitName(o).toLowerCase().includes(q));
+  return looks.length
     ? `<div class="ogrid">${looks.map(o => `<button class="otile" data-planpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div></button>`).join("")}</div>`
-    : `<div class="cal-day-empty" style="padding:24px 16px;text-align:center;color:var(--muted)">No saved looks use only this trip's pieces yet.<br>Use ✨ Suggest or ✎ Build to make one.</div>`;
+    : `<div class="cal-day-empty" style="padding:24px 16px;text-align:center;color:var(--muted)">${q ? "No looks match that search." : "No saved looks use only this trip's pieces yet.<br>Use ✨ Suggest or ✎ Build to make one."}</div>`;
+}
+function openPlanLookPicker(date) {
+  _planPickQ = "";
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="planPickCancel">Cancel</button>
       <h2>Look for ${esc(planDayLabel(date))}</h2>
       <span style="width:54px"></span>
     </div>
-    <div style="padding:6px 0 30px">${grid}</div>`;
+    <div style="padding:6px 16px 8px"><input class="inp" id="planPickSearch" placeholder="Search looks…" value=""></div>
+    <div id="planPickResults" style="padding:6px 0 30px">${planPickGridHtml()}</div>`;
   $("#logSheet").hidden = false;
   hydratePhotos($("#logInner"));
   $("#planPickCancel").onclick = () => { $("#logSheet").hidden = true; };
+  const s = $("#planPickSearch");
+  if (s) s.oninput = () => {
+    _planPickQ = s.value;
+    const wrap = $("#planPickResults");
+    if (wrap) { wrap.innerHTML = planPickGridHtml(); hydratePhotos($("#logInner")); wirePlanPickTaps(date); }
+  };
+  wirePlanPickTaps(date);
+}
+function wirePlanPickTaps(date) {
   $("#logInner").querySelectorAll("[data-planpick]").forEach(b => {
     b.onclick = () => { $("#logSheet").hidden = true; addPlanLook(capsuleId, date, b.dataset.planpick); };
   });

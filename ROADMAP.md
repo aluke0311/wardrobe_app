@@ -273,12 +273,22 @@ Known suspects found in review (fix these; user will report more cases as she hi
 → ✅ **DEPLOYED** (`2026-07-06 r5`)
 
 ### WAVE 6 — Context payoff + finish funnels
-- [ ] **C1 context chips on the suggestion sheet** (empirical + seed fallback). (M)
-- [ ] **C2 Contexts stats page.** (M)
-- [ ] **P3 +Look picker funnel + plan-picker search.** (M)
-- [ ] **Docs sync** — tick shipped boxes here; update `FILTER_UNIFICATION.md` Phase 3
-  + `CLAUDE.md` sections touched. (S)
-→ ✅ **DEPLOY**
+- [x] **C1 context chips on the suggestion sheet** — `topContextsByWearCount(6)` row
+  above the formality chips; picking one sets `_sugg.targetLevel` via
+  `contextFormalityLevel(context)` (mode of that context's `formality_for` wears, min
+  3 to trust; else `CONTEXT_FORMALITY_SEED`). Picking a formality chip directly clears
+  the active context (manual pick supersedes it). (M)
+- [x] **C2 Contexts stats page** — new "Contexts" row in Looks Stats; list page
+  (wear count + avg/spread formality demand per context, range-scoped) → tap through
+  to a detail page (top items + top looks for that context, also range-scoped). (M)
+- [x] **P3 +Look picker funnel + plan-picker search** — `calLookFilter` +
+  `LOOKS_FILTER_DIMS` funnel on `renderCalLookPicker`; keyword search added to
+  `openPlanLookPicker` (`_planPickQ`), alongside the existing liked-first sort. (M)
+- [x] **Docs sync** — ticked shipped boxes here; `FILTER_UNIFICATION.md` Phase 3
+  marked SHIPPED; `CLAUDE.md` LOOKS/OUTFIT SUGGESTIONS/CALENDAR/STYLE STATS/DAILY LOOP
+  sections + data model updated for hearts/context lens/effectiveArchived/wear-again/
+  single-ask. (S)
+→ ✅ **DEPLOYED** (`2026-07-06 r6`)
 
 ### WAVE 7 — Flagship (build LAST)
 - [ ] **"Today" tile on Home — weather-aware outfit of the day.** `navigator.geolocation`

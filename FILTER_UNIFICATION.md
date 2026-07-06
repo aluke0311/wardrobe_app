@@ -5,7 +5,11 @@ Living spec for the cross-app filter rework. Read with `CLAUDE.md`.
 unified `openFilterSheet` + `itemMatchesFilter`/`outfitMatchesFilter` live on Closet,
 Stats, Looks; standalone Search screen retired; per-surface dim lists
 (`CLOSET/STATS/LOOKS_FILTER_DIMS`) + per-surface states (`closetFilter` etc.).
-Phase 3 (pickers) is planned — see `ROADMAP.md` "Hearts + Filters Everywhere".**
+Phase 3 SHIPPED across Waves 0/2/6 of "Hearts + Filters Everywhere" (2026-07-06):
+builder picker (Wave 0), calendar +Clothing + capsule add-items via shared
+`pickerFilter`/`PICKER_FILTER_DIMS` (Wave 2), calendar +Look picker + trip plan
+picker search (Wave 6). `funnelBtnHtml(id, state)` is the one shared button+badge
+implementation — every picker surface uses it.**
 
 ## Why this exists
 
@@ -52,24 +56,29 @@ Logic unified; data-semantics decisions implemented. No UI change yet.
 - `reviewPool` uses `itemStatus(i)`.
 - `STATUSES` = `["Available","Storage","Archive"]` (Wishlist gone).
 
-## Phase 3 — TODO (pickers + calendar; execution plan in ROADMAP.md)
+## Phase 3 — SHIPPED (pickers + calendar; Waves 0/2/6 of "Hearts + Filters Everywhere")
 
-Phase 2 unified the three browse surfaces but left the **pickers** on legacy filtering:
+Phase 2 unified the three browse surfaces; the **pickers** were left on legacy
+filtering. All fixed:
 
+- **Builder picker** (`renderBuilderPicker`) — funnel via `builderFilter` +
+  `BUILDER_FILTER_DIMS` (capsule excluded — it has its own single-select capsule
+  scope chip bar). Shipped Wave 0.
 - **Calendar +Clothing picker** (`renderCalClothingPicker`) and **capsule add-items
-  picker** (`openCapsulePicker`) share the `_capPick*` state + `pickerPool()` — own
+  picker** (`openCapsulePicker`) share the `_capPick*` state + `pickerPool()`. Had own
   status chips + category folders, NO unified funnel, **no capsule dimension** (the
   reported bug: "filter by capsule doesn't appear when adding clothes on calendar").
-  → shared `pickerFilter` + funnel; capsule dim included; status/cat/subcat excluded
-  (picker keeps its own chips/folders).
-- **Builder picker** — funnel added (in-flight diff, `builderFilter` +
-  `BUILDER_FILTER_DIMS`); commit + deploy in Wave 0.
-- **Calendar +Look picker** (`renderCalLookPicker`) — keyword only → add funnel with
-  `LOOKS_FILTER_DIMS` via `outfitMatchesFilter`.
-- **Trip plan look picker** (`openPlanLookPicker`) — no search at all → add keyword +
-  liked-first.
-- Extract `funnelBtnHtml(id, state)` — the funnel-button+badge markup is copy-pasted
-  per surface today.
+  Fixed via shared `pickerFilter` + `PICKER_FILTER_DIMS` (capsule dim included;
+  status/category/subcategory excluded — picker keeps its own chips/folders), applied
+  in `pickerPoolBase()`. Shipped Wave 2.
+- **Calendar +Look picker** (`renderCalLookPicker`) — was keyword-only; added a funnel
+  with `LOOKS_FILTER_DIMS` (incl. Liked) via a new `calLookFilter` state +
+  `outfitMatchesFilter`. Shipped Wave 6.
+- **Trip plan look picker** (`openPlanLookPicker`) — had no search at all; added
+  keyword search (`_planPickQ`) alongside the liked-first sort (L5, Wave 3). Shipped
+  Wave 6.
+- `funnelBtnHtml(id, state)` — the one shared funnel-button+badge implementation;
+  every picker surface above uses it instead of copy-pasted markup.
 
 ## Phase 2 — SHIPPED (the unified funnel UI; spec kept for reference)
 

@@ -28,14 +28,16 @@ Do not use v25 as a reference for current UI code.
 **▶ NEXT UP:** `ROADMAP.md` → "Hearts + Filters Everywhere" **v2** (planned 2026-07-06;
 expanded after a full product review + user questionnaire — all decisions locked in the
 ROADMAP section, do not re-litigate). The 2026-06 "Unified Experience" build (W0–W5) and
-filter unification Phase 2 are fully shipped. When the user says "continue the build,"
-start at the first unchecked item and deploy at each ✅ checkpoint. Wave summary:
-W0 land in-flight builder funnel + hygiene → W1 local-date/dup-guard/Undo/back-date/
-photo stat strip → W2 capsule filter in item pickers (reported bug) → W3 hearts
-(`outfits.rating`, wear-moment capture is primary) → W4 Context lens + derived
-auto-archive → W5 single-ask logging + log-as-look + wear-again → W6 context payoff
-(suggester chips, stats page) + look-picker funnels → W7 weather OOTD tile. Plus a
-parallel navigation-audit track. No schema changes anywhere.
+filter unification Phases 2+3 are fully shipped. **Waves 0–6 of v2 are fully shipped
+(2026-07-06 r6)** — only **Wave 7 (flagship: weather-aware "Today" tile on Home)**
+remains. When the user says "continue the build," pick up there. Wave summary: W0 land
+in-flight builder funnel + hygiene → W1 local-date/dup-guard/Undo/back-date/photo stat
+strip → W2 capsule filter in item pickers (reported bug) → W3 hearts (`outfits.rating`,
+wear-moment capture is primary) → W4 Context lens + derived auto-archive → W5 single-ask
+logging + log-as-look + wear-again → W6 context payoff (suggester chips, stats page) +
+look-picker funnels → **W7 weather OOTD tile (not started)**. Plus a parallel
+navigation-audit track (unfixed items still open — see ROADMAP.md). No schema changes
+anywhere.
 
 Top-of-`<script>` config, then logically grouped sections:
 
@@ -62,13 +64,24 @@ Top-of-`<script>` config, then logically grouped sections:
 - **SEARCH** — `openSearch()`/`renderSearch()`/`runSearch()`. Keyword + 6 filter rows.
 - **LOOKS** — `renderLooks()` + 3-view look detail keyed by `lookView`:
   `openLook()` (clean canvas + bottom action toolbar: Details/Formality/Duplicate/
-  Calendar/Archive/Delete) → `openLookDetails()` (metadata page: wear/pieces/cost,
-  formality, season, per-piece formality, notes) → `openLookWears()` ("When You Wore
-  It" — every wear date; tap a day → `openContextSheet` to set that wear's context).
-  `looksBack()` walks wears→details→canvas→list. `duplicateLook()`/`archiveLook()`.
-  Lens switcher (Formality/Season/Capsule/Recent/All/**Archived**). `activeOutfits()`
-  (non-archived) feeds browse + calendar +Look picker; `archivedOutfits()` feeds the
-  Archived lens. `layoutCanvasHtml(o, wrapCls)` / `lookHeroBlock(o)` render arrangements.
+  Calendar/Archive/Delete, plus a **heart toggle** in the toolbar's right slot) →
+  `openLookDetails()` (metadata page: wear/pieces/cost, formality, season, per-piece
+  formality, notes) → `openLookWears()` ("When You Wore It" — every wear date; tap a
+  day → `openContextSheet` to set that wear's context). `looksBack()` walks
+  wears→details→canvas→list. `duplicateLook()`/`archiveLook()`.
+  Lens switcher: **Formality · Season · Context · Capsule · Liked · Recent · All ·
+  Archived** (8 tabs — `.lens` row scrolls horizontally, doesn't shrink labels).
+  `activeOutfits()`/`archivedOutfits()` derive from `effectiveArchived(o)` (`o.archived`
+  OR any piece is status Archive — no cascade PATCH, no column; auto- vs
+  manually-archived shows a one-line note on canvas/details, the Archive/Unarchive
+  button only ever reads/writes `o.archived`). `layoutCanvasHtml(o, wrapCls)` /
+  `lookHeroBlock(o)` render arrangements.
+  **Hearts**: `outfits.rating === 1` = liked (`toggleLikeLook(id)`, PATCH 1↔null, no
+  other values used). Primary hearting moment is `openPostLogSheet` (shown whenever
+  logged wears share an `outfit_id`) and a `.cal-heart-btn` on calendar day-view look
+  cards — not just browsing. `.otile-heart` badges liked-look tiles everywhere
+  (`outfitGridHtml`, all look pickers). `outfitContexts(o)` = union of `ctxArr(w)`
+  across a look's real wears, backs the Context lens folders.
 - **BUILD-A-LOOK** — Stylebook canvas on `#tab-builder`. `openBuilder(outfitId?, seedItemId?)`.
   Pointer drag+resize; `builder` global state. `saveBuilder()` writes `outfits.layout` JSONB.
   "+ Clothing" picker: category/subfolder browsing is full-screen (`renderBuilderPicker`);
@@ -81,10 +94,14 @@ Top-of-`<script>` config, then logically grouped sections:
   "match" signals: formality cohesion (hard filter via `formalityOk`), exclusions (hard),
   loud-color penalty, pattern-clash penalty (`isPatterned`), and a capped SOFT boost
   for color-pair + item-pair affinity learned from saved outfits (`buildSuggestIndexes`
-  → `_colorPairFreq`/`_itemPairFreq`). Returns 8 via softmax (temp 0.8) with diversity-aware
-  selection so arrowing/swiping swaps pieces. Pieces are tappable (open item); swipe slides
-  (`sg-anim-*`). Entry points:
-  item detail shuffle button, Looks tab +, capsule "Suggest an outfit". Sheet state in `_sugg`.
+  → `_colorPairFreq`/`_itemPairFreq`; **liked looks (`o.rating===1`) count double**).
+  Returns 8 via softmax (temp 0.8) with diversity-aware selection so arrowing/swiping
+  swaps pieces. Pieces are tappable (open item); swipe slides (`sg-anim-*`). A row of
+  **Context chips** (`topContextsByWearCount`) sits above the formality chips —
+  picking one sets `_sugg.targetLevel` from `contextFormalityLevel(context)` (mode of
+  that context's `formality_for` wears, min 3 to trust; else `CONTEXT_FORMALITY_SEED`).
+  Entry points: item detail shuffle button, Looks tab +, capsule "Suggest an outfit".
+  Sheet state in `_sugg` (incl. `activeContext`).
 - **EXCLUSIONS** — `exclusions` table stores item pairs that shouldn't appear together.
   `buildExcludeSet()` → `_excludeSet` (Set of "a:b" canonical pairs). `isExcluded(a,b)`,
   `addExclusion(a,b,reason)`. Loaded in `loadData()`.
@@ -101,20 +118,40 @@ Top-of-`<script>` config, then logically grouped sections:
   NOT wears — `migration/capsule_plan.sql`); "Wore it" (`planWoreIt`) converts a day to a real
   wear. `finishBuilder(id,msg)` routes a builder save back to the plan when `builder.planCtx` set.
 - **CALENDAR** — `renderCalendar()` dispatches month/day views. Day view: outfit groups,
-  swipe-left actions (Copy/Move/Delete). "+ Clothing" / "+ Look" log pickers.
-- **STYLE STATS** — `renderStats()` dispatches main/field/grid/review/outfits views.
-  Filter sheet (funnel icon). Range button. Closet Review deals items one card at a time;
-  inline field picker on the deal card (no sheet-hop for most fields). `reviewPool()`
-  is **Available-only** (Storage + Archive excluded). Deal card is sized to fit one
-  phone screen: horizontal card (96px photo + info beside it), single-line formality
-  chips, one-row action bar.
+  swipe-left actions (Copy/Move/Delete). "+ Clothing" / "+ Look" log pickers, both with
+  a filter funnel (`pickerFilter`/`PICKER_FILTER_DIMS` for +Clothing, `calLookFilter`/
+  `LOOKS_FILTER_DIMS` for +Look). Footer also has a **"↻ Wear again"** button
+  (`openWearAgainChooser`, see DAILY LOOP).
+- **STYLE STATS** — `renderStats()` dispatches main/field/grid/outfits/contexts/
+  context-detail/review views. Filter sheet (funnel icon). Range button. Closet Review
+  deals items one card at a time; inline field picker on the deal card (no sheet-hop
+  for most fields). `reviewPool()` is **Available-only** (Storage + Archive excluded).
+  Deal card is sized to fit one phone screen: horizontal card (96px photo + info
+  beside it), single-line formality chips, one-row action bar. Looks Stats section
+  has three rows: Most Worn Looks, Liked Looks (→ `likedNeglectedOutfits()`: liked +
+  never-worn-or-60d+), and Contexts (→ `renderStatsContextsPage`: wears-by-context,
+  `contextFormalityStats` avg/spread, tap through to `renderStatsContextDetailPage`'s
+  top items + top looks for that context — both range-scoped via `rangeStart()`).
 - **DAILY LOOP** — `logWearToday(id)`: one-tap wear log from item photo view (no modal).
-  POSTs today immediately; toast shows "Wear logged" + "Add context →" chip (interactive).
-  `openPostLogSheet(wearRows[])`: context multi-select + 1–8 formality row; PATCHes
-  `wears.formality_for`. Fires after solo item log AND after look wear. `_logItemId`
-  (module-global) tells `renderContextPicker` which item's frequent contexts to sort first.
-  Home shows `.log-cta` button when 0 wears today → calendar day + openCalAddClothing.
-  `toast(msg, {label, fn})`: optional action chip (interactive inline pill in the toast).
+  Soft dup-wear guard (skips the POST + offers "Log again →" if already logged today).
+  POSTs today immediately; toast shows "Wear logged" + **Undo** + "Add context →"
+  chips (`toast()` accepts an array of `{label,fn}` action chips, each its own click
+  target; `undoLoggedWears(rows)` is the shared Undo). `openPostLogSheet(wearRows[])`:
+  context multi-select + 1–8 formality row + **heart toggle** (shown whenever the
+  wears share an `outfit_id` — the PRIMARY hearting moment) with PATCHes to
+  `wears.formality_for`. Fires after solo item log, look wear, and (single-ask, no
+  double-prompt) after `makeLookFromDay`/`saveCalClothingLogAsLook` create a look,
+  pre-seeded from any context/formality already on the day's rows. `_logItemId`
+  (module-global) tells `renderContextPicker` which item's frequent contexts to sort
+  first. `openLogWear(id)` (back-dated log) reachable via quick-actions "Log on a
+  date…" and a 500ms long-press on the item photo view's Log button. Home's
+  `.log-cta` and the calendar day-view footer's "↻ Wear again" both open
+  `openWearAgainChooser(date)` — a horizontal strip of ~12 candidate looks (worn in
+  the last 14 days ∪ liked ∪ most-worn this season, `wearAgainCandidates()`) before
+  falling back to +Clothing/+Look; tapping a look calls `logLookOnDay`.
+  `createLookFromItems(itemIds, {name})` is the shared create-or-merge (dedup via
+  `findDuplicateOutfit`) behind both `makeLookFromDay` and the +Clothing picker's
+  "Log as look" button (`saveCalClothingLogAsLook`, shown once ≥2 items are picked).
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE.
   Active tabs: home · closet · looks · calendar · stats.
   Capsules is a Home-tile screen (not in bottom nav). Search/Add are non-tab screens.
@@ -160,8 +197,10 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
   nullable — demand capture), created_at.
 - `outfits`: id, user_id, name, context, notes, image_path, formality_override
   (text — bucket key, nullable), **layout** (JSONB `{item_id,x,y,s}[]`),
-  rating (smallint, nullable — reserved), **archived** (boolean default false —
-  hides the look from browse/pickers; kept in history), created_at.
+  **rating** (smallint, CHECK 1–5, nullable — `rating === 1` means "liked" (hearts);
+  other values unused/reserved), **archived** (boolean default false — manually-set
+  flag; browse/pickers actually key off the DERIVED `effectiveArchived(o)`, which is
+  also true when any piece's status is Archive), created_at.
   Join table: `outfit_items(outfit_id, item_id, user_id)`.
 - `capsules`: id, user_id, name, kind (capsule|packing|travel), start_date,
   end_date, notes, locations (JSONB `{name,lat,lon,from,to}[]`), created_at.
@@ -285,8 +324,10 @@ Closet, Stats, and Looks. Per-surface dim lists (`CLOSET_FILTER_DIMS` etc., ~lin
 and per-surface `newFilterState()` clones (`closetFilter`/`statsFilter`/`looksFilter`).
 The standalone Search screen is retired (`openSearch` now opens the closet funnel).
 `outfitMatchesFilter` semantics: ALL-pieces for formality/capsule/status, ANY-piece for
-the rest. **Phase 3 (pickers: calendar +Clothing/+Look, capsule add-items, builder) is
-the current roadmap** — see `FILTER_UNIFICATION.md` + `ROADMAP.md` before touching filters.
+the rest (plus outfit-only `liked`, since `itemMatchesFilter` never sees it — see
+`FILTER_UNIFICATION.md` Phase 3, now SHIPPED). **Phase 3 (pickers: builder, calendar
++Clothing/+Look, capsule add-items, trip plan picker) is SHIPPED** — every picker uses
+the shared `funnelBtnHtml(id, state)` button+badge.
 
 ## Known gotchas
 
