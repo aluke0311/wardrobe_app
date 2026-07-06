@@ -186,13 +186,21 @@ Known suspects found in review (fix these; user will report more cases as she hi
 → ✅ **DEPLOYED** (`2026-07-06 r1`)
 
 ### WAVE 1 — Daily-loop correctness + safety
-- [ ] **D1 local-date fix** (full `toISOString` sweep). (M)
-- [ ] **D2 soft dup-wear guard.** (S)
-- [ ] **G3 multi-action `toast()` + Undo** on `logWearToday` + `saveCalClothingLog`. (S/M)
-- [ ] **G4 back-date entry points** (quick-actions row + long-press `#ibLog` →
-  `openLogWear`; verify the dead function against the current wears flow first). (S)
-- [ ] **G5 photo-view stat strip.** (S)
-→ ✅ **DEPLOY**
+- [x] **D1 local-date fix** — added `localISO(d)`; every `toISOString().slice(0,10)`
+  call site swept (todayStr, home calendar tile, openLogWear, currentSeason, calStreak,
+  calendar month/day nav, stats ranges, trip dates, weather-range fetch). (M)
+- [x] **D2 soft dup-wear guard** — `logWearToday` skips the POST if a wear already
+  exists today for that item; toasts "Already logged today" + "Log again →" (force flag). (S)
+- [x] **G3 multi-action `toast()` + Undo** — `toast()` now accepts an action array;
+  `logWearToday` shows Undo + Add context; `saveCalClothingLog` fallback toast gets Undo.
+  New shared `undoLoggedWears(rows)` DELETEs + splices + re-renders the active screen. (S/M)
+- [x] **G4 back-date entry points** — "Log on a date…" row in quick-actions
+  (`#qaLogDate` → `openLogWear`); long-press (500ms) on `#ibLog` opens the same;
+  plain tap still logs today. `openLogWear` confirmed working against current wears flow. (S)
+- [x] **G5 photo-view stat strip** — `itemStatLine(i)` (`worn N× · last worn X ago ·
+  $Y/wear`, never-worn / no-price handled) shown in `openItem` between the sib bar
+  and the photo. (S)
+→ ✅ **DEPLOYED** (`2026-07-06 r2`)
 
 ### WAVE 2 — Capsule filter in the item pickers (the reported bug)
 - [ ] **P1 `pickerFilter` + `PICKER_FILTER_DIMS`**, reset in both openers. (S)

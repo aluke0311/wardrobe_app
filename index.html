@@ -534,6 +534,7 @@
   .item-sib-btn:disabled { opacity: .3; }
   .item-sib-btn svg { width: 16px; height: 16px; stroke: var(--text); stroke-width: 2; fill: none; }
   .item-sib-label { font-size: 12px; color: var(--muted); min-width: 80px; text-align: center; }
+  .item-stat-strip { text-align: center; font-size: 12px; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
   .item-back { display: flex; align-items: center; gap: 3px; color: var(--accent); font-size: 16px; font-weight: 500; padding: 4px 6px 4px 2px; flex-shrink: 0; }
   .item-back svg { width: 18px; height: 18px; stroke: var(--accent); stroke-width: 2; fill: none; flex-shrink: 0; }
   .item-nav-title { flex: 1; text-align: center; font-size: 17px; font-weight: 600; }
@@ -990,6 +991,10 @@
       <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>
       Log today's wear
     </button>
+    <button class="qa-row" id="qaLogDate">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/><path d="M8 14h.01M12 14h.01M16 14h.01"/></svg>
+      Log on a date…
+    </button>
     <button class="qa-row" id="qaLook">
       <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       Add to a look
@@ -1056,7 +1061,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r1";
+const APP_VERSION = "2026-07-06 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1434,7 +1439,10 @@ function outfitCount(itemId) {
 }
 const itemStatus = (i) => i.status || "Available";
 const money = (n) => (n == null ? "—" : "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-const todayStr = () => new Date().toISOString().slice(0, 10);
+// Local calendar date, NOT toISOString() (which is UTC and rolls over mid-evening
+// in negative-UTC-offset zones — an evening log would land on tomorrow).
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const todayStr = () => localISO(new Date());
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
 const parseList = (s) => String(s || "").split(",").map(x => x.trim()).filter(Boolean);
 
@@ -1459,12 +1467,20 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 })();
 
 let toastTimer;
+// action = one {label,fn} chip, an array of them, or omitted. Each chip is its
+// own click target so multiple actions (e.g. Undo + Add context) don't collide.
 function toast(msg, action) {
   const t = $("#toast");
-  if (action) {
-    t.innerHTML = esc(msg) + ` <span class="toast-chip">${esc(action.label)}</span>`;
+  const actions = action ? (Array.isArray(action) ? action : [action]) : [];
+  if (actions.length) {
+    t.innerHTML = esc(msg) + actions.map((a, i) => `<span class="toast-chip" data-tchip="${i}">${esc(a.label)}</span>`).join("");
     t.style.pointerEvents = "auto";
-    t.onclick = () => { t.classList.remove("show"); clearTimeout(toastTimer); action.fn(); };
+    t.onclick = (e) => {
+      const chip = e.target.closest("[data-tchip]");
+      if (!chip) return;
+      t.classList.remove("show"); clearTimeout(toastTimer);
+      actions[parseInt(chip.dataset.tchip)].fn();
+    };
   } else {
     t.textContent = msg;
     t.style.pointerEvents = "";
@@ -1472,7 +1488,7 @@ function toast(msg, action) {
   }
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), action ? 5500 : 2200);
+  toastTimer = setTimeout(() => t.classList.remove("show"), actions.length ? 5500 : 2200);
 }
 
 // Lazy photo loading: sign + set background only when a node nears the viewport.
@@ -1508,7 +1524,7 @@ const HOME_TILES = [
   { tab: "looks",    label: "Looks",      sub: () => `${displayOutfits().length} looks`,
     icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
   { tab: "calendar", label: "Calendar",   sub: () => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localISO(new Date());
       const n = new Set(wears.filter(w => w.worn_on === today).map(w => w.item_id)).size;
       return n ? `${n} logged today` : "Nothing logged yet";
     },
@@ -2040,6 +2056,7 @@ function openItem(id) {
       </div>
     </div>
     ${sibBar}
+    <div class="item-stat-strip">${esc(itemStatLine(i))}</div>
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#ccc;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -2604,6 +2621,7 @@ function openQuickActions(id) {
   if (!i) return;
   $("#qaTitle").textContent = i.name || "Untitled";
   $("#qaLog").onclick  = () => { $("#quickActSheet").hidden = true; logWearToday(id); };
+  $("#qaLogDate").onclick = () => { $("#quickActSheet").hidden = true; openLogWear(id); };
   $("#qaLook").onclick = () => { $("#quickActSheet").hidden = true; openBuilder(null, id); };
   $("#qaMove").onclick = () => { $("#quickActSheet").hidden = true; openItemMoveSheet(id); };
   $("#quickActSheet").hidden = false;
@@ -2717,8 +2735,15 @@ function renderContextPicker() {
 const ctxSelOrNull = () => _ctxSel.length ? _ctxSel : null;
 
 // ---- One-tap wear today (A1): POST immediately, then offer context + formality ----
-async function logWearToday(id) {
+// D2 soft dup-wear guard: if this item already has a wear logged today, don't
+// silently double-log — ask first. "Log again →" bypasses the guard for the
+// (rare, legit) case of wearing the same piece twice in a day.
+async function logWearToday(id, { force = false } = {}) {
   const today = todayStr();
+  if (!force && wears.some(w => w.item_id === id && w.worn_on === today)) {
+    toast("Already logged today", { label: "Log again →", fn: () => logWearToday(id, { force: true }) });
+    return;
+  }
   try {
     const rows = await rest("/wears", {
       method: "POST",
@@ -2729,7 +2754,26 @@ async function logWearToday(id) {
       ? rows[0]
       : { id: null, item_id: id, worn_on: today, outfit_id: null, context: null, formality_for: null };
     wears.push(wear);
-    toast("Wear logged", { label: "Add context →", fn: () => openPostLogSheet([wear]) });
+    toast("Wear logged", [
+      { label: "Undo", fn: () => undoLoggedWears([wear]) },
+      { label: "Add context →", fn: () => openPostLogSheet([wear]) },
+    ]);
+  } catch (e) { toast(e.message); }
+}
+
+// G3: shared undo for one-tap logging — DELETE the created wear row(s), splice
+// from local state, and re-render whatever's currently visible so it doesn't
+// look logged anymore.
+async function undoLoggedWears(rows) {
+  const ids = rows.map(w => w.id).filter(Boolean);
+  try {
+    if (ids.length) await rest(`wears?id=in.(${ids.map(id => `"${id}"`).join(",")})`, { method: "DELETE" });
+    wears = wears.filter(w => !rows.includes(w));
+    toast("Undone");
+    const activeScreen = $(".screen.active")?.id;
+    if (activeScreen === "tab-calendar" && calendarDay) renderCalendarDay($("#calendarBody"));
+    else if (activeScreen === "tab-home") renderHome();
+    else if (detailId && detailView !== "details") openItem(detailId);
   } catch (e) { toast(e.message); }
 }
 
@@ -2799,7 +2843,7 @@ function openPostLogSheet(wearRows) {
 // ---- Log wear (with date picker, for back-dating) ----
 function openLogWear(id) {
   _logItemId = id;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   _ctxSel = []; _ctxAddOpen = false;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
@@ -3455,7 +3499,7 @@ function itemFormality(i) {
   return s && s.length ? s[0] : 3;
 }
 
-const currentSeason = () => seasonOf(new Date().toISOString().slice(0, 10));
+const currentSeason = () => seasonOf(localISO(new Date()));
 
 // Wearable SEASONS for an item — same derive-first idea as itemFormalitySet.
 // Source order: explicit DB field → seasons it's actually been worn in (the
@@ -3566,6 +3610,16 @@ function outfitBucket(o) {
   const key = KEYS[Math.max(1, Math.min(8, level)) - 1];
   o._bucket = key;
   return key;
+}
+
+// G5: glanceable payoff of logging, shown on the item photo view.
+function itemStatLine(i) {
+  const n = wearCount(i.id);
+  if (n === 0) return "never worn";
+  const parts = [`worn ${n}×`, `last worn ${relDate(lastWorn(i.id))}`];
+  const cpw = costPerWear(i);
+  if (cpw != null) parts.push(`${money(cpw)}/wear`);
+  return parts.join(" · ");
 }
 
 function relDate(d) {
@@ -5357,7 +5411,7 @@ function calMostWorn() {
 function calStreak() {
   const worn = new Set(wears.map(w => w.worn_on));
   const d = new Date(); let streak = 0;
-  while (worn.has(d.toISOString().slice(0, 10))) { streak++; d.setDate(d.getDate() - 1); }
+  while (worn.has(localISO(d))) { streak++; d.setDate(d.getDate() - 1); }
   return streak;
 }
 
@@ -5368,7 +5422,7 @@ function renderCalendar() {
 }
 
 function renderCalendarMonth(body) {
-  const todayStr    = new Date().toISOString().slice(0, 10);
+  const todayStr    = localISO(new Date());
   const year        = calendarYear, month = calendarMonth;
   const firstDoW    = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -5521,8 +5575,8 @@ function renderCalendarDay(body) {
   }).join('')
   : `<div class="cal-day-empty">Nothing logged for this day.</div>`;
 
-  const prevD    = new Date(y, m - 1, d - 1).toISOString().slice(0, 10);
-  const nextD    = new Date(y, m - 1, d + 1).toISOString().slice(0, 10);
+  const prevD    = localISO(new Date(y, m - 1, d - 1));
+  const nextD    = localISO(new Date(y, m - 1, d + 1));
   const isFuture = new Date(y, m - 1, d + 1) > new Date();
 
   body.innerHTML = `<div class="tabbody">
@@ -5881,12 +5935,12 @@ async function saveCalClothingLog() {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
     });
-    if (Array.isArray(rows)) wears.push(...rows);
-    else payload.forEach(p => wears.push({ ...p, outfit_id: null }));
+    const pushed = Array.isArray(rows) ? rows : payload.map(p => ({ ...p, outfit_id: null }));
+    wears.push(...pushed);
     buildOutfitWearMap();
     renderCalendarDay(body);
     if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
-    else toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`);
+    else toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`, { label: "Undo", fn: () => undoLoggedWears(pushed) });
   } catch (e) { toast(e.message); }
 }
 
@@ -6053,7 +6107,7 @@ function rangeStart() {
   else if (statsDateRange === "90d") d.setDate(d.getDate() - 90);
   else if (statsDateRange === "6mo") d.setMonth(d.getMonth() - 6);
   else if (statsDateRange === "1yr") d.setFullYear(d.getFullYear() - 1);
-  return d.toISOString().slice(0, 10);
+  return localISO(d);
 }
 
 function wearCountInRange(itemId) {
@@ -6071,7 +6125,7 @@ function acqRangeStart() {
   else if (period === "2yr") d.setFullYear(d.getFullYear() - 2);
   else if (period === "3yr") d.setFullYear(d.getFullYear() - 3);
   else if (period === "5yr") d.setFullYear(d.getFullYear() - 5);
-  return { cutoff: d.toISOString().slice(0, 10), older };
+  return { cutoff: localISO(d), older };
 }
 
 function statsActiveFilterCount() {
@@ -7467,7 +7521,7 @@ function tripDates(c) {
   const out = [];
   if (!c.start_date || !c.end_date) return out;
   let d = new Date(c.start_date + "T00:00:00"), e = new Date(c.end_date + "T00:00:00");
-  while (d <= e) { out.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+  while (d <= e) { out.push(localISO(d)); d.setDate(d.getDate() + 1); }
   return out;
 }
 function planDayLabel(date) {
@@ -8564,11 +8618,11 @@ async function geocodeLocation(q) {
 // 3 zones: past (archive), recent+near-future (forecast), far-future (3-yr historical avg).
 async function fetchWeatherRange(lat, lon, startStr, endStr) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localISO(today);
   const fc92 = new Date(today); fc92.setDate(fc92.getDate() - 92);
-  const fc92Str = fc92.toISOString().slice(0, 10);
+  const fc92Str = localISO(fc92);
   const fcCutoff = new Date(today); fcCutoff.setDate(fcCutoff.getDate() + 15);
-  const fcCutoffStr = fcCutoff.toISOString().slice(0, 10);
+  const fcCutoffStr = localISO(fcCutoff);
   const result = {};
 
   // Zone A: within forecast API window (today-92 to today+15)
@@ -8587,7 +8641,7 @@ async function fetchWeatherRange(lat, lon, startStr, endStr) {
 
   // Zone B: older than 92 days — ERA5 archive (real historical data)
   if (startStr < fc92Str) {
-    const zBE = endStr < fc92Str ? endStr : new Date(fc92.getTime() - 86400000).toISOString().slice(0, 10);
+    const zBE = endStr < fc92Str ? endStr : localISO(new Date(fc92.getTime() - 86400000));
     try {
       const d = await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}` +
         `&daily=temperature_2m_max,temperature_2m_min,weather_code` +
@@ -8602,7 +8656,7 @@ async function fetchWeatherRange(lat, lon, startStr, endStr) {
   if (endStr > fcCutoffStr) {
     const histDates = [];
     { let d = new Date(startStr + "T00:00:00"), e = new Date(endStr + "T00:00:00");
-      while (d <= e) { const s = d.toISOString().slice(0, 10); if (s > fcCutoffStr && !result[s]) histDates.push(s); d.setDate(d.getDate() + 1); } }
+      while (d <= e) { const s = localISO(d); if (s > fcCutoffStr && !result[s]) histDates.push(s); d.setDate(d.getDate() + 1); } }
     if (histDates.length) {
       const tripSY = parseInt(histDates[0].slice(0, 4));
       const tripEY = parseInt(histDates[histDates.length - 1].slice(0, 4));
@@ -8643,7 +8697,7 @@ async function buildTripWeather(capsule) {
 
   const dates = [];
   { let d = new Date(capsule.start_date + "T00:00:00"), e = new Date(capsule.end_date + "T00:00:00");
-    while (d <= e) { dates.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); } }
+    while (d <= e) { dates.push(localISO(d)); d.setDate(d.getDate() + 1); } }
   if (!dates.length) return [];
 
   function locForDate(ds) {
@@ -9163,9 +9217,17 @@ function wireEvents() {
     else if (calendarDay) { calendarDay = null; renderCalendarMonth($("#calendarBody")); }
   }, { passive: true });
 
-  // Long-press on grid tile (500 ms) → quick-action sheet
+  // Long-press on grid tile (500 ms) → quick-action sheet.
+  // Long-press on the item-photo Log button (500 ms) → back-date picker
+  // (a plain tap still logs today via the #ibLog click handler).
   let _lpTimer = null, _lpItemId = null, _lpFired = false;
   document.addEventListener('touchstart', e => {
+    const ibLog = e.target.closest('#ibLog');
+    if (ibLog) {
+      _lpFired = false;
+      _lpTimer = setTimeout(() => { _lpTimer = null; _lpFired = true; if (detailId) openLogWear(detailId); }, 500);
+      return;
+    }
     const tile = e.target.closest('.gtile[data-item]');
     if (!tile || selectMode) { _lpItemId = null; return; }
     _lpFired = false;
