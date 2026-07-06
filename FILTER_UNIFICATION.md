@@ -1,7 +1,11 @@
 # Filter Unification — design & handoff
 
 Living spec for the cross-app filter rework. Read with `CLAUDE.md`.
-**Status: Phase 1 shipped (2026-06-29 r3). Phase 2 not started.**
+**Status: Phase 1 shipped (2026-06-29 r3). Phase 2 SHIPPED (commit `c468226`, ~2026-06-30):
+unified `openFilterSheet` + `itemMatchesFilter`/`outfitMatchesFilter` live on Closet,
+Stats, Looks; standalone Search screen retired; per-surface dim lists
+(`CLOSET/STATS/LOOKS_FILTER_DIMS`) + per-surface states (`closetFilter` etc.).
+Phase 3 (pickers) is planned — see `ROADMAP.md` "Hearts + Filters Everywhere".**
 
 ## Why this exists
 
@@ -48,7 +52,26 @@ Logic unified; data-semantics decisions implemented. No UI change yet.
 - `reviewPool` uses `itemStatus(i)`.
 - `STATUSES` = `["Available","Storage","Archive"]` (Wishlist gone).
 
-## Phase 2 — TODO (the unified funnel UI)
+## Phase 3 — TODO (pickers + calendar; execution plan in ROADMAP.md)
+
+Phase 2 unified the three browse surfaces but left the **pickers** on legacy filtering:
+
+- **Calendar +Clothing picker** (`renderCalClothingPicker`) and **capsule add-items
+  picker** (`openCapsulePicker`) share the `_capPick*` state + `pickerPool()` — own
+  status chips + category folders, NO unified funnel, **no capsule dimension** (the
+  reported bug: "filter by capsule doesn't appear when adding clothes on calendar").
+  → shared `pickerFilter` + funnel; capsule dim included; status/cat/subcat excluded
+  (picker keeps its own chips/folders).
+- **Builder picker** — funnel added (in-flight diff, `builderFilter` +
+  `BUILDER_FILTER_DIMS`); commit + deploy in Wave 0.
+- **Calendar +Look picker** (`renderCalLookPicker`) — keyword only → add funnel with
+  `LOOKS_FILTER_DIMS` via `outfitMatchesFilter`.
+- **Trip plan look picker** (`openPlanLookPicker`) — no search at all → add keyword +
+  liked-first.
+- Extract `funnelBtnHtml(id, state)` — the funnel-button+badge markup is copy-pasted
+  per surface today.
+
+## Phase 2 — SHIPPED (the unified funnel UI; spec kept for reference)
 
 Goal: one filter model + one reusable sheet, wired into Closet, Stats, Looks.
 

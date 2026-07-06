@@ -1056,7 +1056,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-01 r1";
+const APP_VERSION = "2026-07-06 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1543,17 +1543,6 @@ function renderHome() {
     renderCalendarDay($("#calendarBody"));
     openCalAddClothing();
   };
-}
-
-/* ===================================================================
-   PLACEHOLDER SCREENS  (filled in screen-by-screen next)
-   =================================================================== */
-function placeholder(title) {
-  return `<div class="placeholder">
-    <svg class="pi" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-    <b>${esc(title)}</b>
-    <div>We'll build this next.</div>
-  </div>`;
 }
 
 /* ===================================================================
@@ -2869,9 +2858,9 @@ const FILTERS = [
 const CLOSET_FILTER_DIMS = FILTERS.filter(([k]) => !["status","category","subcategory","capsule"].includes(k));
 const STATS_FILTER_DIMS  = FILTERS.filter(([k]) => k !== "subcategory"); // keep category: "show Tops only" is a useful stats lens
 const LOOKS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].includes(k));
-
-let searchState = newSearchState();
-let searchOpenRow = null;
+// Builder picker already has its own category/subcategory folder nav + a single-select
+// capsule scope chip bar — the funnel only needs attribute dims layered on top.
+const BUILDER_FILTER_DIMS = FILTERS.filter(([k]) => !["category","subcategory","capsule"].includes(k));
 
 // ---- unified filter state (persists across renders per surface) ----
 function newFilterState(overrides) {
@@ -2896,11 +2885,7 @@ function filterActiveCount(f) {
 let closetFilter = newFilterState();
 let statsFilter  = newFilterState();
 let looksFilter  = newFilterState();
-function newSearchState() {
-  return { q: "", color: new Set(), fabric: new Set(), size: new Set(), season: new Set(),
-    brand: new Set(), status: new Set(), category: new Set(), subcategory: new Set(),
-    formality: new Set(), retailer: new Set(), acquisition: new Set(), capsule: new Set() };
-}
+let builderFilter = newFilterState();
 function distinctScalar(field) { return [...new Set(items.map(i => i[field]).filter(Boolean))].sort(); }
 // Like distinctScalar but ordered by how often each value occurs (most-used first).
 function distinctByFreq(field) {
@@ -2910,13 +2895,10 @@ function distinctByFreq(field) {
 }
 function distinctArr(field) { const s = new Set(); items.forEach(i => (i[field] || []).forEach(v => s.add(v))); return [...s].sort(); }
 
+// Retired standalone search screen — logic folded into openFilterSheet + itemMatchesFilter.
 function openSearch() {
   openFilterSheet(closetFilter, { onApply: renderCloset, title: "Filter Closet", dims: CLOSET_FILTER_DIMS });
 }
-
-// Retired standalone search screen — logic folded into openFilterSheet + itemMatchesFilter.
-function renderSearch() {}
-function runSearch() {}
 
 function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } = {}) {
   const activeDims = dims || FILTERS;
@@ -5833,8 +5815,8 @@ function openCalAddClothing() {
   renderCalClothingPicker();
 }
 
-const PICK_SORT_OPTS = ["color","name","newest","most-worn","least-worn","formality","price"];
-const PICK_SORT_LABELS = { color:"Color", name:"Name", newest:"Newest", "most-worn":"Most worn", "least-worn":"Least worn", formality:"Formality", price:"Price" };
+const PICK_SORT_OPTS = SORT_OPTS.map(o => o.key);
+const PICK_SORT_LABELS = Object.fromEntries(SORT_OPTS.map(o => [o.key, o.key === "newest" ? "Newest" : o.label]));
 
 function renderCalClothingPicker() {
   const body = $('#calendarBody');
@@ -8270,13 +8252,20 @@ function renderBuilderPicker() {
     const chip = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
     capBar = `<div class="cap-catbar" style="padding-top:6px">${chip("", "All", !builder.scopeCapsuleId)}${capsules.map(c => chip(c.id, c.name, builder.scopeCapsuleId === c.id)).join("")}</div>`;
   }
+  const filterN = filterActiveCount(builderFilter);
   body.innerHTML = `
     <div class="bld-top">
       <button class="lnk" id="bldPickBack">${esc(backLabel)}</button>
       <div class="bld-name" style="cursor:default">${esc(title)}</div>
       <span style="width:48px"></span>
     </div>
-    <div style="padding:10px 14px 0"><input class="inp" id="bldPickSearch" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}"></div>
+    <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
+      <input class="inp" id="bldPickSearch" style="flex:1" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}">
+      <div style="position:relative">
+        <button class="clsearch" id="bldPickFilter"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
+        ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
+      </div>
+    </div>
     ${capBar}
     <div id="bldPickResults" style="padding:8px 0 30px">${builderPickContent()}</div>`;
   hydratePhotos(body);
@@ -8298,6 +8287,7 @@ function builderPool() {
     const set = new Set((capsuleLinkMap.get(builder.scopeCapsuleId) || []).map(l => l.item_id));
     pool = pool.filter(i => set.has(i.id));
   }
+  if (hasActiveFilter(builderFilter)) pool = pool.filter(i => itemMatchesFilter(i, builderFilter, { noStatusDefault: true }));
   return pool;
 }
 
@@ -9012,6 +9002,7 @@ function wireEvents() {
     if (e.target.closest("#bldSave")) return saveBuilder();
     if (e.target.closest("#bldAdd")) { builder.picking = true; builder.pickCat = null; builder.pickQ = ""; return renderBuilder(); }
     if (e.target.closest("#bldPickBack")) return builderPickBack();
+    if (e.target.closest("#bldPickFilter")) return openFilterSheet(builderFilter, { onApply: renderBuilderPicker, title: "Filter Clothing", dims: BUILDER_FILTER_DIMS });
     const bcat = e.target.closest("[data-bcat]");
     if (bcat) { builder.pickCat = bcat.dataset.bcat; builder.pickSub = null; return renderBuilder(); }
     const bsub = e.target.closest("[data-bsub]");

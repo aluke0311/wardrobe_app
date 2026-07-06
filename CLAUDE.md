@@ -21,20 +21,26 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-06-26 r9. Full rework from v25. ~7,250 lines.**
+**Current state: 2026-07-06 r1. Full rework from v25. ~9,000 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
-**▶ NEXT UP:** `ROADMAP.md` → Wave 4 (gestures). W0–W3 are fully shipped.
-When the user says "continue the build," start at the first unchecked item and deploy at
-each ✅ checkpoint. Wave 4 = swipe-right-to-back (app-wide), day-view swipe between days,
-swipe between sibling items in detail, long-press tile quick-actions. Wave 5 = make-a-look
-from today's logged items. No schema changes needed anywhere.
+**▶ NEXT UP:** `ROADMAP.md` → "Hearts + Filters Everywhere" **v2** (planned 2026-07-06;
+expanded after a full product review + user questionnaire — all decisions locked in the
+ROADMAP section, do not re-litigate). The 2026-06 "Unified Experience" build (W0–W5) and
+filter unification Phase 2 are fully shipped. When the user says "continue the build,"
+start at the first unchecked item and deploy at each ✅ checkpoint. Wave summary:
+W0 land in-flight builder funnel + hygiene → W1 local-date/dup-guard/Undo/back-date/
+photo stat strip → W2 capsule filter in item pickers (reported bug) → W3 hearts
+(`outfits.rating`, wear-moment capture is primary) → W4 Context lens + derived
+auto-archive → W5 single-ask logging + log-as-look + wear-again → W6 context payoff
+(suggester chips, stats page) + look-picker funnels → W7 weather OOTD tile. Plus a
+parallel navigation-audit track. No schema changes anywhere.
 
 Top-of-`<script>` config, then logically grouped sections:
 
 - **CONFIG** — `SUPABASE_URL`, `SUPABASE_KEY`, `BUCKET`, `APP_VERSION`, `TAXONOMY`,
-  `COLOR_FAMILIES`, `OCCASION_LADDER` (6 levels), `FORMALITY_BUCKETS`, `BUCKET_RANGES`,
+  `COLOR_FAMILIES`, `OCCASION_LADDER` (8 levels), `FORMALITY_BUCKETS`, `BUCKET_RANGES`,
   `SUBCAT_FORMALITY`, `CAT_FORMALITY`, `CONTEXTS`, image/encode constants.
 - **SESSION** — `store` safe wrapper (probes localStorage once, falls back to in-memory
   Map). Always use `store`/`saveSession`/`loadSession`, never raw localStorage.
@@ -145,7 +151,7 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 
 - `items`: id, user_id, name, category, subcategory, brand, retailer, color_family
   (single), price, purchase_date, date_is_guess, acquisition (New|Secondhand|Gift),
-  size, fabric (text[]), season (text[]), **formality** (smallint 1–6), status
+  size, fabric (text[]), season (text[]), **formality** (smallint[] of 1–8 levels), status
   (Available|Storage|Archive), tags (text[] — includes `"no-suggest"` tag), url,
   order_no, receipt_url, official_name, notes, image_path, created_at.
 - `wears`: id, user_id, item_id, outfit_id (nullable), worn_on (date),
@@ -257,7 +263,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-06-27 r8`.
+  Currently `2026-07-06 r1`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
@@ -265,17 +271,22 @@ writes a new column/table before its migration is confirmed.**
 
 ## Filtering
 
-**Canonical filter predicates** (single source of truth, `index.html` ~`matchesSeason`):
-`matchesFormality(i, level)` (numeric 1–8) and `matchesSeason(i, season)` (DERIVED via
-`itemSeasonSet`; unknown season = no match). Search (`runSearch`) and Stats (`statsPool`)
-both call these. **Status is always read via `itemStatus(i)`** (null → "Available"); an
-empty status filter excludes Archive. `STATUSES` no longer includes Wishlist.
-`inSeason()` (suggestions) is intentionally separate — unknown = all-season-eligible.
+**Canonical filter predicates** (single source of truth): `matchesFormality(i, level)`
+(numeric 1–8) and `matchesSeason(i, season)` (DERIVED via `itemSeasonSet`; unknown
+season = no match). **Status is always read via `itemStatus(i)`** (null → "Available");
+an empty status filter excludes Archive (`itemMatchesFilter` default; pickers/builder
+pass `{ noStatusDefault: true }` because they have their own status chips). `STATUSES`
+no longer includes Wishlist. `inSeason()` (suggestions) is intentionally separate —
+unknown = all-season-eligible.
 
-**Cross-app filter unification is IN PROGRESS** — see `FILTER_UNIFICATION.md`. Phase 1
-(shared predicates + status/derived-season/Wishlist decisions) shipped r3. Phase 2 (one
-unified filter sheet folded into Closet/Stats/Looks, capsule as a dimension, retire the
-standalone Search screen) is specced but NOT built. Read that doc before touching filters.
+**Unified filter sheet (Phase 2) is SHIPPED**: `openFilterSheet(state, { onApply, title,
+dims })` + `itemMatchesFilter(i, state, opts)` / `outfitMatchesFilter(o, state)` drive
+Closet, Stats, and Looks. Per-surface dim lists (`CLOSET_FILTER_DIMS` etc., ~line 2869)
+and per-surface `newFilterState()` clones (`closetFilter`/`statsFilter`/`looksFilter`).
+The standalone Search screen is retired (`openSearch` now opens the closet funnel).
+`outfitMatchesFilter` semantics: ALL-pieces for formality/capsule/status, ANY-piece for
+the rest. **Phase 3 (pickers: calendar +Clothing/+Look, capsule add-items, builder) is
+the current roadmap** — see `FILTER_UNIFICATION.md` + `ROADMAP.md` before touching filters.
 
 ## Known gotchas
 
@@ -323,9 +334,10 @@ standalone Search screen) is specced but NOT built. Read that doc before touchin
   (save to DB) or callback fn (Add form). Clear both in `closeFieldSheet()`.
 - **Add Item state**: `_addState`, `_addPhotoBlob`, `_addPhotoUrl`. `#moveSheet` reused for
   category with `_addCatMode = true` guard.
-- **Formality is 1–6**: `OCCASION_LADDER` has 6 entries. `itemFormality(i)` reads
-  `i.formality` first, guesses from `SUBCAT_FORMALITY`/`CAT_FORMALITY` if null.
-  Function items (1) must never mix with non-Function — enforced by `formalityOk(its)`.
+- **Formality is 1–8**: `OCCASION_LADDER` has 8 entries (see Design model).
+  `itemFormalitySet(i)` is the source of truth (explicit array or imputed);
+  `itemFormality(i)` = min of the set, for display/grouping compat.
+  Function items (set == [1]) must never mix with non-Function — enforced by `formalityOk(its)`.
 - **`openOccasionEdit(itemId, onSaved)`**: single-tap pick (tap again to deselect).
   Always clears all `o._bucket` caches so looks re-derive.
 - **Exclusions**: `_excludeSet` is a Set of `"<smaller-id>:<larger-id>"` strings.
@@ -376,10 +388,10 @@ standalone Search screen) is specced but NOT built. Read that doc before touchin
 
 - Reorder capsules (needs an `order` column)
 - Crop/rotate photo editor
-- Outfit feedback (👍/👎 — `outfits.rating` column exists, UI deferred)
-- Outfit of the day on Home connected to weather
+- ~~Outfit feedback~~ → hearts scheduled in ROADMAP v2 Wave 3 (👎 still rejected)
+- ~~Outfit of the day on Home~~ → scheduled in ROADMAP v2 Wave 7
 - Capsule-scoped suggestions improvements: variety seeding, multi-anchor, constraints
-- Wear-logging loop overhaul (multi-select fast logger, long-press grid log, Home CTA)
+- ~~Wear-logging loop overhaul~~ → scheduled in ROADMAP v2 Waves 1+5
 
 **Shipped 2026-06-27 r3:**
 - Multi-exclude UI (r4) — `openExcludeSheet` lists every unordered PAIR among the shown pieces as a
