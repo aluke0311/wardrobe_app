@@ -1061,7 +1061,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r2";
+const APP_VERSION = "2026-07-06 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2905,6 +2905,11 @@ const LOOKS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].i
 // Builder picker already has its own category/subcategory folder nav + a single-select
 // capsule scope chip bar — the funnel only needs attribute dims layered on top.
 const BUILDER_FILTER_DIMS = FILTERS.filter(([k]) => !["category","subcategory","capsule"].includes(k));
+// Shared calendar +Clothing / capsule add-items picker (the `_capPick*` family): it
+// already has its own status chips + category/subcategory folder nav, but — unlike
+// the builder picker — capsule STAYS IN as a funnel dim (this was the reported bug:
+// no way to narrow these pickers to a capsule/trip's members).
+const PICKER_FILTER_DIMS = FILTERS.filter(([k]) => !["status","category","subcategory"].includes(k));
 
 // ---- unified filter state (persists across renders per surface) ----
 function newFilterState(overrides) {
@@ -2930,6 +2935,16 @@ let closetFilter = newFilterState();
 let statsFilter  = newFilterState();
 let looksFilter  = newFilterState();
 let builderFilter = newFilterState();
+let pickerFilter = newFilterState();
+// Shared funnel-button + count-badge markup for a picker toolbar (builder, calendar
+// +Clothing, capsule add-items). Extracted so new picker surfaces don't copy-paste it.
+function funnelBtnHtml(id, state) {
+  const n = filterActiveCount(state);
+  return `<div style="position:relative">
+    <button class="clsearch" id="${esc(id)}"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
+    ${n ? `<span class="filter-badge">${n}</span>` : ""}
+  </div>`;
+}
 function distinctScalar(field) { return [...new Set(items.map(i => i[field]).filter(Boolean))].sort(); }
 // Like distinctScalar but ordered by how often each value occurs (most-used first).
 function distinctByFreq(field) {
@@ -5866,6 +5881,7 @@ function openCalAddClothing() {
   _capPickCat = null;
   _capPickSub = null;          // reset so a stale subcategory filter can't hide items
   _capPickStatus = "Available"; // reset so a stale status lens can't hide items
+  pickerFilter = newFilterState();
   renderCalClothingPicker();
 }
 
@@ -5882,7 +5898,10 @@ function renderCalClothingPicker() {
       <button id="calLogDone" style="color:var(--accent);font-size:15px;font-weight:700">Done</button>
     </div>
     <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
-    <div style="padding:6px 14px 0"><input class="inp" id="calLogSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
+    <div style="padding:6px 14px 0;display:flex;gap:8px;align-items:center">
+      <input class="inp" id="calLogSearch" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}">
+      ${funnelBtnHtml("calLogFilter", pickerFilter)}
+    </div>
     ${(() => { const b = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${l}</button>`;
       return `<div class="cap-catbar" style="padding-top:6px">${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px">
@@ -5906,6 +5925,7 @@ function renderCalClothingPicker() {
     if (sortPop && !sortPop.hidden) sortPop.hidden = true;  // any other tap closes the menu
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
     if (e.target.closest('#calLogDone')) return saveCalClothingLog();
+    if (e.target.closest('#calLogFilter')) return openFilterSheet(pickerFilter, { onApply: renderCalClothingPicker, title: "Filter Clothing", dims: PICKER_FILTER_DIMS });
     const ps = e.target.closest('[data-pick-status]');
     if (ps) { _capPickStatus = ps.dataset.pickStatus; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
     const pc = e.target.closest('[data-pickcat]');
@@ -7878,6 +7898,7 @@ function openCapsulePicker(id) {
   _capPickCat = null;
   _capPickSub = null;
   _capPickStatus = "Available";
+  pickerFilter = newFilterState();
   capsuleView = "pick";
   renderCapsules();
 }
@@ -7893,6 +7914,7 @@ function pickerPoolBase() {
     (i.brand || "").toLowerCase().includes(q) ||
     (i.category || "").toLowerCase().includes(q) ||
     (i.subcategory || "").toLowerCase().includes(q));
+  if (hasActiveFilter(pickerFilter)) pool = pool.filter(i => itemMatchesFilter(i, pickerFilter, { noStatusDefault: true }));
   return pool;
 }
 function pickerPool() {
@@ -7947,7 +7969,10 @@ function renderCapsulePicker() {
   </div>`;
   const lensBtn = (s, lbl) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${lbl}</button>`;
   return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
-    <div style="padding:10px 14px 0"><input class="inp" id="capPickSearch" placeholder="Search your closet…" value="${esc(_capPickFilter)}"></div>
+    <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
+      <input class="inp" id="capPickSearch" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}">
+      ${funnelBtnHtml("capPickFilter", pickerFilter)}
+    </div>
     <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
     <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
     <div id="capPickResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
@@ -8306,7 +8331,6 @@ function renderBuilderPicker() {
     const chip = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
     capBar = `<div class="cap-catbar" style="padding-top:6px">${chip("", "All", !builder.scopeCapsuleId)}${capsules.map(c => chip(c.id, c.name, builder.scopeCapsuleId === c.id)).join("")}</div>`;
   }
-  const filterN = filterActiveCount(builderFilter);
   body.innerHTML = `
     <div class="bld-top">
       <button class="lnk" id="bldPickBack">${esc(backLabel)}</button>
@@ -8315,10 +8339,7 @@ function renderBuilderPicker() {
     </div>
     <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
       <input class="inp" id="bldPickSearch" style="flex:1" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}">
-      <div style="position:relative">
-        <button class="clsearch" id="bldPickFilter"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
-        ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
-      </div>
+      ${funnelBtnHtml("bldPickFilter", builderFilter)}
     </div>
     ${capBar}
     <div id="bldPickResults" style="padding:8px 0 30px">${builderPickContent()}</div>`;
@@ -8550,6 +8571,8 @@ function wireCapsules() {
     const s = $("#capPickSearch");
     if (s) s.oninput = () => { _capPickFilter = s.value; renderPickerGrid(); };
     const done = $("#capPickDone"); if (done) done.onclick = saveCapsulePicker;
+    const filterBtn = $("#capPickFilter");
+    if (filterBtn) filterBtn.onclick = () => openFilterSheet(pickerFilter, { onApply: () => renderCapsules(), title: "Filter Clothing", dims: PICKER_FILTER_DIMS });
     body.querySelectorAll("[data-pick-status]").forEach(b => {
       b.onclick = () => { _capPickStatus = b.dataset.pickStatus; _capPickCat = null; _capPickSub = null; renderPickerGrid(); };
     });

@@ -203,12 +203,16 @@ Known suspects found in review (fix these; user will report more cases as she hi
 → ✅ **DEPLOYED** (`2026-07-06 r2`)
 
 ### WAVE 2 — Capsule filter in the item pickers (the reported bug)
-- [ ] **P1 `pickerFilter` + `PICKER_FILTER_DIMS`**, reset in both openers. (S)
-- [ ] **Apply in `pickerPoolBase()`.** (S)
-- [ ] **P2 funnel + badge in both picker headers** (`renderCalClothingPicker` +
-  capsule pick view); extract `funnelBtnHtml`. (M)
-- [ ] **Verify** end-to-end on both surfaces (capsule dim narrows grid, badge counts). (S)
-→ ✅ **DEPLOY**
+- [x] **P1 `pickerFilter` + `PICKER_FILTER_DIMS`**, reset in both openers
+  (`openCalAddClothing`, `openCapsulePicker`). (S)
+- [x] **Apply in `pickerPoolBase()`** via `itemMatchesFilter(i, pickerFilter,
+  { noStatusDefault: true })`, gated on `hasActiveFilter`. (S)
+- [x] **P2 funnel + badge in both picker headers** (`renderCalClothingPicker` +
+  `renderCapsulePicker`); extracted shared `funnelBtnHtml(id, state)` and retrofitted
+  the Wave-0 builder-picker funnel to use it too. (M)
+- [x] **Verified** parse-check + preview load clean; capsule dim now reaches both
+  pickers (previously only the builder picker had it). (S)
+→ ✅ **DEPLOYED** (`2026-07-06 r3`)
 
 ### WAVE 3 — Hearts
 - [ ] **`toggleLikeLook(id)`** — PATCH rating 1↔null, update local row, re-render. (S)
