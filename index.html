@@ -826,6 +826,11 @@
   .cal-day-foot-add span { color: var(--muted); font-size: 13px; }
   .cal-day-foot-add button { color: var(--accent); font-size: 15px; font-weight: 600; padding: 6px 8px; }
   .cal-day-empty { padding: 48px 14px; text-align: center; color: var(--muted); font-size: 15px; }
+  /* G6: "wear again" horizontal candidate strip */
+  .wa-strip { display: flex; gap: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 4px 16px 4px; scrollbar-width: none; }
+  .wa-strip::-webkit-scrollbar { display: none; }
+  .wa-tile { flex: none; width: 84px; text-align: left; position: relative; }
+  .wa-name { font-size: 11.5px; color: var(--text); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -1076,7 +1081,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r4";
+const APP_VERSION = "2026-07-06 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1568,11 +1573,13 @@ function renderHome() {
     : "";
   $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}`;
   const ctaBtn = $("#homeLogCta");
+  // G6: the most common real log is a repeat — offer "wear again" first, not a
+  // blank picker.
   if (ctaBtn) ctaBtn.onclick = () => {
     switchTab("calendar");
     calendarDay = today;
     renderCalendarDay($("#calendarBody"));
-    openCalAddClothing();
+    openWearAgainChooser(today);
   };
 }
 
@@ -2797,10 +2804,10 @@ async function undoLoggedWears(rows) {
 // them, not while browsing) — show a heart row whenever the logged wears share
 // an outfit_id. The tap saves immediately (not gated on Save/Skip), same as the
 // canvas heart, since a heart is its own complete action.
-function openPostLogSheet(wearRows) {
+function openPostLogSheet(wearRows, { presetCtx, presetFml } = {}) {
   _logItemId = wearRows.length === 1 ? wearRows[0].item_id : null;
-  _ctxSel = []; _ctxAddOpen = false;
-  let fmlFor = null;
+  _ctxSel = presetCtx && presetCtx.length ? [...presetCtx] : []; _ctxAddOpen = false;
+  let fmlFor = presetFml || null;
   const oid = wearRows.length && wearRows.every(r => r.outfit_id && r.outfit_id === wearRows[0].outfit_id)
     ? wearRows[0].outfit_id : null;
   const o = oid ? outfitById.get(oid) : null;
@@ -5716,6 +5723,7 @@ function renderCalendarDay(body) {
       <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
       <div class="cal-day-foot-add">
         <span>add more items:</span>
+        <button id="calWearAgain">↻ Wear again</button>
         <button id="calAddClothing">+ Clothing</button>
         <button id="calAddLook">+ Look</button>
       </div>
@@ -5728,6 +5736,7 @@ function renderCalendarDay(body) {
   if (!isFuture) $('#calDayNext').onclick = () => { calendarDay = nextD; renderCalendarDay(body); };
   $('#calAddClothing').onclick = () => openCalAddClothing();
   $('#calAddLook').onclick     = () => openCalAddLook();
+  $('#calWearAgain').onclick   = () => openWearAgainChooser(dateStr);
   const makeLookBtn = $('#calMakeLook');
   if (makeLookBtn) makeLookBtn.onclick = () => makeLookFromDay(dateStr, body);
 
@@ -5918,6 +5927,31 @@ function wireCalSwipe(card) {
   }, { passive: true });
 }
 
+// G2: shared create-or-merge logic (was inline in makeLookFromDay). Dedup guard
+// merges into an existing non-archived look with the same item-set instead of
+// creating a duplicate outfit record (mirrors saveBuilder/saveComboAsOutfit).
+async function createLookFromItems(itemIds, { name } = {}) {
+  const dup = findDuplicateOutfit(itemIds, null);
+  if (dup) return { outfitId: dup.id, isNew: false };
+  const oRows = await rest("/outfits?select=*", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({ name: name || null }),
+  });
+  const newOutfit = Array.isArray(oRows) ? oRows[0] : oRows;
+  if (!newOutfit?.id) throw new Error("Could not create look");
+  outfits.push(newOutfit);
+  const links = itemIds.map(item_id => ({ outfit_id: newOutfit.id, item_id }));
+  await rest("/outfit_items", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(links),
+  });
+  outfitLinks = outfitLinks.concat(links);
+  buildOutfitIndexes();
+  return { outfitId: newOutfit.id, isNew: true };
+}
+
 /* ---- make-a-look from solo items on a day ---- */
 async function makeLookFromDay(dateStr, body) {
   const soloGroups = dayGroups(dateStr).filter(g => !g.outfitId);
@@ -5929,32 +5963,7 @@ async function makeLookFromDay(dateStr, body) {
   const name = new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
   try {
-    // Dedup guard: merge into an existing non-archived look with the same item-set
-    // instead of creating a duplicate outfit record (mirrors saveBuilder/saveComboAsOutfit).
-    const dup = findDuplicateOutfit(itemIds, null);
-    let outfitId, isNew = false;
-    if (dup) {
-      outfitId = dup.id;
-    } else {
-      const oRows = await rest("/outfits?select=*", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-        body: JSON.stringify({ name }),
-      });
-      const newOutfit = Array.isArray(oRows) ? oRows[0] : oRows;
-      if (!newOutfit?.id) throw new Error("Could not create look");
-      outfitId = newOutfit.id;
-      isNew = true;
-      outfits.push(newOutfit);
-
-      const links = itemIds.map(item_id => ({ outfit_id: outfitId, item_id }));
-      await rest("/outfit_items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify(links),
-      });
-      outfitLinks = outfitLinks.concat(links);
-    }
+    const { outfitId } = await createLookFromItems(itemIds, { name });
 
     // Stamp wears with the outfit_id
     const inList = `(${wearIds.map(id => `"${id}"`).join(',')})`;
@@ -5965,11 +5974,16 @@ async function makeLookFromDay(dateStr, body) {
     });
 
     // Update local state
-    for (const w of wears) { if (wearIds.includes(w.id)) w.outfit_id = outfitId; }
+    const dayWears = wears.filter(w => wearIds.includes(w.id));
+    for (const w of dayWears) w.outfit_id = outfitId;
     buildOutfitIndexes();
 
     renderCalendarDay(body);
-    toast(isNew ? "Look created" : "Merged into existing look", { label: "View →", fn: () => { switchTab("looks"); openLook(outfitId); } });
+    // G1: single-ask — pre-seed from whatever context/formality is already on
+    // these wears so opening the sheet doesn't blank out captured values.
+    const presetCtx = dayWears.flatMap(w => ctxArr(w)).filter((v, i, a) => a.indexOf(v) === i);
+    const presetFml = dayWears.find(w => w.formality_for)?.formality_for || null;
+    openPostLogSheet(dayWears, { presetCtx, presetFml });
   } catch (e) { toast(e.message); }
 }
 
@@ -6011,9 +6025,12 @@ function renderCalClothingPicker() {
     </div>
     ${(() => { const b = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${l}</button>`;
       return `<div class="cap-catbar" style="padding-top:6px">${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px;gap:8px">
       <span style="font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</span>
-      <button id="calLogSort" style="font-size:13px;color:var(--muted);padding:4px 10px;border:1px solid var(--line);border-radius:20px">${esc(PICK_SORT_LABELS[sortKey] || "Sort")}</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="calLogAsLook" ${_capPick.size < 2 ? "hidden" : ""} style="font-size:13px;color:var(--accent);font-weight:600;padding:4px 10px;border:1px solid var(--accent);border-radius:20px;white-space:nowrap">Log as look</button>
+        <button id="calLogSort" style="font-size:13px;color:var(--muted);padding:4px 10px;border:1px solid var(--line);border-radius:20px">${esc(PICK_SORT_LABELS[sortKey] || "Sort")}</button>
+      </div>
     </div>
     <div id="calLogResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
     <div id="calLogSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
@@ -6032,6 +6049,7 @@ function renderCalClothingPicker() {
     if (sortPop && !sortPop.hidden) sortPop.hidden = true;  // any other tap closes the menu
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
     if (e.target.closest('#calLogDone')) return saveCalClothingLog();
+    if (e.target.closest('#calLogAsLook')) return saveCalClothingLogAsLook();
     if (e.target.closest('#calLogFilter')) return openFilterSheet(pickerFilter, { onApply: renderCalClothingPicker, title: "Filter Clothing", dims: PICKER_FILTER_DIMS });
     const ps = e.target.closest('[data-pick-status]');
     if (ps) { _capPickStatus = ps.dataset.pickStatus; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
@@ -6066,8 +6084,34 @@ async function saveCalClothingLog() {
     wears.push(...pushed);
     buildOutfitWearMap();
     renderCalendarDay(body);
-    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
-    else toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`, { label: "Undo", fn: () => undoLoggedWears(pushed) });
+    // G1: single-ask — no auto-opened sheet for solo items (context stays reachable
+    // via the toast chip and the day-card "Add context" button instead).
+    toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`, [
+      { label: "Undo", fn: () => undoLoggedWears(pushed) },
+      { label: "Add context →", fn: () => openPostLogSheet(pushed) },
+    ]);
+  } catch (e) { toast(e.message); }
+}
+
+// G2: "Log as look" — skip the day-page detour. Create-or-merge the picked items
+// into a look (createLookFromItems), log wears WITH outfit_id, one post-log sheet.
+async function saveCalClothingLogAsLook() {
+  const body = $('#calendarBody');
+  const ids = [..._capPick];
+  if (ids.length < 2) return;
+  const date = calendarDay;
+  try {
+    const { outfitId } = await createLookFromItems(ids);
+    const payload = ids.map(item_id => ({ item_id, worn_on: date, outfit_id: outfitId }));
+    const rows = await rest('/wears', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
+      body: JSON.stringify(payload),
+    });
+    const pushed = Array.isArray(rows) ? rows : payload.map(p => ({ ...p }));
+    wears.push(...pushed);
+    buildOutfitWearMap();
+    renderCalendarDay(body);
+    openPostLogSheet(pushed);
   } catch (e) { toast(e.message); }
 }
 
@@ -6117,6 +6161,63 @@ function renderCalLookPicker() {
     const lk = e.target.closest('[data-callook]');
     if (lk) return logLookOnDay(lk.dataset.callook);
   };
+}
+
+// G6: "wear again" candidates — worn in the last 14 days ∪ liked ∪ most-worn this
+// season, deduped, recency first. The most common real log is a repeat; this is
+// the 2-tap path for it (tap the CTA, tap a look).
+function outfitSeasonWornCount(o, season) {
+  const s = outfitWearMap.get(o.id);
+  if (!s) return 0;
+  let n = 0;
+  for (const d of s) if (seasonOf(d) === season) n++;
+  return n;
+}
+function wearAgainCandidates() {
+  const all = activeOutfits();
+  const cutoff = localISO(new Date(Date.now() - 14 * 86400000));
+  const season = currentSeason();
+  const recentIds = new Set(wears.filter(w => w.outfit_id && w.worn_on >= cutoff).map(w => w.outfit_id));
+  const seasonCounts = new Map();
+  for (const o of all) { const n = outfitSeasonWornCount(o, season); if (n) seasonCounts.set(o.id, n); }
+  const topSeasonIds = new Set([...seasonCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([id]) => id));
+  return all.filter(o => recentIds.has(o.id) || o.rating === 1 || topSeasonIds.has(o.id))
+    .sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")))
+    .slice(0, 12);
+}
+function openWearAgainChooser(date) {
+  const cands = wearAgainCandidates();
+  const strip = cands.length
+    ? `<div class="wa-strip">${cands.map(o => `<button class="wa-tile" data-wa-look="${esc(o.id)}">
+        ${outfitCollageHtml(o, 4)}
+        ${o.rating === 1 ? `<div class="otile-heart" style="width:14px;height:14px"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
+        <div class="wa-name">${esc(outfitName(o))}</div>
+      </button>`).join("")}</div>`
+    : `<div class="muted center" style="padding:10px 24px 4px;font-size:13px">No recent looks yet — build one below.</div>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="waCancel">Cancel</button>
+      <h2>Wear again?</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:4px 0 12px">${strip}</div>
+    <div class="cal-day-foot" style="position:static;border-top:1px solid var(--line);margin:0 4px">
+      <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
+      <div class="cal-day-foot-add">
+        <span>or add fresh:</span>
+        <button id="waAddClothing">+ Clothing</button>
+        <button id="waAddLook">+ Look</button>
+      </div>
+    </div>
+    <div style="height:max(env(safe-area-inset-bottom),16px)"></div>`;
+  $("#logSheet").hidden = false;
+  hydratePhotos($("#logInner"));
+  $("#waCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#waAddClothing").onclick = () => { $("#logSheet").hidden = true; calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddClothing(); };
+  $("#waAddLook").onclick = () => { $("#logSheet").hidden = true; calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddLook(); };
+  $("#logInner").querySelectorAll("[data-wa-look]").forEach(b => {
+    b.onclick = () => { $("#logSheet").hidden = true; calendarDay = date; logLookOnDay(b.dataset.waLook); };
+  });
 }
 
 async function logLookOnDay(id) {
@@ -8130,6 +8231,7 @@ function togglePick(id) {
     const dot = tile.querySelector(".sel-dot"); if (dot) dot.classList.toggle("on", on);
   }
   const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
+  const logAsLook = $("#calLogAsLook"); if (logAsLook) logAsLook.hidden = _capPick.size < 2;
 }
 
 async function saveCapsulePicker() {

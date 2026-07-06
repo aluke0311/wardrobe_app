@@ -255,13 +255,22 @@ Known suspects found in review (fix these; user will report more cases as she hi
 → ✅ **DEPLOYED** (`2026-07-06 r4`)
 
 ### WAVE 5 — Logging flow rework
-- [ ] **G1 single-ask** — `saveCalClothingLog` stops auto-opening the sheet (toast w/
-  Undo + context chip); `makeLookFromDay` opens the sheet once post-creation,
-  pre-seeded from existing row values, with heart. (M)
-- [ ] **G2 "Log as look"** — extract `createLookFromItems`; second commit button in the
-  +Clothing picker; wears POSTed with `outfit_id`; one post-log sheet. (M)
-- [ ] **G6 "Wear again" chooser** — shared sheet from Home CTA + day-view footer. (M)
-→ ✅ **DEPLOY**
+- [x] **G1 single-ask** — `saveCalClothingLog` no longer auto-opens the sheet (toast
+  w/ Undo + "Add context →" chip instead); `makeLookFromDay` opens `openPostLogSheet`
+  once post-creation, pre-seeded (`presetCtx`/`presetFml`) from whatever's already on
+  the day's wear rows so nothing gets blanked. Heart shows automatically (L2b) since
+  the wears now share an `outfit_id`. (M)
+- [x] **G2 "Log as look"** — extracted `createLookFromItems(itemIds, {name})` (dedup
+  via `findDuplicateOutfit`, shared by `makeLookFromDay` and the new flow); second
+  commit button `#calLogAsLook` in the +Clothing picker (shown/hidden by `togglePick`
+  once ≥2 picked); wears POSTed with `outfit_id`; one post-log sheet. (M)
+- [x] **G6 "Wear again" chooser** — `openWearAgainChooser(date)` shared sheet from the
+  Home CTA and a new "↻ Wear again" button in the calendar day-view footer.
+  `wearAgainCandidates()` = worn-in-last-14-days ∪ liked ∪ most-worn-this-season,
+  deduped, recency-first, capped at 12; horizontal `.wa-strip` via `outfitCollageHtml`;
+  tap → `logLookOnDay` → post-log sheet (with heart); +Clothing/+Look stay reachable
+  below the strip. (M)
+→ ✅ **DEPLOYED** (`2026-07-06 r5`)
 
 ### WAVE 6 — Context payoff + finish funnels
 - [ ] **C1 context chips on the suggestion sheet** (empirical + seed fallback). (M)
