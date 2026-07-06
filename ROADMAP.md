@@ -215,29 +215,44 @@ Known suspects found in review (fix these; user will report more cases as she hi
 → ✅ **DEPLOYED** (`2026-07-06 r3`)
 
 ### WAVE 3 — Hearts
-- [ ] **`toggleLikeLook(id)`** — PATCH rating 1↔null, update local row, re-render. (S)
-- [ ] **L2 heart on look canvas** toolbar right slot. (S)
-- [ ] **L2b heart in `openPostLogSheet`** (when wears share an outfit_id) + on calendar
-  day-view look cards. **This is the primary capture point — build it in the same wave
-  as the browse heart, not later.** (M)
-- [ ] **L3 tile badges** in `outfitGridHtml` + look pickers. (S)
-- [ ] **L4 Liked filter dim** (`newFilterState` key lists + `LOOKS_FILTER_DIMS` +
-  `outfitMatchesFilter`). (S)
-- [ ] **L4b Liked lens** in `LOOK_LENSES` (flat list) **+ L8 scrollable `.lens` CSS**
-  (needed before Wave 4 adds Context too). (S/M)
-- [ ] **L5 liked-first** in +Look picker + plan picker. (S)
-- [ ] **L6 liked ×2 pair-affinity** in `buildSuggestIndexes`. (S)
-- [ ] **L7 "liked but neglected" smart list** + liked count line in Looks Stats. (S/M)
-→ ✅ **DEPLOY**
+- [x] **`toggleLikeLook(id)`** — PATCH rating 1↔null, optimistic update + rebuilds
+  `buildSuggestIndexes()` (for L6), used everywhere hearting happens. (S)
+- [x] **L2 heart on look canvas** — `looksToolbar` takes a `heartId` param that fills
+  the right slot (unused when `showShuffle` is false) with a heart toggle. (S)
+- [x] **L2b heart in `openPostLogSheet`** (shown when all logged wears share an
+  `outfit_id`, tap saves immediately) + heart overlay on calendar day-view look cards
+  (`.cal-heart-btn`, stopPropagation so it doesn't also open the look). (M)
+- [x] **L3 tile badges** (`.otile-heart`) — `outfitGridHtml`, calendar +Look picker,
+  plan look picker, capsule looks section + add-looks picker. (S)
+- [x] **L4 Liked filter dim** — appended only to `LOOKS_FILTER_DIMS` (not the shared
+  `FILTERS` array), `liked` key added to `newFilterState`/`hasActiveFilter`/
+  `filterActiveCount`, handled in `outfitMatchesFilter`; `itemMatchesFilter` untouched
+  so it's naturally ignored elsewhere. (S)
+- [x] **L4b Liked lens** — flat folder-less lens in `LOOK_LENSES` (like Recent/All)
+  **+ L8 scrollable `.lens` CSS** (`overflow-x:auto`, `flex:none` buttons — ready for
+  Wave 4's Context lens too). (S/M)
+- [x] **L5 liked-first** — calendar +Look picker (`calLookListHtml`) and the trip plan
+  look picker both sort liked looks first, then by recency. (S)
+- [x] **L6 liked ×2 pair-affinity** — `buildSuggestIndexes` weights each pair +2
+  instead of +1 when the source outfit is liked. (S)
+- [x] **L7 "liked but neglected" smart list** — `likedNeglectedOutfits()` (liked +
+  never-worn-or-60d+); new "Liked Looks" row in Looks Stats (count + neglected count)
+  routes to a dedicated outfits page (`statsOutfitsMode`). (S/M)
+→ ✅ **DEPLOYED** (`2026-07-06 r4`)
 
 ### WAVE 4 — Looks organization
-- [ ] **L8 Context lens** — `outfitContexts(o)` helper; folder rows with counts +
-  "No context" folder; wire into `folderRowsHtml`/`folderOutfits`/`folderLabel`
-  (index.html:3688–3725). (M)
-- [ ] **L9 `effectiveArchived(o)`** — swap into `activeOutfits`/`archivedOutfits`;
-  auto-archived note on look canvas/details; verify pickers/calendar/capsule-looks all
-  read through `activeOutfits`. (M)
-→ ✅ **DEPLOY**
+- [x] **L8 Context lens** — `outfitContexts(o)` helper (union of `ctxArr(w)` over the
+  look's real wears); folder rows sorted by count desc + trailing "No context" folder;
+  wired into `folderRowsHtml`/`folderOutfits`/`folderLabel`. Lens order now Formality ·
+  Season · Context · Capsule · Liked · Recent · All · Archived. (M)
+- [x] **L9 `effectiveArchived(o)`** — `o.archived || outfitItems(o).some(archived
+  status)`; swapped into `activeOutfits`/`archivedOutfits` (no cascade PATCH, no new
+  column); auto-archived note ("Hidden from browse — contains an archived item") on
+  the look canvas + details when auto- but not manually-archived; the Archive/
+  Unarchive button still reads/writes `o.archived` only. Verified calendar +Look,
+  plan picker, capsule looks/add-looks, and Stats liked-neglected all route through
+  `activeOutfits()`. (M)
+→ ✅ **DEPLOYED** (`2026-07-06 r4`)
 
 ### WAVE 5 — Logging flow rework
 - [ ] **G1 single-ask** — `saveCalClothingLog` stops auto-opening the sheet (toast w/

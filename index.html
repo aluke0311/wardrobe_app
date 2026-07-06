@@ -166,8 +166,12 @@
   .clback, .clsearch { width: 44px; height: 44px; margin: -5px 0; display: flex; align-items: center; justify-content: center; color: var(--ink); }
   .clback svg, .clsearch svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; fill: none; }
   .cltitle { flex: 1; font-size: 15px; font-weight: 600; }
-  .lens { display: flex; gap: 4px; margin: 2px 14px 8px; background: #f4f4f7; border-radius: 11px; padding: 3px; }
-  .lens button { flex: 1; padding: 7px 4px; border-radius: 9px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+  /* L8: more lenses than fit at flex:1 (Formality/Season/Context/Capsule/Liked/Recent/
+     All/Archived) — scroll horizontally instead of shrinking labels. */
+  .lens { display: flex; gap: 4px; margin: 2px 14px 8px; background: #f4f4f7; border-radius: 11px;
+    padding: 3px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .lens::-webkit-scrollbar { display: none; }
+  .lens button { flex: none; padding: 7px 12px; border-radius: 9px; font-size: 12.5px; color: var(--muted); font-weight: 600; white-space: nowrap; }
   .lens button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
   .cl-capbtn { display: flex; align-items: center; gap: 7px; margin: 0 14px 10px; padding: 9px 12px;
     width: calc(100% - 28px); border: 1px solid var(--line); border-radius: 11px; background: #fff;
@@ -211,6 +215,12 @@
   .sf-section { margin-bottom: 4px; }
   .sf-label { font-size: 12px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 12px 14px 2px; }
   .filter-badge { position: absolute; top: 1px; right: 1px; background: var(--accent); color: #fff; border-radius: 50%; font-size: 9px; width: 13px; height: 13px; display: flex; align-items: center; justify-content: center; font-weight: 700; pointer-events: none; }
+  /* hearts (L1-L3): a look is "liked" iff outfits.rating === 1 */
+  .lk-heart-btn svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+  .lk-heart-btn.on { color: #e0455b; }
+  .lk-heart-btn.on svg { fill: currentColor; }
+  .otile-heart { position: absolute; top: 6px; right: 6px; width: 18px; height: 18px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); pointer-events: none; }
+  .otile-heart svg { width: 100%; height: 100%; fill: #e0455b; stroke: #fff; stroke-width: 1.2; }
   /* stylebook-style section cards */
   .stats-sec { margin: 18px 14px 0; }
   .stats-sec-hdr { background: #ededf2; border-radius: 14px 14px 0 0; padding: 13px 16px; display: flex; flex-direction: column; }
@@ -652,7 +662,7 @@
 
   /* ---------- looks (outfit grid + collage) ---------- */
   .ogrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 10px 14px 24px; }
-  .otile { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+  .otile { display: flex; flex-direction: column; gap: 6px; text-align: left; position: relative; }
   .ocollage { width: 100%; aspect-ratio: 3/4; border: 1px solid var(--line); border-radius: 12px;
     background: #fff; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr);
     grid-auto-rows: 1fr; gap: 4px; padding: 9px; }
@@ -795,6 +805,11 @@
   .cal-outfit-collage.solo { grid-template-columns: 1fr; }
   .cal-outfit-piece { background: #fff center/contain no-repeat; }
   .cal-outfit-canvas { position: relative; width: 88px; height: 88px; border-radius: 10px; overflow: hidden; background: #fff; flex: none; }
+  .cal-heart-btn { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,.85); border-radius: 50%; color: var(--muted); }
+  .cal-heart-btn svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; fill: none; }
+  .cal-heart-btn.on { color: #e0455b; }
+  .cal-heart-btn.on svg { fill: currentColor; }
   .cal-outfit-notes-btn { flex: 1; display: flex; align-items: center; justify-content: space-between; background: none; border: none; text-align: left; padding: 0; cursor: pointer; }
   .cal-outfit-notes-btn span { color: var(--muted); font-size: 14.5px; }
   .cal-outfit-notes-btn.has-notes span { color: var(--ink); }
@@ -1061,7 +1076,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r3";
+const APP_VERSION = "2026-07-06 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2778,10 +2793,17 @@ async function undoLoggedWears(rows) {
 }
 
 // ---- Post-log sheet: context + formality_for capture (A2 + E4) ----
+// L2b: this is the user's PRIMARY hearting moment (she hearts looks when wearing
+// them, not while browsing) — show a heart row whenever the logged wears share
+// an outfit_id. The tap saves immediately (not gated on Save/Skip), same as the
+// canvas heart, since a heart is its own complete action.
 function openPostLogSheet(wearRows) {
   _logItemId = wearRows.length === 1 ? wearRows[0].item_id : null;
   _ctxSel = []; _ctxAddOpen = false;
   let fmlFor = null;
+  const oid = wearRows.length && wearRows.every(r => r.outfit_id && r.outfit_id === wearRows[0].outfit_id)
+    ? wearRows[0].outfit_id : null;
+  const o = oid ? outfitById.get(oid) : null;
 
   const renderFml = () => {
     const wrap = $("#postFmlRow");
@@ -2804,6 +2826,10 @@ function openPostLogSheet(wearRows) {
       <button class="lnk" id="postLogSave" style="font-weight:700">Save</button>
     </div>
     <div style="padding:20px 18px 30px">
+      ${o ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
+        <label style="font-size:13px;color:var(--muted)">Loved wearing this look?</label>
+        <button class="lk-heart-btn${o.rating === 1 ? " on" : ""}" id="postLikeBtn"><svg viewBox="0 0 24 24" style="width:26px;height:26px;stroke:currentColor;stroke-width:1.8;fill:none">${HEART_SVG}</svg></button>
+      </div>` : ""}
       ${contextPickerHtml()}
       <div style="margin-top:20px">
         <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">How dressed up? <span style="opacity:.6">(optional)</span></label>
@@ -2813,6 +2839,11 @@ function openPostLogSheet(wearRows) {
   $("#logSheet").hidden = false;
   renderContextPicker();
   renderFml();
+  if (o) {
+    $("#postLikeBtn").onclick = () => {
+      toggleLikeLook(oid).then(r => { const btn = $("#postLikeBtn"); if (btn) btn.classList.toggle("on", r === 1); });
+    };
+  }
 
   const close = () => { $("#logSheet").hidden = true; _logItemId = null; };
   $("#postLogCancel").onclick = close;
@@ -2901,7 +2932,10 @@ const FILTERS = [
 // Looks has no category/subcategory dims (outfits are cross-category by design).
 const CLOSET_FILTER_DIMS = FILTERS.filter(([k]) => !["status","category","subcategory","capsule"].includes(k));
 const STATS_FILTER_DIMS  = FILTERS.filter(([k]) => k !== "subcategory"); // keep category: "show Tops only" is a useful stats lens
-const LOOKS_FILTER_DIMS  = FILTERS.filter(([k]) => !["category","subcategory"].includes(k));
+// L4: "Liked" is outfit-only (o.rating) — appended only here, not to the shared
+// FILTERS array, so itemMatchesFilter (which destructures specific keys) simply
+// never sees it and other surfaces stay unaffected.
+const LOOKS_FILTER_DIMS  = [...FILTERS.filter(([k]) => !["category","subcategory"].includes(k)), ["liked", "Liked", () => ["Liked"]]];
 // Builder picker already has its own category/subcategory folder nav + a single-select
 // capsule scope chip bar — the funnel only needs attribute dims layered on top.
 const BUILDER_FILTER_DIMS = FILTERS.filter(([k]) => !["category","subcategory","capsule"].includes(k));
@@ -2916,19 +2950,19 @@ function newFilterState(overrides) {
   const s = { q: "", color: new Set(), fabric: new Set(), size: new Set(),
     season: new Set(), brand: new Set(), status: new Set(), category: new Set(),
     subcategory: new Set(), formality: new Set(), retailer: new Set(),
-    acquisition: new Set(), capsule: new Set() };
+    acquisition: new Set(), capsule: new Set(), liked: new Set() };
   if (overrides) Object.assign(s, overrides);
   return s;
 }
 function hasActiveFilter(f) {
   if (f.q) return true;
   return ["color","fabric","size","season","brand","status","category","subcategory",
-          "formality","retailer","acquisition","capsule"].some(k => f[k] instanceof Set && f[k].size > 0);
+          "formality","retailer","acquisition","capsule","liked"].some(k => f[k] instanceof Set && f[k].size > 0);
 }
 function filterActiveCount(f) {
   let n = f.q ? 1 : 0;
   for (const k of ["color","fabric","size","season","brand","status","category","subcategory",
-                   "formality","retailer","acquisition","capsule"]) if (f[k]?.size) n++;
+                   "formality","retailer","acquisition","capsule","liked"]) if (f[k]?.size) n++;
   return n;
 }
 let closetFilter = newFilterState();
@@ -3372,7 +3406,8 @@ async function saveNewItem() {
    The user can browse by Formality / Season / Recent / All. Most looks were
    worn once, so this reads as a library where it's useful and a log otherwise. */
 
-const LOOK_LENSES = ["Formality", "Season", "Capsule", "Recent", "All", "Archived"];
+const LOOK_LENSES = ["Formality", "Season", "Context", "Capsule", "Liked", "Recent", "All", "Archived"];
+const NO_CONTEXT_FOLDER = "__no_context__"; // L8 trailing folder so context-less looks don't disappear
 const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phone)
 
 // Formality folders — one per level on the 1-8 scale.
@@ -3429,8 +3464,13 @@ function outfitsForItem(itemId) {
     .filter(o => (outfitItemMap.get(o.id) || []).includes(itemId))
     .sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
 }
-function activeOutfits() { return displayOutfits().filter(o => !o.archived); }
-function archivedOutfits() { return displayOutfits().filter(o => o.archived); }
+// L9: archived-ness is DERIVED, not just written — a look with any archived
+// piece is effectively archived too, with no cascade PATCH and no new column.
+// o.archived stays the source of truth for the manual Archive/Unarchive button;
+// this only affects what browse/pickers show.
+function effectiveArchived(o) { return o.archived || outfitItems(o).some(i => itemStatus(i) === "Archive"); }
+function activeOutfits() { return displayOutfits().filter(o => !effectiveArchived(o)); }
+function archivedOutfits() { return displayOutfits().filter(o => effectiveArchived(o)); }
 // Looks pool, scoped to the active capsule when planning: only looks wearable
 // entirely from that capsule's items (every piece is a member). Excludes archived.
 function looksScopedOutfits() {
@@ -3461,6 +3501,13 @@ function effectiveWearDays(o) {
   return o.created_at ? [String(o.created_at).slice(0, 10)] : [];
 }
 function outfitSeasons(o) { return [...new Set(effectiveWearDays(o).map(seasonOf))]; }
+// L8: union of contexts across every real wear of this look (no created_at fallback —
+// a look with no wear-context data simply has no context folders yet).
+function outfitContexts(o) {
+  const s = new Set();
+  for (const w of wears) { if (w.outfit_id === o.id) for (const c of ctxArr(w)) s.add(c); }
+  return [...s];
+}
 // Wear count + last-worn are REAL wears only (no created_at fallback) — a freshly
 // built look must read "never worn", not "worn today". (Seasons still use the
 // created-date fallback above so unworn looks land in a season folder.)
@@ -3581,11 +3628,12 @@ function itemMatchesFilter(i, state, opts) {
 function outfitMatchesFilter(o, state) {
   if (!hasActiveFilter(state)) return true;
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule } = state;
+          formality, retailer, acquisition, capsule, liked } = state;
   if (q) {
     const hay = [o.name, o.notes].filter(Boolean).join(" ").toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
   }
+  if (liked?.size && o.rating !== 1) return false;
   const its = outfitItems(o);
   if (its.length) {
     if (status?.size  && !its.every(i => status.has(itemStatus(i)))) return false;
@@ -3688,15 +3736,13 @@ function emptyLooks() {
 }
 
 // ---- toolbar / lens row ----
-function looksToolbar(title, showBack, showShuffle) {
+// L2: heartId (only meaningful when showShuffle is false, e.g. the look canvas view)
+// fills the otherwise-unused right slot with a like toggle instead of an empty span.
+function looksToolbar(title, showBack, showShuffle, heartId) {
   const filterN = filterActiveCount(looksFilter);
-  return `<div class="cltoolbar">
-    ${showBack
-      ? `<button class="clback" id="looksBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
-      : `<span style="width:34px"></span>`}
-    <div class="cltitle">${esc(title)}</div>
-    ${showShuffle
-      ? `<div style="display:flex;align-items:center;gap:2px">
+  const heartO = heartId ? outfitById.get(heartId) : null;
+  const right = showShuffle
+    ? `<div style="display:flex;align-items:center;gap:2px">
            <div style="position:relative">
              <button class="clsearch" id="looksFilter" title="Filter looks"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
              ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
@@ -3704,7 +3750,15 @@ function looksToolbar(title, showBack, showShuffle) {
            <button class="clsearch" id="looksNew" title="Build a look"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
            <button class="clsearch" id="looksShuffle" title="Random look"><svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></button>
          </div>`
+    : heartO
+    ? `<button class="clsearch lk-heart-btn${heartO.rating === 1 ? " on" : ""}" id="lookHeartBtn" title="Like this look"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></button>`
+    : `<span style="width:34px"></span>`;
+  return `<div class="cltoolbar">
+    ${showBack
+      ? `<button class="clback" id="looksBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
       : `<span style="width:34px"></span>`}
+    <div class="cltitle">${esc(title)}</div>
+    ${right}
   </div>`;
 }
 function looksLensHtml() {
@@ -3747,6 +3801,17 @@ function folderRowsHtml(lens) {
       if (!list.length) continue;
       rows += looksFolderRow(c.name, list.length, repByRecency(list), `data-lfolder="${esc(c.id)}"`);
     }
+  } else if (lens === "Context") {
+    // L8: folders sorted by look-count desc, "No context" trails so nothing disappears.
+    const counts = new Map();
+    for (const o of all) for (const c of outfitContexts(o)) counts.set(c, (counts.get(c) || 0) + 1);
+    const ctxs = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
+    for (const c of ctxs) {
+      const list = all.filter(o => outfitContexts(o).includes(c));
+      rows += looksFolderRow(c, list.length, repByRecency(list), `data-lfolder="${esc(c)}"`);
+    }
+    const noCtx = all.filter(o => !outfitContexts(o).length);
+    if (noCtx.length) rows += looksFolderRow("No context", noCtx.length, repByRecency(noCtx), `data-lfolder="${NO_CONTEXT_FOLDER}"`);
   } else {
     for (const s of SEASONS) {
       const list = all.filter(o => outfitSeasons(o).includes(s));
@@ -3762,16 +3827,21 @@ function folderOutfits(lens, folder) {
     ? all.filter(o => outfitBucket(o) === folder)
     : lens === "Capsule"
     ? all.filter(o => outfitFullyInCapsule(o, folder))
+    : lens === "Context"
+    ? (folder === NO_CONTEXT_FOLDER ? all.filter(o => !outfitContexts(o).length) : all.filter(o => outfitContexts(o).includes(folder)))
     : all.filter(o => outfitSeasons(o).includes(folder));
   return list.sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
 }
 function folderLabel(lens, folder) {
   if (lens === "Formality") return FORMALITY_BUCKETS.find(b => b.key === folder)?.label || folder;
   if (lens === "Capsule") return capsuleById.get(folder)?.name || folder;
+  if (lens === "Context") return folder === NO_CONTEXT_FOLDER ? "No context" : folder;
   return folder;
 }
 function lensOutfitsSorted() {
   const all = looksScopedOutfits();
+  // L4b: Liked is a flat folder-less lens (like Recent/All), scoped to o.rating === 1.
+  if (looksLens === "Liked") return all.filter(o => o.rating === 1).sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
   if (looksLens === "Recent") return all.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
   return all.slice().sort((a, b) => (b._num || 0) - (a._num || 0)); // All: newest created first
 }
@@ -3783,6 +3853,7 @@ function outfitGridHtml(list) {
     const n = outfitItems(o).length, lw = outfitLastWorn(o);
     return `<button class="otile" data-look="${esc(o.id)}">
       ${outfitCollageHtml(o, 4)}
+      ${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
       <div class="oname">${esc(outfitName(o))}</div>
       <div class="ometa">${n} piece${n === 1 ? "" : "s"}${lw ? " · " + esc(relDate(lw)) : ""}</div>
     </button>`;
@@ -3809,14 +3880,15 @@ function buildSuggestIndexes() {
   for (const o of outfits) {
     const its = outfitItems(o);
     if (its.length < 2) continue;
+    const w = o.rating === 1 ? 2 : 1; // L6: liked looks count double toward pair-affinity
     for (let i = 0; i < its.length; i++) {
       for (let j = i + 1; j < its.length; j++) {
         const A = its[i], B = its[j];
         const ik = _pairKey(A.id, B.id);
-        _itemPairFreq.set(ik, (_itemPairFreq.get(ik) || 0) + 1);
+        _itemPairFreq.set(ik, (_itemPairFreq.get(ik) || 0) + w);
         if (A.color_family && B.color_family && A.color_family !== B.color_family) {
           const ck = _pairKey(A.color_family, B.color_family);
-          _colorPairFreq.set(ck, (_colorPairFreq.get(ck) || 0) + 1);
+          _colorPairFreq.set(ck, (_colorPairFreq.get(ck) || 0) + w);
         }
       }
     }
@@ -4560,12 +4632,14 @@ function renderLooks() {
     hydratePhotos(body);
     return;
   }
-  if (looksLens === "Recent" || looksLens === "All") {
+  if (looksLens === "Recent" || looksLens === "All" || looksLens === "Liked") {
     const full = lensOutfitsSorted();
     const list = full.slice(0, LOOKS_FLAT_CAP);
     const more = full.length > list.length
       ? `<div class="snote center" style="padding:0 16px 24px">Showing ${list.length} of ${full.length}. Narrow with Formality or Season.</div>` : "";
-    body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml() + outfitGridHtml(list) + more;
+    const empty = looksLens === "Liked" && !list.length
+      ? `<div class="placeholder"><b>No liked looks yet</b><div>Heart a look when you wear it and it'll show up here.</div></div>` : outfitGridHtml(list);
+    body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml() + empty + more;
   } else if (looksFolder) {
     const list = folderOutfits(looksLens, looksFolder);
     body.innerHTML = looksToolbar(`${folderLabel(looksLens, looksFolder)} · ${list.length}`, true, true) + banner + outfitGridHtml(list);
@@ -4619,7 +4693,8 @@ function openLook(id) {
     `<button class="lk-act${cls ? ` ${cls}` : ""}" data-lkact="${act}"><svg viewBox="0 0 24 24">${svg}</svg><span>${label}</span></button>`;
   const body = $("#looksBody");
   body.innerHTML = `
-    ${looksToolbar(esc(outfitName(o)), true, false)}
+    ${looksToolbar(esc(outfitName(o)), true, false, id)}
+    ${!o.archived && effectiveArchived(o) ? `<div class="center muted" style="font-size:12.5px;padding:6px 16px 0;color:var(--accent)">Hidden from browse — contains an archived item</div>` : ""}
     <div class="lk-canvas-wrap">
       ${lookHeroBlock(o)}
       <div class="center muted" style="font-size:12.5px;margin-top:4px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it</div>
@@ -4664,6 +4739,7 @@ function openLookDetails(id) {
   const body = $("#looksBody");
   body.innerHTML = `
     ${looksToolbar("Details", true, false)}
+    ${!o.archived && effectiveArchived(o) ? `<div class="center muted" style="font-size:12.5px;padding:6px 16px 0;color:var(--accent)">Hidden from browse — contains an archived item</div>` : ""}
     <div class="det-body">
       <div class="det-section-label">WEAR</div>
       <div class="det-card">
@@ -4815,6 +4891,24 @@ function openWearLook(id) {
     } catch (e) { toast(e.message); }
   };
 }
+
+// ---- hearts: L1 liked = rating === 1, toggle liked <-> null (PATCH) ----
+async function toggleLikeLook(id) {
+  const o = outfitById.get(id);
+  if (!o) return null;
+  const prev = o.rating;
+  const next = prev === 1 ? null : 1;
+  o.rating = next; // optimistic
+  try {
+    await rest(`/outfits?id=eq.${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ rating: next }),
+    });
+    buildSuggestIndexes(); // L6: liked looks count double toward pair-affinity
+  } catch (e) { o.rating = prev; toast(e.message); }
+  return o.rating;
+}
+const HEART_SVG = '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/>';
 
 // ---- archive / unarchive a look (hidden from browse + pickers, kept in history) ----
 async function archiveLook(id) {
@@ -5556,7 +5650,9 @@ function renderCalendarDay(body) {
     const wearIdsStr = g.wearIds.join(',');
     return `<div class="cal-outfit-card">
       <div class="cal-outfit-inner">
-        ${g.outfitId ? `<div data-open-look="${esc(g.outfitId)}" style="cursor:pointer">${collage}</div>` : collage}
+        ${g.outfitId ? `<div data-open-look="${esc(g.outfitId)}" style="cursor:pointer;position:relative">${collage}
+          <button class="cal-heart-btn${outfit && outfit.rating === 1 ? ' on' : ''}" data-cal-heart="${esc(g.outfitId)}" title="Like this look"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></button>
+        </div>` : collage}
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:9px">
           <button class="cal-outfit-notes-btn${notes ? ' has-notes' : ''}" data-cal-notes="${esc(g.outfitId || '')}" style="flex:none">
             <span>${esc(notes || 'Tap to add notes')}</span>
@@ -5719,6 +5815,17 @@ function renderCalendarDay(body) {
     el.onclick = () => {
       const id = el.dataset.openLook;
       if (id && outfitById.has(id)) openLookFromStats(id);  // switch to Looks tab + open detail
+    };
+  });
+
+  // L2b: heart toggle on the day-view look card (stopPropagation so it doesn't
+  // also trigger the parent [data-open-look] tap-to-open)
+  body.querySelectorAll('[data-cal-heart]').forEach(el => {
+    el.onclick = (e) => {
+      e.stopPropagation();
+      const id = el.dataset.calHeart;
+      if (!id) return;
+      toggleLikeLook(id).then(r => el.classList.toggle("on", r === 1));
     };
   });
 
@@ -5972,15 +6079,16 @@ function openCalAddLook() {
 
 function calLookListHtml() {
   const q = _calLookQ.trim().toLowerCase();
+  // L5: liked looks first, then most-recently-created.
   let list = activeOutfits().slice()
-    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    .sort((a, b) => (b.rating === 1 ? 1 : 0) - (a.rating === 1 ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
   if (q) list = list.filter(o => outfitName(o).toLowerCase().includes(q));
   const capped = list.slice(0, 150);
   if (!capped.length) return `<div class="cal-day-empty">No looks found.</div>`;
   const more = list.length > capped.length
     ? `<div class="snote center" style="padding:4px 16px 20px;color:var(--muted);font-size:12.5px">Showing ${capped.length} most recent of ${list.length}. Search to narrow.</div>` : "";
   return `<div class="ogrid">${capped.map(o =>
-    `<button class="otile" data-callook="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div></button>`
+    `<button class="otile" data-callook="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div></button>`
   ).join('')}</div>${more}`;
 }
 
@@ -6077,6 +6185,7 @@ let statsFieldSort = "count"; // "count" | "name" — sort order for field break
 let statsDateRange = "all"; // "all"|"7d"|"14d"|"30d"|"90d"|"6mo"|"1yr"
 let statsAcqRange = "all";  // "all"|"1yr"|"2yr"|"3yr"|"5yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
+let statsOutfitsMode = "most-worn"; // "most-worn" | "liked-neglected" — which outfits list renderStatsOutfitsPage shows
 // closet review state
 let reviewField = null;      // current field key being dealt
 let reviewQueue = [];        // item ids queued for the current field
@@ -6595,6 +6704,8 @@ function renderStatsMain() {
   const wornSub = `Most & Least worn${rangeTag}`;
   const topLook = displayOutfits().slice().sort((a, b) => outfitWornCount(b) - outfitWornCount(a))[0];
   const topLookSub = topLook ? `Most worn: ${outfitWornCount(topLook)} time${outfitWornCount(topLook) === 1 ? "" : "s"}` : "By wear count";
+  const likedCount = displayOutfits().filter(o => o.rating === 1).length;
+  const neglectedCount = likedNeglectedOutfits().length;
   const reviewToReview = reviewTotalItems();
   const row = (label, sub, action) =>
     `<button class="frow" data-sa="${esc(action)}">
@@ -6637,6 +6748,7 @@ function renderStatsMain() {
             <div class="kpi-cell"><div class="kpi-val">${avgItems}</div><div class="kpi-lbl">Avg. Items per Look</div></div>
           </div>
           ${row("Most Worn Looks", topLookSub, "looks:most-worn")}
+          ${row("Liked Looks", `${likedCount} look${likedCount === 1 ? "" : "s"}${neglectedCount ? ` · ${neglectedCount} neglected` : ""}`, "looks:liked-neglected")}
         </div>
       </div>
 
@@ -6677,7 +6789,10 @@ function renderStatsMain() {
         renderStats(); return;
       }
       if (action === "looks:most-worn") {
-        statsView = "outfits"; renderStats(); return;
+        statsOutfitsMode = "most-worn"; statsView = "outfits"; renderStats(); return;
+      }
+      if (action === "looks:liked-neglected") {
+        statsOutfitsMode = "liked-neglected"; statsView = "outfits"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -6815,19 +6930,41 @@ function openItemFromStats(id) {
   openItemFrom(id);  // captures the stats screen as the return target
 }
 
+// L7: liked looks not worn in 60+ days (or never). Never-worn floats to the top,
+// then oldest-last-worn first — the most "neglected" favorites lead the list.
+function likedNeglectedOutfits() {
+  return activeOutfits().filter(o => {
+    if (o.rating !== 1) return false;
+    const lw = outfitLastWorn(o);
+    return !lw || daysSince(lw) >= 60;
+  }).sort((a, b) => {
+    const la = outfitLastWorn(a), lb = outfitLastWorn(b);
+    if (!la && !lb) return 0;
+    if (!la) return -1;
+    if (!lb) return 1;
+    return la.localeCompare(lb);
+  });
+}
+
 function renderStatsOutfitsPage() {
   const body = $("#statsBody");
-  const list = displayOutfits().slice()
-    .sort((a, b) => outfitWornCount(b) - outfitWornCount(a)).slice(0, 100);
+  const neglected = statsOutfitsMode === "liked-neglected";
+  const list = (neglected ? likedNeglectedOutfits() : displayOutfits().slice()
+    .sort((a, b) => outfitWornCount(b) - outfitWornCount(a))).slice(0, 100);
+  const subtitle = (o) => neglected
+    ? (outfitLastWorn(o) ? `last worn ${relDate(outfitLastWorn(o))}` : "never worn")
+    : `${outfitWornCount(o)} wear${outfitWornCount(o) === 1 ? "" : "s"}`;
   const grid = list.length ? `<div class="ogrid" style="padding:0 14px">${list.map(o => {
-    const n = outfitWornCount(o);
     return `<button class="otile" data-look="${esc(o.id)}">
       ${outfitCollageHtml(o, 4)}
+      ${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
       <div class="oname">${esc(outfitName(o))}</div>
-      <div class="ometa">${n} wear${n === 1 ? "" : "s"}</div>
+      <div class="ometa">${esc(subtitle(o))}</div>
     </button>`;
-  }).join("")}</div>` : emptyLooks();
-  body.innerHTML = statsToolbar("Most Worn Looks", true, false) + grid;
+  }).join("")}</div>` : (neglected
+    ? `<div class="placeholder"><b>No neglected favorites</b><div>Liked looks you haven't worn in 60+ days will show up here.</div></div>`
+    : emptyLooks());
+  body.innerHTML = statsToolbar(neglected ? "Liked but Neglected" : "Most Worn Looks", true, false) + grid;
   wireStatsToolbar();
   body.querySelectorAll(".otile").forEach(btn => {
     btn.addEventListener("click", () => openLookFromStats(btn.dataset.look));
@@ -7479,7 +7616,7 @@ function renderCapsuleLooksSection(cid) {
     .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
   const tilesHtml = looks.length
     ? `<div class="ogrid" style="padding:0 14px 4px">${looks.map(o =>
-        `<button class="otile" data-cap-look="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div></button>`
+        `<button class="otile" data-cap-look="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div></button>`
       ).join("")}</div>`
     : `<div class="placeholder" style="padding:16px 16px 8px;font-size:13px;color:var(--muted)">No saved looks use only these pieces yet — add a look to bring its pieces in.</div>`;
   return `<div class="cap-secrow"><div class="t">Looks</div><button class="a" data-cap-look-add>＋ Add looks</button></div>${tilesHtml}`;
@@ -7492,7 +7629,7 @@ function openCapsuleLookPicker() {
   const grid = looks.length
     ? `<div class="ogrid">${looks.map(o => {
         const inCap = outfitFullyInCapsule(o, cid);
-        return `<button class="otile${inCap ? " selected" : ""}" data-lkpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div>${inCap ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">In capsule</div>` : ""}</button>`;
+        return `<button class="otile${inCap ? " selected" : ""}" data-lkpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div>${inCap ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">In capsule</div>` : ""}</button>`;
       }).join("")}</div>`
     : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">No saved looks yet.</div>`;
   $("#logInner").innerHTML = `
@@ -7670,10 +7807,11 @@ function renderCapsulePlan() {
 // trip's pieces (falls back to a hint when none qualify).
 function openPlanLookPicker(date) {
   const c = capsuleById.get(capsuleId);
+  // L5: liked looks first, then most-recently-created.
   const looks = activeOutfits().filter(o => outfitFullyInCapsule(o, capsuleId))
-    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    .sort((a, b) => (b.rating === 1 ? 1 : 0) - (a.rating === 1 ? 1 : 0) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
   const grid = looks.length
-    ? `<div class="ogrid">${looks.map(o => `<button class="otile" data-planpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div></button>`).join("")}</div>`
+    ? `<div class="ogrid">${looks.map(o => `<button class="otile" data-planpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div></button>`).join("")}</div>`
     : `<div class="cal-day-empty" style="padding:24px 16px;text-align:center;color:var(--muted)">No saved looks use only this trip's pieces yet.<br>Use ✨ Suggest or ✎ Build to make one.</div>`;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
@@ -9032,6 +9170,11 @@ function wireEvents() {
     if (e.target.closest("#looksFilter")) { return openFilterSheet(looksFilter, { onApply: () => { looksSearchQ = null; renderLooks(); }, title: "Filter Looks", dims: LOOKS_FILTER_DIMS }); }
     if (e.target.closest("#looksNew")) return openNewLookSheet();
     if (e.target.closest("#looksShuffle")) return openRandomLook();
+    if (e.target.closest("#lookHeartBtn")) {
+      if (!lookId) return;
+      toggleLikeLook(lookId).then(r => { const btn = $("#lookHeartBtn"); if (btn) btn.classList.toggle("on", r === 1); });
+      return;
+    }
     const lens = e.target.closest("[data-llens]");
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
     const folder = e.target.closest("[data-lfolder]");
