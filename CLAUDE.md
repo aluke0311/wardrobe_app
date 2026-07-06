@@ -21,23 +21,21 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-06 r1. Full rework from v25. ~9,000 lines.**
+**Current state: 2026-07-06 r7. Full rework from v25. ~9,850 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
-**▶ NEXT UP:** `ROADMAP.md` → "Hearts + Filters Everywhere" **v2** (planned 2026-07-06;
-expanded after a full product review + user questionnaire — all decisions locked in the
-ROADMAP section, do not re-litigate). The 2026-06 "Unified Experience" build (W0–W5) and
-filter unification Phases 2+3 are fully shipped. **Waves 0–6 of v2 are fully shipped
-(2026-07-06 r6)** — only **Wave 7 (flagship: weather-aware "Today" tile on Home)**
-remains. When the user says "continue the build," pick up there. Wave summary: W0 land
-in-flight builder funnel + hygiene → W1 local-date/dup-guard/Undo/back-date/photo stat
-strip → W2 capsule filter in item pickers (reported bug) → W3 hearts (`outfits.rating`,
-wear-moment capture is primary) → W4 Context lens + derived auto-archive → W5 single-ask
-logging + log-as-look + wear-again → W6 context payoff (suggester chips, stats page) +
-look-picker funnels → **W7 weather OOTD tile (not started)**. Plus a parallel
-navigation-audit track (unfixed items still open — see ROADMAP.md). No schema changes
-anywhere.
+**"Hearts + Filters Everywhere" v2 (planned 2026-07-06) is FULLY SHIPPED, all 8
+waves (W0–W7), through `2026-07-06 r7`.** The 2026-06 "Unified Experience" build
+(W0–W5) and filter unification Phases 2+3 are also fully shipped. Wave summary: W0
+land in-flight builder funnel + hygiene → W1 local-date/dup-guard/Undo/back-date/photo
+stat strip → W2 capsule filter in item pickers (reported bug) → W3 hearts
+(`outfits.rating`, wear-moment capture is primary) → W4 Context lens + derived
+auto-archive → W5 single-ask logging + log-as-look + wear-again → W6 context payoff
+(suggester chips, stats page) + look-picker funnels → W7 weather-aware "Today" tile on
+Home. **▶ NEXT UP:** nothing scheduled — see `ROADMAP.md`'s "Back-burner" section and
+the still-open parallel navigation-audit track (unfixed items — see ROADMAP.md) for
+what's next; ask the user before starting new work. No schema changes anywhere in v2.
 
 Top-of-`<script>` config, then logically grouped sections:
 
@@ -54,7 +52,14 @@ Top-of-`<script>` config, then logically grouped sections:
 - **STATE + DERIVED** — `items`, `wears`, `outfits`, `outfit_items`, `capsules`,
   `capsule_items`, `exclusions` loaded via `loadData()`. Helpers: `wearCount`,
   `lastWorn`, `costPerWear`, `daysSince`, `money`, `esc`.
-- **HOME LAUNCHER** — `renderHome()`: Stylebook calm tile grid (5 tiles).
+- **HOME LAUNCHER** — `renderHome()`: Stylebook calm tile grid (5 tiles), plus a
+  **"Today" tile** above it (`todayTileHtml()`/`loadTodayTile()`, W7 flagship):
+  keyless `navigator.geolocation` (permission-prompted, last fix cached in `store`
+  under `HOME_LOC_KEY` for `HOME_LOC_TTL`) → `fetchWeatherRange` for today →
+  `suggestOutfits(null, null, null, currentSeason())` picks one combo, cached per
+  day in `_todayTile` (doesn't reshuffle on re-render). Tap → `openSuggestSheet()`.
+  Degrades gracefully: no permission/offline → season-only label, no weather; not
+  enough items to suggest → tile omitted entirely (no dead state).
 - **CLOSET** — `renderCloset()`/`openItem()`/`openItemDetails()`. Status-lens
   switcher. `siblingItems()` derives the current list for prev/next item nav.
 - **ITEM DETAIL** — two-view: `openItem()` (photo + nav bar) → `openItemDetails()`
@@ -302,7 +307,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-06 r1`.
+  Currently `2026-07-06 r7`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.

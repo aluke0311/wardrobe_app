@@ -117,6 +117,15 @@
   .tile .tlabel { font-size: 14.5px; font-weight: 600; letter-spacing: .01em; }
   .tile .tsub { font-size: 12px; color: var(--muted); margin-top: -6px; }
   .tile.wide { grid-column: 1 / -1; }
+  /* W7: weather-aware "Today" tile */
+  .today-tile { display: flex; align-items: center; gap: 14px; margin: 20px 18px 0; padding: 12px;
+    border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line);
+    text-align: left; transition: transform .08s ease, background .12s ease; }
+  .today-tile:active { transform: scale(.98); background: var(--accent-soft); }
+  .today-tile.loading { justify-content: center; color: var(--muted); font-size: 14px; padding: 20px; }
+  .tt-meta { flex: 1; min-width: 0; }
+  .tt-label { font-size: 15px; font-weight: 700; }
+  .tt-wx { font-size: 13px; color: var(--muted); margin-top: 2px; }
 
   /* ---------- placeholder screens ---------- */
   .placeholder {
@@ -1081,7 +1090,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r6";
+const APP_VERSION = "2026-07-06 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1538,6 +1547,72 @@ function hydratePhotos(root = document) {
    =================================================================== */
 // Stylebook-style calm launcher: tiles that open a destination. Each tile carries
 // a title, an inline SVG glyph, the tab it opens, and an optional live subtitle.
+// ---- W7: weather-aware "Today" tile (flagship) ----
+// Keyless geolocation, cached in `store` so we don't re-prompt every visit.
+const HOME_LOC_KEY = "wardrobe.homeLoc";
+const HOME_LOC_TTL = 6 * 3600000; // 6h — position + weather both drift slowly
+function getHomeLocation() {
+  try {
+    const cached = JSON.parse(store.getItem(HOME_LOC_KEY) || "null");
+    if (cached && Date.now() - cached.ts < HOME_LOC_TTL) return Promise.resolve({ lat: cached.lat, lon: cached.lon });
+  } catch (e) {}
+  if (!navigator.geolocation) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, ts: Date.now() };
+        try { store.setItem(HOME_LOC_KEY, JSON.stringify(loc)); } catch (e) {}
+        resolve({ lat: loc.lat, lon: loc.lon });
+      },
+      () => resolve(null),
+      { timeout: 8000, maximumAge: HOME_LOC_TTL }
+    );
+  });
+}
+// { date, loading, wx, combo, hasLocation } — one suggestOutfits() pick per day,
+// cached so it doesn't reshuffle on every Home re-render.
+let _todayTile = { date: null, loading: false, wx: null, combo: null, hasLocation: null };
+async function loadTodayTile() {
+  if (_todayTile.loading) return;
+  _todayTile.loading = true;
+  const today = todayStr();
+  let wx = null, hasLocation = false;
+  try {
+    const loc = await getHomeLocation();
+    hasLocation = !!loc;
+    if (loc) {
+      const result = await fetchWeatherRange(loc.lat, loc.lon, today, today);
+      wx = result[today] || null;
+    }
+  } catch (e) { /* offline/denied — degrade to season-only below */ }
+  let combo = null;
+  try {
+    const results = suggestOutfits(null, null, null, currentSeason());
+    combo = results && results.length ? results[0] : null;
+  } catch (e) {}
+  _todayTile = { date: today, loading: false, wx, combo, hasLocation };
+  if ($(".screen.active")?.id === "tab-home") renderHome();
+}
+function todayTileHtml() {
+  if (!dataReady) return "";
+  if (_todayTile.date !== todayStr()) return `<div class="today-tile loading">Finding today's pick…</div>`;
+  if (!_todayTile.combo) return ""; // not enough items to suggest — no dead tile
+  const layout = suggestionLayout(_todayTile.combo.pieces);
+  const canvas = layoutCanvasHtml({ layout, formality_override: null, _bucket: null }, "ocanvas omini");
+  if (!canvas) return "";
+  const wx = _todayTile.wx;
+  const wxHtml = wx && wx.maxT != null
+    ? `${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°`
+    : (_todayTile.hasLocation === false ? esc(currentSeason()) : "");
+  return `<button class="today-tile" id="homeTodayTile">
+    ${canvas}
+    <div class="tt-meta">
+      <div class="tt-label">Today's pick</div>
+      ${wxHtml ? `<div class="tt-wx">${wxHtml}</div>` : ""}
+    </div>
+  </button>`;
+}
+
 const HOME_TILES = [
   { tab: "closet",   label: "Closet",     sub: () => `${availableCount()} items`,
     icon: `<path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/>` },
@@ -1571,7 +1646,7 @@ function renderHome() {
   const cta = dataReady && !hasWearToday
     ? `<button class="log-cta" id="homeLogCta">Log today's wear</button>`
     : "";
-  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}`;
+  $("#homeBody").innerHTML = `${todayTileHtml()}<div class="launch">${tiles}</div>${cta}`;
   const ctaBtn = $("#homeLogCta");
   // G6: the most common real log is a repeat — offer "wear again" first, not a
   // blank picker.
@@ -1581,6 +1656,9 @@ function renderHome() {
     renderCalendarDay($("#calendarBody"));
     openWearAgainChooser(today);
   };
+  const todayBtn = $("#homeTodayTile");
+  if (todayBtn) todayBtn.onclick = () => openSuggestSheet();
+  if (dataReady && _todayTile.date !== today) loadTodayTile();
 }
 
 /* ===================================================================

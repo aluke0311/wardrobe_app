@@ -1,7 +1,7 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-06 r1**.
+> Current version: **2026-07-06 r7**.
 
 ---
 
@@ -291,12 +291,18 @@ Known suspects found in review (fix these; user will report more cases as she hi
 → ✅ **DEPLOYED** (`2026-07-06 r6`)
 
 ### WAVE 7 — Flagship (build LAST)
-- [ ] **"Today" tile on Home — weather-aware outfit of the day.** `navigator.geolocation`
-  (keyless, permission-prompted, cache the last fix in `store`) → existing open-meteo
-  plumbing (`fetchWeatherRange`) → pick season/level context → one `suggestOutfits()`
-  pick rendered as a mini collage on a Home tile; tap → suggestion sheet. Degrade
-  gracefully: no permission/offline → season-only pick. (L)
-→ ✅ **DEPLOY**
+- [x] **"Today" tile on Home — weather-aware outfit of the day.** `getHomeLocation()`
+  wraps `navigator.geolocation` (keyless, permission-prompted, last fix cached in
+  `store` under `HOME_LOC_KEY`/`HOME_LOC_TTL`) → existing open-meteo plumbing
+  (`fetchWeatherRange`) for today → one `suggestOutfits(null,null,null,
+  currentSeason())` pick, cached per day in `_todayTile` (`loadTodayTile()`, doesn't
+  reshuffle on re-render) → rendered as an `.ocanvas.omini` mini collage on a Home
+  tile (`todayTileHtml()`); tap → `openSuggestSheet()`. Degrades gracefully: no
+  permission/offline → season-only label, no weather; not enough items to suggest →
+  tile omitted (no dead state). (L)
+→ ✅ **DEPLOYED** (`2026-07-06 r7`)
+
+**"Hearts + Filters Everywhere" v2 is now FULLY SHIPPED (Waves 0–7, `2026-07-06 r7`).**
 
 ### Build conventions for this plan
 - One wave = one deploy at the ✅ checkpoint; bump `APP_VERSION` each deploy.
