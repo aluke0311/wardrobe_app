@@ -1090,7 +1090,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r8";
+const APP_VERSION = "2026-07-07 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5838,7 +5838,7 @@ function openCalDaySheet(dateStr, body) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const title = `${CAL_MONTHS[m - 1]} ${d}`;
   const hasEntries = dayGroups(dateStr).length > 0;
-  const isFuture = new Date(y, m - 1, d + 1) > new Date();
+  const isFuture = dateStr > todayStr();
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="calDaySheetClose">Cancel</button>
@@ -5866,6 +5866,7 @@ function renderCalendarDay(body) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const title   = `${CAL_MONTHS[m - 1]} ${d}, ${y}`;
   const groups  = dayGroups(dateStr);
+  const isFuture = dateStr > todayStr();
 
   const cardsHtml = groups.length ? groups.map(g => {
     const outfit  = g.outfitId ? outfitById.get(g.outfitId) : null;
@@ -5912,7 +5913,6 @@ function renderCalendarDay(body) {
 
   const prevD    = localISO(new Date(y, m - 1, d - 1));
   const nextD    = localISO(new Date(y, m - 1, d + 1));
-  const isFuture = new Date(y, m - 1, d + 1) > new Date();
 
   body.innerHTML = `<div class="tabbody">
     <div class="cal-day-header">
