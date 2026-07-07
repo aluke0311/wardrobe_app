@@ -168,10 +168,14 @@ Known suspects found in review (fix these; user will report more cases as she hi
   sibling nav works — after returning, the CLOSET tab's browse position has silently
   changed. Same pattern anywhere `openItemFrom` callers pre-set closet globals: restore
   the prior closet state when the `_itemReturn` thunk fires.
-- [ ] Make-a-look toast "View →" (and similar toast shortcuts) `switchTab("looks")`,
-  which clears `_itemReturn`/origin — back from the look lands in Looks browse, not the
-  calendar day the user came from. Decide per-case: either capture a return thunk for
-  look-detail too, or accept and document.
+- [x] **Look-return thunk shipped (2026-07-07 r2)** — `_lookReturn` + `openLookFrom(id)`
+  mirror the item pattern: every non-Looks entry point (calendar day view, stats look
+  grids, capsule looks, trip-plan days) now returns to its origin on back. `leaveLook()`
+  is the single exit (back/archive/delete) so no stale returns. Bonus fixes: back from
+  an item opened off a look canvas re-opens the LOOK (restoreTab re-opens `lookId`),
+  and back from a look opened off Looks-search returns to the results instead of
+  clearing the search. Builder round-trips (edit pieces → cancel/save) still abandon
+  origin — accepted, they route through `switchTab("looks")`.
 - [ ] `activeCapsuleId` scoping persists across tab switches by design — verify the
   banner is ALWAYS visible on scoped surfaces so "why is my closet tiny" never happens.
 

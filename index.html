@@ -1090,7 +1090,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-07 r1";
+const APP_VERSION = "2026-07-07 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1747,6 +1747,10 @@ let _fromBuilder = null;  // stashed builder state when an item is opened from t
 // invokes it. The builder is the one exception (it needs a full state stash, so it
 // keeps _fromBuilder). Cleared by genuine tab navigation.
 let _itemReturn = null;
+// Same idea for looks: any non-Looks entry point (calendar, stats, capsules)
+// captures its origin via openLookFrom(); looksBack() invokes it when leaving
+// the look. Cleared by genuine tab navigation.
+let _lookReturn = null;
 let _itemSlideDir = null; // "next" | "prev" → slide-in animation for sibling navigation
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
@@ -2069,13 +2073,14 @@ function renderCloset() {
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
-// already in the closet (the default closet-grid back behavior is then correct).
-function makeItemReturn() {
+// already on the destination tab (the default back behavior is then correct).
+function makeScreenReturn(homeTab) {
   const active = document.querySelector(".screen.active");
-  const tab = active ? active.id.replace("tab-", "") : "closet";
-  if (tab === "closet") return null;
+  const tab = active ? active.id.replace("tab-", "") : homeTab;
+  if (tab === homeTab) return null;
   return () => restoreTab(tab);
 }
+function makeItemReturn() { return makeScreenReturn("closet"); }
 
 // Re-show a tab from its PRESERVED view-state (unlike switchTab, which resets
 // per-tab view globals like capsuleView/statsView). Used to return from item detail.
@@ -2089,7 +2094,15 @@ function restoreTab(tab) {
   hideGridBar();
   if (tab === "capsules")      renderCapsules();
   else if (tab === "stats")    renderStats();
-  else if (tab === "looks")    renderLooks();
+  else if (tab === "looks") {
+    // A look was open when we left (e.g. tapped one of its pieces) — return to
+    // it, not the list. renderLooks() would wipe lookId.
+    if (lookId && outfitById.has(lookId)) {
+      if (lookView === "details")    openLookDetails(lookId);
+      else if (lookView === "wears") openLookWears(lookId);
+      else                           openLook(lookId);
+    } else renderLooks();
+  }
   else if (tab === "calendar") renderCalendar();
   else if (tab === "home")     renderHome();
   else                         renderCloset();
@@ -2107,6 +2120,18 @@ function openItemFrom(id) {
   $("#headerAdd").hidden = true;
   hideGridBar();
   openItem(id);
+}
+
+// Open a look while remembering the origin screen. Use from any non-Looks entry
+// point (calendar, stats, capsules…) instead of switchTab("looks") + openLook,
+// so back returns to where the look was opened.
+function openLookFrom(id) {
+  _lookReturn = makeScreenReturn("looks");  // capture BEFORE we bring Looks forward
+  $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-looks"));
+  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "looks"));
+  $("#title").textContent = TAB_TITLES.looks;
+  $("#headerAdd").hidden = true;
+  openLook(id);
 }
 
 function closetBack() {
@@ -4874,15 +4899,26 @@ function renderLooks() {
 }
 
 function looksBack() {
-  if (looksSearchQ !== null) { looksSearchQ = null; return renderLooks(); }
+  // Look detail first: a look can be open on top of a lingering search (e.g.
+  // tapped from a search result, or opened from another screen entirely).
   if (lookId) {
     if (lookView === "wears") return openLookDetails(lookId);   // wears → details
     if (lookView === "details") return openLook(lookId);        // details → canvas
-    lookId = null; lookView = "canvas"; return renderLooks();   // canvas → list (stays filtered if scoped)
+    return leaveLook();                                         // canvas → list or origin screen
   }
+  if (looksSearchQ !== null) { looksSearchQ = null; return renderLooks(); }
   // From the item-scoped looks list, back returns to that item's detail.
   if (looksItemFilter) { const id = looksItemFilter; looksItemFilter = null; switchTab("closet"); return openItemDetails(id); }
   if (looksFolder) { looksFolder = null; return renderLooks(); }
+  renderLooks();
+}
+
+// Leave the current look (back, archive, delete): return to the origin screen
+// if it was opened from elsewhere (_lookReturn), else the looks list (stays
+// filtered if scoped).
+function leaveLook() {
+  lookId = null; lookView = "canvas";
+  if (_lookReturn) { const r = _lookReturn; _lookReturn = null; return r(); }
   renderLooks();
 }
 
@@ -5146,7 +5182,7 @@ async function archiveLook(id) {
     });
     toast(next ? "Look archived" : "Look unarchived");
   } catch (e) { o.archived = !next; toast(e.message); }
-  if (o.archived) { lookId = null; lookView = "canvas"; renderLooks(); }  // leave the now-hidden look
+  if (o.archived) leaveLook();  // leave the now-hidden look
   else openLook(id);
 }
 
@@ -5160,8 +5196,7 @@ async function deleteLook(id) {
     outfitItemMap.delete(id);
     wears.forEach(w => { if (w.outfit_id === id) w.outfit_id = null; });
     buildOutfitWearMap();
-    lookId = null;
-    renderLooks();
+    leaveLook();
     toast("Look deleted");
   } catch (e) { toast(e.message); }
 }
@@ -6040,7 +6075,7 @@ function renderCalendarDay(body) {
   body.querySelectorAll('[data-open-look]').forEach(el => {
     el.onclick = () => {
       const id = el.dataset.openLook;
-      if (id && outfitById.has(id)) openLookFromStats(id);  // switch to Looks tab + open detail
+      if (id && outfitById.has(id)) openLookFrom(id);  // open detail; back returns here
     };
   });
 
@@ -7302,18 +7337,11 @@ function renderStatsOutfitsPage() {
   body.innerHTML = statsToolbar(neglected ? "Liked but Neglected" : "Most Worn Looks", true, false) + grid;
   wireStatsToolbar();
   body.querySelectorAll(".otile").forEach(btn => {
-    btn.addEventListener("click", () => openLookFromStats(btn.dataset.look));
+    btn.addEventListener("click", () => openLookFrom(btn.dataset.look));
   });
   hydratePhotos(body);
 }
 
-function openLookFromStats(id) {
-  $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-looks"));
-  $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "looks"));
-  $("#title").textContent = TAB_TITLES.looks;
-  $("#headerAdd").hidden = true;
-  openLook(id);
-}
 
 /* ---- C2: Contexts stats page ---- */
 // Wear count per context, respecting the stats date range.
@@ -7404,7 +7432,7 @@ function renderStatsContextDetailPage() {
     btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
   });
   $("#statsBody").querySelectorAll("[data-sctx-look]").forEach(el => {
-    el.addEventListener("click", () => openLookFromStats(el.dataset.sctxLook));
+    el.addEventListener("click", () => openLookFrom(el.dataset.sctxLook));
   });
 }
 
@@ -9521,9 +9549,11 @@ function switchTab(name) {
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
   $("#title").textContent = TAB_TITLES[name] || "Wardrobe";
   $("#headerAdd").hidden = name !== "home";
-  // A genuine tab tap abandons any pending item-return (even to the closet tab,
-  // whose block below is skipped). openItemFrom() does NOT route through switchTab.
+  // A genuine tab tap abandons any pending item/look-return (even to the home tab
+  // of that return, whose block below may be skipped). openItemFrom()/openLookFrom()
+  // do NOT route through switchTab.
   _itemReturn = null;
+  _lookReturn = null;
   if (name !== "closet") {
     hideGridBar();
     exitSelectMode();
@@ -9706,7 +9736,7 @@ function wireEvents() {
     const planWore = e.target.closest("[data-plan-wore]");
     if (planWore) { e.stopPropagation(); return planWoreIt(planWore.dataset.planDate, planWore.dataset.planWore); }
     const planOpen = e.target.closest("[data-plan-open]");
-    if (planOpen) { looksLens = "All"; looksFolder = null; switchTab("looks"); return openLook(planOpen.dataset.planOpen); }
+    if (planOpen) { looksLens = "All"; looksFolder = null; return openLookFrom(planOpen.dataset.planOpen); }
     const planAssign = e.target.closest("[data-plan-assign]");
     if (planAssign) return openPlanLookPicker(planAssign.dataset.planAssign);
     const planSuggest = e.target.closest("[data-plan-suggest]");
@@ -9716,7 +9746,7 @@ function wireEvents() {
     if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
     if (e.target.closest("[data-cap-look-add]")) return openCapsuleLookPicker();
     const capLook = e.target.closest("[data-cap-look]");
-    if (capLook) { looksLens = "All"; looksFolder = null; switchTab("looks"); return openLook(capLook.dataset.capLook); }
+    if (capLook) { looksLens = "All"; looksFolder = null; return openLookFrom(capLook.dataset.capLook); }
     if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
     if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);

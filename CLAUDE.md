@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-06 r8. Full rework from v25. ~9,850 lines.**
+**Current state: 2026-07-07 r2. Full rework from v25. ~9,900 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
@@ -73,7 +73,10 @@ Top-of-`<script>` config, then logically grouped sections:
   `openLookDetails()` (metadata page: wear/pieces/cost, formality, season, per-piece
   formality, notes) → `openLookWears()` ("When You Wore It" — every wear date; tap a
   day → `openContextSheet` to set that wear's context). `looksBack()` walks
-  wears→details→canvas→list. `duplicateLook()`/`archiveLook()`.
+  wears→details→canvas, then `leaveLook()` — the single canvas-level exit (also used
+  by archive + delete): consumes `_lookReturn` if the look was opened from another
+  screen (see `openLookFrom` in Known gotchas), else `renderLooks()` (list, stays
+  filtered if scoped). `duplicateLook()`/`archiveLook()`.
   Lens switcher: **Formality · Season · Context · Capsule · Liked · Recent · All ·
   Archived** (8 tabs — `.lens` row scrolls horizontally, doesn't shrink labels).
   `activeOutfits()`/`archivedOutfits()` derive from `effectiveArchived(o)` (`o.archived`
@@ -187,6 +190,16 @@ preserved view-state). `switchTab` clears `_itemReturn` (a real tab tap abandons
 The builder is the one exception — it needs a full state stash, so it keeps `_fromBuilder`.
 Plain closet-grid taps use bare `openItem` (origin IS closet → default back). Migrated entry
 points: stats (`openItemFromStats`), look piece tap, suggestion piece tap, capsule item tap.
+
+**Look-detail back mirrors this via `_lookReturn`** (added 2026-07-07 r2). Non-Looks entry
+points open via `openLookFrom(id)` (`makeScreenReturn("looks")` — the generalized capture
+behind `makeItemReturn`); `leaveLook()` consumes the thunk on back/archive/delete. Migrated:
+calendar day-view look cards, both stats look grids, capsule looks, trip-plan day cards.
+`restoreTab("looks")` re-opens `lookId` (per `lookView`) instead of `renderLooks()`, so
+item-back from a look-canvas piece lands on the LOOK, and the two thunks compose:
+calendar → look → piece → back → look → back → calendar. `switchTab` clears both returns.
+Builder round-trips (`builderCancel`/`finishBuilder`) route through `switchTab("looks")`
+and intentionally abandon origin.
 
 ## Data model
 
@@ -367,6 +380,11 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   (`restoreTab`); `detailId` set → closet grid; `searchResults` → sub → cat → root.
 - **Open an item from a non-closet screen via `openItemFrom(id)`** (never bare
   `switchTab("closet")` + `openItem`) so back returns to the origin, not the closet.
+- **Open a look from a non-Looks screen via `openLookFrom(id)`** (never bare
+  `switchTab("looks")` + `openLook`) — same rule for looks (`_lookReturn`/`leaveLook`).
+- **`looksBack()` checks `lookId` BEFORE `looksSearchQ`** — a look can sit on top of a
+  lingering search; back must exit the look first (then `renderLooks()` restores the
+  search results). Don't reorder.
 - **`closetSub` special values**: `"__other__"` = no recognized subcategory;
   `"__all__"` = flat grid of whole category. Handle both in `categoryGrid()`.
 - **`[hidden]` vs CSS specificity**: always include `[hidden] { display: none !important }`

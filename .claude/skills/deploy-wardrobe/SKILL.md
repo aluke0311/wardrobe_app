@@ -11,18 +11,19 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
 ## Steps
 
 1. **Bump `APP_VERSION`** in `index.html` (a constant near the top of the
-   `<script>`, shown in the UI). Format is **`YYYY-MM-DD vN`**:
-   - If the current value's date is **before today** → set today's date with `v1`.
-   - If it's **already today** → increment the `vN` (so multiple pushes the same
-     day differ: `v1` → `v2` → …).
-   The UI prints `APP_VERSION` verbatim (no extra "v" prefix), so keep the `vN`
-   inside the string.
+   `<script>`, shown in the UI). Format is **`YYYY-MM-DD rN`** (matches the
+   convention in CLAUDE.md):
+   - If the current value's date is **before today** → set today's date with `r1`.
+   - If it's **already today** → increment the `rN` (so multiple pushes the same
+     day differ: `r1` → `r2` → …). Check the value in the LAST COMMIT
+     (`git show HEAD:index.html | grep APP_VERSION`), not just the working tree —
+     an earlier session may already have deployed today's `r1`.
+   The UI prints `APP_VERSION` verbatim.
 
 2. **Stage and commit** with a clear, specific message describing what changed
-   (not "update index.html"). End the commit body with:
-   ```
-   Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
-   ```
+   (not "update index.html"). End the commit body with the standard
+   `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer for the
+   current model.
 
 3. **Push to main:**
    ```
