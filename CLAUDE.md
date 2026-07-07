@@ -21,7 +21,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-06 r7. Full rework from v25. ~9,850 lines.**
+**Current state: 2026-07-06 r8. Full rework from v25. ~9,850 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
@@ -85,8 +85,10 @@ Top-of-`<script>` config, then logically grouped sections:
   other values used). Primary hearting moment is `openPostLogSheet` (shown whenever
   logged wears share an `outfit_id`) and a `.cal-heart-btn` on calendar day-view look
   cards — not just browsing. `.otile-heart` badges liked-look tiles everywhere
-  (`outfitGridHtml`, all look pickers). `outfitContexts(o)` = union of `ctxArr(w)`
-  across a look's real wears, backs the Context lens folders.
+  (`outfitGridHtml`, all look pickers). `outfitContextMap()` (one pass over wears →
+  Map(outfit_id→Set(contexts)); `outfitContexts(o)` is the single-look convenience)
+  backs the Context lens folders — use the map for whole-list scans, never a
+  per-outfit scan (perf: outfits × wears).
 - **BUILD-A-LOOK** — Stylebook canvas on `#tab-builder`. `openBuilder(outfitId?, seedItemId?)`.
   Pointer drag+resize; `builder` global state. `saveBuilder()` writes `outfits.layout` JSONB.
   "+ Clothing" picker: category/subfolder browsing is full-screen (`renderBuilderPicker`);
@@ -307,7 +309,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-06 r7`.
+  Currently `2026-07-06 r8`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
@@ -343,6 +345,17 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 - **Private photos need signed URLs** — never use a public bucket URL. Batch-sign via
   `POST /storage/v1/object/sign/{bucket}` with `{paths, expiresIn}`; full URL =
   `` `${SUPABASE_URL}/storage/v1${row.signedURL}` ``.
+- **Photo bytes are cached locally (Supabase egress guard, added 2026-07-06 r8).**
+  Signed URLs change every session so the browser HTTP cache never hits — every session
+  used to re-download every photo (triggered a Supabase egress-quota email 2026-07-02).
+  `photoUrl(path)` (the ONLY thing `loadPhotoNode` calls now) checks the Cache Storage
+  API (`PHOTO_CACHE`, keyed by stable `image_path` via `photoCacheKey`) before any
+  network; misses fetch the signed URL once and store the bytes; serves `blob:` URLs
+  (`_blobUrlCache` per session, `_photoPending` dedupes concurrent grid renders).
+  Eviction: `deletePhoto` → `evictPhotoCache` (photo replace/remove both flow through
+  it); `prunePhotoCache()` after `loadData` drops entries no item references. Falls
+  back to plain signed URLs where `caches` is unavailable. If photo display ever
+  changes, route it through `photoUrl`, never raw `signedUrl`.
 - **`prewarmUrlCache()`** — call after `loadData()` fire-and-forget. IntersectionObserver
   finds URLs cached on scroll.
 - **`loadPhotoNode` sets `backgroundColor = "transparent"`** — lets white/transparent

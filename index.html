@@ -1090,7 +1090,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-06 r7";
+const APP_VERSION = "2026-07-06 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1255,6 +1255,7 @@ async function uploadPhoto(blob, filename) {
 
 async function deletePhoto(path) {
   if (!path) return;
+  evictPhotoCache(path);  // fire-and-forget; hoisted from the byte-cache block below
   await api(`/storage/v1/object/${BUCKET}/${path}`, { method: "DELETE" }).catch(() => {});
 }
 
@@ -1305,6 +1306,72 @@ async function prewarmUrlCache() {
   for (let i = 0; i < paths.length; i += 100) {
     signedUrlBatch(paths.slice(i, i + 100)); // fire and forget
   }
+}
+
+/* ===================================================================
+   LOCAL PHOTO BYTE CACHE  (Cache Storage API — Supabase egress guard)
+   =================================================================== */
+// Signed URLs change every session, so the browser's HTTP cache never hits and
+// every session re-downloaded every photo from Supabase (the July 2026 "usage
+// quota" email — EGRESS, not storage size). Fix: cache the actual image bytes
+// locally, keyed by the STABLE image_path, and serve blob: URLs from the cache.
+// First view downloads once; every later view — including future sessions — is
+// local. Falls back to plain signed URLs where the Cache API is unavailable
+// (insecure context / some private-browsing modes).
+const PHOTO_CACHE = "wardrobe-photos-v1";
+const _photoCacheOK = typeof caches !== "undefined";
+const _blobUrlCache = new Map();   // image_path -> blob: URL (this session)
+const _photoPending = new Map();   // image_path -> in-flight promise (dedupes grid re-renders)
+const photoCacheKey = (path) => `${location.origin}/__photo-cache/${encodeURIComponent(path)}`;
+
+function photoUrl(path) {
+  if (!path) return Promise.resolve(null);
+  if (_blobUrlCache.has(path)) return Promise.resolve(_blobUrlCache.get(path));
+  let p = _photoPending.get(path);
+  if (!p) {
+    p = _photoUrlUncached(path).finally(() => _photoPending.delete(path));
+    _photoPending.set(path, p);
+  }
+  return p;
+}
+async function _photoUrlUncached(path) {
+  if (_photoCacheOK) {
+    try {
+      const cache = await caches.open(PHOTO_CACHE);
+      const key = photoCacheKey(path);
+      let resp = await cache.match(key);
+      if (!resp) {
+        const su = await signedUrl(path);
+        if (!su) return null;
+        const net = await fetch(su);
+        if (!net.ok) throw new Error(`photo fetch ${net.status}`);
+        await cache.put(key, net.clone());
+        resp = net;
+      }
+      const blobUrl = URL.createObjectURL(await resp.blob());
+      _blobUrlCache.set(path, blobUrl);
+      return blobUrl;
+    } catch (_) { /* cache quota/eviction/offline — fall through to a signed URL */ }
+  }
+  return signedUrl(path);
+}
+// Local bytes are stale the moment the storage object changes — called from
+// deletePhoto (which both photo-replace and photo-remove flow through).
+async function evictPhotoCache(path) {
+  if (!path) return;
+  const u = _blobUrlCache.get(path);
+  if (u) { URL.revokeObjectURL(u); _blobUrlCache.delete(path); }
+  if (_photoCacheOK) { try { (await caches.open(PHOTO_CACHE)).delete(photoCacheKey(path)); } catch (_) {} }
+}
+// Drop cached bytes no longer referenced by any item (items deleted, photos
+// replaced on another device). Fire-and-forget after loadData.
+async function prunePhotoCache() {
+  if (!_photoCacheOK || !items.length) return;
+  try {
+    const live = new Set(items.map(i => i.image_path).filter(Boolean).map(photoCacheKey));
+    const cache = await caches.open(PHOTO_CACHE);
+    for (const req of await cache.keys()) if (!live.has(req.url)) cache.delete(req);
+  } catch (_) {}
 }
 
 /* ===================================================================
@@ -1533,7 +1600,7 @@ const photoObserver = new IntersectionObserver((entries) => {
 async function loadPhotoNode(n) {
   if (n.dataset.photoDone) return;
   n.dataset.photoDone = "1";
-  const url = await signedUrl(n.dataset.photo);
+  const url = await photoUrl(n.dataset.photo);   // local byte cache first, Supabase only on miss
   if (url) { n.style.backgroundImage = `url("${url}")`; n.style.backgroundColor = "transparent"; }
 }
 function hydratePhotos(root = document) {
@@ -3588,11 +3655,23 @@ function effectiveWearDays(o) {
 function outfitSeasons(o) { return [...new Set(effectiveWearDays(o).map(seasonOf))]; }
 // L8: union of contexts across every real wear of this look (no created_at fallback —
 // a look with no wear-context data simply has no context folders yet).
-function outfitContexts(o) {
-  const s = new Set();
-  for (const w of wears) { if (w.outfit_id === o.id) for (const c of ctxArr(w)) s.add(c); }
-  return [...s];
+// One pass over wears → Map(outfit_id -> Set(contexts)). The Context lens used
+// to call a per-outfit wears scan once per outfit PER FOLDER (O(contexts ×
+// outfits × wears) ≈ 95M iterations at current data size — seconds of jank);
+// build this map once per render instead and read from it.
+function outfitContextMap() {
+  const m = new Map();
+  for (const w of wears) {
+    if (!w.outfit_id) continue;
+    const cs = ctxArr(w);
+    if (!cs.length) continue;
+    let s = m.get(w.outfit_id);
+    if (!s) { s = new Set(); m.set(w.outfit_id, s); }
+    for (const c of cs) s.add(c);
+  }
+  return m;
 }
+function outfitContexts(o) { return [...(outfitContextMap().get(o.id) || [])]; }  // single-look convenience
 // Wear count + last-worn are REAL wears only (no created_at fallback) — a freshly
 // built look must read "never worn", not "worn today". (Seasons still use the
 // created-date fallback above so unworn looks land in a season folder.)
@@ -3888,14 +3967,18 @@ function folderRowsHtml(lens) {
     }
   } else if (lens === "Context") {
     // L8: folders sorted by look-count desc, "No context" trails so nothing disappears.
-    const counts = new Map();
-    for (const o of all) for (const c of outfitContexts(o)) counts.set(c, (counts.get(c) || 0) + 1);
-    const ctxs = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
+    const ctxMap = outfitContextMap();
+    const byCtx = new Map(), noCtx = [];
+    for (const o of all) {
+      const cs = ctxMap.get(o.id);
+      if (!cs || !cs.size) { noCtx.push(o); continue; }
+      for (const c of cs) { let l = byCtx.get(c); if (!l) { l = []; byCtx.set(c, l); } l.push(o); }
+    }
+    const ctxs = [...byCtx.keys()].sort((a, b) => byCtx.get(b).length - byCtx.get(a).length || a.localeCompare(b));
     for (const c of ctxs) {
-      const list = all.filter(o => outfitContexts(o).includes(c));
+      const list = byCtx.get(c);
       rows += looksFolderRow(c, list.length, repByRecency(list), `data-lfolder="${esc(c)}"`);
     }
-    const noCtx = all.filter(o => !outfitContexts(o).length);
     if (noCtx.length) rows += looksFolderRow("No context", noCtx.length, repByRecency(noCtx), `data-lfolder="${NO_CONTEXT_FOLDER}"`);
   } else {
     for (const s of SEASONS) {
@@ -3913,7 +3996,12 @@ function folderOutfits(lens, folder) {
     : lens === "Capsule"
     ? all.filter(o => outfitFullyInCapsule(o, folder))
     : lens === "Context"
-    ? (folder === NO_CONTEXT_FOLDER ? all.filter(o => !outfitContexts(o).length) : all.filter(o => outfitContexts(o).includes(folder)))
+    ? (() => {
+        const ctxMap = outfitContextMap();
+        return folder === NO_CONTEXT_FOLDER
+          ? all.filter(o => !(ctxMap.get(o.id)?.size))
+          : all.filter(o => ctxMap.get(o.id)?.has(folder));
+      })()
     : all.filter(o => outfitSeasons(o).includes(folder));
   return list.sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
 }
@@ -9811,6 +9899,7 @@ async function bootApp() {
   try {
     await loadData();
     prewarmUrlCache();    // fire-and-forget: batch-sign all photo URLs into cache
+    prunePhotoCache();    // fire-and-forget: drop cached bytes for photos no item references
     renderHome();         // re-render so tile subtitles (counts) fill in
   } catch (e) {
     $("#homeBody").innerHTML = `<div class="placeholder"><b>Couldn't load data</b>
@@ -9820,7 +9909,7 @@ async function bootApp() {
 }
 async function retryLoad() {
   $("#homeBody").innerHTML = `<div class="spin"></div>`;
-  try { await loadData(); prewarmUrlCache(); renderHome(); } catch (e) { toast(e.message); }
+  try { await loadData(); prewarmUrlCache(); prunePhotoCache(); renderHome(); } catch (e) { toast(e.message); }
 }
 window.retryLoad = retryLoad;
 
