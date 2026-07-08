@@ -1090,7 +1090,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-07 r2";
+const APP_VERSION = "2026-07-08 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5110,12 +5110,13 @@ async function duplicateLook(id) {
 }
 
 // ---- wear this look (one wear row per piece, linked to the outfit) ----
+// Single-ask: date only here; context/formality/heart are captured once,
+// after logging, via the shared openPostLogSheet (same pattern as logLookOnDay).
 function openWearLook(id) {
   const o = outfitById.get(id);
   if (!o) return;
   const its = outfitItems(o);
   const today = todayStr();
-  _ctxSel = []; _ctxAddOpen = false;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="logCancel">Cancel</button>
@@ -5126,17 +5127,14 @@ function openWearLook(id) {
       <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Date worn</label>
       <input class="inp" id="logDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
       <div class="muted" style="font-size:13px;margin-top:12px">Logs a wear for all ${its.length} piece${its.length === 1 ? "" : "s"} in this look.</div>
-      ${contextPickerHtml()}
     </div>`;
   $("#logSheet").hidden = false;
-  renderContextPicker();
   $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
   $("#logSave").onclick = async () => {
     const date = $("#logDate").value;
     if (!date || !its.length) { $("#logSheet").hidden = true; return; }
-    const ctx = ctxSelOrNull();
     try {
-      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, context: ctx }));
+      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id }));
       const rows = await rest("/wears", {
         method: "POST",
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
@@ -9074,6 +9072,134 @@ function findDuplicateOutfit(itemIds, excludeId) {
   return null;
 }
 
+// ---- wear-sync after piece edits ------------------------------------------
+// Editing a look's pieces doesn't rewrite wear history, but a look edited right
+// after being worn usually means "I actually wore the new pieces". These
+// reconcile ONE day's outfit-linked wear rows with the look's current piece
+// set: swapped-out pieces lose that day's wear row, swapped-in pieces gain one
+// with the group's context/formality copied over (so tags follow the swap).
+
+// Most recent date this look was worn (within 14 days) whose wear rows no
+// longer match the current piece set. Older wears are history — left alone.
+function wearSyncCandidate(outfitId) {
+  const dates = [...new Set(wears.filter(w => w.outfit_id === outfitId).map(w => w.worn_on))].sort();
+  if (!dates.length) return null;
+  const d = dates[dates.length - 1];
+  if (daysSince(d) > 14) return null;
+  const current = new Set(outfitItemMap.get(outfitId) || []);
+  if (!current.size) return null;
+  const group = wears.filter(w => w.outfit_id === outfitId && w.worn_on === d);
+  const have = new Set(group.map(w => w.item_id));
+  const mismatch = group.some(w => !current.has(w.item_id)) || [...current].some(x => !have.has(x));
+  return mismatch ? d : null;
+}
+
+async function syncWearsToLook(outfitId, dateStr) {
+  const current = new Set(outfitItemMap.get(outfitId) || []);
+  const group = wears.filter(w => w.outfit_id === outfitId && w.worn_on === dateStr);
+  if (!current.size || !group.length) return null;
+  const stale = group.filter(w => !current.has(w.item_id) && w.id);
+  const have = new Set(group.map(w => w.item_id));
+  const missing = [...current].filter(x => !have.has(x));
+  if (!stale.length && !missing.length) return null;
+  // Copy context/formality from a row that's staying (fall back to any row).
+  const src = group.find(w => current.has(w.item_id) && (ctxArr(w).length || w.formality_for))
+    || group.find(w => ctxArr(w).length || w.formality_for) || null;
+  if (stale.length) {
+    await rest(`/wears?id=in.(${stale.map(w => `"${w.id}"`).join(",")})`, { method: "DELETE" });
+    const gone = new Set(stale.map(w => w.id));
+    wears = wears.filter(w => !gone.has(w.id));
+  }
+  if (missing.length) {
+    const payload = missing.map(item_id => ({
+      item_id, worn_on: dateStr, outfit_id: outfitId,
+      context: src && ctxArr(src).length ? ctxArr(src) : null,
+      formality_for: (src && src.formality_for) || null,
+    }));
+    const rows = await rest("/wears", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    wears.push(...(Array.isArray(rows) ? rows : payload));
+  }
+  buildOutfitWearMap();
+  return { added: missing.length, removed: stale.length };
+}
+
+// Move one day's wear rows from one look to another (merge follow-up).
+async function repointWears(fromId, toId, dateStr) {
+  await rest(`/wears?outfit_id=eq.${fromId}&worn_on=eq.${dateStr}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({ outfit_id: toId }),
+  });
+  wears.forEach(w => { if (w.outfit_id === fromId && w.worn_on === dateStr) w.outfit_id = toId; });
+  buildOutfitWearMap();
+}
+
+// After an EDITED look merges into an existing duplicate: the edit landed on the
+// surviving look, but the edited look still exists with its old pieces. Offer to
+// move the recent wear over (re-point + piece-sync) and decide the old look's fate.
+function openMergeFollowUp(oldId, dupId, wearDate) {
+  const oldO = outfitById.get(oldId);
+  if (!oldO) return;
+  const wearRow = wearDate ? `
+      <div style="margin-bottom:20px">
+        <div class="muted" style="font-size:13px;margin-bottom:8px">It was worn ${esc(calDayLabel(wearDate))} with the old pieces.</div>
+        <button class="sheet-chip" id="mergeMoveWear">Move that wear to this look →</button>
+      </div>` : "";
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="mergeClose">Done</button>
+      <h2>Merged</h2>
+      <span></span>
+    </div>
+    <div style="padding:20px 18px 30px">
+      <div class="muted" style="font-size:13px;margin-bottom:20px">Your edit matched an existing look, so it was applied there. “${esc(outfitName(oldO))}” still exists with the old pieces.</div>
+      ${wearRow}
+      <div class="muted" style="font-size:13px;margin-bottom:8px">Keep the old look?</div>
+      <div class="sheet-chips">
+        <button class="sheet-chip" id="mergeKeep">Keep it</button>
+        <button class="sheet-chip" id="mergeArchive">Archive it</button>
+        <button class="sheet-chip" id="mergeDelete">Delete it</button>
+      </div>
+    </div>`;
+  $("#logSheet").hidden = false;
+  const close = () => { $("#logSheet").hidden = true; };
+  $("#mergeClose").onclick = close;
+  $("#mergeKeep").onclick = close;
+  if (wearDate) $("#mergeMoveWear").onclick = async () => {
+    try {
+      await repointWears(oldId, dupId, wearDate);
+      await syncWearsToLook(dupId, wearDate);
+      const b = $("#mergeMoveWear");
+      if (b) { b.textContent = "Wear moved ✓"; b.disabled = true; }
+    } catch (e) { toast(e.message); }
+  };
+  $("#mergeArchive").onclick = async () => {
+    try {
+      await rest(`/outfits?id=eq.${oldId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ archived: true }),
+      });
+      oldO.archived = true;
+      close(); toast("Old look archived");
+    } catch (e) { toast(e.message); }
+  };
+  // Delete preserves history like deleteLook (wears.outfit_id is SET NULL), but
+  // without leaveLook() — we're on the surviving look, not the deleted one.
+  $("#mergeDelete").onclick = async () => {
+    try {
+      await rest(`/outfits?id=eq.${oldId}`, { method: "DELETE" });
+      outfits = outfits.filter(o => o.id !== oldId);
+      outfitById.delete(oldId);
+      outfitItemMap.delete(oldId);
+      wears.forEach(w => { if (w.outfit_id === oldId) w.outfit_id = null; });
+      buildOutfitWearMap();
+      close(); toast("Old look deleted");
+    } catch (e) { toast(e.message); }
+  };
+}
+
 async function saveBuilder() {
   if (!builder) return;
   const p = builder.pieces;
@@ -9094,7 +9220,30 @@ async function saveBuilder() {
       });
       dup.layout = layout; if (name) dup.name = name; dup._bucket = null;
       buildOutfitIndexes();
-      return finishBuilder(dup.id, "Merged into existing look");
+      // Edited-look merge: the edit landed on dup, but oldId's recent wear (if
+      // any) still points at oldId with the old pieces. Same-day wear moves
+      // silently (same policy as the non-merge sync); anything else is offered
+      // in the follow-up sheet along with the old look's fate.
+      const oldId = builder.outfitId || null;
+      const mergePlanCtx = builder.planCtx || null;
+      let mergeMsg = "Merged into existing look";
+      let mergeWearDate = null;
+      if (oldId) {
+        const oldDates = [...new Set(wears.filter(w => w.outfit_id === oldId).map(w => w.worn_on))].sort();
+        const d = oldDates.length ? oldDates[oldDates.length - 1] : null;
+        if (d && daysSince(d) <= 14) {
+          if (d === todayStr()) {
+            await repointWears(oldId, dup.id, d);
+            await syncWearsToLook(dup.id, d);
+            mergeMsg = "Merged into existing look · today's wear moved";
+          } else {
+            mergeWearDate = d;
+          }
+        }
+      }
+      finishBuilder(dup.id, mergeMsg);
+      if (oldId && !mergePlanCtx) openMergeFollowUp(oldId, dup.id, mergeWearDate);
+      return;
     }
     if (!id) {
       const rows = await rest("/outfits?select=*", {
@@ -9135,7 +9284,30 @@ async function saveBuilder() {
       }
     }
     buildOutfitIndexes();  // resets _bucket caches so formality re-derives
-    finishBuilder(id, wasNew ? "Look created" : "Look saved");
+    const planCtx = builder && builder.planCtx;
+    let savedMsg = wasNew ? "Look created" : "Look saved";
+    let syncOffer = null;
+    if (!wasNew) {
+      const d = wearSyncCandidate(id);
+      if (d === todayStr()) {
+        // Same-day edit = "this is what I actually wore" — sync silently.
+        const r = await syncWearsToLook(id, d);
+        if (r) savedMsg = "Look saved · today's wear updated";
+      } else if (d && !planCtx) {
+        syncOffer = d;
+      }
+    }
+    finishBuilder(id, savedMsg);
+    if (syncOffer) {
+      toast(`Worn ${calDayLabel(syncOffer)} with the old pieces`, [
+        { label: "Update that wear →", fn: async () => {
+          try {
+            const r = await syncWearsToLook(id, syncOffer);
+            toast(r ? "Wear updated to match the look" : "Already up to date");
+          } catch (e) { toast(e.message); }
+        } },
+      ]);
+    }
   } catch (e) { toast(e.message); }
 }
 

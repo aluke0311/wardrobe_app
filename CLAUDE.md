@@ -98,6 +98,21 @@ Top-of-`<script>` config, then logically grouped sections:
   once at an item list (`builderInItemMode` → subfolder or flat category) it switches to a
   bottom item rail over the visible canvas (`renderBuilderRail`, `.bld-rail`); rail taps
   `addPieceToBuilder(id, true)` keep it open. Migration: `migration/outfit_layout.sql`.
+  **Wear-sync after piece edits** (2026-07-08): `saveBuilder` checks `wearSyncCandidate(id)`
+  (most recent wear date ≤14d whose outfit-linked wear rows ≠ current piece set).
+  Same-day mismatch → `syncWearsToLook(id, date)` runs silently (toast notes it);
+  1–14 days old → offer chip on the toast ("Update that wear →"). Sync deletes that
+  day's wear rows for swapped-out pieces and inserts rows for swapped-in ones,
+  copying context/formality from a surviving group row (tags follow the swap).
+  State-based, not delta-based — re-saving an unchanged look still offers the fix,
+  which is also the repair path for wears left stale before this shipped. Older
+  wears are history and never touched. **Dup-merge follow-up**: when an EDITED
+  look merges into an existing duplicate, the same policy applies to the edited
+  look's latest wear — same-day is re-pointed to the survivor automatically
+  (`repointWears` + `syncWearsToLook`); ≤14d is offered inside `openMergeFollowUp`,
+  a post-merge sheet that also asks the old look's fate (Keep / Archive / Delete —
+  delete inlined, not `deleteLook`, to skip its `leaveLook()` navigation; wears FK
+  is SET NULL so history survives). Sheet skipped in trip-plan (`planCtx`) saves.
 - **OUTFIT SUGGESTIONS** — `suggestOutfits(targetLevel?, seedItemId?, capsulePool?)`.
   Slot-filling engine (Top/Dress + Bottom + Shoes + optional Outerwear). **By design
   there is NO unworn/last-worn weighting** — slots random-sample and scoring is only
