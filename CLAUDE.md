@@ -143,6 +143,10 @@ Top-of-`<script>` config, then logically grouped sections:
   that context's `formality_for` wears, min 3 to trust; else `CONTEXT_FORMALITY_SEED`).
   Entry points: item detail shuffle button, Looks tab +, capsule "Suggest an outfit".
   Sheet state in `_sugg` (incl. `activeContext`).
+  **"Wear this today" logs AS AN OUTFIT** (`wearSuggestedCombo`, r2): create-or-merge
+  a real look via `saveComboAsOutfit` (item-set dedup + layout), wears get its
+  `outfit_id` + derived formality, soft dup guard per day, post-log sheet shows the
+  heart. Undo removes the wear rows only (the created look stays; dedup reabsorbs it).
 - **EXCLUSIONS** — `exclusions` table stores item pairs that shouldn't appear together.
   `buildExcludeSet()` → `_excludeSet` (Set of "a:b" canonical pairs). `isExcluded(a,b)`,
   `addExclusion(a,b,reason)`. Loaded in `loadData()`.

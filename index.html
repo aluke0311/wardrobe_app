@@ -1098,7 +1098,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-09 r1";
+const APP_VERSION = "2026-07-09 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4567,6 +4567,32 @@ function addSuggestionLayer() {
   renderSuggestSheet();
 }
 
+// "Wear this today" (non-plan): a suggested outfit logs AS AN OUTFIT — create-or-
+// merge a real look (saveComboAsOutfit dedups by item-set + saves the layout), then
+// log one wear row per piece with that outfit_id. Same soft dup guard as
+// logLookOnDay; post-log sheet gets the heart since the rows share an outfit_id.
+async function wearSuggestedCombo(combo, { force = false } = {}) {
+  const today = todayStr();
+  try {
+    const oid = await saveComboAsOutfit(combo.pieces);
+    if (!force && wears.some(w => w.outfit_id === oid && w.worn_on === today)) {
+      toast("Already logged today", { label: "Log again →", fn: () => wearSuggestedCombo(combo, { force: true }) });
+      return;
+    }
+    const fml = deriveWearFormality(combo.pieces.map(p => p.id));
+    const rows = await rest("/wears", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today, outfit_id: oid, formality_for: fml }))),
+    });
+    if (Array.isArray(rows)) wears.push(...rows);
+    buildOutfitWearMap();
+    // Route into the context capture sheet (shared with daily-loop logging)
+    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
+    else { $("#logSheet").hidden = true; toast("Logged!"); }
+  } catch (e) { toast(e.message); }
+}
+
 // One-line rationale shown under a suggestion so the randomness reads as intentional.
 function suggestionWhy(combo) {
   const its = combo.pieces;
@@ -4801,22 +4827,7 @@ function renderSuggestSheet() {
       toast("Added to " + planDayLabel(date));
     } catch (e) { toast(e.message); }
   };
-  else if (wearBtn && combo) wearBtn.onclick = async () => {
-    const today = todayStr();
-    try {
-      const fml = deriveWearFormality(combo.pieces.map(p => p.id));
-      const rows = await rest("/wears", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-        body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today, formality_for: fml }))),
-      });
-      if (Array.isArray(rows)) wears.push(...rows);
-      buildOutfitWearMap();
-      // Route into the context capture sheet (shared with daily-loop logging)
-      if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
-      else { $("#logSheet").hidden = true; toast("Logged!"); }
-    } catch (e) { toast(e.message); }
-  };
+  else if (wearBtn && combo) wearBtn.onclick = () => wearSuggestedCombo(combo);
 
   const buildBtn = $("#logInner").querySelector("[data-sbuild]");
   if (buildBtn && combo) buildBtn.onclick = () => {
