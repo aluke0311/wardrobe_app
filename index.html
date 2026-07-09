@@ -117,15 +117,13 @@
   .tile .tlabel { font-size: 14.5px; font-weight: 600; letter-spacing: .01em; }
   .tile .tsub { font-size: 12px; color: var(--muted); margin-top: -6px; }
   .tile.wide { grid-column: 1 / -1; }
-  /* W7: weather-aware "Today" tile */
-  .today-tile { display: flex; align-items: center; gap: 14px; margin: 20px 18px 0; padding: 12px;
-    border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line);
-    text-align: left; transition: transform .08s ease, background .12s ease; }
-  .today-tile:active { transform: scale(.98); background: var(--accent-soft); }
-  .today-tile.loading { justify-content: center; color: var(--muted); font-size: 14px; padding: 20px; }
-  .tt-meta { flex: 1; min-width: 0; }
-  .tt-label { font-size: 15px; font-weight: 700; }
-  .tt-wx { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  /* V3: "logged today" acknowledgment row on Home (replaces the CTA once logged) */
+  .logged-row { display: flex; align-items: center; gap: 8px; margin: 12px 16px 0; padding: 12px 14px;
+    border-radius: 14px; background: var(--accent-soft); color: var(--ink);
+    font-size: 14.5px; font-weight: 500; text-align: left; }
+  .logged-row .lr-check { color: var(--accent); font-weight: 700; flex: none; }
+  .logged-row .lr-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .logged-row .lr-plus { flex: none; color: var(--accent); font-size: 18px; font-weight: 600; }
 
   /* ---------- placeholder screens ---------- */
   .placeholder {
@@ -533,6 +531,16 @@
     background:var(--accent); color:#fff; border-radius:12px;
     font-size:15px; font-weight:600; }
   .cal-make-look-btn svg { width:18px; height:18px; stroke:#fff; stroke-width:2.5; fill:none; }
+
+  /* V3 "On this day" history row in day view */
+  .otd-row { display:flex; align-items:center; gap:12px; width:calc(100% - 32px);
+    margin:10px 16px 0; padding:10px 12px; border-radius:12px;
+    background:var(--surface); border:1px solid var(--line); text-align:left; }
+  .otd-collage { width:44px; flex:none; }
+  .otd-text { flex:1; min-width:0; }
+  .otd-title { font-size:13.5px; font-weight:600; }
+  .otd-sub { font-size:12px; color:var(--muted); margin-top:1px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   /* quick-action sheet (long-press tile) */
   .qa-row { width:100%; display:flex; align-items:center; gap:14px; padding:16px 20px;
@@ -1090,7 +1098,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-08 r1";
+const APP_VERSION = "2026-07-09 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1636,48 +1644,23 @@ function getHomeLocation() {
     );
   });
 }
-// { date, loading, wx, combo, hasLocation } — one suggestOutfits() pick per day,
-// cached so it doesn't reshuffle on every Home re-render.
-let _todayTile = { date: null, loading: false, wx: null, combo: null, hasLocation: null };
-async function loadTodayTile() {
-  if (_todayTile.loading) return;
-  _todayTile.loading = true;
+// V3: home weather for the suggestion sheet (the Today tile is gone — weather
+// intelligence lives in the suggester now). One fetch per day, cached in memory.
+let _homeWx = { date: null, wx: null, loading: false };
+async function loadHomeWeather() {
   const today = todayStr();
-  let wx = null, hasLocation = false;
+  if (_homeWx.date === today || _homeWx.loading) return _homeWx.wx;
+  _homeWx.loading = true;
+  let wx = null;
   try {
     const loc = await getHomeLocation();
-    hasLocation = !!loc;
     if (loc) {
       const result = await fetchWeatherRange(loc.lat, loc.lon, today, today);
       wx = result[today] || null;
     }
-  } catch (e) { /* offline/denied — degrade to season-only below */ }
-  let combo = null;
-  try {
-    const results = suggestOutfits(null, null, null, currentSeason());
-    combo = results && results.length ? results[0] : null;
-  } catch (e) {}
-  _todayTile = { date: today, loading: false, wx, combo, hasLocation };
-  if ($(".screen.active")?.id === "tab-home") renderHome();
-}
-function todayTileHtml() {
-  if (!dataReady) return "";
-  if (_todayTile.date !== todayStr()) return `<div class="today-tile loading">Finding today's pick…</div>`;
-  if (!_todayTile.combo) return ""; // not enough items to suggest — no dead tile
-  const layout = suggestionLayout(_todayTile.combo.pieces);
-  const canvas = layoutCanvasHtml({ layout, formality_override: null, _bucket: null }, "ocanvas omini");
-  if (!canvas) return "";
-  const wx = _todayTile.wx;
-  const wxHtml = wx && wx.maxT != null
-    ? `${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°`
-    : (_todayTile.hasLocation === false ? esc(currentSeason()) : "");
-  return `<button class="today-tile" id="homeTodayTile">
-    ${canvas}
-    <div class="tt-meta">
-      <div class="tt-label">Today's pick</div>
-      ${wxHtml ? `<div class="tt-wx">${wxHtml}</div>` : ""}
-    </div>
-  </button>`;
+  } catch (e) { /* offline/denied — suggester degrades to season-only */ }
+  _homeWx = { date: today, wx, loading: false };
+  return wx;
 }
 
 const HOME_TILES = [
@@ -1710,10 +1693,21 @@ function renderHome() {
     </button>`).join("");
   const today = todayStr();
   const hasWearToday = dataReady && wearDayMap().has(today);
-  const cta = dataReady && !hasWearToday
-    ? `<button class="log-cta" id="homeLogCta">Log today's wear</button>`
-    : "";
-  $("#homeBody").innerHTML = `${todayTileHtml()}<div class="launch">${tiles}</div>${cta}`;
+  // V3: once today is logged, acknowledge it (habit feedback) + keep a one-tap
+  // path into today's day view for the evening outfit — instead of going silent.
+  let cta = "";
+  if (dataReady && !hasWearToday) {
+    cta = `<button class="log-cta" id="homeLogCta">Log today's wear</button>`;
+  } else if (dataReady) {
+    const todayWears = wears.filter(w => w.worn_on === today);
+    const ctxs = [...new Set(todayWears.flatMap(w => ctxArr(w)))];
+    const nItems = new Set(todayWears.map(w => w.item_id)).size;
+    const detail = ctxs.length ? ctxs.join(", ") : `${nItems} item${nItems === 1 ? "" : "s"}`;
+    cta = `<button class="logged-row" id="homeLoggedRow">
+      <span class="lr-check">✓</span><span class="lr-text">Logged today · ${esc(detail)}</span><span class="lr-plus">＋</span>
+    </button>`;
+  }
+  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}`;
   const ctaBtn = $("#homeLogCta");
   // G6: the most common real log is a repeat — offer "wear again" first, not a
   // blank picker.
@@ -1723,9 +1717,12 @@ function renderHome() {
     renderCalendarDay($("#calendarBody"));
     openWearAgainChooser(today);
   };
-  const todayBtn = $("#homeTodayTile");
-  if (todayBtn) todayBtn.onclick = () => openSuggestSheet();
-  if (dataReady && _todayTile.date !== today) loadTodayTile();
+  const loggedBtn = $("#homeLoggedRow");
+  if (loggedBtn) loggedBtn.onclick = () => {
+    switchTab("calendar");
+    calendarDay = today;
+    renderCalendarDay($("#calendarBody"));
+  };
 }
 
 /* ===================================================================
@@ -2111,8 +2108,21 @@ function restoreTab(tab) {
 // Open an item while remembering the origin screen. Use from any non-closet entry
 // point (looks, capsules, stats, suggestions, calendar…) instead of bare
 // switchTab("closet") + openItem, so back returns to where the item was opened.
-function openItemFrom(id) {
-  _itemReturn = makeItemReturn();           // capture BEFORE we bring the closet forward
+// V3 nav-audit fix: pass `browseCtx` ({cat, sub}) instead of pre-setting
+// closetCat/closetSub at the call site — the closet browse state is snapshotted
+// here and restored when the return thunk fires, so viewing an item from another
+// screen no longer silently moves the closet tab's position.
+function openItemFrom(id, browseCtx) {
+  const ret = makeItemReturn();             // capture BEFORE we bring the closet forward
+  if (ret) {
+    const snap = { cat: closetCat, sub: closetSub, res: searchResults };
+    _itemReturn = () => { closetCat = snap.cat; closetSub = snap.sub; searchResults = snap.res; ret(); };
+  } else _itemReturn = null;
+  if (browseCtx) {  // sibling prev/next nav browses the item's own category
+    closetCat = browseCtx.cat ?? null;
+    closetSub = browseCtx.sub ?? null;
+    searchResults = null;
+  }
   builder = null; $("#app").classList.remove("builder-mode");
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-closet"));
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "closet"));
@@ -2844,11 +2854,32 @@ function itemContexts(itemId) {
     .sort((a, b) => b.count - a.count);
 }
 
+// V3: her weekly rhythm predicts the context ("Sundays are usually Church").
+// Top context for the date's weekday, counted in distinct DAYS (so a 5-piece
+// look doesn't count 5×); needs ≥3 days to trust. Suggestion only — never saved.
+function weekdayTopContext(dateStr) {
+  const dow = new Date(dateStr + "T00:00:00").getDay();
+  const days = new Map();  // context → Set of dates
+  for (const w of wears) {
+    if (!w.worn_on) continue;
+    const cs = ctxArr(w);
+    if (!cs.length) continue;
+    if (new Date(w.worn_on + "T00:00:00").getDay() !== dow) continue;
+    for (const c of cs) { if (!days.has(c)) days.set(c, new Set()); days.get(c).add(w.worn_on); }
+  }
+  let best = null, n = 0;
+  for (const [c, s] of days) if (s.size > n) { n = s.size; best = c; }
+  if (n < 3) return null;
+  const names = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+  return { ctx: best, label: `usual for ${names[dow]}` };
+}
+
 // Reusable multi-select context picker for log sheets. Reads/writes the module-global
 // `_ctxSel` (array of chosen contexts). Self-re-renders into #ctxPicker so the rest of
 // the surrounding sheet (e.g. the date input) is untouched.
 let _ctxSel = [];
 let _ctxAddOpen = false;  // whether the "+ Add…" typeahead input is expanded
+let _ctxSuggest = null;   // {ctx,label} weekday-based suggestion (post-log sheet only)
 let _logItemId = null;  // item being logged, for context-chip ordering (A2)
 function contextPickerHtml() { return `<div id="ctxPicker" style="margin-top:18px"></div>`; }
 function renderContextPicker() {
@@ -2862,8 +2893,14 @@ function renderContextPicker() {
   }
   const extra = _ctxSel.filter(c => !opts.includes(c));   // custom added this session
   const all = [...opts, ...extra];
+  // V3 weekday suggestion: one pre-offered chip, one tap to confirm; disappears
+  // once picked (it's then just a selected chip below).
+  const sug = _ctxSuggest && !_ctxSel.includes(_ctxSuggest.ctx)
+    ? `<button class="sheet-chip" data-ctx-sug="${esc(_ctxSuggest.ctx)}" style="border-color:var(--accent);color:var(--accent);margin-bottom:8px">✨ ${esc(_ctxSuggest.ctx)} <span style="opacity:.65;font-weight:400">· ${esc(_ctxSuggest.label)}</span></button>`
+    : "";
   wrap.innerHTML = `
     <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">Context <span style="opacity:.6">(optional · choose any that apply)</span></label>
+    ${sug}
     <div class="sheet-chips" style="margin-bottom:8px">
       ${all.map(c => `<button class="sheet-chip${_ctxSel.includes(c) ? " on" : ""}" data-ctx="${esc(c)}">${esc(c)}</button>`).join("")}
       <button class="sheet-chip" data-ctx-add="1">+ Add…</button>
@@ -2881,6 +2918,11 @@ function renderContextPicker() {
     _ctxAddOpen = false;
     renderContextPicker();
   });
+  const sugBtn = wrap.querySelector("[data-ctx-sug]");
+  if (sugBtn) sugBtn.onclick = () => {
+    _ctxSel = [..._ctxSel, sugBtn.dataset.ctxSug];
+    renderContextPicker();
+  };
   const addBtn = wrap.querySelector("[data-ctx-add]");
   if (addBtn) addBtn.onclick = () => {
     _ctxAddOpen = true;
@@ -2937,14 +2979,15 @@ async function logWearToday(id, { force = false } = {}) {
     return;
   }
   try {
+    const fml = deriveWearFormality([id]);
     const rows = await rest("/wears", {
       method: "POST",
       headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify({ item_id: id, worn_on: today }),
+      body: JSON.stringify({ item_id: id, worn_on: today, formality_for: fml }),
     });
     const wear = Array.isArray(rows) && rows[0]
       ? rows[0]
-      : { id: null, item_id: id, worn_on: today, outfit_id: null, context: null, formality_for: null };
+      : { id: null, item_id: id, worn_on: today, outfit_id: null, context: null, formality_for: fml };
     wears.push(wear);
     toast("Wear logged", [
       { label: "Undo", fn: () => undoLoggedWears([wear]) },
@@ -2969,32 +3012,21 @@ async function undoLoggedWears(rows) {
   } catch (e) { toast(e.message); }
 }
 
-// ---- Post-log sheet: context + formality_for capture (A2 + E4) ----
+// ---- Post-log sheet: context capture (A2) ----
 // L2b: this is the user's PRIMARY hearting moment (she hearts looks when wearing
 // them, not while browsing) — show a heart row whenever the logged wears share
 // an outfit_id. The tap saves immediately (not gated on Save/Skip), same as the
 // canvas heart, since a heart is its own complete action.
-function openPostLogSheet(wearRows, { presetCtx, presetFml } = {}) {
+// V3: formality is no longer asked here — it's derived at log time
+// (deriveWearFormality); the look's formality edit is the manual override.
+// `undoable` shows an Undo toast when the sheet closes (look logs).
+function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
   _logItemId = wearRows.length === 1 ? wearRows[0].item_id : null;
   _ctxSel = presetCtx && presetCtx.length ? [...presetCtx] : []; _ctxAddOpen = false;
-  let fmlFor = presetFml || null;
+  _ctxSuggest = weekdayTopContext(wearRows[0]?.worn_on || todayStr());
   const oid = wearRows.length && wearRows.every(r => r.outfit_id && r.outfit_id === wearRows[0].outfit_id)
     ? wearRows[0].outfit_id : null;
   const o = oid ? outfitById.get(oid) : null;
-
-  const renderFml = () => {
-    const wrap = $("#postFmlRow");
-    if (!wrap) return;
-    wrap.innerHTML = OCCASION_LADDER.map((lbl, idx) => {
-      const lvl = idx + 1;
-      return `<button class="sheet-chip${fmlFor === lvl ? " on" : ""}" data-pfml="${lvl}" style="font-size:12px">${lvl} · ${esc(lbl)}</button>`;
-    }).join("");
-    wrap.querySelectorAll("[data-pfml]").forEach(b => b.onclick = () => {
-      const v = parseInt(b.dataset.pfml);
-      fmlFor = fmlFor === v ? null : v;
-      renderFml();
-    });
-  };
 
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
@@ -3008,28 +3040,23 @@ function openPostLogSheet(wearRows, { presetCtx, presetFml } = {}) {
         <button class="lk-heart-btn${o.rating === 1 ? " on" : ""}" id="postLikeBtn"><svg viewBox="0 0 24 24" style="width:26px;height:26px;stroke:currentColor;stroke-width:1.8;fill:none">${HEART_SVG}</svg></button>
       </div>` : ""}
       ${contextPickerHtml()}
-      <div style="margin-top:20px">
-        <label style="display:block;font-size:13px;color:var(--muted);margin-bottom:8px">How dressed up? <span style="opacity:.6">(optional)</span></label>
-        <div class="sheet-chips" id="postFmlRow"></div>
-      </div>
     </div>`;
   $("#logSheet").hidden = false;
   renderContextPicker();
-  renderFml();
   if (o) {
     $("#postLikeBtn").onclick = () => {
       toggleLikeLook(oid).then(r => { const btn = $("#postLikeBtn"); if (btn) btn.classList.toggle("on", r === 1); });
     };
   }
 
-  const close = () => { $("#logSheet").hidden = true; _logItemId = null; };
+  const close = () => {
+    $("#logSheet").hidden = true; _logItemId = null; _ctxSuggest = null;
+    if (undoable) toast("Logged ✓", { label: "Undo", fn: () => undoLoggedWears(wearRows) });
+  };
   $("#postLogCancel").onclick = close;
   $("#postLogSave").onclick = async () => {
     const ctx = ctxSelOrNull();
-    const updates = {};
-    if (ctx) updates.context = ctx;
-    if (fmlFor) updates.formality_for = fmlFor;
-    if (Object.keys(updates).length) {
+    if (ctx) {
       const patchable = wearRows.filter(r => r.id);
       if (patchable.length) {
         try {
@@ -3037,11 +3064,11 @@ function openPostLogSheet(wearRows, { presetCtx, presetFml } = {}) {
             rest(`/wears?id=eq.${r.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(updates),
+              body: JSON.stringify({ context: ctx }),
             })
           ));
-          patchable.forEach(r => Object.assign(r, updates));
-        } catch (_) { /* wear already logged — context/formality is best-effort */ }
+          patchable.forEach(r => { r.context = ctx; });
+        } catch (_) { /* wear already logged — context is best-effort */ }
       }
     }
     close();
@@ -3052,7 +3079,7 @@ function openPostLogSheet(wearRows, { presetCtx, presetFml } = {}) {
 function openLogWear(id) {
   _logItemId = id;
   const today = todayStr();
-  _ctxSel = []; _ctxAddOpen = false;
+  _ctxSel = []; _ctxAddOpen = false; _ctxSuggest = null;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="logCancel">Cancel</button>
@@ -3076,12 +3103,13 @@ function openLogWear(id) {
       const row = await rest("/wears", {
         method: "POST",
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-        body: JSON.stringify({ item_id: id, worn_on: date, context: ctx }),
+        body: JSON.stringify({ item_id: id, worn_on: date, context: ctx, formality_for: deriveWearFormality([id]) }),
       });
-      if (Array.isArray(row) && row[0]) wears.push(row[0]);
-      else wears.push({ item_id: id, worn_on: date, outfit_id: null, context: ctx });
+      const pushed = Array.isArray(row) && row[0] ? row[0]
+        : { item_id: id, worn_on: date, outfit_id: null, context: ctx };
+      wears.push(pushed);
       $("#logSheet").hidden = true;
-      toast(`Wear logged for ${date}`);
+      toast(`Wear logged for ${date}`, { label: "Undo", fn: () => undoLoggedWears([pushed]) });
     } catch (e) { toast(e.message); }
   };
 }
@@ -3750,6 +3778,21 @@ function itemFormality(i) {
   return s && s.length ? s[0] : 3;
 }
 
+// V3 (2026-07-09): wears.formality_for is DERIVED at log time, never asked.
+// Inferred from the pieces worn: the level(s) every piece shares (median of the
+// intersection), else the rounded average of each piece's base level. Manual
+// correction lives on the look (formality override), not per-wear.
+function deriveWearFormality(itemIds) {
+  const sets = (itemIds || []).map(id => itemById.get(id)).filter(Boolean)
+    .map(i => (itemFormalitySet(i) || []).slice().sort((a, b) => a - b));
+  if (!sets.length) return null;
+  const shared = [];
+  for (let L = 1; L <= 8; L++) if (sets.every(s => s.includes(L))) shared.push(L);
+  if (shared.length) return shared[Math.floor((shared.length - 1) / 2)];
+  const mins = sets.map(s => (s.length ? s[0] : 3));
+  return Math.round(mins.reduce((a, b) => a + b, 0) / mins.length);
+}
+
 const currentSeason = () => seasonOf(localISO(new Date()));
 
 // Wearable SEASONS for an item — same derive-first idea as itemFormalitySet.
@@ -4133,7 +4176,15 @@ function isPatterned(i) {
 const _suggSeen = new Set();
 const comboKey = pieces => pieces.map(p => p.id).sort().join(",");
 
-function scoreCombo(its, target, season = null) {
+// V3 weather-aware thresholds (°F) — tune from experience. Real weather, when
+// available, overrides the calendar-season layer heuristic in scoreCombo.
+const WX_HOT_F = 78;
+const WX_COLD_F = 50;
+// Any precipitation (drizzle/rain/snow/showers/thunder) per WMO weather codes.
+const wmoIsWet = code => code != null &&
+  ((code >= 51 && code <= 67) || (code >= 71 && code <= 77) || (code >= 80 && code <= 86) || code >= 95);
+
+function scoreCombo(its, target, season = null, wx = null) {
   let s = 0;
   // dismissal memory: gently penalize combos already shown this session
   if (_suggSeen.has(comboKey(its))) s -= 4;
@@ -4155,17 +4206,33 @@ function scoreCombo(its, target, season = null) {
   if (fams.length === 1 && its.length >= 2) s += 1;
   // pattern: penalize mixing 2+ patterned/printed pieces (busy clash)
   if (its.filter(isPatterned).length >= 2) s -= 3;
-  // layer appropriateness: bias WHETHER a layer belongs by season + dressiness,
-  // instead of treating "+ outerwear" as a coin-flip. A blazer-level piece (set
-  // reaches 6) justifies layering even in summer.
-  if (season) {
-    const hasLayer = its.some(i => i.category === "Outerwear" || i.subcategory === "Cardigans")
-      || its.filter(i => i.category === "Tops").length >= 2;
-    const dressy = its.some(i => Math.max(...(itemFormalitySet(i) || [3])) >= 6);
+  // layer appropriateness: bias WHETHER a layer belongs by weather (preferred) or
+  // season + dressiness, instead of treating "+ outerwear" as a coin-flip. A
+  // blazer-level piece (set reaches 6) justifies layering even in summer/heat.
+  const hasLayer = its.some(i => i.category === "Outerwear" || i.subcategory === "Cardigans")
+    || its.filter(i => i.category === "Tops").length >= 2;
+  const heavyTop = its.some(i => i.subcategory === "Sweaters" || i.subcategory === "Sweatshirts");
+  const dressy = its.some(i => Math.max(...(itemFormalitySet(i) || [3])) >= 6);
+  if (wx && wx.maxT != null) {
+    // real weather beats the calendar: a 95° September day is a summer day
+    if (wx.maxT >= WX_HOT_F) {
+      if (hasLayer && !dressy) s -= 3;
+      if (heavyTop) s -= 3;
+    } else if (wx.maxT <= WX_COLD_F) {
+      s += hasLayer ? 2 : -2;
+      if (heavyTop) s += 1;
+    } else if (heavyTop && its.some(i => i.category === "Outerwear")) {
+      s -= 2;  // mild day: don't stack outerwear over a sweater
+    }
+    // precipitation: closed shoes over open ones (category-level only)
+    if (wmoIsWet(wx.code)) {
+      if (its.some(i => i.subcategory === "Sandals")) s -= 2;
+      if (its.some(i => i.subcategory === "Boots")) s += 1.5;
+    }
+  } else if (season) {
     if (season === "Summer") { if (hasLayer && !dressy) s -= 3; }
     else if (season === "Winter") { s += hasLayer ? 2 : -2; }
     // don't stack heat: outerwear over a sweater/sweatshirt only makes sense in winter
-    const heavyTop = its.some(i => i.subcategory === "Sweaters" || i.subcategory === "Sweatshirts");
     if (heavyTop && its.some(i => i.category === "Outerwear") && season !== "Winter") s -= 2;
   }
   // learned affinity (soft): nudge toward color pairs + item pairs the user
@@ -4189,15 +4256,21 @@ function scoreCombo(its, target, season = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason()) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   const avail = base.filter(i => i.image_path && !isNoSuggest(i));
   const seed = seedItemId ? itemById.get(seedItemId) : null;
+  // V3 lock-a-piece: locked items pin their slot — every returned combo contains
+  // every locked piece (mutually impossible locks, e.g. dress + top, yield none).
+  const locked = lockedIds && lockedIds.size ? [...lockedIds].map(id => itemById.get(id)).filter(Boolean) : [];
   const slot = (...cats) => {
     // Layerable tops (e.g. button-ups, flagged via isLayer) double as the outerwear
     // layer, so they're eligible for the Outerwear slot in addition to the Tops slot.
-    let pool = avail.filter(i => cats.includes(suggestSlot(i)) ||
-      (cats.includes("Outerwear") && isLayer(i) && i.category === "Tops"));
+    const fits = i => cats.includes(suggestSlot(i)) ||
+      (cats.includes("Outerwear") && isLayer(i) && i.category === "Tops");
+    const lockedHere = locked.filter(i => cats.includes(suggestSlot(i)));
+    if (lockedHere.length) return lockedHere;  // slot is pinned
+    let pool = avail.filter(fits);
     // Season filter (soft): keep only in-season pieces, but fall back to the full
     // slot if that would empty it (e.g. a slot with no seasonal coverage yet).
     if (season) {
@@ -4238,7 +4311,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       for (const ow of [null, ...outerwear.slice(0, 2)]) {
         const its = [d, sh, ...(ow ? [ow] : [])];
         if (!exFree(its) || !formalityOk(its)) continue;
-        combos.push({ pieces: its, score: scoreCombo(its, targetLevel, season) });
+        combos.push({ pieces: its, score: scoreCombo(its, targetLevel, season, wx) });
       }
     }
   }
@@ -4250,17 +4323,23 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       for (const sh of shoes.slice(0, 6)) {
         const its3 = [t, bt, sh];
         if (!exFree(its3) || !formalityOk(its3)) continue;
-        combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel, season) });
+        combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel, season, wx) });
         for (const ow of outerwear.slice(0, 2)) {
           if (ow.id === t.id) continue;  // a layerable top can't be its own layer
           const its4 = [t, bt, sh, ow];
-          if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel, season) });
+          if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel, season, wx) });
         }
       }
     }
   }
 
-  combos.sort((a, b) => {
+  // Locked pieces must appear in EVERY combo (kills e.g. dress combos when a top
+  // is locked, and layer-less variants when outerwear is locked).
+  let pool2 = locked.length
+    ? combos.filter(c => locked.every(l => c.pieces.some(p => p.id === l.id)))
+    : combos;
+
+  pool2.sort((a, b) => {
     // seed item always comes first
     if (seedItemId) {
       const ha = a.pieces.some(p => p.id === seedItemId) ? 1 : 0;
@@ -4273,7 +4352,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   // deduplicate: don't show the same set of item_ids twice
   const seen = new Set();
   const unique = [];
-  for (const c of combos) {
+  for (const c of pool2) {
     const key = c.pieces.map(p => p.id).sort().join(",");
     if (!seen.has(key)) { seen.add(key); unique.push(c); }
     if (unique.length >= 60) break;
@@ -4297,6 +4376,10 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     const picked = [];
     const used = new Array(unique.length).fill(false);
     const itemUse = new Map();
+    // Seed + locked pieces appear in every combo by design — keep them out of the
+    // per-item usage accounting so they don't trip the cap or the overlap decay.
+    const pinnedIds = new Set(locked.map(l => l.id));
+    if (seedItemId) pinnedIds.add(seedItemId);
     const seedOk = c => seedItemId && c.pieces.some(p => p.id === seedItemId);
     const fill = (cap) => {
       while (picked.length < 8) {
@@ -4305,8 +4388,8 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
         for (let k = 0; k < unique.length; k++) {
           if (used[k]) continue;
           const c = unique[k];
-          if (cap && !seedOk(c) && c.pieces.some(p => (itemUse.get(p.id) || 0) >= MAX_PER_ITEM)) continue;
-          const overlap = c.pieces.reduce((n, p) => n + (itemUse.get(p.id) ? 1 : 0), 0);
+          if (cap && !seedOk(c) && c.pieces.some(p => !pinnedIds.has(p.id) && (itemUse.get(p.id) || 0) >= MAX_PER_ITEM)) continue;
+          const overlap = c.pieces.reduce((n, p) => n + (!pinnedIds.has(p.id) && itemUse.get(p.id) ? 1 : 0), 0);
           const w = baseW[k] * Math.pow(0.35, overlap);
           eff[k] = w; tot += w;
         }
@@ -4316,7 +4399,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
         if (pick < 0) break;
         used[pick] = true;
         picked.push(unique[pick]);
-        unique[pick].pieces.forEach(p => itemUse.set(p.id, (itemUse.get(p.id) || 0) + 1));
+        unique[pick].pieces.forEach(p => { if (!pinnedIds.has(p.id)) itemUse.set(p.id, (itemUse.get(p.id) || 0) + 1); });
       }
     };
     fill(true);
@@ -4340,8 +4423,10 @@ function suggestionLayout(pieces) {
   return sorted.map((it, i) => ({ item_id: it.id, x: pos[i][0], y: pos[i][1], s: pos[i][2] }));
 }
 
-// Suggestion sheet state
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null };
+// Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
+// the weather chip; locked = item ids pinned across "New suggestions" (V3).
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, locked: new Set() };
+const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
 
 // C1: context chips on the suggestion sheet. Seed values (tweak here) for when a
@@ -4376,12 +4461,29 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.activeContext = null;
   _sugg.season = planCtx ? seasonOf(planCtx.date) : currentSeason();
   _sugg.idx = 0;
+  _sugg.locked = new Set();
+  _sugg.useWx = true;
+  // Weather: plan days use the trip's per-day forecast; otherwise home weather
+  // (cached per day). If it isn't in memory yet, fetch and fold it in once.
+  _sugg.wx = planCtx
+    ? (_planWx[planCtx.date] || null)
+    : (_homeWx.date === todayStr() ? _homeWx.wx : null);
   const pool = capsuleId
     ? capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available")
     : null;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season);
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season, _suggWx());
   renderSuggestSheet();
   $("#logSheet").hidden = false;
+  if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
+    // Only apply if the suggestion sheet is still the one showing (#sgClose is ours)
+    if (!wx || _sugg.planCtx || $("#logSheet").hidden || !$("#sgClose")) return;
+    _sugg.wx = wx;
+    // Untouched sheet → regenerate with weather; otherwise just show the chip
+    if (_sugg.idx === 0 && !_sugg.locked.size) {
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx());
+    }
+    renderSuggestSheet();
+  });
 }
 
 function _suggPool() {
@@ -4425,6 +4527,43 @@ function swapSuggestionPiece(pieceId) {
   if (!cands.length) { toast(`No other ${suggSlotLabel(old).toLowerCase()} fits`); return; }
   const pick = cands[Math.floor(Math.random() * cands.length)];
   combo.pieces = combo.pieces.map(p => p.id === pieceId ? pick : p);
+  renderSuggestSheet();
+}
+
+// The piece acting as this combo's layer: outerwear/cardigan slot, or (when two
+// tops are present) the layer-flagged top doubling as outerwear.
+function comboLayerPiece(combo) {
+  const ow = combo.pieces.find(p => suggestSlot(p) === "Outerwear");
+  if (ow) return ow;
+  const tops = combo.pieces.filter(p => p.category === "Tops");
+  return tops.length >= 2 ? tops.find(isLayer) || null : null;
+}
+
+// V3 "+ Layer": add a compatible outerwear/layer piece to the current combo,
+// using the same filters as a slot swap (season, exclusions, target level,
+// pure-function isolation). Random among candidates, like the engine.
+function addSuggestionLayer() {
+  const combo = _sugg.results[_sugg.idx];
+  if (!combo) return;
+  const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
+  const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
+  let cands = pool.filter(i =>
+    i.image_path && !isNoSuggest(i) &&
+    !combo.pieces.some(p => p.id === i.id) &&
+    (suggestSlot(i) === "Outerwear" || (isLayer(i) && i.category === "Tops")) &&
+    inSeason(i, _sugg.season) &&
+    !combo.pieces.some(p => isExcluded(i.id, p.id)));
+  if (_sugg.targetLevel) {
+    const f = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
+    if (f.length) cands = f;
+  }
+  cands = cands.filter(i => {
+    const test = [...combo.pieces, i];
+    const hasFunc = test.some(isPureFunc);
+    return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
+  });
+  if (!cands.length) { toast("No layer fits this look"); return; }
+  combo.pieces = [...combo.pieces, cands[Math.floor(Math.random() * cands.length)]];
   renderSuggestSheet();
 }
 
@@ -4516,15 +4655,27 @@ function renderSuggestSheet() {
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
         ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
         <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
+        ${_sugg.wx && _sugg.wx.maxT != null ? `<button class="cap-chip${_sugg.useWx ? " on" : ""}" data-swx style="font-size:13px" title="Weather-aware picks">${wmoEmoji(_sugg.wx.code)} ${_sugg.wx.maxT}°/${_sugg.wx.minT}°</button>` : ""}
       </div>
     </div>
     <div style="padding:12px 16px" id="sgPreview">
       <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
       ${combo ? `<div class="center" style="font-size:12px;color:var(--accent);padding:8px 0 0;font-weight:500">${esc(suggestionWhy(combo))}</div>` : ""}
       ${combo ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
-        ${combo.pieces.map(p => `<button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px">↻ ${esc(suggSlotLabel(p))}</button>`).join("")}
+        ${combo.pieces.map(p => {
+          const lk = _sugg.locked.has(p.id);
+          return `<span style="display:inline-flex;gap:1px">
+            <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
+            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>↻ ${esc(suggSlotLabel(p))}</button>
+          </span>`;
+        }).join("")}
+        ${(() => {
+          const layer = comboLayerPiece(combo);
+          if (!layer) return `<button class="cap-chip" data-saddlayer style="font-size:12px">＋ Layer</button>`;
+          return _sugg.locked.has(layer.id) ? "" : `<button class="cap-chip" data-sunlayer="${esc(layer.id)}" style="font-size:12px">× Layer</button>`;
+        })()}
       </div>` : ""}
-      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · swap a slot above${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
+      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it through reshuffles${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
     </div>
     ${combo ? `
@@ -4538,14 +4689,18 @@ function renderSuggestSheet() {
 
   $("#sgClose").onclick = () => { $("#logSheet").hidden = true; };
 
+  const regen = () => {
+    _sugg.idx = 0;
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked);
+    renderSuggestSheet();
+  };
+
   $("#logInner").querySelectorAll("[data-slvl]").forEach(b => {
     b.onclick = () => {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
       _sugg.activeContext = null; // manual formality pick supersedes a context chip
-      _sugg.idx = 0;
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
-      renderSuggestSheet();
+      regen();
     };
   });
 
@@ -4558,24 +4713,44 @@ function renderSuggestSheet() {
         const lvl = contextFormalityLevel(c);
         if (lvl) _sugg.targetLevel = lvl;
       }
-      _sugg.idx = 0;
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
-      renderSuggestSheet();
+      regen();
     };
   });
 
   $("#logInner").querySelectorAll("[data-sseason]").forEach(b => {
     b.onclick = () => {
       _sugg.season = b.dataset.sseason || null;
-      _sugg.idx = 0;
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
-      renderSuggestSheet();
+      regen();
     };
   });
+
+  const wxBtn = $("#logInner").querySelector("[data-swx]");
+  if (wxBtn) wxBtn.onclick = () => { _sugg.useWx = !_sugg.useWx; regen(); };
 
   $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
   });
+
+  // V3 lock-a-piece: locking doesn't reshuffle — it marks the piece so the NEXT
+  // regenerate (chips or "New suggestions") keeps it. Current combo re-renders only.
+  $("#logInner").querySelectorAll("[data-slock]").forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const id = b.dataset.slock;
+      if (_sugg.locked.has(id)) _sugg.locked.delete(id); else _sugg.locked.add(id);
+      renderSuggestSheet();
+    };
+  });
+
+  const addLayerBtn = $("#logInner").querySelector("[data-saddlayer]");
+  if (addLayerBtn) addLayerBtn.onclick = () => addSuggestionLayer();
+  const unLayerBtn = $("#logInner").querySelector("[data-sunlayer]");
+  if (unLayerBtn) unLayerBtn.onclick = () => {
+    const combo2 = _sugg.results[_sugg.idx];
+    if (!combo2) return;
+    combo2.pieces = combo2.pieces.filter(p => p.id !== unLayerBtn.dataset.sunlayer);
+    renderSuggestSheet();
+  };
 
   const go = (dir) => {
     if (dir === "next" && _sugg.idx < total - 1) { _suggSlideDir = "next"; _sugg.idx++; renderSuggestSheet(); }
@@ -4611,8 +4786,7 @@ function renderSuggestSheet() {
       const it = itemById.get(el.dataset.canvasItem);
       if (!it) return;
       $("#logSheet").hidden = true;
-      closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null;
-      openItemFrom(it.id);
+      openItemFrom(it.id, { cat: it.category, sub: it.subcategory });
     });
   });
 
@@ -4630,15 +4804,16 @@ function renderSuggestSheet() {
   else if (wearBtn && combo) wearBtn.onclick = async () => {
     const today = todayStr();
     try {
+      const fml = deriveWearFormality(combo.pieces.map(p => p.id));
       const rows = await rest("/wears", {
         method: "POST",
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-        body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today }))),
+        body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today, formality_for: fml }))),
       });
       if (Array.isArray(rows)) wears.push(...rows);
       buildOutfitWearMap();
-      // Route into the context + formality capture sheet (shared with daily-loop logging)
-      if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
+      // Route into the context capture sheet (shared with daily-loop logging)
+      if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
       else { $("#logSheet").hidden = true; toast("Logged!"); }
     } catch (e) { toast(e.message); }
   };
@@ -4664,13 +4839,12 @@ function renderSuggestSheet() {
   const fbBtn = $("#logInner").querySelector("[data-sfeedback]");
   if (fbBtn && combo) fbBtn.onclick = () => openFeedbackSheet(combo.pieces);
 
-  // New suggestions: remember everything currently shown, then regenerate a fresh batch.
+  // New suggestions: remember everything currently shown, then regenerate a fresh
+  // batch (locked pieces persist through regen).
   const newBtn = $("#logInner").querySelector("[data-snew]");
   if (newBtn) newBtn.onclick = () => {
     _sugg.results.forEach(c => _suggSeen.add(comboKey(c.pieces)));
-    _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
-    renderSuggestSheet();
+    regen();
   };
 
   hydratePhotos($("#logInner"));
@@ -4705,7 +4879,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -4786,7 +4960,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
@@ -5134,18 +5308,19 @@ function openWearLook(id) {
     const date = $("#logDate").value;
     if (!date || !its.length) { $("#logSheet").hidden = true; return; }
     try {
-      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id }));
+      const fml = deriveWearFormality(its.map(it => it.id));
+      const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, formality_for: fml }));
       const rows = await rest("/wears", {
         method: "POST",
         headers: { "Content-Type": "application/json", Prefer: "return=representation" },
         body: JSON.stringify(payload),
       });
       const newWears = Array.isArray(rows) && rows.length ? rows
-        : its.map(it => ({ id: null, item_id: it.id, worn_on: date, outfit_id: id, context: null, formality_for: null }));
+        : its.map(it => ({ id: null, item_id: it.id, worn_on: date, outfit_id: id, context: null, formality_for: fml }));
       wears.push(...(Array.isArray(rows) ? rows : newWears));
       buildOutfitWearMap();
       if (lookId === id) openLook(id);
-      openPostLogSheet(newWears);
+      openPostLogSheet(newWears, { undoable: true });
     } catch (e) { toast(e.message); }
   };
 }
@@ -5947,6 +6122,33 @@ function renderCalendarDay(body) {
   const prevD    = localISO(new Date(y, m - 1, d - 1));
   const nextD    = localISO(new Date(y, m - 1, d + 1));
 
+  // V3 "On this day": most recent prior year with wears on this same date —
+  // quiet payoff for the years of history, and passive resurfacing.
+  let onThisDay = '';
+  {
+    const mmdd = dateStr.slice(4);
+    const priorDates = [...new Set(wears
+      .filter(w => w.worn_on && w.worn_on.slice(4) === mmdd && w.worn_on < dateStr)
+      .map(w => w.worn_on))].sort().reverse();
+    if (priorDates.length) {
+      const pd = priorDates[0];
+      const pGroups = dayGroups(pd);
+      const g = pGroups[0];
+      const ctxs = [...new Set(pGroups.flatMap(gr => gr.context))];
+      const nItems = new Set(wears.filter(w => w.worn_on === pd).map(w => w.item_id)).size;
+      const detail = ctxs.length ? ctxs.join(', ') : `${nItems} item${nItems === 1 ? '' : 's'}`;
+      const collage = g ? calCellCollageHtml(g.itemIds, g.outfitId ? outfitById.get(g.outfitId) : null) : '';
+      onThisDay = `<button class="otd-row" data-otd="${esc(pd)}">
+        <div class="otd-collage">${collage}</div>
+        <div class="otd-text">
+          <div class="otd-title">On this day in ${esc(pd.slice(0, 4))}</div>
+          <div class="otd-sub">${esc(detail)}</div>
+        </div>
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex:none"><path d="M9 6l6 6-6 6"/></svg>
+      </button>`;
+    }
+  }
+
   body.innerHTML = `<div class="tabbody">
     <div class="cal-day-header">
       <button id="calDayBack" style="color:var(--accent);font-size:15px;font-weight:500">Back</button>
@@ -5969,6 +6171,7 @@ function renderCalendarDay(body) {
            </button>`
         : '';
     })()}
+    ${onThisDay}
     <div class="cal-day-foot">
       <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
       <div class="cal-day-foot-add">
@@ -6077,6 +6280,9 @@ function renderCalendarDay(body) {
     };
   });
 
+  const otdBtn = body.querySelector('[data-otd]');
+  if (otdBtn) otdBtn.onclick = () => { calendarDay = otdBtn.dataset.otd; renderCalendarDay(body); };
+
   // L2b: heart toggle on the day-view look card (stopPropagation so it doesn't
   // also trigger the parent [data-open-look] tap-to-open)
   body.querySelectorAll('[data-cal-heart]').forEach(el => {
@@ -6114,7 +6320,7 @@ function renderCalendarDay(body) {
 
 // Set/change the contexts on a group of wear rows (calendar day card "after" flow).
 function openContextSheet(wearIds, current, onSaved) {
-  _ctxSel = Array.isArray(current) ? [...current] : []; _ctxAddOpen = false;
+  _ctxSel = Array.isArray(current) ? [...current] : []; _ctxAddOpen = false; _ctxSuggest = null;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="ctxCancel">Cancel</button>
@@ -6215,25 +6421,26 @@ async function makeLookFromDay(dateStr, body) {
   try {
     const { outfitId } = await createLookFromItems(itemIds, { name });
 
-    // Stamp wears with the outfit_id
+    // Stamp wears with the outfit_id + re-derive formality for the grouped set
+    // (solo-derived values were per-item; the look as a whole is the better read)
+    const fml = deriveWearFormality(itemIds);
     const inList = `(${wearIds.map(id => `"${id}"`).join(',')})`;
     await rest(`/wears?id=in.${inList}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ outfit_id: outfitId }),
+      body: JSON.stringify({ outfit_id: outfitId, formality_for: fml }),
     });
 
     // Update local state
     const dayWears = wears.filter(w => wearIds.includes(w.id));
-    for (const w of dayWears) w.outfit_id = outfitId;
+    for (const w of dayWears) { w.outfit_id = outfitId; w.formality_for = fml; }
     buildOutfitIndexes();
 
     renderCalendarDay(body);
-    // G1: single-ask — pre-seed from whatever context/formality is already on
-    // these wears so opening the sheet doesn't blank out captured values.
+    // G1: single-ask — pre-seed from whatever context is already on these wears
+    // so opening the sheet doesn't blank out captured values.
     const presetCtx = dayWears.flatMap(w => ctxArr(w)).filter((v, i, a) => a.indexOf(v) === i);
-    const presetFml = dayWears.find(w => w.formality_for)?.formality_for || null;
-    openPostLogSheet(dayWears, { presetCtx, presetFml });
+    openPostLogSheet(dayWears, { presetCtx });
   } catch (e) { toast(e.message); }
 }
 
@@ -6325,7 +6532,7 @@ async function saveCalClothingLog() {
   if (!ids.length) return renderCalendarDay(body);
   const date = calendarDay;
   try {
-    const payload = ids.map(item_id => ({ item_id, worn_on: date }));  // solo wears, no outfit_id
+    const payload = ids.map(item_id => ({ item_id, worn_on: date, formality_for: deriveWearFormality([item_id]) }));  // solo wears, no outfit_id
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
@@ -6352,7 +6559,8 @@ async function saveCalClothingLogAsLook() {
   const date = calendarDay;
   try {
     const { outfitId } = await createLookFromItems(ids);
-    const payload = ids.map(item_id => ({ item_id, worn_on: date, outfit_id: outfitId }));
+    const fml = deriveWearFormality(ids);
+    const payload = ids.map(item_id => ({ item_id, worn_on: date, outfit_id: outfitId, formality_for: fml }));
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
@@ -6361,7 +6569,7 @@ async function saveCalClothingLogAsLook() {
     wears.push(...pushed);
     buildOutfitWearMap();
     renderCalendarDay(body);
-    openPostLogSheet(pushed);
+    openPostLogSheet(pushed, { undoable: true });
   } catch (e) { toast(e.message); }
 }
 
@@ -6438,17 +6646,30 @@ function wearAgainCandidates() {
   const seasonCounts = new Map();
   for (const o of all) { const n = outfitSeasonWornCount(o, season); if (n) seasonCounts.set(o.id, n); }
   const topSeasonIds = new Set([...seasonCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([id]) => id));
-  return all.filter(o => recentIds.has(o.id) || o.rating === 1 || topSeasonIds.has(o.id))
-    .sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")))
-    .slice(0, 12);
+  const base = all.filter(o => recentIds.has(o.id) || o.rating === 1 || topSeasonIds.has(o.id))
+    .sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
+  // V3: recency-sorting buries liked-but-neglected looks (they sort last and fall
+  // off the 12 cap) — reserve 2 slots for them so resurfacing happens where she
+  // actually logs, not just on the Stats page. Prefer in-season ones.
+  const neglected = [];
+  const negPool = likedNeglectedOutfits();
+  const inSeasonNeg = negPool.filter(o => { const s = outfitSeasons(o); return !s.length || s.includes(season); });
+  for (const o of [...inSeasonNeg, ...negPool]) {
+    if (neglected.length >= 2) break;
+    if (!neglected.some(n => n.id === o.id)) neglected.push(o);
+  }
+  const negIds = new Set(neglected.map(o => o.id));
+  const list = [...base.filter(o => !negIds.has(o.id)).slice(0, 12 - neglected.length), ...neglected];
+  return { list, neglectedIds: negIds };
 }
 function openWearAgainChooser(date) {
-  const cands = wearAgainCandidates();
+  const { list: cands, neglectedIds } = wearAgainCandidates();
   const strip = cands.length
     ? `<div class="wa-strip">${cands.map(o => `<button class="wa-tile" data-wa-look="${esc(o.id)}">
         ${outfitCollageHtml(o, 4)}
         ${o.rating === 1 ? `<div class="otile-heart" style="width:14px;height:14px"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
         <div class="wa-name">${esc(outfitName(o))}</div>
+        ${neglectedIds.has(o.id) ? `<div style="font-size:10px;color:var(--accent);font-weight:600">it's been a while</div>` : ""}
       </button>`).join("")}</div>`
     : `<div class="muted center" style="padding:10px 24px 4px;font-size:13px">No recent looks yet — build one below.</div>`;
   $("#logInner").innerHTML = `
@@ -6477,14 +6698,20 @@ function openWearAgainChooser(date) {
   });
 }
 
-async function logLookOnDay(id) {
+async function logLookOnDay(id, { force = false } = {}) {
   const o = outfitById.get(id);
   if (!o) return;
   const its = outfitItems(o);
   if (!its.length) { toast('This look has no pieces'); return; }
   const date = calendarDay;
+  // V3 soft dup guard (same as solo logs): don't silently double-log a look on a day
+  if (!force && wears.some(w => w.outfit_id === id && w.worn_on === date)) {
+    toast('Already logged that day', { label: 'Log again →', fn: () => logLookOnDay(id, { force: true }) });
+    return;
+  }
   try {
-    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id }));
+    const fml = deriveWearFormality(its.map(it => it.id));
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, formality_for: fml }));
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
@@ -6493,7 +6720,7 @@ async function logLookOnDay(id) {
     else payload.forEach(p => wears.push(p));
     buildOutfitWearMap();
     renderCalendarDay($('#calendarBody'));
-    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows);
+    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
     else toast(`Logged ${outfitName(o)} for ${date}`);
   } catch (e) { toast(e.message); }
 }
@@ -8179,7 +8406,8 @@ async function planWoreIt(date, outfitId) {
   const its = outfitItems(o);
   if (!its.length) { toast("This look has no pieces"); return; }
   try {
-    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: outfitId }));
+    const fml = deriveWearFormality(its.map(it => it.id));
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: outfitId, formality_for: fml }));
     const rows = await rest("/wears", {
       method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
       body: JSON.stringify(payload),
@@ -9854,7 +10082,7 @@ function wireEvents() {
     const piece = e.target.closest("[data-look-item]");
     if (piece) {
       const it = itemById.get(piece.dataset.lookItem);
-      if (it) { closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null; openItemFrom(it.id); }
+      if (it) openItemFrom(it.id, { cat: it.category, sub: it.subcategory });
       return;
     }
     const look = e.target.closest("[data-look]");
@@ -9941,7 +10169,7 @@ function wireEvents() {
     const pack = e.target.closest("[data-pack]");
     if (pack) { e.stopPropagation(); return togglePack(pack.dataset.pack); }
     const capItem = e.target.closest("[data-cap-item]");
-    if (capItem) { closetCat = null; closetSub = null; searchResults = null; return openItemFrom(capItem.dataset.capItem); }
+    if (capItem) return openItemFrom(capItem.dataset.capItem, { cat: null, sub: null });
     const pick = e.target.closest("[data-pick]");
     if (pick) return togglePick(pick.dataset.pick);
     const card = e.target.closest("[data-cap]");

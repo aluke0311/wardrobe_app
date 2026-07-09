@@ -1,17 +1,83 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-06 r7**.
+> Current version: **2026-07-09 r1**. Nothing scheduled — see Back-burner.
 
 ---
 
-## ▶ NEXT BUILD — "Hearts + Filters Everywhere" v2 (planned 2026-07-06)
+## ✅ SHIPPED BUILD — "Weather + Loop Polish" v3 (planned + built 2026-07-09)
 
-**Status: APPROVED + EXPANDED after the 2026-07-06 product review. All decisions locked
+**Status: FULLY SHIPPED in `2026-07-09 r1` (built same session as the review). All
+decisions were locked in the 2026-07-09 product review (user answered the
+questionnaire; overrides noted per item). No schema changes — `wears.formality_for`
+already existed and stays populated (now derived, not asked).**
+
+Through-line: **use what the app already knows** — weather it fetches, formality the
+garments imply, weekday patterns in 4k wears — instead of asking or decorating.
+
+### Locked decisions (do not re-litigate)
+
+- **Today tile is DROPPED** (user override: "drop the today tile altogether"). Remove
+  the tile; weather intelligence moves INTO the suggestion sheet + trip planner.
+  Keep `getHomeLocation()` (suggestion-sheet weather needs it).
+- **Weather-aware scoring**: real temps override the season layer heuristic in
+  `scoreCombo` when weather is available. Thresholds are top-of-script constants
+  (`WX_HOT_F = 78`, `WX_COLD_F = 50`, °F — tune from experience). Rain → boost Boots,
+  penalize Sandals (category-level only, no fabric guessing). Surfaces: suggestion
+  sheet (home location weather, toggleable chip) + trip-planner per-day suggest
+  (that day's `_planWx`).
+- **Formality is NEVER asked at log time** (user override on B4): the post-log sheet
+  asks context only (+ heart). `wears.formality_for` is silently DERIVED from the
+  worn pieces (`deriveWearFormality`) on every wear-create path so context stats
+  keep working. Manual correction point = the look's formality edit, as today.
+- **Day-of-week context chip**: suggested (pre-highlighted, never auto-saved) context
+  in the post-log sheet from weekday history.
+- **Dup guard + Undo parity**: `logLookOnDay` gets the soft dup guard; look logs get
+  an Undo toast after the post-log sheet closes; back-date (`openLogWear`) toast gets
+  an Undo chip.
+- **Home logged-state row**: replaces the CTA once today has wears ("✓ Logged today ·
+  …") → taps into today's day view. Calendar tile ALWAYS goes to month view (C9: no
+  deep-link — predictability).
+- **Wear-again strip**: reserve 2 of 12 slots for in-season `likedNeglectedOutfits()`,
+  badged.
+- **Lock-a-piece + layer button** (user addition): tap a suggestion piece chip to 🔒
+  lock it across "New suggestions"; "+ Layer" adds a compatible outerwear/layer piece
+  to a combo that lacks one, with a remove affordance when present.
+- **"On this day"**: calendar day view shows prior-year wears for the same date (day
+  view only, not Home).
+- **REJECTED**: season-transition nudge (D13: no nudges), calendar-tile deep-link,
+  laundry/availability (stays dead), Today tile in any form.
+
+### Build order (function refs as of 2026-07-08 r1)
+
+1. Drop Today tile: `renderHome`/`todayTileHtml`/`loadTodayTile`/`_todayTile`
+   (~index.html:1639–1728) + `.today-tile` CSS.
+2. Weather scoring: `scoreCombo` (~4136), `suggestOutfits` (~4192),
+   `openSuggestSheet`/`renderSuggestSheet` (~4371/4454); trip path via `planCtx`.
+3. Derived formality: new `deriveWearFormality`; wear-create paths `logWearToday`
+   (~2933), `openLogWear` (~3052), `logLookOnDay` (~6480), `saveCalClothingLog`
+   (~6322), `makeLookFromDay` (~6206), suggestion wear + `planWoreIt` (~8176);
+   strip formality row from `openPostLogSheet` (~2977).
+4. Post-log weekday context chip: `openPostLogSheet` + `renderContextPicker` (~2854).
+5. Dup guard + Undo parity: `logLookOnDay`, `openPostLogSheet` close, `openLogWear`.
+6. Home logged row: `renderHome` (~1704).
+7. Wear-again neglected slots: `wearAgainCandidates` (~6433) +
+   `likedNeglectedOutfits` (~7303).
+8. Lock + layer: `_sugg` state (~4344), `renderSuggestSheet`, `suggestOutfits`.
+9. On this day: `renderCalendarDay` (~5897).
+10. Nav audit: closet-state snapshot in `makeItemReturn` (~2083) restored when the
+    `_itemReturn` thunk fires (suggestion piece tap pre-sets `closetCat`/`closetSub`);
+    verify capsule banner on all `activeCapsuleId`-scoped renders.
+
+---
+
+## ✅ SHIPPED BUILD — "Hearts + Filters Everywhere" v2 (planned 2026-07-06)
+
+**Status: FULLY SHIPPED, all 8 waves, through 2026-07-06 r7. Kept for reference.
+Original plan header follows.** All decisions locked
 (user answered the review questionnaire: "defaults for everything" + 7 additions, all
 folded in below). Build in wave order; deploy at each ✅ checkpoint via the
-`deploy-wardrobe` skill (bump `APP_VERSION`, commit, push). When the user says
-"continue the build," start at the first unchecked item.**
+`deploy-wardrobe` skill (bump `APP_VERSION`, commit, push).
 
 Through-line: **make the daily wear-log loop safe and single-ask, finish filter
 unification on the pickers, add hearts ("I liked this look") captured at the wear
@@ -164,10 +230,11 @@ enforce wherever violated: **back returns to the screen I visibly came from; a t
 goes to that tab's root; viewing something must not silently mutate my browse state.**
 Known suspects found in review (fix these; user will report more cases as she hits them
 — collect + fix in any wave):
-- [ ] Suggestion-sheet piece tap mutates `closetCat`/`closetSub` (index.html:4246) so
-  sibling nav works — after returning, the CLOSET tab's browse position has silently
-  changed. Same pattern anywhere `openItemFrom` callers pre-set closet globals: restore
-  the prior closet state when the `_itemReturn` thunk fires.
+- [x] **Fixed 2026-07-09 (v3)** — `openItemFrom(id, browseCtx)` now snapshots
+  `closetCat`/`closetSub`/`searchResults` and restores them when the `_itemReturn`
+  thunk fires; callers (suggestion piece tap, look-canvas piece tap, capsule item
+  tap) pass `browseCtx` instead of pre-setting globals. Builder `_fromBuilder`
+  path unchanged (documented exception).
 - [x] **Look-return thunk shipped (2026-07-07 r2)** — `_lookReturn` + `openLookFrom(id)`
   mirror the item pattern: every non-Looks entry point (calendar day view, stats look
   grids, capsule looks, trip-plan days) now returns to its origin on back. `leaveLook()`
@@ -176,8 +243,10 @@ Known suspects found in review (fix these; user will report more cases as she hi
   and back from a look opened off Looks-search returns to the results instead of
   clearing the search. Builder round-trips (edit pieces → cancel/save) still abandon
   origin — accepted, they route through `switchTab("looks")`.
-- [ ] `activeCapsuleId` scoping persists across tab switches by design — verify the
-  banner is ALWAYS visible on scoped surfaces so "why is my closet tiny" never happens.
+- [x] **Verified 2026-07-09 (v3)** — every closet render path (root / category /
+  grid) includes `.cltoolbar` and `renderCloset` unconditionally inserts
+  `capsuleBanner()` after it while scoped; Looks list renders `looksCapsuleBanner`.
+  No gap found; no change needed.
 
 ### WAVE 0 — Land in-flight work + housekeeping ✅ deploy after
 - [x] **Commit the builder-picker funnel** — uncommitted diff in `index.html`

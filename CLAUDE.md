@@ -21,21 +21,26 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-07 r2. Full rework from v25. ~9,900 lines.**
+**Current state: 2026-07-09 r1. Full rework from v25. ~10,350 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
-**"Hearts + Filters Everywhere" v2 (planned 2026-07-06) is FULLY SHIPPED, all 8
-waves (W0–W7), through `2026-07-06 r7`.** The 2026-06 "Unified Experience" build
-(W0–W5) and filter unification Phases 2+3 are also fully shipped. Wave summary: W0
-land in-flight builder funnel + hygiene → W1 local-date/dup-guard/Undo/back-date/photo
-stat strip → W2 capsule filter in item pickers (reported bug) → W3 hearts
-(`outfits.rating`, wear-moment capture is primary) → W4 Context lens + derived
-auto-archive → W5 single-ask logging + log-as-look + wear-again → W6 context payoff
-(suggester chips, stats page) + look-picker funnels → W7 weather-aware "Today" tile on
-Home. **▶ NEXT UP:** nothing scheduled — see `ROADMAP.md`'s "Back-burner" section and
-the still-open parallel navigation-audit track (unfixed items — see ROADMAP.md) for
-what's next; ask the user before starting new work. No schema changes anywhere in v2.
+**"Weather + Loop Polish" v3 (2026-07-09) is FULLY SHIPPED in `2026-07-09 r1`**
+(decisions locked in ROADMAP.md's v3 section): the W7 "Today" tile was REMOVED
+(user call) and weather moved INTO the suggester (`scoreCombo` wx override,
+`WX_HOT_F`/`WX_COLD_F` constants, sheet weather chip, trip-plan `_planWx`) ·
+`wears.formality_for` is now DERIVED at log time (`deriveWearFormality`), never
+asked — the post-log sheet is context-only · weekday-context suggestion chip
+(`weekdayTopContext`) · look-log dup guard + Undo parity · Home "✓ Logged today"
+row · Wear-again strip reserves 2 liked-but-neglected slots · suggester
+lock-a-piece (🔒) + add/remove Layer · calendar "On this day" row · both nav-audit
+items closed (`openItemFrom(id, browseCtx)` snapshot/restore). No schema changes.
+
+**"Hearts + Filters Everywhere" v2 is FULLY SHIPPED, all 8 waves (W0–W7), through
+`2026-07-06 r7`.** The 2026-06 "Unified Experience" build (W0–W5) and filter
+unification Phases 2+3 are also fully shipped. **▶ NEXT UP:** nothing scheduled —
+see `ROADMAP.md`'s "Back-burner" section for what's next; ask the user before
+starting new work.
 
 Top-of-`<script>` config, then logically grouped sections:
 
@@ -52,14 +57,14 @@ Top-of-`<script>` config, then logically grouped sections:
 - **STATE + DERIVED** — `items`, `wears`, `outfits`, `outfit_items`, `capsules`,
   `capsule_items`, `exclusions` loaded via `loadData()`. Helpers: `wearCount`,
   `lastWorn`, `costPerWear`, `daysSince`, `money`, `esc`.
-- **HOME LAUNCHER** — `renderHome()`: Stylebook calm tile grid (5 tiles), plus a
-  **"Today" tile** above it (`todayTileHtml()`/`loadTodayTile()`, W7 flagship):
-  keyless `navigator.geolocation` (permission-prompted, last fix cached in `store`
-  under `HOME_LOC_KEY` for `HOME_LOC_TTL`) → `fetchWeatherRange` for today →
-  `suggestOutfits(null, null, null, currentSeason())` picks one combo, cached per
-  day in `_todayTile` (doesn't reshuffle on re-render). Tap → `openSuggestSheet()`.
-  Degrades gracefully: no permission/offline → season-only label, no weather; not
-  enough items to suggest → tile omitted entirely (no dead state).
+- **HOME LAUNCHER** — `renderHome()`: Stylebook calm tile grid (5 tiles). Below the
+  grid: the `log-cta` ("Log today's wear" → `openWearAgainChooser`) when nothing is
+  logged today, else a **"✓ Logged today · <contexts|n items>" row** (`.logged-row`)
+  that taps into today's calendar day view (v3 — habit feedback + evening-outfit
+  shortcut). The v2 "Today" tile was REMOVED in v3; what remains of it is
+  `getHomeLocation()` (keyless `navigator.geolocation`, cached in `store` under
+  `HOME_LOC_KEY`/`HOME_LOC_TTL`) + `loadHomeWeather()` (`_homeWx`, one fetch/day),
+  which now feed the suggestion sheet's weather chip instead.
 - **CLOSET** — `renderCloset()`/`openItem()`/`openItemDetails()`. Status-lens
   switcher. `siblingItems()` derives the current list for prev/next item nav.
 - **ITEM DETAIL** — two-view: `openItem()` (photo + nav bar) → `openItemDetails()`
@@ -113,15 +118,26 @@ Top-of-`<script>` config, then logically grouped sections:
   a post-merge sheet that also asks the old look's fate (Keep / Archive / Delete —
   delete inlined, not `deleteLook`, to skip its `leaveLook()` navigation; wears FK
   is SET NULL so history survives). Sheet skipped in trip-plan (`planCtx`) saves.
-- **OUTFIT SUGGESTIONS** — `suggestOutfits(targetLevel?, seedItemId?, capsulePool?)`.
-  Slot-filling engine (Top/Dress + Bottom + Shoes + optional Outerwear). **By design
-  there is NO unworn/last-worn weighting** — slots random-sample and scoring is only
-  "match" signals: formality cohesion (hard filter via `formalityOk`), exclusions (hard),
-  loud-color penalty, pattern-clash penalty (`isPatterned`), and a capped SOFT boost
-  for color-pair + item-pair affinity learned from saved outfits (`buildSuggestIndexes`
-  → `_colorPairFreq`/`_itemPairFreq`; **liked looks (`o.rating===1`) count double**).
-  Returns 8 via softmax (temp 0.8) with diversity-aware selection so arrowing/swiping
-  swaps pieces. Pieces are tappable (open item); swipe slides (`sg-anim-*`). A row of
+- **OUTFIT SUGGESTIONS** — `suggestOutfits(targetLevel?, seedItemId?, capsulePool?,
+  season?, wx?, lockedIds?)`. Slot-filling engine (Top/Dress + Bottom + Shoes +
+  optional Outerwear). **By design there is NO unworn/last-worn weighting** — slots
+  random-sample and scoring is only "match" signals: formality cohesion (hard filter
+  via `formalityOk`), exclusions (hard), loud-color penalty, pattern-clash penalty
+  (`isPatterned`), and a capped SOFT boost for color-pair + item-pair affinity learned
+  from saved outfits (`buildSuggestIndexes` → `_colorPairFreq`/`_itemPairFreq`;
+  **liked looks (`o.rating===1`) count double**). Returns 8 via softmax (temp 0.8)
+  with diversity-aware selection so arrowing/swiping swaps pieces.
+  **Weather (v3):** when `wx` (`{maxT,minT,code}`) is present it OVERRIDES the
+  season layer heuristic in `scoreCombo` — hot (`maxT ≥ WX_HOT_F`, 78°F) penalizes
+  layers/heavy tops, cold (`≤ WX_COLD_F`, 50°F) boosts layers, precipitation
+  (`wmoIsWet`) boosts Boots / penalizes Sandals. Sheet weather = `loadHomeWeather()`
+  (`_homeWx`, one fetch/day, geolocation) or the plan day's `_planWx`; shown as a
+  toggleable chip in the Season row (`_sugg.useWx`, `_suggWx()`).
+  **Lock-a-piece (v3):** 🔒 chip per piece (`_sugg.locked` Set) — locked pieces pin
+  their slot and survive every regenerate; locked+seed ids are exempt from the
+  per-item diversity cap. **"+ Layer" / "× Layer"** (`comboLayerPiece`/
+  `addSuggestionLayer`) adds/removes a compatible layer on the current combo.
+  Pieces are tappable (open item); swipe slides (`sg-anim-*`). A row of
   **Context chips** (`topContextsByWearCount`) sits above the formality chips —
   picking one sets `_sugg.targetLevel` from `contextFormalityLevel(context)` (mode of
   that context's `formality_for` wears, min 3 to trust; else `CONTEXT_FORMALITY_SEED`).
@@ -146,7 +162,9 @@ Top-of-`<script>` config, then logically grouped sections:
   swipe-left actions (Copy/Move/Delete). "+ Clothing" / "+ Look" log pickers, both with
   a filter funnel (`pickerFilter`/`PICKER_FILTER_DIMS` for +Clothing, `calLookFilter`/
   `LOOKS_FILTER_DIMS` for +Look). Footer also has a **"↻ Wear again"** button
-  (`openWearAgainChooser`, see DAILY LOOP).
+  (`openWearAgainChooser`, see DAILY LOOP). Above the footer, an **"On this day"** row
+  (v3, `.otd-row`) shows the most recent prior YEAR with wears on the same date
+  (mini collage + contexts); tap navigates the day view to that date.
 - **STYLE STATS** — `renderStats()` dispatches main/field/grid/outfits/contexts/
   context-detail/review views. Filter sheet (funnel icon). Range button. Closet Review
   deals items one card at a time; inline field picker on the deal card (no sheet-hop
@@ -158,25 +176,34 @@ Top-of-`<script>` config, then logically grouped sections:
   `contextFormalityStats` avg/spread, tap through to `renderStatsContextDetailPage`'s
   top items + top looks for that context — both range-scoped via `rangeStart()`).
 - **DAILY LOOP** — `logWearToday(id)`: one-tap wear log from item photo view (no modal).
-  Soft dup-wear guard (skips the POST + offers "Log again →" if already logged today).
-  POSTs today immediately; toast shows "Wear logged" + **Undo** + "Add context →"
-  chips (`toast()` accepts an array of `{label,fn}` action chips, each its own click
-  target; `undoLoggedWears(rows)` is the shared Undo). `openPostLogSheet(wearRows[])`:
-  context multi-select + 1–8 formality row + **heart toggle** (shown whenever the
-  wears share an `outfit_id` — the PRIMARY hearting moment) with PATCHes to
-  `wears.formality_for`. Fires after solo item log, look wear, and (single-ask, no
-  double-prompt) after `makeLookFromDay`/`saveCalClothingLogAsLook` create a look,
-  pre-seeded from any context/formality already on the day's rows. `_logItemId`
-  (module-global) tells `renderContextPicker` which item's frequent contexts to sort
-  first. `openLogWear(id)` (back-dated log) reachable via quick-actions "Log on a
-  date…" and a 500ms long-press on the item photo view's Log button. Home's
-  `.log-cta` and the calendar day-view footer's "↻ Wear again" both open
-  `openWearAgainChooser(date)` — a horizontal strip of ~12 candidate looks (worn in
-  the last 14 days ∪ liked ∪ most-worn this season, `wearAgainCandidates()`) before
-  falling back to +Clothing/+Look; tapping a look calls `logLookOnDay`.
-  `createLookFromItems(itemIds, {name})` is the shared create-or-merge (dedup via
-  `findDuplicateOutfit`) behind both `makeLookFromDay` and the +Clothing picker's
-  "Log as look" button (`saveCalClothingLogAsLook`, shown once ≥2 items are picked).
+  Soft dup-wear guard (skips the POST + offers "Log again →" if already logged today);
+  `logLookOnDay` has the same guard per look/day (v3). POSTs immediately; toast shows
+  "Wear logged" + **Undo** + "Add context →" chips (`toast()` accepts an array of
+  `{label,fn}` action chips; `undoLoggedWears(rows)` is the shared Undo — back-dated
+  logs and look logs get Undo too, the latter via the post-log sheet's close toast).
+  **`wears.formality_for` is DERIVED, never asked (v3):** every wear-create path
+  writes `deriveWearFormality(itemIds)` (level(s) all pieces share → median, else
+  rounded avg of per-piece minimums); manual correction = the look's formality edit.
+  `openPostLogSheet(wearRows[], {presetCtx, undoable})`: context multi-select +
+  **heart toggle** (shown whenever the wears share an `outfit_id` — the PRIMARY
+  hearting moment). A **weekday-context suggestion chip** (v3,
+  `weekdayTopContext(date)` → "✨ Church · usual for Sundays", ≥3 distinct days to
+  trust, `_ctxSuggest`) sits above the context chips — one tap selects, never
+  auto-saved. Sheet fires after solo item log, look wear, and (single-ask) after
+  `makeLookFromDay`/`saveCalClothingLogAsLook` create a look, pre-seeded from any
+  context already on the day's rows. `_logItemId` (module-global) tells
+  `renderContextPicker` which item's frequent contexts to sort first. `openLogWear(id)`
+  (back-dated log) reachable via quick-actions "Log on a date…" and a 500ms long-press
+  on the item photo view's Log button. Home's `.log-cta` (or, once logged, the
+  `.logged-row`) and the calendar day-view footer's "↻ Wear again" both open
+  `openWearAgainChooser(date)` — a horizontal strip of 12 candidate looks
+  (`wearAgainCandidates()` → `{list, neglectedIds}`: worn last 14 days ∪ liked ∪
+  most-worn this season, with **2 slots reserved for in-season liked-but-neglected
+  looks** badged "it's been a while", v3) before falling back to +Clothing/+Look;
+  tapping a look calls `logLookOnDay`. `createLookFromItems(itemIds, {name})` is the
+  shared create-or-merge (dedup via `findDuplicateOutfit`) behind both
+  `makeLookFromDay` and the +Clothing picker's "Log as look" button
+  (`saveCalClothingLogAsLook`, shown once ≥2 items are picked).
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE.
   Active tabs: home · closet · looks · calendar · stats.
   Capsules is a Home-tile screen (not in bottom nav). Search/Add are non-tab screens.
@@ -229,7 +256,8 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 - `wears`: id, user_id, item_id, outfit_id (nullable), worn_on (date),
   context (text[] — named contexts, multi-select; seed list `CONTEXT_SEED` + any
   custom ones, derived via `contextOptions()`), formality_for (smallint 1–8,
-  nullable — demand capture), created_at.
+  nullable — DERIVED at log time via `deriveWearFormality`, never asked (v3);
+  manual override lives on the look), created_at.
 - `outfits`: id, user_id, name, context, notes, image_path, formality_override
   (text — bucket key, nullable), **layout** (JSONB `{item_id,x,y,s}[]`),
   **rating** (smallint, CHECK 1–5, nullable — `rating === 1` means "liked" (hearts);
@@ -337,7 +365,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-06 r8`.
+  Currently `2026-07-09 r1`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
@@ -393,8 +421,12 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 - **`closetBack()` priority stack**: `detailView==="details"` → photo view; `_reviewMode`
   → review deal card; `_fromBuilder` → restore builder; `_itemReturn` → origin screen
   (`restoreTab`); `detailId` set → closet grid; `searchResults` → sub → cat → root.
-- **Open an item from a non-closet screen via `openItemFrom(id)`** (never bare
-  `switchTab("closet")` + `openItem`) so back returns to the origin, not the closet.
+- **Open an item from a non-closet screen via `openItemFrom(id, browseCtx?)`** (never
+  bare `switchTab("closet")` + `openItem`) so back returns to the origin, not the
+  closet. To make sibling prev/next nav browse the item's category, pass
+  `{cat, sub}` as `browseCtx` — NEVER pre-set `closetCat`/`closetSub` at the call
+  site: `openItemFrom` snapshots the closet browse state and restores it when the
+  return thunk fires (v3 nav-audit fix). Builder `_fromBuilder` path is the exception.
 - **Open a look from a non-Looks screen via `openLookFrom(id)`** (never bare
   `switchTab("looks")` + `openLook`) — same rule for looks (`_lookReturn`/`leaveLook`).
 - **`looksBack()` checks `lookId` BEFORE `looksSearchQ`** — a look can sit on top of a
@@ -509,4 +541,7 @@ https://aluke0311.github.io/wardrobe_app/
 ## Local preview
 
 `.claude/launch.json` runs `python3 -m http.server 4173` for the Claude preview
-panel. Auth/data only fully work against the real `https://` deploy.
+panel (the port is passed explicitly as of 2026-07-09 — it used to default to 8000
+while the panel proxied 4173). Auth/data only fully work against the real
+`https://` deploy; locally you get the login screen, but the whole script parses
+and pure helpers are testable from the console.
