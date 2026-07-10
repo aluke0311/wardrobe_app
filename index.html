@@ -136,7 +136,7 @@
   /* ---------- bottom nav ---------- */
   .tabbar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-template-columns: repeat(6, 1fr);
     height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b);
     background: rgba(255,255,255,.94); backdrop-filter: blur(8px);
     border-top: 1px solid var(--line);
@@ -466,6 +466,13 @@
   #gridPickerPop button, #sortMenuPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
   #gridPickerPop button.on, #sortMenuPop button.on { color: var(--accent); font-weight: 600; }
   #gridPickerPop button:not(:last-child), #sortMenuPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
+  /* looks-per-row popover — same look as #gridPickerPop but drops DOWN from the top toolbar */
+  #lookGridPop { position: absolute; top: calc(100% + 4px); right: 0;
+    background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.13); overflow: hidden; z-index: 200; min-width: 160px; }
+  #lookGridPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
+  #lookGridPop button.on { color: var(--accent); font-weight: 600; }
+  #lookGridPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
   /* sort + filter stubs (wired in Wave 2) */
   .gb-sort svg, .gb-filter svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   .gb-sort, .gb-filter { padding: 4px; display: flex; align-items: center; }
@@ -678,7 +685,7 @@
   .add-photo-label svg { width: 15px; height: 15px; stroke: #fff; stroke-width: 2; fill: none; flex-shrink: 0; }
 
   /* ---------- looks (outfit grid + collage) ---------- */
-  .ogrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; padding: 10px 14px 24px; }
+  .ogrid { display: grid; grid-template-columns: repeat(var(--look-cols,2), 1fr); gap: 16px; padding: 10px 14px 24px; }
   .otile { display: flex; flex-direction: column; gap: 6px; text-align: left; position: relative; }
   .ocollage { width: 100%; aspect-ratio: 3/4; border: 1px solid var(--line); border-radius: 12px;
     background: #fff; overflow: hidden; display: grid; grid-template-columns: repeat(2, 1fr);
@@ -994,6 +1001,10 @@
       <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>
       Calendar
     </button>
+    <button data-tab="capsules">
+      <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg>
+      Capsules
+    </button>
     <button data-tab="stats">
       <svg viewBox="0 0 24 24"><path d="M3 18h4v-7H3z"/><path d="M10 18h4V5h-4z"/><path d="M17 18h4v-4h-4z"/></svg>
       Stats
@@ -1098,7 +1109,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-09 r2";
+const APP_VERSION = "2026-07-10 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1751,6 +1762,7 @@ let _lookReturn = null;
 let _itemSlideDir = null; // "next" | "prev" → slide-in animation for sibling navigation
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
+let lookCols = 2;         // looks per row (2–4), persisted to localStorage (drives --look-cols)
 let selectMode = false;   // multi-select active
 
 // ---- sort system (shared across all grid surfaces) ----
@@ -2075,7 +2087,9 @@ function makeScreenReturn(homeTab) {
   const active = document.querySelector(".screen.active");
   const tab = active ? active.id.replace("tab-", "") : homeTab;
   if (tab === homeTab) return null;
-  return () => restoreTab(tab);
+  const fn = () => restoreTab(tab);
+  fn.tab = tab;  // lets openItem() label its back button with the real destination
+  return fn;
 }
 function makeItemReturn() { return makeScreenReturn("closet"); }
 
@@ -2117,6 +2131,7 @@ function openItemFrom(id, browseCtx) {
   if (ret) {
     const snap = { cat: closetCat, sub: closetSub, res: searchResults };
     _itemReturn = () => { closetCat = snap.cat; closetSub = snap.sub; searchResults = snap.res; ret(); };
+    _itemReturn.tab = ret.tab;
   } else _itemReturn = null;
   if (browseCtx) {  // sibling prev/next nav browses the item's own category
     closetCat = browseCtx.cat ?? null;
@@ -2223,7 +2238,14 @@ function openItem(id) {
   detailId = id;
   detailView = null;
 
-  const backLabel = closetSub
+  // Label the back button with where closetBack() will ACTUALLY go — its priority
+  // order (review deal → builder → origin screen → closet grid). closetSub/closetCat
+  // may hold this item's category for sibling nav, but back doesn't go there.
+  const backLabel = _reviewMode ? "Review"
+    : _fromBuilder ? "Look"
+    : _itemReturn ? ({ home: "Home", calendar: "Calendar", stats: "Stats", capsules: "Capsules",
+                       looks: (lookId && outfitById.has(lookId)) ? "Look" : "Looks" }[_itemReturn.tab] || "Back")
+    : closetSub
     ? (closetSub === "__all__" ? closetCat : closetSub === "__other__" ? "Other" : closetSub)
     : closetCat || "Closet";
 
@@ -3976,6 +3998,12 @@ function looksToolbar(title, showBack, showShuffle, heartId) {
   const right = showShuffle
     ? `<div style="display:flex;align-items:center;gap:2px">
            <div style="position:relative">
+             <button class="clsearch" id="looksGrid" title="Looks per row"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
+             <div id="lookGridPop" hidden>
+               ${[2, 3, 4].map(n => `<button data-lookcols="${n}" class="${n === lookCols ? "on" : ""}">${n} per row</button>`).join("")}
+             </div>
+           </div>
+           <div style="position:relative">
              <button class="clsearch" id="looksFilter" title="Filter looks"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
              ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
            </div>
@@ -5660,6 +5688,19 @@ function setGridCols(n) {
   $("#gridPickerPop").hidden = true;
   // update all grids on screen without full re-render
   $$(".grid").forEach(g => g.style.setProperty("--grid-cols", n));
+}
+
+// Looks-per-row — the var lives on <html> so EVERY .ogrid (Looks lists, stats
+// look grids, pickers) follows without per-surface markup.
+function setLookCols(n) {
+  lookCols = n;
+  store.setItem("wardrobe.lookCols", String(n));
+  document.documentElement.style.setProperty("--look-cols", n);
+  const pop = $("#lookGridPop");
+  if (pop) {
+    pop.hidden = true;
+    pop.querySelectorAll("[data-lookcols]").forEach(b => b.classList.toggle("on", +b.dataset.lookcols === n));
+  }
 }
 
 // ---- delete selected ----
@@ -7590,12 +7631,27 @@ function contextWearCounts() {
   }
   return counts;
 }
-// Formality demand for a context: avg + spread of formality_for, range-scoped.
+// Effective formality of a wear for stats. The look's MANUAL override wins,
+// then the level captured at log time (formality_for), then a derive-now
+// fallback — pre-v3 wears (incl. the whole Airtable import) have neither.
+// _soloFmlMemo: solo-wear derive is O(wears) for items with no explicit
+// formality, so memoize per item; rebuilt on every Contexts page render.
+let _soloFmlMemo = new Map();
+function wearFormality(w) {
+  const o = w.outfit_id ? outfitById.get(w.outfit_id) : null;
+  if (o && o.formality_override) return BUCKET_RANGES[o.formality_override] || null;
+  if (w.formality_for) return w.formality_for;
+  if (o) return BUCKET_RANGES[outfitBucket(o)] || null;
+  if (!w.item_id) return null;
+  if (!_soloFmlMemo.has(w.item_id)) _soloFmlMemo.set(w.item_id, deriveWearFormality([w.item_id]));
+  return _soloFmlMemo.get(w.item_id);
+}
+// Formality demand for a context: avg + spread of effective wear formality, range-scoped.
 function contextFormalityStats(context) {
   const cutoff = rangeStart();
   const levels = wears
-    .filter(w => (!cutoff || w.worn_on >= cutoff) && w.formality_for && ctxArr(w).includes(context))
-    .map(w => w.formality_for);
+    .filter(w => (!cutoff || w.worn_on >= cutoff) && ctxArr(w).includes(context))
+    .map(wearFormality).filter(Boolean);
   if (!levels.length) return null;
   return { avg: levels.reduce((a, b) => a + b, 0) / levels.length, min: Math.min(...levels), max: Math.max(...levels), n: levels.length };
 }
@@ -7623,6 +7679,7 @@ function contextTopLooks(context, limit = 12) {
 }
 
 function renderStatsContextsPage() {
+  _soloFmlMemo = new Map();  // formality edits since last visit must be picked up
   const counts = contextWearCounts();
   const ctxs = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
   const rows = ctxs.map(c => {
@@ -7977,17 +8034,12 @@ let _capPickStatus = "Available"; // picker status lens: "Available" | "Storage"
 // canonical category order for grouping (packing-friendly)
 const CAP_CAT_ORDER = ["Outerwear", "Tops", "Dresses", "Bottoms", "Shoes", "Workout"];
 const catRank = (c) => { const i = CAP_CAT_ORDER.indexOf(c); return i < 0 ? 99 : i; };
-const sortFmlName = (a, b) => {
-  const fa = itemFormality(a), fb = itemFormality(b);
-  if (fa !== fb) return fa - fb;
-  return (a.name || "").localeCompare(b.name || "");
-};
-// → [{key, items}] grouped by category in canonical order, items sorted by formality then name
+// → [{key, items}] grouped by category in canonical order, items sorted by color (closet default)
 function groupByCategory(list) {
   const map = new Map();
   for (const i of list) { const c = i.category || "Other"; if (!map.has(c)) map.set(c, []); map.get(c).push(i); }
   const keys = [...map.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
-  return keys.map(k => ({ key: k, items: map.get(k).sort(sortFmlName) }));
+  return keys.map(k => ({ key: k, items: sortItems(map.get(k), "color") }));
 }
 // → [{key, items}] grouped by formality levels (only non-empty). Items with multi-level sets
 // appear in the group for their minimum (most casual) level.
@@ -7995,7 +8047,7 @@ function groupByFormality(list) {
   const buckets = OCCASION_LADDER.map(lbl => ({ key: lbl, items: [] }));
   for (const i of list) { const lv = Math.max(1, Math.min(8, itemFormality(i))); buckets[lv - 1].items.push(i); }
   return buckets.filter(b => b.items.length)
-    .map(b => ({ key: b.key, items: b.items.sort((a, b) => (a.name || "").localeCompare(b.name || "")) }));
+    .map(b => ({ key: b.key, items: sortItems(b.items, "color") }));
 }
 
 const isTrip = (c) => c && c.kind !== "capsule";
@@ -9039,7 +9091,8 @@ function builderRailPool() {
   // builderPool() honors builder.scopeCapsuleId (trip-day planning), so the rail
   // stays scoped to the trip's pieces — same as the folder/subfolder lists.
   const pool = builderPool().filter(i => (i.category || "Other") === builder.pickCat);
-  return builder.pickSub ? pool.filter(i => (i.subcategory || "") === builder.pickSub) : pool;
+  const list = builder.pickSub ? pool.filter(i => (i.subcategory || "") === builder.pickSub) : pool;
+  return sortItems(list, "color");  // rail always browses by color, every section
 }
 
 // Bottom item slider over the visible canvas; tap an item to drop it in (rail stays open).
@@ -10052,6 +10105,9 @@ function wireEvents() {
   $("#looksBody").addEventListener("click", (e) => {
     if (e.target.closest("#looksBack")) return looksBack();
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; return renderLooks(); }
+    const lgc = e.target.closest("[data-lookcols]");
+    if (lgc) return setLookCols(+lgc.dataset.lookcols);
+    if (e.target.closest("#looksGrid")) { const pop = $("#lookGridPop"); if (pop) pop.hidden = !pop.hidden; return; }
     if (e.target.closest("#looksFilter")) { return openFilterSheet(looksFilter, { onApply: () => { looksSearchQ = null; renderLooks(); }, title: "Filter Looks", dims: LOOKS_FILTER_DIMS }); }
     if (e.target.closest("#looksNew")) return openNewLookSheet();
     if (e.target.closest("#looksShuffle")) return openRandomLook();
@@ -10361,6 +10417,9 @@ window.retryLoad = retryLoad;
   $$(".appver").forEach(el => el.textContent = APP_VERSION);
   const savedCols = parseInt(store.getItem("wardrobe.gridCols") || "0");
   if (savedCols >= 2 && savedCols <= 5) gridCols = savedCols;
+  const savedLookCols = parseInt(store.getItem("wardrobe.lookCols") || "0");
+  if (savedLookCols >= 2 && savedLookCols <= 4) lookCols = savedLookCols;
+  document.documentElement.style.setProperty("--look-cols", lookCols);
   ["closet", "search"].forEach(s => {
     const k = store.getItem(`wardrobe.sort.${s}`);
     if (k) _gridSortKeys[s] = k;
