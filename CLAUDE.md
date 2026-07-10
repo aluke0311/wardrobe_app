@@ -21,9 +21,14 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-09 r1. Full rework from v25. ~10,350 lines.**
+**Current state: 2026-07-10 r2. Full rework from v25. ~10,700 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
+
+**Brand & Retailer Report Cards (2026-07-10) shipped in `2026-07-10 r2`** — see
+the STYLE STATS entry below for `buildReportStats`/`renderStatsReportPage`/
+`renderStatsReportDetailPage`. **▶ NEXT UP:** nothing scheduled — ask before
+starting new work.
 
 **"Weather + Loop Polish" v3 (2026-07-09) is FULLY SHIPPED in `2026-07-09 r1`**
 (decisions locked in ROADMAP.md's v3 section): the W7 "Today" tile was REMOVED
@@ -170,7 +175,23 @@ Top-of-`<script>` config, then logically grouped sections:
   (v3, `.otd-row`) shows the most recent prior YEAR with wears on the same date
   (mini collage + contexts); tap navigates the day view to that date.
 - **STYLE STATS** — `renderStats()` dispatches main/field/grid/outfits/contexts/
-  context-detail/review views. Filter sheet (funnel icon). Range button. Closet Review
+  context-detail/report/report-detail/review views. **Brand/Retailer report cards**
+  (2026-07-10): main-page "Brands & Retailers" section → `renderStatsReportPage()`
+  ranks groups by a wear index (`buildReportStats(field)`): actual wears / expected
+  wears, where expected = peer wear-rate (subcategory rate, category fallback when
+  the subcat slice is under 5 items) × months observed per item. Tenure runs from
+  purchase_date (→ first wear → created_at fallback), clamped to the earliest logged
+  wear anywhere (pre-logging months would deflate rates). Per group: wears/mo,
+  median $/wear + total spend (gifts excluded from cost stats, still counted for
+  engagement), duds (never worn, or archived with < `REPORT_DUD_WEARS`=3 wears).
+  Groups under `REPORT_MIN_ITEMS`=3 items list unranked. Pool = `reportPool()` —
+  statsPool but `{ noStatusDefault: true }` so archived items stay in (dud rate
+  needs them). Detail page: KPI card, Best performers / Underperformers grids
+  (worst = never-worn by price desc, then lowest index), "All items" →
+  grid with `statsFromReport` so back returns to the detail page (wired in
+  `statsNavBack` + `statsRebuild`). No date-range button (metrics are inherently
+  all-time / tenure-normalized); the filter funnel + acquisition range apply.
+  Filter sheet (funnel icon). Range button. Closet Review
   deals items one card at a time; inline field picker on the deal card (no sheet-hop
   for most fields). `reviewPool()` is **Available-only** (Storage + Archive excluded).
   Deal card is sized to fit one phone screen: horizontal card (96px photo + info
@@ -369,7 +390,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-09 r1`.
+  Currently `2026-07-10 r2`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.

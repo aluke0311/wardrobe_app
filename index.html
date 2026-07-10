@@ -1109,7 +1109,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-10 r1";
+const APP_VERSION = "2026-07-10 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -6824,6 +6824,10 @@ let statsAcqRange = "all";  // "all"|"1yr"|"2yr"|"3yr"|"5yr"
 let statsSubtitleFn = null;  // optional fn(item)=>string shown on grid tiles
 let statsOutfitsMode = "most-worn"; // "most-worn" | "liked-neglected" — which outfits list renderStatsOutfitsPage shows
 let statsContextSel = null; // C2: selected context on the Contexts detail page
+let statsReportField = null;  // "brand" | "retailer" — which report card is open
+let statsReportSel = null;    // selected brand/retailer label on the report detail page
+let statsReportSort = "best"; // "best" | "worst" — report list order
+let statsFromReport = false;  // grid page was entered from a report detail (back returns there)
 // closet review state
 let reviewField = null;      // current field key being dealt
 let reviewQueue = [];        // item ids queued for the current field
@@ -6906,6 +6910,8 @@ function statsRebuild() {
     if (statsListKey) {
       const result = buildSmartList(statsListKey);
       if (result) { statsGridItems = result.list; statsGridTitle = result.title; statsSubtitleFn = result.subtitleFn || null; }
+    } else if (statsFromReport) {
+      statsView = "report-detail"; statsGridItems = []; statsGridTitle = ""; statsFromReport = false;
     } else if (statsFromField) {
       statsView = "field"; statsGridItems = []; statsGridTitle = "";
     } else {
@@ -7136,6 +7142,8 @@ function renderStats() {
   if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
   if (statsView === "contexts")    { renderStatsContextsPage(); return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
+  if (statsView === "report")        { renderStatsReportPage();       return; }
+  if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
   if (statsView === "review")      { renderReviewLanding();    return; }
   if (statsView === "review-deal") { renderReviewDeal();       return; }
   renderStatsMain();
@@ -7164,11 +7172,15 @@ function statsNavBack() {
   }
   if (statsView === "review") { statsView = "main"; renderStats(); return; }
   if (statsView === "context-detail") { statsView = "contexts"; statsContextSel = null; renderStats(); return; }
-  if (statsView === "grid" && statsFromField) {
+  if (statsView === "report-detail") { statsView = "report"; statsReportSel = null; renderStats(); return; }
+  if (statsView === "report") { statsView = "main"; statsReportField = null; renderStats(); return; }
+  if (statsView === "grid" && statsFromReport) {
+    statsView = "report-detail"; statsGridItems = []; statsGridTitle = ""; statsFromReport = false;
+  } else if (statsView === "grid" && statsFromField) {
     statsView = "field"; statsGridItems = []; statsGridTitle = "";
   } else {
     statsView = "main"; statsField = null;
-    statsGridItems = []; statsGridTitle = ""; statsFromField = false;
+    statsGridItems = []; statsGridTitle = ""; statsFromField = false; statsFromReport = false;
   }
   renderStats();
 }
@@ -7397,6 +7409,14 @@ function renderStatsMain() {
       </div>
 
       <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Brands &amp; Retailers</div><div class="s">Who's earning their place</div></div>
+        <div class="stats-sec-body">
+          ${row("Brand Report Card", "Best & worst by wear rate and $/wear", "report:brand")}
+          ${row("Retailer Report Card", "Where you shop well (and don't)", "report:retailer")}
+        </div>
+      </div>
+
+      <div class="stats-sec">
         <div class="stats-sec-hdr"><div class="t">View Closet By…</div><div class="s">Browse the closet by field</div></div>
         <div class="stats-sec-body">
           ${row("Color", null, "field:color_family")}
@@ -7432,6 +7452,11 @@ function renderStatsMain() {
         statsView = "field"; statsField = action.slice(6); statsDonutIdx = 0; statsFieldSort = "count";
         renderStats(); return;
       }
+      if (action.startsWith("report:")) {
+        statsView = "report"; statsReportField = action.slice(7);
+        statsReportSel = null; statsReportSort = "best";
+        renderStats(); return;
+      }
       if (action === "looks:most-worn") {
         statsOutfitsMode = "most-worn"; statsView = "outfits"; renderStats(); return;
       }
@@ -7446,7 +7471,7 @@ function renderStatsMain() {
         const result = buildSmartList(key);
         if (result) {
           statsView = "grid"; statsGridItems = result.list; statsGridTitle = result.title;
-          statsFromField = false; statsListKey = key; statsSubtitleFn = result.subtitleFn || null;
+          statsFromField = false; statsFromReport = false; statsListKey = key; statsSubtitleFn = result.subtitleFn || null;
           renderStats();
         }
       }
@@ -7539,7 +7564,7 @@ function renderStatsFieldPage() {
       if (val === "__novalue__") { list = noValue; title = `No ${STATS_FIELD_LABELS[statsField] || statsField}`; }
       else { const g = groups.find(g => g.label === val); list = g ? g.items : []; title = val; }
       statsView = "grid"; statsGridItems = list; statsGridTitle = title;
-      statsFromField = true; statsListKey = null;
+      statsFromField = true; statsFromReport = false; statsListKey = null;
       renderStats();
     });
   });
@@ -7726,6 +7751,235 @@ function renderStatsContextDetailPage() {
   });
   $("#statsBody").querySelectorAll("[data-sctx-look]").forEach(el => {
     el.addEventListener("click", () => openLookFrom(el.dataset.sctxLook));
+  });
+}
+
+/* ---- Brand / Retailer report cards ---- */
+// Like statsPool, but archived items stay in unless the user explicitly
+// filters status — the dud rate needs to see what got archived.
+function reportPool() {
+  const acqCutoff = acqRangeStart();
+  return items.filter(i => {
+    if (!itemMatchesFilter(i, statsFilter, { noStatusDefault: true })) return false;
+    if (acqCutoff) {
+      const pd = i.purchase_date;
+      if (acqCutoff.older) { if (!pd || pd >= acqCutoff.cutoff) return false; }
+      else                 { if (!pd || pd < acqCutoff.cutoff)  return false; }
+    }
+    return true;
+  });
+}
+
+const REPORT_MIN_ITEMS = 3;  // fewer items than this → unranked "fewer than…" section
+const REPORT_DUD_WEARS = 3;  // archived under this many wears counts as a dud
+
+// One pass over wears → per-item { days: Set(worn_on), first: earliest date }.
+function itemWearIndex() {
+  const m = new Map();
+  for (const w of wears) {
+    if (!w.item_id) continue;
+    let e = m.get(w.item_id);
+    if (!e) { e = { days: new Set(), first: w.worn_on }; m.set(w.item_id, e); }
+    e.days.add(w.worn_on);
+    if (w.worn_on < e.first) e.first = w.worn_on;
+  }
+  return m;
+}
+
+// Per-brand (or per-retailer) engagement + cost stats.
+// Tenure per item starts at purchase_date (falling back to its first wear, then
+// created_at) but never before the earliest logged wear anywhere — months
+// before logging began can't be observed and would deflate the rate.
+// "vs expected" = actual wears / (peer wear-rate × months observed), where the
+// peer rate comes from the item's subcategory (category fallback when the
+// subcategory slice is under 5 items) — so basics aren't rewarded over formal
+// pieces just for being basics. A peer rate of 0 contributes nothing either way.
+function buildReportStats(field) {
+  const pool = reportPool();
+  const wearIdx = itemWearIndex();
+  let epoch = null;
+  for (const e of wearIdx.values()) if (!epoch || e.first < epoch) epoch = e.first;
+  const today = todayStr();
+  const MS_MONTH = 86400000 * 30.44;
+  const per = new Map();
+  for (const i of pool) {
+    const e = wearIdx.get(i.id);
+    const count = e ? e.days.size : 0;
+    let since = i.purchase_date || (e ? e.first : null) || (i.created_at || today).slice(0, 10);
+    if (epoch && since < epoch) since = epoch;
+    const months = Math.max(1, (new Date(today) - new Date(since)) / MS_MONTH);
+    per.set(i.id, { count, months, exp: 0, idx: null });
+  }
+
+  const bump = (map, key, p) => {
+    const e = map.get(key) || { w: 0, m: 0, n: 0 };
+    e.w += p.count; e.m += p.months; e.n++; map.set(key, e);
+  };
+  const subRate = new Map(), catRate = new Map();
+  let totW = 0, totM = 0;
+  for (const i of pool) {
+    const p = per.get(i.id);
+    bump(catRate, i.category || "?", p);
+    bump(subRate, (i.category || "?") + "/" + (i.subcategory || "?"), p);
+    totW += p.count; totM += p.months;
+  }
+  const overallRate = totM ? totW / totM : 0;
+  for (const i of pool) {
+    const p = per.get(i.id);
+    const s = subRate.get((i.category || "?") + "/" + (i.subcategory || "?"));
+    const c = catRate.get(i.category || "?");
+    const rate = (s && s.n >= 5 && s.m) ? s.w / s.m
+               : (c && c.m) ? c.w / c.m
+               : overallRate;
+    p.exp = rate * p.months;
+    p.idx = p.exp > 0 ? p.count / p.exp : null;
+  }
+
+  const groups = new Map();
+  let noValue = 0;
+  for (const i of pool) {
+    const label = (i[field] || "").trim();
+    if (!label) { noValue++; continue; }
+    let g = groups.get(label);
+    if (!g) { g = []; groups.set(label, g); }
+    g.push(i);
+  }
+  const rows = [...groups.entries()].map(([label, list]) => {
+    let wearsN = 0, months = 0, exp = 0, duds = 0, spend = 0, gifts = 0, priced = 0;
+    const cpws = [];
+    for (const i of list) {
+      const p = per.get(i.id);
+      wearsN += p.count; months += p.months; exp += p.exp;
+      if (p.count === 0 || (itemStatus(i) === "Archive" && p.count < REPORT_DUD_WEARS)) duds++;
+      if (i.acquisition === "Gift") { gifts++; continue; }
+      const price = parseFloat(i.price);
+      if (isNaN(price)) continue;
+      spend += price; priced++;
+      if (p.count > 0) cpws.push(price / p.count);
+    }
+    cpws.sort((a, b) => a - b);
+    const mid = cpws.length >> 1;
+    const medCPW = !cpws.length ? null : (cpws.length % 2 ? cpws[mid] : (cpws[mid - 1] + cpws[mid]) / 2);
+    return {
+      label, items: list, n: list.length, wears: wearsN,
+      rate: months ? wearsN / months : 0,
+      idx: exp > 0 ? wearsN / exp : null,
+      duds, spend, medCPW, gifts, priced,
+    };
+  });
+  return { rows, per, noValue };
+}
+
+const fmtReportIdx = (v) => v == null ? "—" : "×" + v.toFixed(1);
+const reportIdxColor = (v) => v == null ? "var(--muted)" : v >= 1.15 ? "#3a7d44" : v <= 0.85 ? "#c0392b" : "var(--text)";
+
+function renderStatsReportPage() {
+  const field = statsReportField;
+  const title = field === "retailer" ? "Retailers" : "Brands";
+  const { rows, noValue } = buildReportStats(field);
+  const ranked = rows.filter(r => r.n >= REPORT_MIN_ITEMS);
+  const withIdx = ranked.filter(r => r.idx != null).sort((a, b) => b.idx - a.idx);
+  if (statsReportSort === "worst") withIdx.reverse();
+  const display = [...withIdx, ...ranked.filter(r => r.idx == null)];
+  const small = rows.filter(r => r.n < REPORT_MIN_ITEMS).sort((a, b) => b.n - a.n || b.wears - a.wears);
+
+  const rowHtml = (r, detailed) => {
+    const sub = detailed
+      ? `${r.n} items · ${r.rate.toFixed(1)} wears/mo · ${r.medCPW != null ? money(r.medCPW) + "/wear" : "no cost data"}${r.duds ? ` · ${r.duds} dud${r.duds === 1 ? "" : "s"}` : ""}`
+      : `${r.n} item${r.n === 1 ? "" : "s"} · ${r.wears} wear${r.wears === 1 ? "" : "s"}`;
+    return `<button class="frow" data-srb="${esc(r.label)}">
+      <div class="fmeta"><div class="fname">${esc(r.label)}</div><div class="fcount">${esc(sub)}</div></div>
+      ${detailed ? `<span style="font-size:16px;font-weight:700;margin-right:6px;flex-shrink:0;color:${reportIdxColor(r.idx)}">${fmtReportIdx(r.idx)}</span>` : ""}
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  };
+
+  $("#statsBody").innerHTML = statsToolbar(title, true)
+    + `<div class="stats-note" style="padding:12px 18px 2px">×1.0 = worn about as much as similar items, for how long you've had each piece. Higher over-performs, lower under-performs. Cost stats skip gifts.</div>`
+    + `<div class="stats-sort-bar" style="padding-bottom:6px">
+        <button class="stats-sort-btn${statsReportSort === "best" ? " on" : ""}" data-srs="best">Best first</button>
+        <button class="stats-sort-btn${statsReportSort === "worst" ? " on" : ""}" data-srs="worst">Worst first</button>
+      </div>`
+    + (display.length
+        ? `<div class="frows">${display.map(r => rowHtml(r, true)).join("")}</div>`
+        : `<div class="placeholder"><b>Not enough data</b><div>${esc(title)} with ${REPORT_MIN_ITEMS}+ items get ranked here.</div></div>`)
+    + (small.length ? `<div class="sf-label">Fewer than ${REPORT_MIN_ITEMS} items</div><div class="frows">${small.map(r => rowHtml(r, false)).join("")}</div>` : "")
+    + (noValue ? `<div class="stats-note" style="padding:12px 18px 24px">${noValue} item${noValue === 1 ? " has" : "s have"} no ${esc(field)} set.</div>` : `<div style="height:24px"></div>`);
+
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-srs]").forEach(btn => {
+    btn.addEventListener("click", () => { statsReportSort = btn.dataset.srs; renderStatsReportPage(); });
+  });
+  $("#statsBody").querySelectorAll("[data-srb]").forEach(el => {
+    el.addEventListener("click", () => {
+      statsReportSel = el.dataset.srb; statsView = "report-detail"; renderStats();
+    });
+  });
+}
+
+function renderStatsReportDetailPage() {
+  const field = statsReportField;
+  const { rows, per } = buildReportStats(field);
+  const r = rows.find(x => x.label === statsReportSel);
+  if (!r) { statsView = "report"; renderStats(); return; }  // filter change can empty the group
+
+  const scored = r.items.map(i => ({ i, p: per.get(i.id) }));
+  const worn = scored.filter(x => x.p.count > 0 && x.p.idx != null).sort((a, b) => b.p.idx - a.p.idx);
+  const best = worn.slice(0, 6);
+  const bestIds = new Set(best.map(x => x.i.id));
+  // Worst: never-worn first (priciest shelf-sitters lead), then lowest index.
+  const never = scored.filter(x => x.p.count === 0)
+    .sort((a, b) => (parseFloat(b.i.price) || 0) - (parseFloat(a.i.price) || 0));
+  const worst = [...never, ...worn.slice().reverse().filter(x => !bestIds.has(x.i.id))].slice(0, 6);
+
+  const subFor = new Map();
+  for (const x of best) subFor.set(x.i.id, `${x.p.count} wear${x.p.count === 1 ? "" : "s"} · ${fmtReportIdx(x.p.idx)}`);
+  for (const x of worst) if (!subFor.has(x.i.id)) subFor.set(x.i.id,
+    x.p.count === 0 ? "never worn" : `${x.p.count} wear${x.p.count === 1 ? "" : "s"} · ${fmtReportIdx(x.p.idx)}`);
+  const subFn = (i) => subFor.get(i.id) || "";
+
+  const kpi = (val, lbl) => `<div class="kpi-cell"><div class="kpi-val">${val}</div><div class="kpi-lbl">${esc(lbl)}</div></div>`;
+  const dudNote = r.duds
+    ? `${r.duds} of ${r.n} item${r.n === 1 ? "" : "s"} never worn or archived early.`
+    : "No duds — everything got worn.";
+  const giftNote = r.gifts ? ` Cost stats exclude ${r.gifts} gift${r.gifts === 1 ? "" : "s"}.` : "";
+
+  $("#statsBody").innerHTML = statsToolbar(r.label, true)
+    + `<div class="stats-sec" style="margin-top:12px">
+      <div class="stats-sec-body">
+        <div class="kpi-row" style="border-bottom:1px solid var(--line)">
+          ${kpi(r.n, "Items")}${kpi(r.wears, "Total Wears")}
+        </div>
+        <div class="kpi-row" style="border-bottom:1px solid var(--line)">
+          ${kpi(r.rate.toFixed(1), "Wears / Month")}
+          ${kpi(`<span style="color:${reportIdxColor(r.idx)}">${fmtReportIdx(r.idx)}</span>`, "vs Similar Items")}
+        </div>
+        <div class="kpi-row">
+          ${kpi(r.medCPW != null ? money(r.medCPW) : "—", "Median $ / Wear")}${kpi(r.priced ? money(r.spend) : "—", "Total Spent")}
+        </div>
+      </div>
+      <div class="stats-note">${esc(dudNote)}${esc(giftNote)}</div>
+    </div>`
+    + (best.length ? `<div class="sf-label">Best performers</div>${itemGridView(best.map(x => x.i), { subtitleFn: subFn })}` : "")
+    + (worst.length ? `<div class="sf-label">Underperformers</div>${itemGridView(worst.map(x => x.i), { subtitleFn: subFn })}` : "")
+    + `<div class="frows" style="padding-top:8px"><button class="frow" id="srAllItems">
+        <div class="fmeta"><div class="fname">All ${r.n} item${r.n === 1 ? "" : "s"}</div></div>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button></div><div style="height:24px"></div>`;
+
+  wireStatsToolbar();
+  hydratePhotos($("#statsBody"));
+  $("#statsBody").querySelectorAll(".gtile").forEach(btn => {
+    btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
+  });
+  $("#srAllItems").addEventListener("click", () => {
+    const counts = new Map(scored.map(x => [x.i.id, x.p.count]));
+    statsView = "grid";
+    statsGridItems = scored.slice().sort((a, b) => b.p.count - a.p.count).map(x => x.i);
+    statsGridTitle = r.label;
+    statsFromReport = true; statsFromField = false; statsListKey = null;
+    statsSubtitleFn = (i) => { const n = counts.get(i.id) || 0; return `${n} wear${n === 1 ? "" : "s"}`; };
+    renderStats();
   });
 }
 

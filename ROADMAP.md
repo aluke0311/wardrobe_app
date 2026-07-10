@@ -1,7 +1,22 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-09 r1**. Nothing scheduled — see Back-burner.
+> Current version: **2026-07-10 r2**. Nothing scheduled — see Back-burner.
+
+---
+
+## ✅ SHIPPED — Brand & Retailer Report Cards (2026-07-10)
+
+**Status: FULLY SHIPPED in `2026-07-10 r2`.** User asked how to think about
+assessing best/worst brands and retailers by wear frequency and cost, plus
+best/worst items within each. Style Stats gained a "Brands & Retailers" section:
+`renderStatsReportPage()` ranks brands/retailers by a wear-rate index vs. similar
+items (tenure-normalized, indirect-standardized by subcategory/category so basics
+don't win just for being basics), alongside median $/wear, total spend (gifts
+excluded from cost), and a dud count (never worn / archived early). Tap through to
+`renderStatsReportDetailPage()` for a KPI card + Best performers / Underperformers
+item grids + all-items grid. Groups under 3 items are unranked. See CLAUDE.md's
+STYLE STATS entry for the implementation (`buildReportStats`, `reportPool`).
 
 ---
 
