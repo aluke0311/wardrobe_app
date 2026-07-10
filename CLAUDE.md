@@ -21,12 +21,16 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-10 r2. Full rework from v25. ~10,700 lines.**
+**Current state: 2026-07-10 r3. Full rework from v25. ~10,800 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
-**Brand & Retailer Report Cards (2026-07-10) shipped in `2026-07-10 r2`** — see
-the STYLE STATS entry below for `buildReportStats`/`renderStatsReportPage`/
+**Report Cards (2026-07-10) shipped in `2026-07-10 r2`→`r3`** — r2 shipped Brand
+& Retailer report cards; r3 (same day) generalized the engine to 7 dimensions
+(+ subcategory, price bracket, purchase year, color, acquisition) and added the
+Workhorses/Declutter smart lists, the capsule-picker suggested strip, and the
+item-detail workhorse badge. See the STYLE STATS entry below for
+`buildItemPerf`/`buildReportStats`/`renderStatsReportPage`/
 `renderStatsReportDetailPage`. **▶ NEXT UP:** nothing scheduled — ask before
 starting new work.
 
@@ -74,7 +78,10 @@ Top-of-`<script>` config, then logically grouped sections:
   switcher. `siblingItems()` derives the current list for prev/next item nav.
 - **ITEM DETAIL** — two-view: `openItem()` (photo + nav bar) → `openItemDetails()`
   (edit view). Field sheet (`#fieldSheet`) driven by `FIELD_CONFIGS`/`openFieldEdit()`.
-  `_fieldEditItem`/`_fieldOnSave` dual-mode (DB save vs. callback).
+  `_fieldEditItem`/`_fieldOnSave` dual-mode (DB save vs. callback). Photo view shows
+  a **"★ Workhorse" badge line** (`workhorseBadgeHtml`, 2026-07-10) under the stat
+  strip when the item has 5+ wears and idx ≥ 1.5 vs subcategory peers
+  (`buildItemPerf(items)` — full-closet baseline, not the stats-filtered pool).
 - **ADD ITEM** — `renderAdd()`/`_renderAddBody()`/`saveNewItem()`. State in `_addState`.
 - **SEARCH** — `openSearch()`/`renderSearch()`/`runSearch()`. Keyword + 6 filter rows.
 - **LOOKS** — `renderLooks()` + 3-view look detail keyed by `lookView`:
@@ -156,7 +163,12 @@ Top-of-`<script>` config, then logically grouped sections:
   `buildExcludeSet()` → `_excludeSet` (Set of "a:b" canonical pairs). `isExcluded(a,b)`,
   `addExclusion(a,b,reason)`. Loaded in `loadData()`.
 - **CAPSULES** — `renderCapsules()` dispatches by `capsuleView` (list/detail/form/pick/**plan**).
-  Two modes: Capsule + Trip (packing checklist, weather strip). "Plan outfits from this" sets
+  Two modes: Capsule + Trip (packing checklist, weather strip). The add-items picker
+  (`renderCapsulePicker`) opens with a **"★ Suggested" workhorse strip**
+  (`capsulePickSuggestHtml`, 2026-07-10): up to 12 in-season (trip start-date season
+  when set, else current), Available, idx ≥ 1.2, 3+-wear items; hidden while
+  searching or category-drilled; tiles are `data-pick` so `togglePick` (now `$$` —
+  an item can appear in strip AND grid) selects in both places. "Plan outfits from this" sets
   `activeCapsuleId` (scopes Closet + Looks). "Suggest an outfit" opens suggestion sheet scoped to
   capsule members.
   **Trip by-day planner** (`capsuleView="plan"`, `renderCapsulePlan()`): one card per trip date
@@ -175,22 +187,35 @@ Top-of-`<script>` config, then logically grouped sections:
   (v3, `.otd-row`) shows the most recent prior YEAR with wears on the same date
   (mini collage + contexts); tap navigates the day view to that date.
 - **STYLE STATS** — `renderStats()` dispatches main/field/grid/outfits/contexts/
-  context-detail/report/report-detail/review views. **Brand/Retailer report cards**
-  (2026-07-10): main-page "Brands & Retailers" section → `renderStatsReportPage()`
-  ranks groups by a wear index (`buildReportStats(field)`): actual wears / expected
-  wears, where expected = peer wear-rate (subcategory rate, category fallback when
-  the subcat slice is under 5 items) × months observed per item. Tenure runs from
-  purchase_date (→ first wear → created_at fallback), clamped to the earliest logged
-  wear anywhere (pre-logging months would deflate rates). Per group: wears/mo,
-  median $/wear + total spend (gifts excluded from cost stats, still counted for
-  engagement), duds (never worn, or archived with < `REPORT_DUD_WEARS`=3 wears).
-  Groups under `REPORT_MIN_ITEMS`=3 items list unranked. Pool = `reportPool()` —
+  context-detail/report/report-detail/review views. **Report Cards** (2026-07-10):
+  main-page "Report Cards" section → `renderStatsReportPage()` over
+  the 7 dimensions in `REPORT_DIMS` (brand, retailer, subcategory, price bracket,
+  purchase year, color_family, acquisition). Engine: `buildItemPerf(pool)` computes
+  per-item {count, months, exp, idx} — idx = actual wears / expected wears, where
+  expected = peer wear-rate (subcategory rate, category fallback when the subcat
+  slice is under 5 items) × months observed. Tenure runs from purchase_date
+  (→ first wear → created_at fallback), clamped to the earliest logged wear
+  anywhere (pre-logging months would deflate rates). `buildReportStats(field)`
+  groups per-item perf by the dim's `keyFn`. Per group: wears/mo, median $/wear +
+  total spend (gifts excluded from cost stats, still counted for engagement), duds
+  (never worn, or archived with < `REPORT_DUD_WEARS`=3 wears). **Ranked dims**
+  (brand/retailer/color/acquisition): idx sort + Best/Worst bar; groups under
+  `REPORT_MIN_ITEMS`=3 items list unranked. **Canonical dims**: subcategory
+  (taxonomy order under category `sf-label` headers, `showIdx:false` — the index
+  is ×1.0 by construction there; the payoff is best/worst WITHIN the group, per
+  user decision 2026-07-10), price (bracket order), year (newest first; current
+  year's duds say "still proving out"/"too soon"). Pool = `reportPool()` —
   statsPool but `{ noStatusDefault: true }` so archived items stay in (dud rate
-  needs them). Detail page: KPI card, Best performers / Underperformers grids
-  (worst = never-worn by price desc, then lowest index), "All items" →
-  grid with `statsFromReport` so back returns to the detail page (wired in
-  `statsNavBack` + `statsRebuild`). No date-range button (metrics are inherently
-  all-time / tenure-normalized); the filter funnel + acquisition range apply.
+  needs them). Detail page: KPI card (subcategory swaps the vs-Similar KPI for
+  Duds), Best performers / Underperformers grids (worst = never-worn by price
+  desc, then lowest index), "All items" → grid with `statsFromReport` so back
+  returns to the detail page (wired in `statsNavBack` + `statsRebuild`). No
+  date-range button (metrics are inherently all-time / tenure-normalized); the
+  filter funnel + acquisition range apply. **Workhorses / Declutter smart lists**
+  (`buildSmartList` keys, a TOGGLE_GROUPS pair, rows in Clothing Stats):
+  Workhorses = idx desc among 3+-wear items; Declutter = owned 6+ months, not in
+  any liked look (`likedLookItemIds()` shield), never worn (longest-owned first)
+  or idx < 0.5 and untouched 90+ days — transparent sort, no composite score.
   Filter sheet (funnel icon). Range button. Closet Review
   deals items one card at a time; inline field picker on the deal card (no sheet-hop
   for most fields). `reviewPool()` is **Available-only** (Storage + Archive excluded).
@@ -390,7 +415,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-10 r2`.
+  Currently `2026-07-10 r3`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.

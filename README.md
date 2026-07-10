@@ -48,10 +48,13 @@ Repo: https://github.com/aluke0311/wardrobe_app
 
 - **Style Stats** — Clothing Stats (count, value, color bar, field breakdowns with
   donut), Looks Stats, smart lists (most/least worn, cost-per-wear, recently
-  acquired), closet-vs-life formality gap, Brand & Retailer report cards (wear-rate
-  vs. similar items, cost per wear, dud rate, best/worst items per brand). Filter by
-  status/category/season/formality + date range. Closet Review: one card at a time
-  to fill missing fields with inline chip pickers.
+  acquired, Workhorses, Declutter Candidates), closet-vs-life formality gap, Report
+  Cards across 7 dimensions (brand, retailer, subcategory, price bracket, purchase
+  year, color, acquisition — wear-rate vs. similar items, cost per wear, dud rate,
+  best/worst items per group). Filter by status/category/season/formality + date
+  range. Closet Review: one card at a time to fill missing fields with inline chip
+  pickers. Capsule/trip picker surfaces a "★ Suggested" workhorse strip; item detail
+  shows a workhorse badge for standout pieces.
 
 ---
 

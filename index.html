@@ -361,6 +361,8 @@
   .cap-grp-hdr .g-cnt { font-size: 12.5px; color: var(--muted); font-weight: 600; }
   .cap-grp-hdr .g-cnt.done { color: #2f9e5e; }
   .cap-catbar { display: flex; gap: 7px; overflow-x: auto; padding: 8px 14px 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .cap-sug-strip { display: flex; gap: 8px; overflow-x: auto; padding: 4px 14px 8px; scrollbar-width: none; -webkit-overflow-scrolling: touch; border-bottom: 1px solid var(--line); }
+  .cap-sug-strip .cap-sug-tile { width: 86px; flex-shrink: 0; }
   .cap-catbar::-webkit-scrollbar { display: none; }
   .cap-catbar .cap-chip { flex-shrink: 0; }
   .cap-secrow { display: flex; align-items: center; justify-content: space-between;
@@ -1109,7 +1111,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-10 r2";
+const APP_VERSION = "2026-07-10 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2281,6 +2283,7 @@ function openItem(id) {
     </div>
     ${sibBar}
     <div class="item-stat-strip">${esc(itemStatLine(i))}</div>
+    ${workhorseBadgeHtml(i)}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#ccc;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -3937,6 +3940,14 @@ function itemStatLine(i) {
   const cpw = costPerWear(i);
   if (cpw != null) parts.push(`${money(cpw)}/wear`);
   return parts.join(" · ");
+}
+
+// "★ Workhorse" line under the stat strip when an item is well above its
+// subcategory peers (5+ wears and 1.5×+ the expected wear rate).
+function workhorseBadgeHtml(i) {
+  const p = buildItemPerf(items).get(i.id);
+  if (!p || p.count < 5 || p.idx == null || p.idx < 1.5) return "";
+  return `<div class="item-stat-strip" style="color:var(--accent);font-weight:600">★ Workhorse · worn ${p.idx.toFixed(1)}× as much as similar pieces</div>`;
 }
 
 function relDate(d) {
@@ -6991,6 +7002,8 @@ const TOGGLE_GROUPS = {
   "worst-cpw":       { keys: ["best-cpw",  "worst-cpw"],            labels: ["Best CPW", "Worst CPW"] },
   "least-expensive": { keys: ["least-expensive", "most-expensive"], labels: ["Least Expensive", "Most Expensive"] },
   "most-expensive":  { keys: ["least-expensive", "most-expensive"], labels: ["Least Expensive", "Most Expensive"] },
+  "workhorses":      { keys: ["declutter", "workhorses"],           labels: ["Declutter", "Workhorses"] },
+  "declutter":       { keys: ["declutter", "workhorses"],           labels: ["Declutter", "Workhorses"] },
 };
 // lists whose date Range control is meaningful (wear-count based)
 const RANGE_LISTS = ["never-worn", "most-worn", "least-worn", "best-cpw", "worst-cpw"];
@@ -7133,7 +7146,52 @@ function buildSmartList(key) {
       .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date)).slice(0, 100),
       title: "Recently Acquired", subtitleFn: acqSub };
   }
+  if (key === "workhorses") {
+    // Highest wear index vs similar items, among pieces with a real track record.
+    const per = buildItemPerf(reportPool());
+    const list = av.filter(i => { const p = per.get(i.id); return p && p.count >= 3 && p.idx != null; })
+      .sort((a, b) => per.get(b.id).idx - per.get(a.id).idx).slice(0, 100);
+    return { list, title: "Workhorses",
+      subtitleFn: i => { const p = per.get(i.id); return `${p.count} wear${p.count === 1 ? "" : "s"} · ${fmtReportIdx(p.idx)}`; } };
+  }
+  if (key === "declutter") {
+    // Removal candidates: owned 6+ months, not in any liked look, and either
+    // never worn or badly under-worn for their type and not touched in 90+ days.
+    // Never-worn lead (longest owned first), then lowest index. Transparent
+    // sort, no composite score — she can see exactly why each item is here.
+    const per = buildItemPerf(reportPool());
+    const liked = likedLookItemIds();
+    const pool = reportPool().filter(i => {
+      if (itemStatus(i) === "Archive") return false;
+      const p = per.get(i.id);
+      if (!p || p.months < 6 || liked.has(i.id)) return false;
+      if (p.count === 0) return true;
+      const lw = lastWorn(i.id);
+      return p.idx != null && p.idx < 0.5 && (!lw || daysSince(lw) >= 90);
+    });
+    pool.sort((a, b) => {
+      const pa = per.get(a.id), pb = per.get(b.id);
+      if ((pa.count === 0) !== (pb.count === 0)) return pa.count === 0 ? -1 : 1;
+      if (pa.count === 0) return pb.months - pa.months;
+      return (pa.idx ?? 0) - (pb.idx ?? 0);
+    });
+    return { list: pool.slice(0, 100), title: "Declutter Candidates",
+      subtitleFn: i => {
+        const p = per.get(i.id);
+        if (p.count === 0) return `never worn · owned ${Math.round(p.months)} mo`;
+        const st = itemStatus(i) === "Storage" ? " · storage" : "";
+        return `${p.count} wear${p.count === 1 ? "" : "s"} · ${fmtReportIdx(p.idx)} · last ${relDate(lastWorn(i.id))}${st}`;
+      } };
+  }
   return null;
+}
+
+// Items that appear in at least one liked look — a "love" signal that shields
+// them from declutter suggestions.
+function likedLookItemIds() {
+  const s = new Set();
+  for (const o of outfits) if (o.rating === 1) for (const id of (outfitItemMap.get(o.id) || [])) s.add(id);
+  return s;
 }
 
 function renderStats() {
@@ -7352,6 +7410,7 @@ function renderStatsMain() {
     ).join("");
   })();
   const neverWorn = avail.filter(i => wearCountInRange(i.id) === 0).length;
+  const declutterCount = (buildSmartList("declutter") || { list: [] }).list.length;
   const rangeTag = statsDateRange === "all" ? "" : ` · past ${dateRangeHuman()}`;
   const notLoggedLabel = statsDateRange === "all" ? "Never Worn" : `Not Worn${rangeTag}`;
   const wornSub = `Most & Least worn${rangeTag}`;
@@ -7391,6 +7450,8 @@ function renderStatsMain() {
           ${row("Cost per Wear",             "Best & Worst $/wear",                               "list:best-cpw")}
           ${row("Purchase Price",            "Most & least expensive",                            "list:least-expensive")}
           ${row("Best Potential Improvement","One more wear → biggest CPW drop",                  "list:best-potential")}
+          ${row("Workhorses",                "Your highest-performing pieces",                    "list:workhorses")}
+          ${row("Declutter Candidates",      declutterCount ? `${declutterCount} removal candidate${declutterCount === 1 ? "" : "s"}` : "Nothing to remove right now", "list:declutter")}
         </div>
         <div class="stats-note">Total Closet Value and Item Count exclude archived items.</div>
       </div>
@@ -7409,10 +7470,15 @@ function renderStatsMain() {
       </div>
 
       <div class="stats-sec">
-        <div class="stats-sec-hdr"><div class="t">Brands &amp; Retailers</div><div class="s">Who's earning their place</div></div>
+        <div class="stats-sec-hdr"><div class="t">Report Cards</div><div class="s">Who's earning their place</div></div>
         <div class="stats-sec-body">
-          ${row("Brand Report Card", "Best & worst by wear rate and $/wear", "report:brand")}
-          ${row("Retailer Report Card", "Where you shop well (and don't)", "report:retailer")}
+          ${row("Brands", "Best & worst by wear rate and $/wear", "report:brand")}
+          ${row("Retailers", "Where you shop well (and don't)", "report:retailer")}
+          ${row("Subcategories", "Best & worst pieces within each type", "report:subcategory")}
+          ${row("Price Brackets", "Find your price sweet spot", "report:price")}
+          ${row("Purchase Years", "Are you buying better over time?", "report:year")}
+          ${row("Colors", "Which colors actually get worn", "report:color_family")}
+          ${row("Acquisition", "New vs. secondhand vs. gifts", "report:acquisition")}
         </div>
       </div>
 
@@ -7773,6 +7839,28 @@ function reportPool() {
 const REPORT_MIN_ITEMS = 3;  // fewer items than this → unranked "fewer than…" section
 const REPORT_DUD_WEARS = 3;  // archived under this many wears counts as a dud
 
+// Report-card dimensions. "ranked" dims sort by the wear index with a Best/Worst
+// toggle and a min-items split; "canonical" dims keep a fixed browse order (no
+// cross-group ranking implied). showIdx:false hides the vs-similar index — for
+// subcategory it would be ×1.0 by construction (items are standardized against
+// their own subcategory peers); the payoff there is best/worst WITHIN the group.
+const REPORT_DIMS = {
+  brand:        { title: "Brands",         mode: "ranked",    keyFn: i => (i.brand || "").trim(),    noValueLabel: "brand" },
+  retailer:     { title: "Retailers",      mode: "ranked",    keyFn: i => (i.retailer || "").trim(), noValueLabel: "retailer" },
+  color_family: { title: "Colors",         mode: "ranked",    keyFn: i => i.color_family || "",      noValueLabel: "color" },
+  acquisition:  { title: "Acquisition",    mode: "ranked",    keyFn: i => i.acquisition || "",       noValueLabel: "acquisition" },
+  subcategory:  { title: "Subcategories",  mode: "canonical", keyFn: i => i.subcategory || "",       noValueLabel: "subcategory", showIdx: false },
+  price:        { title: "Price Brackets", mode: "canonical", keyFn: i => priceBracketLabel(i),      noValueLabel: "price" },
+  year:         { title: "Purchase Years", mode: "canonical", keyFn: i => (i.purchase_date || "").slice(0, 4), noValueLabel: "purchase date" },
+};
+
+function priceBracketLabel(i) {
+  const p = parseFloat(i.price);
+  if (i.price == null || isNaN(p)) return "";
+  const b = PRICE_BRACKETS.find(b => p >= b.min && p < b.max);
+  return b ? b.label : "";
+}
+
 // One pass over wears → per-item { days: Set(worn_on), first: earliest date }.
 function itemWearIndex() {
   const m = new Map();
@@ -7786,16 +7874,17 @@ function itemWearIndex() {
   return m;
 }
 
-// Per-brand (or per-retailer) engagement + cost stats.
-// Tenure per item starts at purchase_date (falling back to its first wear, then
-// created_at) but never before the earliest logged wear anywhere — months
-// before logging began can't be observed and would deflate the rate.
-// "vs expected" = actual wears / (peer wear-rate × months observed), where the
-// peer rate comes from the item's subcategory (category fallback when the
-// subcategory slice is under 5 items) — so basics aren't rewarded over formal
-// pieces just for being basics. A peer rate of 0 contributes nothing either way.
-function buildReportStats(field) {
-  const pool = reportPool();
+// Per-item performance: wears, months observed, expected wears, and the
+// "vs similar items" index. Tenure per item starts at purchase_date (falling
+// back to its first wear, then created_at) but never before the earliest logged
+// wear anywhere — months before logging began can't be observed and would
+// deflate the rate. "vs expected" = actual wears / (peer wear-rate × months
+// observed), where the peer rate comes from the item's subcategory (category
+// fallback when the subcategory slice is under 5 items) — so basics aren't
+// rewarded over formal pieces just for being basics. A peer rate of 0
+// contributes nothing either way. Shared by the report cards, the
+// Workhorses/Declutter smart lists, the capsule picker strip, and the item badge.
+function buildItemPerf(pool) {
   const wearIdx = itemWearIndex();
   let epoch = null;
   for (const e of wearIdx.values()) if (!epoch || e.first < epoch) epoch = e.first;
@@ -7834,11 +7923,19 @@ function buildReportStats(field) {
     p.exp = rate * p.months;
     p.idx = p.exp > 0 ? p.count / p.exp : null;
   }
+  return per;
+}
+
+// Group per-item performance by a report dimension (see REPORT_DIMS).
+function buildReportStats(field) {
+  const pool = reportPool();
+  const per = buildItemPerf(pool);
+  const keyFn = REPORT_DIMS[field].keyFn;
 
   const groups = new Map();
   let noValue = 0;
   for (const i of pool) {
-    const label = (i[field] || "").trim();
+    const label = keyFn(i);
     if (!label) { noValue++; continue; }
     let g = groups.get(label);
     if (!g) { g = []; groups.set(label, g); }
@@ -7875,36 +7972,75 @@ const reportIdxColor = (v) => v == null ? "var(--muted)" : v >= 1.15 ? "#3a7d44"
 
 function renderStatsReportPage() {
   const field = statsReportField;
-  const title = field === "retailer" ? "Retailers" : "Brands";
+  const dim = REPORT_DIMS[field];
   const { rows, noValue } = buildReportStats(field);
-  const ranked = rows.filter(r => r.n >= REPORT_MIN_ITEMS);
-  const withIdx = ranked.filter(r => r.idx != null).sort((a, b) => b.idx - a.idx);
-  if (statsReportSort === "worst") withIdx.reverse();
-  const display = [...withIdx, ...ranked.filter(r => r.idx == null)];
-  const small = rows.filter(r => r.n < REPORT_MIN_ITEMS).sort((a, b) => b.n - a.n || b.wears - a.wears);
+  const showIdx = dim.showIdx !== false;
+  const thisYear = String(new Date().getFullYear());
 
   const rowHtml = (r, detailed) => {
+    // Current-year cohort: too little tenure to call anything a dud yet.
+    const dudTxt = (field === "year" && r.label === thisYear)
+      ? " · still proving out"
+      : (r.duds ? ` · ${r.duds} dud${r.duds === 1 ? "" : "s"}` : "");
     const sub = detailed
-      ? `${r.n} items · ${r.rate.toFixed(1)} wears/mo · ${r.medCPW != null ? money(r.medCPW) + "/wear" : "no cost data"}${r.duds ? ` · ${r.duds} dud${r.duds === 1 ? "" : "s"}` : ""}`
+      ? `${r.n} item${r.n === 1 ? "" : "s"} · ${r.rate.toFixed(1)} wears/mo · ${r.medCPW != null ? money(r.medCPW) + "/wear" : "no cost data"}${dudTxt}`
       : `${r.n} item${r.n === 1 ? "" : "s"} · ${r.wears} wear${r.wears === 1 ? "" : "s"}`;
     return `<button class="frow" data-srb="${esc(r.label)}">
       <div class="fmeta"><div class="fname">${esc(r.label)}</div><div class="fcount">${esc(sub)}</div></div>
-      ${detailed ? `<span style="font-size:16px;font-weight:700;margin-right:6px;flex-shrink:0;color:${reportIdxColor(r.idx)}">${fmtReportIdx(r.idx)}</span>` : ""}
+      ${detailed && showIdx ? `<span style="font-size:16px;font-weight:700;margin-right:6px;flex-shrink:0;color:${reportIdxColor(r.idx)}">${fmtReportIdx(r.idx)}</span>` : ""}
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   };
 
-  $("#statsBody").innerHTML = statsToolbar(title, true)
-    + `<div class="stats-note" style="padding:12px 18px 2px">×1.0 = worn about as much as similar items, for how long you've had each piece. Higher over-performs, lower under-performs. Cost stats skip gifts.</div>`
-    + `<div class="stats-sort-bar" style="padding-bottom:6px">
+  let listHtml, sortBar = "";
+  if (dim.mode === "ranked") {
+    const ranked = rows.filter(r => r.n >= REPORT_MIN_ITEMS);
+    const withIdx = ranked.filter(r => r.idx != null).sort((a, b) => b.idx - a.idx);
+    if (statsReportSort === "worst") withIdx.reverse();
+    const display = [...withIdx, ...ranked.filter(r => r.idx == null)];
+    const small = rows.filter(r => r.n < REPORT_MIN_ITEMS).sort((a, b) => b.n - a.n || b.wears - a.wears);
+    sortBar = `<div class="stats-sort-bar" style="padding-bottom:6px">
         <button class="stats-sort-btn${statsReportSort === "best" ? " on" : ""}" data-srs="best">Best first</button>
         <button class="stats-sort-btn${statsReportSort === "worst" ? " on" : ""}" data-srs="worst">Worst first</button>
-      </div>`
-    + (display.length
+      </div>`;
+    listHtml = (display.length
         ? `<div class="frows">${display.map(r => rowHtml(r, true)).join("")}</div>`
-        : `<div class="placeholder"><b>Not enough data</b><div>${esc(title)} with ${REPORT_MIN_ITEMS}+ items get ranked here.</div></div>`)
-    + (small.length ? `<div class="sf-label">Fewer than ${REPORT_MIN_ITEMS} items</div><div class="frows">${small.map(r => rowHtml(r, false)).join("")}</div>` : "")
-    + (noValue ? `<div class="stats-note" style="padding:12px 18px 24px">${noValue} item${noValue === 1 ? " has" : "s have"} no ${esc(field)} set.</div>` : `<div style="height:24px"></div>`);
+        : `<div class="placeholder"><b>Not enough data</b><div>${esc(dim.title)} with ${REPORT_MIN_ITEMS}+ items get ranked here.</div></div>`)
+      + (small.length ? `<div class="sf-label">Fewer than ${REPORT_MIN_ITEMS} items</div><div class="frows">${small.map(r => rowHtml(r, false)).join("")}</div>` : "");
+  } else if (field === "subcategory") {
+    // Taxonomy order with category headers; unrecognized subcats go under Other.
+    const byLabel = new Map(rows.map(r => [r.label, r]));
+    const used = new Set();
+    const sections = [];
+    for (const cat of CATEGORIES) {
+      const secRows = (TAXONOMY[cat] || []).map(s => byLabel.get(s)).filter(Boolean);
+      if (secRows.length) { sections.push({ hdr: cat, rows: secRows }); secRows.forEach(r => used.add(r.label)); }
+    }
+    const other = rows.filter(r => !used.has(r.label)).sort((a, b) => b.n - a.n);
+    if (other.length) sections.push({ hdr: "Other", rows: other });
+    listHtml = sections.map(s =>
+      `<div class="sf-label">${esc(s.hdr)}</div><div class="frows">${s.rows.map(r => rowHtml(r, true)).join("")}</div>`
+    ).join("") || `<div class="placeholder"><b>No data yet</b></div>`;
+  } else {
+    // price: bracket order · year: newest first
+    const ordered = field === "price"
+      ? PRICE_BRACKETS.map(b => rows.find(r => r.label === b.label)).filter(Boolean)
+      : rows.sort((a, b) => b.label.localeCompare(a.label));
+    listHtml = ordered.length
+      ? `<div class="frows">${ordered.map(r => rowHtml(r, true)).join("")}</div>`
+      : `<div class="placeholder"><b>No data yet</b></div>`;
+  }
+
+  const note = showIdx
+    ? "×1.0 = worn about as much as similar items, for how long you've had each piece. Higher over-performs, lower under-performs. Cost stats skip gifts."
+    : "Tap a type to see its best and worst pieces. Cost stats skip gifts.";
+
+  $("#statsBody").innerHTML = statsToolbar(dim.title, true)
+    + `<div class="stats-note" style="padding:12px 18px 2px">${esc(note)}</div>`
+    + sortBar
+    + (sortBar ? "" : `<div style="height:8px"></div>`)
+    + listHtml
+    + (noValue ? `<div class="stats-note" style="padding:12px 18px 24px">${noValue} item${noValue === 1 ? " has" : "s have"} no ${esc(dim.noValueLabel)} set.</div>` : `<div style="height:24px"></div>`);
 
   wireStatsToolbar();
   $("#statsBody").querySelectorAll("[data-srs]").forEach(btn => {
@@ -7939,10 +8075,18 @@ function renderStatsReportDetailPage() {
   const subFn = (i) => subFor.get(i.id) || "";
 
   const kpi = (val, lbl) => `<div class="kpi-cell"><div class="kpi-val">${val}</div><div class="kpi-lbl">${esc(lbl)}</div></div>`;
-  const dudNote = r.duds
-    ? `${r.duds} of ${r.n} item${r.n === 1 ? "" : "s"} never worn or archived early.`
-    : "No duds — everything got worn.";
+  const isThisYear = field === "year" && r.label === String(new Date().getFullYear());
+  const dudNote = isThisYear
+    ? "Bought this year — too soon to call anything a dud."
+    : r.duds
+      ? `${r.duds} of ${r.n} item${r.n === 1 ? "" : "s"} never worn or archived early.`
+      : "No duds — everything got worn.";
   const giftNote = r.gifts ? ` Cost stats exclude ${r.gifts} gift${r.gifts === 1 ? "" : "s"}.` : "";
+  // For subcategory the vs-similar index is ×1.0 by construction (items are
+  // standardized against these same peers) — show the dud count instead.
+  const secondKpi = REPORT_DIMS[field].showIdx === false
+    ? kpi(r.duds, r.duds === 1 ? "Dud" : "Duds")
+    : kpi(`<span style="color:${reportIdxColor(r.idx)}">${fmtReportIdx(r.idx)}</span>`, "vs Similar Items");
 
   $("#statsBody").innerHTML = statsToolbar(r.label, true)
     + `<div class="stats-sec" style="margin-top:12px">
@@ -7952,7 +8096,7 @@ function renderStatsReportDetailPage() {
         </div>
         <div class="kpi-row" style="border-bottom:1px solid var(--line)">
           ${kpi(r.rate.toFixed(1), "Wears / Month")}
-          ${kpi(`<span style="color:${reportIdxColor(r.idx)}">${fmtReportIdx(r.idx)}</span>`, "vs Similar Items")}
+          ${secondKpi}
         </div>
         <div class="kpi-row">
           ${kpi(r.medCPW != null ? money(r.medCPW) : "—", "Median $ / Wear")}${kpi(r.priced ? money(r.spend) : "—", "Total Spent")}
@@ -9111,6 +9255,28 @@ function pickerGridHtml(pool) {
   });
 }
 
+// "★ Suggested" strip at the top of the capsule picker: in-season workhorses
+// (high wear index vs similar items) not yet picked. Hidden while searching or
+// drilled into a category. Trip capsules use the trip's start-date season.
+function capsulePickSuggestHtml() {
+  if (_capPickFilter.trim() || _capPickCat) return "";
+  const c = capsuleById.get(capsuleId);
+  const season = (c && c.start_date) ? seasonOf(c.start_date) : currentSeason();
+  const per = buildItemPerf(items);
+  const sugg = items.filter(i => {
+    if (itemStatus(i) !== "Available") return false;
+    const p = per.get(i.id);
+    return p && p.count >= 3 && p.idx != null && p.idx >= 1.2 && inSeason(i, season);
+  }).sort((a, b) => per.get(b.id).idx - per.get(a.id).idx).slice(0, 12);
+  if (!sugg.length) return "";
+  const tile = (i) => `<button class="gtile cap-sug-tile${_capPick.has(i.id) ? " selected" : ""}" data-pick="${esc(i.id)}">
+    <div class="sel-dot${_capPick.has(i.id) ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>
+    ${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div>
+  </button>`;
+  return `<div class="sf-label" style="padding:8px 14px 2px">★ Suggested · ${esc(season)} workhorses</div>
+    <div class="cap-sug-strip">${sugg.map(tile).join("")}</div>`;
+}
+
 function renderCapsulePicker() {
   const c = capsuleById.get(capsuleId);
   const sortKey = gridSortKey();
@@ -9127,7 +9293,7 @@ function renderCapsulePicker() {
     </div>
     <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
     <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
-    <div id="capPickResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
+    <div id="capPickResults">${capsulePickSuggestHtml()}${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
     <div id="capPickSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
       ${["color","name","newest","most-worn","least-worn","formality","price"].map(k =>
         `<button data-cpsort="${k}" style="display:block;width:100%;padding:13px 20px;text-align:left;font-size:15px${k===sortKey?";color:var(--accent);font-weight:600":""}">${{color:"Color",name:"Name",newest:"Newest first","most-worn":"Most worn","least-worn":"Least worn",formality:"Formality",price:"Price"}[k]}</button>`
@@ -9137,12 +9303,12 @@ function renderCapsulePicker() {
 
 function togglePick(id) {
   if (_capPick.has(id)) _capPick.delete(id); else _capPick.add(id);
-  const tile = $(`[data-pick="${id}"]`);
-  if (tile) {
+  // $$: the item can appear twice (suggested strip + main grid) — update both
+  $$(`[data-pick="${id}"]`).forEach(tile => {
     const on = _capPick.has(id);
     tile.classList.toggle("selected", on);
     const dot = tile.querySelector(".sel-dot"); if (dot) dot.classList.toggle("on", on);
-  }
+  });
   const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
   const logAsLook = $("#calLogAsLook"); if (logAsLook) logAsLook.hidden = _capPick.size < 2;
 }
@@ -9923,7 +10089,7 @@ function renderPickerGrid() {
   const body = $("#capsulesBody");
   const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
   const wrap = $("#capPickResults");
-  if (wrap) { wrap.innerHTML = pickerCatBar() + pickerSubBar() + pickerGridHtml(pickerPool()); hydratePhotos(body); }
+  if (wrap) { wrap.innerHTML = capsulePickSuggestHtml() + pickerCatBar() + pickerSubBar() + pickerGridHtml(pickerPool()); hydratePhotos(body); }
   // update lens chip active state
   const lens = $("#capPickLens");
   if (lens) lens.querySelectorAll("[data-pick-status]").forEach(b => b.classList.toggle("on", b.dataset.pickStatus === _capPickStatus));

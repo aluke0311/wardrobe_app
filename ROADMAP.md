@@ -1,22 +1,33 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-10 r2**. Nothing scheduled — see Back-burner.
+> Current version: **2026-07-10 r3**. Nothing scheduled — see Back-burner.
 
 ---
 
-## ✅ SHIPPED — Brand & Retailer Report Cards (2026-07-10)
+## ✅ SHIPPED — Report Cards + Workhorses/Declutter (2026-07-10)
 
-**Status: FULLY SHIPPED in `2026-07-10 r2`.** User asked how to think about
+**Status: FULLY SHIPPED, r2 → r3 same day.** User asked how to think about
 assessing best/worst brands and retailers by wear frequency and cost, plus
-best/worst items within each. Style Stats gained a "Brands & Retailers" section:
-`renderStatsReportPage()` ranks brands/retailers by a wear-rate index vs. similar
-items (tenure-normalized, indirect-standardized by subcategory/category so basics
-don't win just for being basics), alongside median $/wear, total spend (gifts
-excluded from cost), and a dud count (never worn / archived early). Tap through to
-`renderStatsReportDetailPage()` for a KPI card + Best performers / Underperformers
-item grids + all-items grid. Groups under 3 items are unranked. See CLAUDE.md's
-STYLE STATS entry for the implementation (`buildReportStats`, `reportPool`).
+best/worst items within each. **r2** shipped Style Stats' "Brands & Retailers"
+section: `renderStatsReportPage()` ranks brands/retailers by a wear-rate index vs.
+similar items (tenure-normalized, indirect-standardized by subcategory/category so
+basics don't win just for being basics), alongside median $/wear, total spend
+(gifts excluded from cost), and a dud count (never worn / archived early). Tap
+through to `renderStatsReportDetailPage()` for a KPI card + Best performers /
+Underperformers item grids + all-items grid. Groups under 3 items are unranked.
+
+**r3 (same session)** generalized this to a "Report Cards" section covering 7
+dimensions: brand, retailer, **subcategory** (canonical taxonomy order, best/worst
+WITHIN each type rather than cross-type ranking — her explicit correction), price
+bracket, purchase year (current year marked "still proving out"), color, and
+acquisition. Also added: **Workhorses** and **Declutter Candidates** smart lists
+(Clothing Stats, toggle pair) — declutter logic is transparent (owned 6+ months,
+not in any liked look, never-worn-or-badly-under-worn-and-stale) rather than a
+black-box score; a **"★ Suggested" workhorse strip** at the top of the capsule
+add-items picker (in-season, idx ≥ 1.2); and a **"★ Workhorse" badge** on item
+detail (5+ wears, idx ≥ 1.5). See CLAUDE.md's STYLE STATS entry for the
+implementation (`buildItemPerf`, `buildReportStats`, `REPORT_DIMS`, `reportPool`).
 
 ---
 
