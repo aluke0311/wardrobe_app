@@ -973,7 +973,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       </button>
       <div id="sortMenuPop" hidden>
-        <button data-sort="color">Color</button>
+        <button data-sort="color">Category</button>
         <button data-sort="name">Name</button>
         <button data-sort="newest">Newest first</button>
         <button data-sort="most-worn">Most worn</button>
@@ -1117,7 +1117,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r3";
+const APP_VERSION = "2026-07-11 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1782,7 +1782,7 @@ let selectMode = false;   // multi-select active
 
 // ---- sort system (shared across all grid surfaces) ----
 const SORT_OPTS = [
-  { key: "color",     label: "Color" },
+  { key: "color",     label: "Category" },
   { key: "name",      label: "Name" },
   { key: "newest",    label: "Newest first" },
   { key: "most-worn", label: "Most worn" },
@@ -1808,6 +1808,12 @@ function sortItems(list, key) {
     case "formality": return [...list].sort((a, b) => itemFormality(a) - itemFormality(b));
     case "price":     return [...list].sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
     default:          return [...list].sort((a, b) => {
+      // Default: category > subcategory > color > name (taxonomy declaration order).
+      const catD = (CATEGORIES.indexOf(a.category) + 1 || 99) - (CATEGORIES.indexOf(b.category) + 1 || 99);
+      if (catD !== 0) return catD;
+      const subs = TAXONOMY[a.category] || [];
+      const subD = (subs.indexOf(a.subcategory) + 1 || 99) - (subs.indexOf(b.subcategory) + 1 || 99);
+      if (subD !== 0) return subD;
       const cd = (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99);
       return cd !== 0 ? cd : (a.name || "").localeCompare(b.name || "");
     });
