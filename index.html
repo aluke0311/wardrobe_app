@@ -1117,7 +1117,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r4";
+const APP_VERSION = "2026-07-11 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4568,7 +4568,12 @@ function swapSuggestionPiece(pieceId) {
   if (!combo) return;
   const old = itemById.get(pieceId);
   if (!old) return;
-  const slot = suggestSlot(old);
+  // A layerable top (isLayer) doubling as this combo's layer must re-roll from the
+  // LAYER pool, not the whole Tops pool — otherwise swapping it drops in a plain tee
+  // and the "layer" slot silently becomes a second top.
+  const layerPc = comboLayerPiece(combo);
+  const asLayer = !!layerPc && layerPc.id === pieceId;
+  const slot = asLayer ? "Outerwear" : suggestSlot(old);
   const others = combo.pieces.filter(p => p.id !== pieceId);
   const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
@@ -4586,7 +4591,7 @@ function swapSuggestionPiece(pieceId) {
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
   });
-  if (!cands.length) { toast(`No other ${suggSlotLabel(old).toLowerCase()} fits`); return; }
+  if (!cands.length) { toast(`No other ${(asLayer ? "layer" : suggSlotLabel(old).toLowerCase())} fits`); return; }
   const pick = cands[Math.floor(Math.random() * cands.length)];
   combo.pieces = combo.pieces.map(p => p.id === pieceId ? pick : p);
   renderSuggestSheet();
@@ -4749,20 +4754,22 @@ function renderSuggestSheet() {
     <div style="padding:12px 16px" id="sgPreview">
       <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
       ${combo ? `<div class="center" style="font-size:12px;color:var(--accent);padding:8px 0 0;font-weight:500">${esc(suggestionWhy(combo))}</div>` : ""}
-      ${combo ? `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
+      ${combo ? (() => {
+        const layerPc = comboLayerPiece(combo);
+        return `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
         ${combo.pieces.map(p => {
           const lk = _sugg.locked.has(p.id);
+          const lbl = (layerPc && layerPc.id === p.id) ? "Layer" : suggSlotLabel(p);
           return `<span style="display:inline-flex;gap:1px">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
-            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>↻ ${esc(suggSlotLabel(p))}</button>
+            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>↻ ${esc(lbl)}</button>
           </span>`;
         }).join("")}
-        ${(() => {
-          const layer = comboLayerPiece(combo);
-          if (!layer) return `<button class="cap-chip" data-saddlayer style="font-size:12px">＋ Layer</button>`;
-          return _sugg.locked.has(layer.id) ? "" : `<button class="cap-chip" data-sunlayer="${esc(layer.id)}" style="font-size:12px">× Layer</button>`;
-        })()}
-      </div>` : ""}
+        ${!layerPc
+          ? `<button class="cap-chip" data-saddlayer style="font-size:12px">＋ Layer</button>`
+          : (_sugg.locked.has(layerPc.id) ? "" : `<button class="cap-chip" data-sunlayer="${esc(layerPc.id)}" style="font-size:12px">× Layer</button>`)}
+      </div>`;
+      })() : ""}
       ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it through reshuffles${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
     </div>
@@ -4770,7 +4777,7 @@ function renderSuggestSheet() {
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
       <button class="btn" data-swear>${_sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date))) : "Wear this today"}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
-      <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>↻ New suggestions</button>
+      <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>↻ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
     </div>` : `
     <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>↻ Try again</button></div>`}`;
