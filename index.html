@@ -1117,7 +1117,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r6";
+const APP_VERSION = "2026-07-11 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1126,7 +1126,7 @@ const TAXONOMY = {
   "Dresses": ["Short", "Long", "Cocktail"],
   "Outerwear": ["Blazers", "Jackets", "Coats"],
   "Shoes": ["Boots", "Sandals", "Flats", "Heels", "Sneakers"],
-  "Workout": ["Workout tops", "Active shorts", "Sports bras"],
+  "Workout": ["Workout tops", "Active shorts", "Sports bras", "Swimwear"],
 };
 const CATEGORIES = Object.keys(TAXONOMY);
 
@@ -3686,7 +3686,7 @@ const SUBCAT_FORMALITY = {
   "Short": [3,4], "Long": [4,6], "Cocktail": [6],
   "Blazers": [5,6,7], "Jackets": [3,4], "Coats": [3,4,5],
   "Boots": [3,4,5], "Sandals": [2,3,4], "Flats": [3,4,5], "Heels": [6,8], "Sneakers": [2,3],
-  "Workout tops": [1], "Active shorts": [1], "Sports bras": [1],
+  "Workout tops": [1], "Active shorts": [1], "Sports bras": [1], "Swimwear": [1],
 };
 const CAT_FORMALITY = {
   Tops: [2,3], Bottoms: [3,4], Dresses: [4,5], Outerwear: [3,4,5], Shoes: [3,4], Workout: [1],

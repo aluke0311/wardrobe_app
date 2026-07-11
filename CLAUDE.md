@@ -432,7 +432,7 @@ Gala/chorus concert (5, all-black rule).
 - Dresses: Short, Long, Cocktail
 - Outerwear: Blazers, Jackets, Coats
 - Shoes: Boots, Sandals, Flats, Heels, Sneakers
-- Workout: Workout tops, Active shorts, Sports bras
+- Workout: Workout tops, Active shorts, Sports bras, Swimwear
 
 **Color families** (single per item): Green, Teal, Blue, Purple, Maroon, Pink, Red,
 Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
