@@ -42,6 +42,15 @@ from Most Worn Looks, stats main-page counts, context Top Looks, the Home
 Looks-tile count, `outfitsForItem` (item's looks list), and trip-plan day
 cards (`planActiveLooks`) — archived looks appear ONLY in the Archive lens and
 on the calendar. ⑥ **Trip/capsule OUTFIT BUCKET** — see CAPSULES entry.
+r2 routed `thumbHtml`/review-card/det-thumb empties through the tee placeholder
+(and `.empty` CSS tints via `background-color`, never the `background:`
+shorthand — it kills the `center/contain` the placeholder needs). r3 QoL:
+`contextOptions()` sorts by global wear frequency (all context pickers);
+`.cltoolbar` + `.cal-day-header` are sticky under the app header (`--hdr-h`
+var); tapping the header scrolls to top (NOTE: **body is the scroll
+container**, not window — `window.scrollTo` is a no-op app-wide; the header
+tap animates `document.body.scrollTop` with a setTimeout loop because rAF
+stalls in hidden documents).
 **▶ NEXT UP:** nothing scheduled — ask before starting new work.
 
 **Report Cards (2026-07-10) shipped in `2026-07-10 r2`→`r3`** — r2 shipped Brand

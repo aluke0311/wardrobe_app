@@ -16,6 +16,7 @@
     --line: #ececf1;
     --accent: #8b8fd0;          /* calm periwinkle, Stylebook-ish */
     --accent-soft: #eef0fb;
+    --hdr-h: calc(52px + env(safe-area-inset-top));  /* app header height — sticky toolbars sit below it */
     --danger: #c0392b;
     --radius: 16px;
     --nav-h: 64px;
@@ -85,7 +86,7 @@
   .bar {
     position: sticky; top: 0; z-index: 10;
     display: flex; align-items: center; justify-content: center;
-    height: calc(52px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 14px 0;
+    height: var(--hdr-h); padding: env(safe-area-inset-top) 14px 0;
     background: rgba(255,255,255,.92); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
   }
@@ -169,7 +170,9 @@
   .addbtn[hidden] { display: none; }
 
   /* ---------- closet toolbar + lens ---------- */
-  .cltoolbar { display: flex; align-items: center; gap: 8px; padding: 12px 14px 6px; }
+  .cltoolbar { display: flex; align-items: center; gap: 8px; padding: 12px 14px 6px;
+    position: sticky; top: var(--hdr-h); z-index: 9;
+    background: rgba(255,255,255,.92); backdrop-filter: blur(8px); }
   .clback, .clsearch { width: 44px; height: 44px; margin: -5px 0; display: flex; align-items: center; justify-content: center; color: var(--ink); }
   .clback svg, .clsearch svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; fill: none; }
   .cltitle { flex: 1; font-size: 15px; font-weight: 600; }
@@ -821,7 +824,9 @@
   .cal-stat-chev { margin-left: auto; color: var(--muted); }
   .cal-stat-chev svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
   /* day view */
-  .cal-day-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .cal-day-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line);
+    position: sticky; top: var(--hdr-h); z-index: 9;
+    background: rgba(255,255,255,.92); backdrop-filter: blur(8px); }
   .cal-day-nav { display: flex; align-items: center; padding: 4px 6px; }
   .cal-day-nav-btn { color: var(--accent); padding: 8px 10px; }
   .cal-day-nav-btn svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; fill: none; }
@@ -1112,7 +1117,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r2";
+const APP_VERSION = "2026-07-11 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2870,9 +2875,10 @@ const ctxArr = (w) => !w || !w.context ? [] : (Array.isArray(w.context) ? w.cont
 
 // Seed list + any custom contexts the user has already logged (derive-first).
 function contextOptions() {
-  const s = new Set(CONTEXT_SEED);
-  for (const w of wears) for (const c of ctxArr(w)) s.add(c);
-  return [...s];
+  // Most-used first (never-used seeds trail, alphabetical among ties).
+  const counts = new Map(CONTEXT_SEED.map(c => [c, 0]));
+  for (const w of wears) for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
+  return [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || a.localeCompare(b));
 }
 
 // Distinct contexts an item has been worn for, with counts (most-worn first).
@@ -10829,6 +10835,23 @@ function wireEvents() {
 
   // header gear -> settings
   $("#headerGear").addEventListener("click", () => switchTab("settings"));
+
+  // tap the header (not its buttons) -> scroll to top, like the iOS status bar.
+  // body is the real scroll container (html/body height:100%), and smooth
+  // behavior on body.scrollTo is unreliable — animate scrollTop by hand.
+  document.querySelector("header.bar").addEventListener("click", (e) => {
+    if (e.target.closest("button")) return;
+    const sc = document.body.scrollTop ? document.body : document.documentElement;
+    const from = sc.scrollTop;
+    if (!from) return;
+    const t0 = performance.now(), dur = 260;
+    const step = () => {
+      const p = Math.min(1, (performance.now() - t0) / dur);
+      sc.scrollTop = from * Math.pow(1 - p, 3);  // ease-out cubic
+      if (p < 1) setTimeout(step, 16);           // timer, not rAF — rAF stalls in hidden docs
+    };
+    step();
+  });
 
   // bottom-sheet swipe-down-to-dismiss (each .sheet has a sibling .sheet-bg whose
   // click handler does the real cleanup — we just trigger it past a drag threshold)
