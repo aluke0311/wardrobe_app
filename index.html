@@ -1117,7 +1117,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r5";
+const APP_VERSION = "2026-07-11 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4473,8 +4473,22 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
 
 // Build a simple layout array for the suggestion canvas preview
 function suggestionLayout(pieces) {
-  const ORDER = ["Outerwear","Dresses","Tops","Bottoms","Shoes","Workout"];
-  const sorted = pieces.slice().sort((a, b) => ORDER.indexOf(a.category) - ORDER.indexOf(b.category));
+  // Left slot = base top, right slot = its layer (per user convention). The layer
+  // is detected the same way the swap chips are (layerPieceOf), so a layerable top
+  // used as a layer also lands on the right rather than beside the base top.
+  const layer = layerPieceOf(pieces);
+  const rank = (it) => {
+    if (layer && it.id === layer.id) return 1.5;          // layer → just right of the top
+    switch (it.category) {
+      case "Tops": case "Dresses": return 1;              // base top/dress → left
+      case "Workout": return 1.2;
+      case "Outerwear": return 1.5;                        // (undetected layer, keep right)
+      case "Bottoms": return 3;
+      case "Shoes": return 4;
+      default: return 2;
+    }
+  };
+  const sorted = pieces.slice().sort((a, b) => rank(a) - rank(b));
   const grids = [
     [[.5,.5,.75]],
     [[.3,.5,.45],[.72,.5,.45]],
@@ -4597,14 +4611,16 @@ function swapSuggestionPiece(pieceId) {
   renderSuggestSheet();
 }
 
-// The piece acting as this combo's layer: outerwear/cardigan slot, or (when two
-// tops are present) the layer-flagged top doubling as outerwear.
-function comboLayerPiece(combo) {
-  const ow = combo.pieces.find(p => suggestSlot(p) === "Outerwear");
+// The piece acting as a look's layer: outerwear/cardigan slot, or (when two tops
+// are present) the layer-flagged top doubling as outerwear. Single source of truth
+// so the chip labels and the canvas layout agree on which piece is the layer.
+function layerPieceOf(pieces) {
+  const ow = pieces.find(p => suggestSlot(p) === "Outerwear");
   if (ow) return ow;
-  const tops = combo.pieces.filter(p => p.category === "Tops");
+  const tops = pieces.filter(p => p.category === "Tops");
   return tops.length >= 2 ? tops.find(isLayer) || null : null;
 }
+function comboLayerPiece(combo) { return layerPieceOf(combo.pieces); }
 
 // V3 "+ Layer": add a compatible outerwear/layer piece to the current combo,
 // using the same filters as a slot swap (season, exclusions, target level,
