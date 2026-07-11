@@ -190,7 +190,7 @@
   .frow { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
     padding: 12px 2px; border-bottom: 1px solid var(--line); }
   .cthumb { width: 64px; height: 64px; flex: none; border-radius: 10px; background: #faf9f8 center/contain no-repeat; }
-  .cthumb.empty { display: flex; align-items: center; justify-content: center; background: #f4f4f7; }
+  .cthumb.empty { display: flex; align-items: center; justify-content: center; background-color: #f4f4f7; }
   .cthumb.empty svg { width: 30px; height: 30px; stroke: var(--line); stroke-width: 1.5; fill: none; }
   .fmeta { flex: 1; min-width: 0; }
   .fname { font-size: 17px; font-weight: 600; }
@@ -432,7 +432,7 @@
   .grid { display: grid; grid-template-columns: repeat(var(--grid-cols,3), 1fr); gap: 10px; padding: 4px 14px 20px; }
   .gtile { position: relative; display: flex; flex-direction: column; gap: 5px; }
   .gphoto { width: 100%; aspect-ratio: 1; border-radius: 10px; background: #faf9f8 center/contain no-repeat; border: 1px solid var(--line); }
-  .gphoto.empty { display: flex; align-items: center; justify-content: center; background: #f4f4f7; }
+  .gphoto.empty { display: flex; align-items: center; justify-content: center; background-color: #f4f4f7; }
   .gphoto.empty svg { width: 28px; height: 28px; stroke: var(--line); stroke-width: 1.5; fill: none; }
   .gname { font-size: 11.5px; color: var(--muted); line-height: 1.25; overflow: hidden;
     text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
@@ -606,7 +606,7 @@
   .det-body { padding: 14px 16px calc(60px + var(--safe-b)); }
   .det-header { display: flex; gap: 14px; background: #f3f4f8; border-radius: 12px; padding: 14px; margin-bottom: 16px; }
   .det-thumb { width: 74px; height: 90px; flex-shrink: 0; border-radius: 8px; background: #e8e8ed center/contain no-repeat; }
-  .det-thumb.empty { background: #e8e8ed; display: flex; align-items: center; justify-content: center; }
+  .det-thumb.empty { background-color: #e8e8ed; display: flex; align-items: center; justify-content: center; }
   .det-notes { flex: 1; border: none; background: transparent; resize: none; font-size: 15px;
     font-family: inherit; color: var(--ink); outline: none; min-height: 90px; padding: 0; }
   .det-section-label { font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--muted);
@@ -1112,7 +1112,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r1";
+const APP_VERSION = "2026-07-11 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1832,9 +1832,8 @@ const isOtherCat = (i) => !i.category || !CATEGORIES.includes(i.category);
 function folderThumb(list) { const f = list.find(i => i.image_path); return f ? f.image_path : null; }
 
 function thumbHtml(path, cls = "cthumb") {
-  return path
-    ? `<div class="${cls}" data-photo="${esc(path)}"></div>`
-    : `<div class="${cls} empty"><svg viewBox="0 0 24 24"><path d="M5 9l7-5 7 5"/><path d="M5 9c0 2.2 14 2.2 14 0"/></svg></div>`;
+  // Empty path still gets data-photo so loadPhotoNode applies the tee placeholder.
+  return `<div class="${cls}${path ? "" : " empty"}" data-photo="${esc(path || "")}"></div>`;
 }
 function rowHtml(thumb, name, count, attrs = "") {
   const sub = count === 0 ? "No items" : `${count} item${count === 1 ? "" : "s"}`;
@@ -2389,7 +2388,7 @@ function openItemDetails(id) {
     <div class="det-body">
 
       <div class="det-header">
-        <div class="det-thumb${i.image_path ? "" : " empty"}"${i.image_path ? ` data-photo="${esc(i.image_path)}"` : ""}></div>
+        <div class="det-thumb${i.image_path ? "" : " empty"}" data-photo="${esc(i.image_path || "")}"></div>
         <div class="det-hinfo">
           <button class="det-hname" data-det-field="name" style="background:none;border:none;padding:0;text-align:left;font:inherit;color:inherit;cursor:pointer">${esc(i.name || "Untitled")} <span style="color:var(--muted);font-size:13px;font-weight:400">✎</span></button>
           ${i.brand ? `<div class="det-hbrand">${esc(i.brand)}</div>` : ""}
@@ -8302,9 +8301,7 @@ function renderReviewDeal() {
   body.innerHTML = toolbar
     + `<div class="rv-prog">${reviewIdx + 1} of ${total}</div>
     <div class="rv-card">
-      ${item.image_path
-        ? `<div class="rv-photo" data-photo="${esc(item.image_path)}"></div>`
-        : `<div class="rv-photo empty"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
+      <div class="rv-photo${item.image_path ? "" : " empty"}" data-photo="${esc(item.image_path || "")}"></div>
       <div class="rv-info">
         <div class="rv-name">${esc(item.name || "Untitled")}</div>
         <div class="rv-path">${esc(path)}</div>
