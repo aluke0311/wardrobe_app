@@ -613,6 +613,7 @@
     text-transform: uppercase; margin: 16px 0 8px 4px; }
   .det-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
   .det-row { width: 100%; display: flex; align-items: center; padding: 14px 16px; text-align: left; gap: 8px; }
+  .det-piece-thumb { width: 42px; height: 50px; flex: none; border-radius: 8px; background: #f4f4f7 center/contain no-repeat; }
   button.det-row:active { background: var(--accent-soft); }
   .det-lbl { font-size: 15px; color: var(--muted); min-width: 70px; flex-shrink: 0; }
   .det-val { flex: 1; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
@@ -1111,7 +1112,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-10 r3";
+const APP_VERSION = "2026-07-11 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1618,11 +1619,18 @@ const photoObserver = new IntersectionObserver((entries) => {
   }
 }, { rootMargin: "300px" });
 
+// Muted tee-shirt glyph shown wherever an item has no photo yet — the piece is
+// still visibly "there" in collages, canvases, and grids.
+const PHOTO_PLACEHOLDER = `url("data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-7 -7 38 38"><path d="M8.2 2.4 3 5.6l2 4.4 2.2-1v12h9.6V9l2.2 1 2-4.4-5.2-3.2a3.3 3.3 0 0 1-7.6 0z" fill="none" stroke="#c6c6cf" stroke-width="1.4" stroke-linejoin="round"/></svg>`
+)}")`;
 async function loadPhotoNode(n) {
   if (n.dataset.photoDone) return;
   n.dataset.photoDone = "1";
+  if (!n.dataset.photo) { n.style.backgroundImage = PHOTO_PLACEHOLDER; return; }
   const url = await photoUrl(n.dataset.photo);   // local byte cache first, Supabase only on miss
   if (url) { n.style.backgroundImage = `url("${url}")`; n.style.backgroundColor = "transparent"; }
+  else n.style.backgroundImage = PHOTO_PLACEHOLDER;
 }
 function hydratePhotos(root = document) {
   $$("[data-photo]", root)
@@ -1679,7 +1687,7 @@ async function loadHomeWeather() {
 const HOME_TILES = [
   { tab: "closet",   label: "Closet",     sub: () => `${availableCount()} items`,
     icon: `<path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/>` },
-  { tab: "looks",    label: "Looks",      sub: () => `${displayOutfits().length} looks`,
+  { tab: "looks",    label: "Looks",      sub: () => `${activeOutfits().length} looks`,
     icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
   { tab: "calendar", label: "Calendar",   sub: () => {
       const today = localISO(new Date());
@@ -3688,9 +3696,10 @@ function outfitItems(o) { return (outfitItemMap.get(o.id) || []).map(id => itemB
 // A look needs 2+ real (still-existing) pieces to show anywhere.
 function displayOutfits() { return outfits.filter(o => (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id)).length >= 2); }
 // Looks the user hasn't archived (archived ones are hidden from browse/pickers).
-// Every look this item is a member of (active + archived), newest-worn first.
+// Every ACTIVE look this item is a member of, newest-worn first (archived looks
+// stay out of the item's looks list too — user call 2026-07-11).
 function outfitsForItem(itemId) {
-  return displayOutfits()
+  return activeOutfits()
     .filter(o => (outfitItemMap.get(o.id) || []).includes(itemId))
     .sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
 }
@@ -3717,7 +3726,8 @@ function looksScopedOutfits() {
 }
 function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
 function outfitPieces(o) {
-  return outfitItems(o).filter(i => i.image_path)
+  // Photoless pieces stay in — they render as the tee placeholder glyph.
+  return outfitItems(o).slice()
     .sort((a, b) => (LAYER_ORDER[a.category] ?? 1.5) - (LAYER_ORDER[b.category] ?? 1.5));
 }
 
@@ -3853,14 +3863,16 @@ function matchesFormality(i, level) { return (itemFormalitySet(i) || []).include
 function matchesSeason(i, season) { const s = itemSeasonSet(i); return !!s && s.includes(season); }
 
 // Universal item filter — checks all active dims in state.
-// opts.noStatusDefault: skip the default "empty status = exclude Archive" logic
-// (used by Closet where the lens already handles status).
+// opts.noStatusDefault: skip the default "empty status = Available only" logic
+// (used by Closet where the lens already handles status, and by pickers/report
+// cards that manage status themselves). Explicitly picking statuses in the
+// funnel brings Storage/Archive back.
 function itemMatchesFilter(i, state, opts) {
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
           formality, retailer, acquisition, capsule } = state;
   const st = itemStatus(i);
   if (status?.size) { if (!status.has(st)) return false; }
-  else if (!opts?.noStatusDefault) { if (st === "Archive") return false; }
+  else if (!opts?.noStatusDefault) { if (st !== "Available") return false; }
   if (q) {
     const hay = [i.name, i.brand, i.notes, i.retailer, i.category, i.subcategory].filter(Boolean).join(" ").toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
@@ -3964,11 +3976,11 @@ function relDate(d) {
 // `wrapCls` frames the container; pieces use absolute % geometry so it scales to any size.
 function layoutCanvasHtml(o, wrapCls) {
   const lay = (Array.isArray(o && o.layout) ? o.layout : [])
-    .filter(p => { const it = itemById.get(p.item_id); return it && it.image_path; });
+    .filter(p => itemById.has(p.item_id));
   if (!lay.length) return null;
   const cells = lay.map((p, i) => {
     const it = itemById.get(p.item_id);
-    return `<div class="ocpiece" data-photo="${esc(it.image_path)}" data-canvas-item="${esc(p.item_id)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
+    return `<div class="ocpiece" data-photo="${esc(it.image_path || "")}" data-canvas-item="${esc(p.item_id)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
   }).join("");
   return `<div class="${wrapCls}">${cells}</div>`;
 }
@@ -3982,7 +3994,7 @@ function outfitCollageHtml(o, max, mini) {
   if (pieces.length === 1) cls += " solo";
   const cells = pieces.map((p, idx) => {
     const span = (pieces.length === 3 && idx === 2) ? " span2" : "";  // wide bottom for 3-piece looks
-    return `<div class="opiece${span}" data-photo="${esc(p.image_path)}"></div>`;
+    return `<div class="opiece${span}" data-photo="${esc(p.image_path || "")}"></div>`;
   }).join("");
   return `<div class="${cls}">${cells}</div>`;
 }
@@ -4498,7 +4510,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.planCtx = planCtx || null;
   _sugg.targetLevel = null;
   _sugg.activeContext = null;
-  _sugg.season = planCtx ? seasonOf(planCtx.date) : currentSeason();
+  _sugg.season = planCtx ? seasonOf(planCtxSeasonDate(planCtx)) : currentSeason();
   _sugg.idx = 0;
   _sugg.locked = new Set();
   _sugg.useWx = true;
@@ -4745,7 +4757,7 @@ function renderSuggestSheet() {
     </div>
     ${combo ? `
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
-      <button class="btn" data-swear>${_sugg.planCtx ? "Plan for " + esc(planDayLabel(_sugg.planCtx.date)) : "Wear this today"}</button>
+      <button class="btn" data-swear>${_sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date))) : "Wear this today"}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
       <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>↻ New suggestions</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
@@ -5154,15 +5166,15 @@ function openRandomLook() {
 // ---- outfit detail ----
 // Shared hero: a saved canvas layout, else a grid of piece photos.
 function lookHeroBlock(o) {
-  const lay = Array.isArray(o.layout) ? o.layout.filter(p => itemById.get(p.item_id) && itemById.get(p.item_id).image_path) : [];
+  const lay = Array.isArray(o.layout) ? o.layout.filter(p => itemById.has(p.item_id)) : [];
   if (lay.length) return `<div class="lk-canvas">${lay.map((p, idx) => {
     const it = itemById.get(p.item_id);
-    return `<div class="lk-cpiece" data-look-item="${esc(it.id)}" data-photo="${esc(it.image_path)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${idx + 1}"></div>`;
+    return `<div class="lk-cpiece" data-look-item="${esc(it.id)}" data-photo="${esc(it.image_path || "")}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${idx + 1}"></div>`;
   }).join("")}</div>`;
   const pieces = outfitPieces(o);
   if (pieces.length) return `<div class="lk-hero${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) => {
     const span = (pieces.length === 3 && idx === 2) ? " span2" : "";
-    return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path)}"></div>`;
+    return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path || "")}"></div>`;
   }).join("")}</div>`;
   return `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
 }
@@ -5213,6 +5225,7 @@ function openLookDetails(id) {
   const pieceRows = its.map((it, idx) => `
     ${idx > 0 ? '<div class="det-divider"></div>' : ""}
     <button class="det-row" data-occ-item="${esc(it.id)}" style="align-items:center">
+      <span class="det-piece-thumb" data-piece-open="${esc(it.id)}" data-photo="${esc(it.image_path || "")}"></span>
       <span style="flex:1;min-width:0">
         <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
         <span style="display:block;color:var(--muted);font-size:12px;margin-top:2px">${esc(pieceFormalityLabel(it))}</span>
@@ -5987,14 +6000,15 @@ function calCellCollageHtml(itemIds, outfit) {
   return `<div class="cal-ccoll${pieces.length === 1 ? ' solo' : ''}">${cells}</div>`;
 }
 
-// Day-view outfit collage (88×88 square, 2-col grid)
-function calOutfitCollageHtml(itemIds, outfit) {
+// Day-view outfit collage (88×88 square, 2-col grid). `tappable` (solo-item
+// cards only — look cards open the look instead) makes each cell open its item.
+function calOutfitCollageHtml(itemIds, outfit, tappable) {
   const canvas = outfit && layoutCanvasHtml(outfit, "cal-outfit-canvas");
   if (canvas) return canvas;
   const pieces = itemIds.map(id => itemById.get(id)).filter(Boolean).slice(0, 4);
   if (!pieces.length) return '<div class="cal-outfit-collage" style="background:#f4f4f7"></div>';
   const cells = pieces.map(p =>
-    `<div class="cal-outfit-piece" data-photo="${esc(p.image_path || '')}"></div>`).join('');
+    `<div class="cal-outfit-piece" data-photo="${esc(p.image_path || '')}"${tappable ? ` data-cal-item="${esc(p.id)}" style="cursor:pointer"` : ''}></div>`).join('');
   return `<div class="cal-outfit-collage${pieces.length === 1 ? ' solo' : ''}">${cells}</div>`;
 }
 
@@ -6141,7 +6155,7 @@ function renderCalendarDay(body) {
 
   const cardsHtml = groups.length ? groups.map(g => {
     const outfit  = g.outfitId ? outfitById.get(g.outfitId) : null;
-    const collage = calOutfitCollageHtml(g.itemIds, outfit);
+    const collage = calOutfitCollageHtml(g.itemIds, outfit, !g.outfitId);
     const notes   = outfit?.notes || '';
     const wearIdsStr = g.wearIds.join(',');
     return `<div class="cal-outfit-card">
@@ -6340,6 +6354,14 @@ function renderCalendarDay(body) {
     el.onclick = () => {
       const id = el.dataset.openLook;
       if (id && outfitById.has(id)) openLookFrom(id);  // open detail; back returns here
+    };
+  });
+
+  // Solo-logged items: tap a collage cell to open the item (back returns here).
+  body.querySelectorAll('[data-cal-item]').forEach(el => {
+    el.onclick = () => {
+      const it = itemById.get(el.dataset.calItem);
+      if (it) openItemFrom(it.id, { cat: it.category, sub: it.subcategory });
     };
   });
 
@@ -7414,9 +7436,9 @@ function renderStatsMain() {
   const rangeTag = statsDateRange === "all" ? "" : ` · past ${dateRangeHuman()}`;
   const notLoggedLabel = statsDateRange === "all" ? "Never Worn" : `Not Worn${rangeTag}`;
   const wornSub = `Most & Least worn${rangeTag}`;
-  const topLook = displayOutfits().slice().sort((a, b) => outfitWornCount(b) - outfitWornCount(a))[0];
+  const topLook = activeOutfits().sort((a, b) => outfitWornCount(b) - outfitWornCount(a))[0];
   const topLookSub = topLook ? `Most worn: ${outfitWornCount(topLook)} time${outfitWornCount(topLook) === 1 ? "" : "s"}` : "By wear count";
-  const likedCount = displayOutfits().filter(o => o.rating === 1).length;
+  const likedCount = activeOutfits().filter(o => o.rating === 1).length;
   const neglectedCount = likedNeglectedOutfits().length;
   const ctxCount = new Set(wears.flatMap(w => ctxArr(w))).size;
   const contextsRowSub = ctxCount ? `${ctxCount} context${ctxCount === 1 ? "" : "s"} logged` : "By occasion";
@@ -7687,7 +7709,7 @@ function likedNeglectedOutfits() {
 function renderStatsOutfitsPage() {
   const body = $("#statsBody");
   const neglected = statsOutfitsMode === "liked-neglected";
-  const list = (neglected ? likedNeglectedOutfits() : displayOutfits().slice()
+  const list = (neglected ? likedNeglectedOutfits() : activeOutfits()
     .sort((a, b) => outfitWornCount(b) - outfitWornCount(a))).slice(0, 100);
   const subtitle = (o) => neglected
     ? (outfitLastWorn(o) ? `last worn ${relDate(outfitLastWorn(o))}` : "never worn")
@@ -7765,8 +7787,10 @@ function contextTopLooks(context, limit = 12) {
     if (!w.outfit_id || !ctxArr(w).includes(context)) continue;
     counts.set(w.outfit_id, (counts.get(w.outfit_id) || 0) + 1);
   }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit)
-    .map(([id, n]) => ({ outfit: outfitById.get(id), n })).filter(x => x.outfit);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])
+    .map(([id, n]) => ({ outfit: outfitById.get(id), n }))
+    .filter(x => x.outfit && !effectiveArchived(x.outfit))  // archived looks live only in Archive + calendar
+    .slice(0, limit);
 }
 
 function renderStatsContextsPage() {
@@ -8729,8 +8753,11 @@ function renderCapsuleDetail() {
     ${trip && c.start_date && c.end_date ? `<button class="cap-plan" data-cap-byday>
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
       Plan outfits by day
-    </button>` : ""}
-    <button class="cap-plan${trip && c.start_date && c.end_date ? " sec" : ""}" data-cap-plan${trip && c.start_date && c.end_date ? ' style="margin-top:8px"' : ""}>
+    </button>` : `<button class="cap-plan" data-cap-byday>
+      <svg viewBox="0 0 24 24"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/></svg>
+      Planned outfits
+    </button>`}
+    <button class="cap-plan sec" data-cap-plan style="margin-top:8px">
       <svg viewBox="0 0 24 24"><path d="M12 3l-1.5 3L4 9v11h16V9l-6.5-3z"/><path d="M12 6v14"/></svg>
       Plan outfits from this
     </button>
@@ -8812,9 +8839,26 @@ let _planWx = {};  // date → {maxT,minT,code,hist,locName} for the open trip
 let _planWxLoadedFor = null;  // capsuleId whose weather is already in _planWx (avoids reload loop)
 
 function tripPlan(c) { return (c && c.plan && typeof c.plan === "object") ? c.plan : {}; }
+// Reserved plan key: the trip/capsule "outfit bucket" — planned looks not tied
+// to a day yet. Rides the same plan JSONB + add/remove pipeline as real dates.
+const PLAN_BUCKET = "bucket";
 function planLooksForDate(c, date) {
   const v = tripPlan(c)[date];
   return Array.isArray(v) ? v : (v ? [v] : []);
+}
+// Same, but drops deleted/archived looks (archived lives only in Archive + calendar).
+function planActiveLooks(c, date) {
+  return planLooksForDate(c, date).filter(oid => {
+    const o = outfitById.get(oid);
+    return o && !effectiveArchived(o);
+  });
+}
+// Season/weather anchor for a plan context — the bucket has no date of its own,
+// so fall back to the trip start (or today for undated capsules).
+function planCtxSeasonDate(planCtx) {
+  if (planCtx.date !== PLAN_BUCKET) return planCtx.date;
+  const c = capsuleById.get(planCtx.capsuleId);
+  return (c && c.start_date) || todayStr();
 }
 function tripDates(c) {
   const out = [];
@@ -8824,6 +8868,7 @@ function tripDates(c) {
   return out;
 }
 function planDayLabel(date) {
+  if (date === PLAN_BUCKET) return "Outfit bucket";
   const o = new Date(date + "T00:00:00");
   return o.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
@@ -8909,11 +8954,35 @@ function renderCapsulePlan() {
   const c = capsuleById.get(capsuleId);
   const dates = tripDates(c);
   const memberCount = capsuleItems(capsuleId).length;
+  const bucketIds = planActiveLooks(c, PLAN_BUCKET);
+
+  // Bucket looks already assigned to some day get a "✓ planned" mark (they stay
+  // in the bucket — one outfit can cover several days).
+  const plannedSomewhere = new Set(dates.flatMap(d => planLooksForDate(c, d)));
+  const bucketTiles = bucketIds.map(oid => {
+    const o = outfitById.get(oid);
+    return `<div class="plan-look">
+      <div data-plan-open="${esc(oid)}">${outfitCollageHtml(o, 4)}</div>
+      <button class="plan-look-x" data-plan-remove="${esc(oid)}" data-plan-date="${PLAN_BUCKET}" aria-label="Remove">×</button>
+      <div class="plan-look-name">${plannedSomewhere.has(oid) ? `<span class="plan-worn">✓ planned</span>` : esc(outfitName(o))}</div>
+    </div>`;
+  }).join("");
+  const bucketCard = `<div class="plan-day">
+    <div class="plan-day-hd">
+      <div class="plan-day-date">Outfit bucket<small>${bucketIds.length ? `${bucketIds.length} outfit${bucketIds.length === 1 ? "" : "s"} ready to assign` : "plan outfits here, then pull them onto days"}</small></div>
+    </div>
+    ${bucketIds.length ? `<div class="plan-looks">${bucketTiles}</div>` : ""}
+    <div class="plan-add-row">
+      <button class="plan-act" data-plan-assign="${PLAN_BUCKET}">＋ Look</button>
+      <button class="plan-act" data-plan-suggest="${PLAN_BUCKET}">✨ Suggest</button>
+      <button class="plan-act" data-plan-build="${PLAN_BUCKET}">✎ Build</button>
+    </div>
+  </div>`;
+
   const dayCards = dates.map(date => {
-    const looks = planLooksForDate(c, date);
+    const looks = planActiveLooks(c, date);
     const looksHtml = looks.map(oid => {
       const o = outfitById.get(oid);
-      if (!o) return "";
       const worn = planWorn(date, oid);
       return `<div class="plan-look">
         <div data-plan-open="${esc(oid)}">${outfitCollageHtml(o, 4)}</div>
@@ -8929,6 +8998,7 @@ function renderCapsulePlan() {
       </div>
       ${looks.length ? `<div class="plan-looks">${looksHtml}</div>` : ""}
       <div class="plan-add-row">
+        ${bucketIds.length ? `<button class="plan-act" data-plan-frombucket="${esc(date)}">🧺 From bucket</button>` : ""}
         <button class="plan-act" data-plan-assign="${esc(date)}">＋ Look</button>
         <button class="plan-act" data-plan-suggest="${esc(date)}">✨ Suggest</button>
         <button class="plan-act" data-plan-build="${esc(date)}">✎ Build</button>
@@ -8936,14 +9006,49 @@ function renderCapsulePlan() {
     </div>`;
   }).join("");
 
-  return capToolbar(c.name + " · By day", true) + `
+  const kind = capModeLabel(c).toLowerCase();
+  return capToolbar(c.name + (dates.length ? " · By day" : " · Planned outfits"), true) + `
     <div class="cap-hdr">
-      <div class="ch-name">Plan by day</div>
-      <div class="ch-sub">${dates.length} day${dates.length === 1 ? "" : "s"} · ${memberCount} piece${memberCount === 1 ? "" : "s"} in this trip</div>
+      <div class="ch-name">${dates.length ? "Plan by day" : "Planned outfits"}</div>
+      <div class="ch-sub">${dates.length ? `${dates.length} day${dates.length === 1 ? "" : "s"} · ` : ""}${memberCount} piece${memberCount === 1 ? "" : "s"} in this ${esc(kind)}</div>
     </div>
-    ${memberCount ? "" : `<div class="placeholder" style="padding:24px 32px"><b>No pieces yet</b><div>Add items to the trip first — planning is scoped to the trip's pieces.</div></div>`}
+    ${memberCount ? "" : `<div class="placeholder" style="padding:24px 32px"><b>No pieces yet</b><div>Add items to the ${esc(kind)} first — planning is scoped to its pieces.</div></div>`}
+    ${bucketCard}
     ${dayCards}
     <div style="height:30px"></div>`;
+}
+
+// "🧺 From bucket": assign a bucket look to a specific day (the look stays in
+// the bucket; assigning again on another day is fine).
+function openBucketAssignSheet(date) {
+  const c = capsuleById.get(capsuleId);
+  const bucketIds = planActiveLooks(c, PLAN_BUCKET);
+  const onDay = new Set(planLooksForDate(c, date));
+  const grid = bucketIds.length
+    ? `<div class="ogrid">${bucketIds.map(oid => {
+        const o = outfitById.get(oid);
+        const used = onDay.has(oid);
+        return `<button class="otile${used ? " selected" : ""}" data-bktpick="${esc(oid)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div>${used ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">On this day</div>` : ""}</button>`;
+      }).join("")}</div>`
+    : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">The bucket is empty.</div>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="bktPickCancel">Cancel</button>
+      <h2>Bucket → ${esc(planDayLabel(date))}</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 0 30px">${grid}</div>`;
+  $("#logSheet").hidden = false;
+  hydratePhotos($("#logInner"));
+  $("#bktPickCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logInner").querySelectorAll("[data-bktpick]").forEach(b => {
+    b.onclick = () => {
+      const oid = b.dataset.bktpick;
+      if (onDay.has(oid)) { toast("Already planned for this day"); return; }
+      $("#logSheet").hidden = true;
+      addPlanLook(capsuleId, date, oid);
+    };
+  });
 }
 
 // Assign a saved look to a trip day — scoped to looks built entirely from the
@@ -8964,7 +9069,7 @@ function openPlanLookPicker(date) {
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="planPickCancel">Cancel</button>
-      <h2>Look for ${esc(planDayLabel(date))}</h2>
+      <h2>${date === PLAN_BUCKET ? "Add to bucket" : `Look for ${esc(planDayLabel(date))}`}</h2>
       <span style="width:54px"></span>
     </div>
     <div style="padding:6px 16px 8px"><input class="inp" id="planPickSearch" placeholder="Search looks…" value=""></div>
@@ -9521,7 +9626,7 @@ function renderBuilderRail() {
   const list = builderRailPool();
   const have = new Set(builder.pieces.map(p => p.item_id));
   const cells = list.length
-    ? list.map(i => `<div class="bld-rail-item${have.has(i.id) ? " in" : ""}" data-railadd="${esc(i.id)}" data-photo="${esc(i.image_path)}"></div>`).join("")
+    ? list.map(i => `<div class="bld-rail-item${have.has(i.id) ? " in" : ""}" data-railadd="${esc(i.id)}" data-photo="${esc(i.image_path || "")}"></div>`).join("")
     : `<div class="muted" style="padding:20px 12px;font-size:13px">No items</div>`;
   const ov = document.createElement("div");
   ov.className = "bld-pick-overlay";
@@ -9544,7 +9649,7 @@ function renderBuilderCanvas() {
   const pieceEls = p.map((pc, i) => {
     const it = itemById.get(pc.item_id);
     if (!it) return "";
-    return `<div class="bpiece${i === sel ? " sel" : ""}" data-bidx="${i}" data-photo="${esc(it.image_path)}"
+    return `<div class="bpiece${i === sel ? " sel" : ""}" data-bidx="${i}" data-photo="${esc(it.image_path || "")}"
       style="left:${pc.x * 100}%;top:${pc.y * 100}%;width:${pc.s * 100}%;z-index:${i + 1}">
       <div class="bp-handle" data-bresize="1"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 21h5v-5M21 3l-7 7M3 21l7-7"/></svg></div>
     </div>`;
@@ -9677,7 +9782,8 @@ function renderBuilderPickerResults() {
 // Base pool for the builder picker — scoped to a capsule's pieces when the
 // builder was opened for trip-day planning (scopeCapsuleId set).
 function builderPool() {
-  let pool = items.filter(i => itemStatus(i) !== "Archive" && i.image_path);
+  // Photoless items are allowed — they place on the canvas as the tee placeholder.
+  let pool = items.filter(i => itemStatus(i) !== "Archive");
   if (builder && builder.scopeCapsuleId) {
     const set = new Set((capsuleLinkMap.get(builder.scopeCapsuleId) || []).map(l => l.item_id));
     pool = pool.filter(i => set.has(i.id));
@@ -10564,6 +10670,13 @@ function wireEvents() {
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
     if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
     if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
+    const pieceOpen = e.target.closest("[data-piece-open]");
+    if (pieceOpen) {
+      // Thumbnail tap opens the item; must run BEFORE the [data-occ-item] row check.
+      const it = itemById.get(pieceOpen.dataset.pieceOpen);
+      if (it) openItemFrom(it.id, { cat: it.category, sub: it.subcategory });
+      return;
+    }
     const occItem = e.target.closest("[data-occ-item]");
     if (occItem) { openOccasionEdit(occItem.dataset.occItem, () => { if (lookId) openLookDetails(lookId); }); return; }
     const piece = e.target.closest("[data-look-item]");
@@ -10624,6 +10737,8 @@ function wireEvents() {
     if (planWore) { e.stopPropagation(); return planWoreIt(planWore.dataset.planDate, planWore.dataset.planWore); }
     const planOpen = e.target.closest("[data-plan-open]");
     if (planOpen) { looksLens = "All"; looksFolder = null; return openLookFrom(planOpen.dataset.planOpen); }
+    const planFromBucket = e.target.closest("[data-plan-frombucket]");
+    if (planFromBucket) return openBucketAssignSheet(planFromBucket.dataset.planFrombucket);
     const planAssign = e.target.closest("[data-plan-assign]");
     if (planAssign) return openPlanLookPicker(planAssign.dataset.planAssign);
     const planSuggest = e.target.closest("[data-plan-suggest]");

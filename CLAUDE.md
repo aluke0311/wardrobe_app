@@ -21,9 +21,28 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-10 r3. Full rework from v25. ~10,800 lines.**
+**Current state: 2026-07-11 r1. Full rework from v25. ~10,900 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
+
+**"Bucket + Visibility polish" (2026-07-11 r1) is FULLY SHIPPED:** ① photoless
+items render a muted tee-glyph placeholder everywhere (`PHOTO_PLACEHOLDER`
+data-URI SVG applied by `loadPhotoNode` when `data-photo` is empty or the URL
+fails; `outfitPieces`/`layoutCanvasHtml`/`lookHeroBlock` no longer drop
+photoless pieces; the builder accepts photoless items — `builderPool`'s
+image_path filter removed). ② Calendar day-view SOLO-item collage cells are
+tappable (`calOutfitCollageHtml(ids, outfit, tappable)` → `data-cal-item` →
+`openItemFrom`); look cards still open the look first (user call). ③ Look-
+details piece rows carry a `.det-piece-thumb` thumbnail that opens the item
+(`data-piece-open`, checked BEFORE `data-occ-item` in the looks delegation);
+the rest of the row still edits formality. ④ Empty status filter now means
+**Available only** (`itemMatchesFilter` default — Storage no longer counts in
+Style Stats unless explicitly picked in the funnel). ⑤ Archived looks purged
+from Most Worn Looks, stats main-page counts, context Top Looks, the Home
+Looks-tile count, `outfitsForItem` (item's looks list), and trip-plan day
+cards (`planActiveLooks`) — archived looks appear ONLY in the Archive lens and
+on the calendar. ⑥ **Trip/capsule OUTFIT BUCKET** — see CAPSULES entry.
+**▶ NEXT UP:** nothing scheduled — ask before starting new work.
 
 **Report Cards (2026-07-10) shipped in `2026-07-10 r2`→`r3`** — r2 shipped Brand
 & Retailer report cards; r3 (same day) generalized the engine to 7 dimensions
@@ -31,8 +50,7 @@ Do not use v25 as a reference for current UI code.
 Workhorses/Declutter smart lists, the capsule-picker suggested strip, and the
 item-detail workhorse badge. See the STYLE STATS entry below for
 `buildItemPerf`/`buildReportStats`/`renderStatsReportPage`/
-`renderStatsReportDetailPage`. **▶ NEXT UP:** nothing scheduled — ask before
-starting new work.
+`renderStatsReportDetailPage`.
 
 **"Weather + Loop Polish" v3 (2026-07-09) is FULLY SHIPPED in `2026-07-09 r1`**
 (decisions locked in ROADMAP.md's v3 section): the W7 "Today" tile was REMOVED
@@ -179,6 +197,17 @@ Top-of-`<script>` config, then logically grouped sections:
   Saving in any of those calls `addPlanLook`. Plans live in `capsules.plan` JSONB (intentions,
   NOT wears — `migration/capsule_plan.sql`); "Wore it" (`planWoreIt`) converts a day to a real
   wear. `finishBuilder(id,msg)` routes a builder save back to the plan when `builder.planCtx` set.
+  **Outfit bucket (2026-07-11 r1):** `PLAN_BUCKET = "bucket"` is a RESERVED key in the same
+  `capsules.plan` JSONB — a pool of planned looks not tied to a day. The plan view (now reachable
+  for ALL capsules: dated trips get "Plan outfits by day", undated capsules get a "Planned
+  outfits" button, same `data-cap-byday`/`openTripPlan`) renders the bucket card first with its
+  own ＋ Look / ✨ Suggest / ✎ Build actions — all the existing plan plumbing works because they
+  just pass `date = PLAN_BUCKET` (`planDayLabel` special-cases the label; `planCtxSeasonDate`
+  anchors season to trip start / today since the bucket has no date; suggest button reads "Add
+  to bucket"). Day cards get a **"🧺 From bucket"** chip (`openBucketAssignSheet`) — assigning
+  KEEPS the look in the bucket (one outfit can cover several days); bucket tiles show
+  "✓ planned" once used somewhere. `planActiveLooks(c, date)` is the render-side reader — it
+  drops deleted AND archived looks (raw ids stay in the JSONB; unarchiving restores them).
 - **CALENDAR** — `renderCalendar()` dispatches month/day views. Day view: outfit groups,
   swipe-left actions (Copy/Move/Delete). "+ Clothing" / "+ Look" log pickers, both with
   a filter funnel (`pickerFilter`/`PICKER_FILTER_DIMS` for +Clothing, `calLookFilter`/
@@ -426,7 +455,9 @@ writes a new column/table before its migration is confirmed.**
 **Canonical filter predicates** (single source of truth): `matchesFormality(i, level)`
 (numeric 1–8) and `matchesSeason(i, season)` (DERIVED via `itemSeasonSet`; unknown
 season = no match). **Status is always read via `itemStatus(i)`** (null → "Available");
-an empty status filter excludes Archive (`itemMatchesFilter` default; pickers/builder
+an empty status filter means **Available only** (`itemMatchesFilter` default, tightened
+2026-07-11 r1 — it used to only exclude Archive, which let Storage into Style Stats;
+explicitly picking statuses in the funnel brings Storage/Archive back; pickers/builder
 pass `{ noStatusDefault: true }` because they have their own status chips). `STATUSES`
 no longer includes Wishlist. `inSeason()` (suggestions) is intentionally separate —
 unknown = all-season-eligible.
