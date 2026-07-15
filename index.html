@@ -1117,7 +1117,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-11 r7";
+const APP_VERSION = "2026-07-15 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1568,6 +1568,133 @@ const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 const todayStr = () => localISO(new Date());
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
 const parseList = (s) => String(s || "").split(",").map(x => x.trim()).filter(Boolean);
+
+/* ===================================================================
+   LAUNDRY — dirty state is DERIVED from wears + items.last_washed
+   (migration/items_laundry.sql). null last_washed = clean: tracking is
+   opt-in by behavior — an item joins the first time it's stamped washed
+   (or overridden into the hamper). No stored dirty flag anywhere.
+   =================================================================== */
+// Wears (distinct days) per wash, by subcategory; category fallback below.
+// Infinity = never dirty. Tune from experience, like the WX thresholds.
+const WEAR_TOLERANCE = {
+  "Tee shirts": 1, "Graphic tees": 1, "Sleeveless": 1, "Blouses": 1,
+  "Long-sleeve tees": 2, "Sweatshirts": 3, "Sweaters": 4, "Cardigans": 4,
+  "Jeans": 5, "Pants": 3, "Shorts": 2, "Skirts": 2, "Leggings/Joggers": 1, "Tights": 1,
+  "Short": 1, "Long": 2, "Cocktail": 2,
+  "Workout tops": 1, "Active shorts": 1, "Sports bras": 1, "Swimwear": 1,
+};
+const WEAR_TOLERANCE_CAT = { Tops: 1, Bottoms: 2, Dresses: 1, Workout: 1, Outerwear: Infinity, Shoes: Infinity };
+// Her real loads, keyed off color_family. Unmapped colors are only caught by
+// the "All together" chip in the laundry sheet.
+const LAUNDRY_LOADS = {
+  Whites: ["White", "Beige"],
+  Cools:  ["Blue", "Teal", "Green", "Purple", "Gray", "Black", "Metallic"],
+  Warms:  ["Red", "Orange", "Yellow", "Pink", "Maroon", "Brown"],
+};
+const LAUNDRY_RESUGGEST_DAYS = 7;  // dirty this long → back in the suggestion pool (badged)
+const LAUNDRY_STALE_DAYS = 7;      // hamper this stale → Home "done laundry?" prompt
+const LAUNDRY_SNOOZE_DAYS = 3;     // "Not yet" pushes the prompt this far out
+// Write-UI gate: true once migration/items_laundry.sql has run (loadData selects *
+// so the column then appears on every row). Read paths need no gate — an absent
+// column reads as null last_washed, i.e. everything clean.
+const LAUNDRY_READY = () => items.length > 0 && "last_washed" in items[0];
+
+function wearTolerance(i) {
+  if (!i) return Infinity;
+  if (i.subcategory != null && i.subcategory in WEAR_TOLERANCE) return WEAR_TOLERANCE[i.subcategory];
+  return WEAR_TOLERANCE_CAT[i.category] ?? Infinity;
+}
+// One pass over wears → Map(item_id → Set of distinct worn dates). Build once per
+// bulk scan (grids, suggester pool) and pass into the helpers below; per-item
+// calls without one still work, they just pay the pass themselves.
+function laundryState() {
+  const m = new Map();
+  for (const w of wears) {
+    if (!w.item_id || !w.worn_on) continue;
+    let s = m.get(w.item_id); if (!s) m.set(w.item_id, s = new Set());
+    s.add(w.worn_on);
+  }
+  return m;
+}
+function wearDatesSinceWash(i, ls) {
+  const s = (ls || laundryState()).get(i.id);
+  if (!s) return [];
+  const since = i.last_washed;
+  return [...s].filter(d => !since || d > since).sort();
+}
+// The "one more wear" override stores the wear-day count at the moment it was set
+// ("extra:N") — once a NEWER wear lands (count > N) the grace is spent, with no
+// wear-path bookkeeping. "hamper" forces dirty until the next wash stamp.
+function isDirty(i, ls) {
+  if (!i) return false;
+  const st = i.laundry_state || null;
+  if (st === "hamper") return true;
+  if (!i.last_washed) return false;  // never washed in-app = not tracked yet
+  const tol = wearTolerance(i);
+  if (tol === Infinity) return false;
+  const n = wearDatesSinceWash(i, ls).length;
+  if (st && st.startsWith("extra:") && n <= +st.slice(6)) return false;
+  return n >= tol;
+}
+// Date the item crossed into the hamper (its tolerance-th wear day since the
+// wash) — feeds staleness + suggestion re-entry.
+function dirtySince(i, ls) {
+  if (!isDirty(i, ls)) return null;
+  const dates = wearDatesSinceWash(i, ls);
+  const tol = wearTolerance(i);
+  if (tol !== Infinity && dates.length >= tol) return dates[tol - 1];
+  return dates.length ? dates[dates.length - 1] : todayStr();  // "hamper" override, no wears since wash
+}
+function dirtyDays(i, ls) { const d = dirtySince(i, ls); return d == null ? null : daysSince(d); }
+// Suggester eligibility: clean, or dirty long enough that keeping it filtered
+// would starve the pool while the laundry prompt sits unanswered (re-enters badged).
+function suggestibleClean(i, ls) { return !isDirty(i, ls) || dirtyDays(i, ls) >= LAUNDRY_RESUGGEST_DAYS; }
+
+function hamperItems(ls) {
+  ls = ls || laundryState();
+  return items.filter(i => itemStatus(i) === "Available" && isDirty(i, ls));
+}
+// Load a color family belongs to (null = unmapped).
+function laundryLoadOf(cf) {
+  for (const [load, fams] of Object.entries(LAUNDRY_LOADS)) if (fams.includes(cf)) return load;
+  return null;
+}
+function laundryStale(ls) {
+  if (!LAUNDRY_READY()) return false;
+  ls = ls || laundryState();
+  return hamperItems(ls).some(i => (dirtyDays(i, ls) ?? 0) >= LAUNDRY_STALE_DAYS);
+}
+// Stamp items washed on a date: sets last_washed + clears any one-time override.
+// Optimistic; PostgREST in.() needs quoted ids, chunked to keep URLs sane.
+async function stampWash(ids, dateStr) {
+  if (!ids.length) return;
+  const day = dateStr || todayStr();
+  for (const id of ids) { const it = itemById.get(id); if (it) { it.last_washed = day; it.laundry_state = null; } }
+  for (let k = 0; k < ids.length; k += 40) {
+    const chunk = ids.slice(k, k + 40).map(id => `"${id}"`).join(",");
+    await rest(`/items?id=in.(${chunk})`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ last_washed: day, laundry_state: null }) });
+  }
+}
+async function setLaundryOverride(id, state) {
+  const it = itemById.get(id); if (!it) return;
+  it.laundry_state = state;  // optimistic
+  try {
+    await rest(`/items?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ laundry_state: state }) });
+  } catch (e) { toast(e.message); }
+}
+// Make the item's shown state = wantDirty, minimally: clear the override when the
+// derived state already agrees, else set the override that forces it.
+async function flipLaundry(id, wantDirty, ls) {
+  const it = itemById.get(id); if (!it) return;
+  const st = it.laundry_state;
+  it.laundry_state = null;                // peek at the un-overridden state
+  const derived = isDirty(it, ls);
+  it.laundry_state = st;
+  if (derived === wantDirty) return setLaundryOverride(id, null);
+  if (wantDirty) return setLaundryOverride(id, "hamper");
+  return setLaundryOverride(id, "extra:" + wearDatesSinceWash(it, ls).length);
+}
 
 /* ===================================================================
    DOM UTILS
@@ -4318,9 +4445,17 @@ function scoreCombo(its, target, season = null, wx = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
-  const avail = base.filter(i => i.image_path && !isNoSuggest(i));
+  let avail = base.filter(i => i.image_path && !isNoSuggest(i));
+  // Laundry: hamper items sit out. Locked pieces bypass via the pinned-slot path
+  // and the seed is unshifted after filtering, so both are exempt by construction.
+  // Items dirty LAUNDRY_RESUGGEST_DAYS+ re-enter (badged) so an unanswered
+  // laundry prompt can never starve the pool.
+  if (cleanOnly) {
+    const ls = laundryState();
+    avail = avail.filter(i => suggestibleClean(i, ls));
+  }
   const seed = seedItemId ? itemById.get(seedItemId) : null;
   // V3 lock-a-piece: locked items pin their slot — every returned combo contains
   // every locked piece (mutually impossible locks, e.g. dress + top, yield none).
@@ -4501,8 +4636,9 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, locked: new Set() };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set() };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
+const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
 
 // C1: context chips on the suggestion sheet. Seed values (tweak here) for when a
@@ -4539,6 +4675,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.idx = 0;
   _sugg.locked = new Set();
   _sugg.useWx = true;
+  _sugg.useClean = true;
   // Weather: plan days use the trip's per-day forecast; otherwise home weather
   // (cached per day). If it isn't in memory yet, fetch and fold it in once.
   _sugg.wx = planCtx
@@ -4547,7 +4684,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   const pool = capsuleId
     ? capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available")
     : null;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season, _suggWx());
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season, _suggWx(), null, _suggClean());
   renderSuggestSheet();
   $("#logSheet").hidden = false;
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -4556,7 +4693,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx());
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean());
     }
     renderSuggestSheet();
   });
@@ -4591,8 +4728,10 @@ function swapSuggestionPiece(pieceId) {
   const others = combo.pieces.filter(p => p.id !== pieceId);
   const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
+  const ls = laundryState();
   let cands = pool.filter(i =>
     i.image_path && !isNoSuggest(i) && i.id !== pieceId &&
+    (!_suggClean() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
     inSeason(i, _sugg.season) &&
     !others.some(o => isExcluded(i.id, o.id)));
@@ -4630,9 +4769,11 @@ function addSuggestionLayer() {
   if (!combo) return;
   const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
+  const ls = laundryState();
   let cands = pool.filter(i =>
     i.image_path && !isNoSuggest(i) &&
     !combo.pieces.some(p => p.id === i.id) &&
+    (!_suggClean() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === "Outerwear" || (isLayer(i) && i.category === "Tops")) &&
     inSeason(i, _sugg.season) &&
     !combo.pieces.some(p => isExcluded(i.id, p.id)));
@@ -4765,6 +4906,7 @@ function renderSuggestSheet() {
         ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
         <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
         ${_sugg.wx && _sugg.wx.maxT != null ? `<button class="cap-chip${_sugg.useWx ? " on" : ""}" data-swx style="font-size:13px" title="Weather-aware picks">${wmoEmoji(_sugg.wx.code)} ${_sugg.wx.maxT}°/${_sugg.wx.minT}°</button>` : ""}
+        ${(() => { if (!LAUNDRY_READY()) return ""; const n = hamperItems().length; return n ? `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="Skip items in the hamper">🧺 Clean only</button>` : ""; })()}
       </div>
     </div>
     <div style="padding:12px 16px" id="sgPreview">
@@ -4772,10 +4914,13 @@ function renderSuggestSheet() {
       ${combo ? `<div class="center" style="font-size:12px;color:var(--accent);padding:8px 0 0;font-weight:500">${esc(suggestionWhy(combo))}</div>` : ""}
       ${combo ? (() => {
         const layerPc = comboLayerPiece(combo);
+        const ls = laundryState();
         return `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
         ${combo.pieces.map(p => {
           const lk = _sugg.locked.has(p.id);
-          const lbl = (layerPc && layerPc.id === p.id) ? "Layer" : suggSlotLabel(p);
+          // 🧺 marks a dirty piece that's in the combo anyway (locked/seeded,
+          // 7-day re-entry, or the clean filter toggled off).
+          const lbl = (isDirty(p, ls) ? "🧺 " : "") + ((layerPc && layerPc.id === p.id) ? "Layer" : suggSlotLabel(p));
           return `<span style="display:inline-flex;gap:1px">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
             <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>↻ ${esc(lbl)}</button>
@@ -4802,7 +4947,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
     renderSuggestSheet();
   };
 
@@ -4837,6 +4982,9 @@ function renderSuggestSheet() {
 
   const wxBtn = $("#logInner").querySelector("[data-swx]");
   if (wxBtn) wxBtn.onclick = () => { _sugg.useWx = !_sugg.useWx; regen(); };
+
+  const cleanBtn = $("#logInner").querySelector("[data-sclean]");
+  if (cleanBtn) cleanBtn.onclick = () => { _sugg.useClean = !_suggClean(); regen(); };
 
   $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
@@ -4975,7 +5123,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -5056,7 +5204,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }

@@ -49,6 +49,8 @@ create table if not exists items (
   official_name text,
   notes         text,
   image_path    text,           -- <user_id>/<uuid>.webp in the wardrobe bucket
+  last_washed   date,           -- null = laundry not tracked yet (reads clean)
+  laundry_state text,           -- one-time override: 'hamper' | 'extra:<n>' (see migration/items_laundry.sql)
   created_at    timestamptz not null default now()
 );
 
