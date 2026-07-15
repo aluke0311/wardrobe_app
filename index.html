@@ -1130,7 +1130,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r6";
+const APP_VERSION = "2026-07-15 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5728,14 +5728,16 @@ function openLookDetails(id) {
       ${(() => {
         const sims = similarLooks(o);
         if (!sims.length) return "";
-        const tiles = sims.map(s => `<button class="otile" data-look="${esc(s.o.id)}">
-          ${outfitCollageHtml(s.o, 4)}
-          ${s.o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
-          <div class="oname">${esc(outfitName(s.o))}</div>
-          <div style="font-size:11px;color:var(--accent);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.label)}</div>
+        // Horizontal scroll strip (wa-strip pattern) — small fixed-width tiles so
+        // nothing runs off a phone's edge; swipe sideways for more.
+        const tiles = sims.map(s => `<button class="wa-tile" data-look="${esc(s.o.id)}">
+          ${outfitCollageHtml(s.o, 4, true)}
+          ${s.o.rating === 1 ? `<div class="otile-heart" style="width:14px;height:14px"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
+          <div class="wa-name">${esc(outfitName(s.o))}</div>
+          <div style="font-size:10.5px;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.label)}</div>
         </button>`).join("");
         return `<div class="det-section-label">SIMILAR LOOKS</div>
-          <div class="ogrid" style="padding:4px 0 8px">${tiles}</div>`;
+          <div class="wa-strip" style="padding-left:0;padding-right:0">${tiles}</div>`;
       })()}
     </div>`;
   $("#itemBar").hidden = true;
