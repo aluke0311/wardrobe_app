@@ -1130,7 +1130,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r7";
+const APP_VERSION = "2026-07-15 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1984,6 +1984,13 @@ let _itemReturn = null;
 // captures its origin via openLookFrom(); looksBack() invokes it when leaving
 // the look. Cleared by genuine tab navigation.
 let _lookReturn = null;
+// Prev/next sibling nav overrides (captured in VISUAL order at tap time, so the
+// item photo view / look canvas swipe through exactly what was on screen — used
+// for surfaces whose order siblingItems()/the looks list can't re-derive, e.g. a
+// capsule's grouped grid). null = fall back to the default closet/looks list.
+let _itemSiblingIds = null;   // array of item ids | null
+let _itemSiblingLabel = null; // e.g. the capsule name, shown in the sib bar
+let _lookSiblingIds = null;   // array of outfit ids | null
 let _itemSlideDir = null; // "next" | "prev" → slide-in animation for sibling navigation
 let _reviewMode = false;  // item detail opened from closet review (closetBack returns to review)
 let gridCols = 3;         // items per row (2–5), persisted to localStorage
@@ -2483,9 +2490,13 @@ function openItemFrom(id, browseCtx) {
   const ret = makeItemReturn();             // capture BEFORE we bring the closet forward
   if (ret) {
     const snap = { cat: closetCat, sub: closetSub, res: searchResults };
-    _itemReturn = () => { closetCat = snap.cat; closetSub = snap.sub; searchResults = snap.res; ret(); };
+    _itemReturn = () => { closetCat = snap.cat; closetSub = snap.sub; searchResults = snap.res; _itemSiblingIds = null; _itemSiblingLabel = null; ret(); };
     _itemReturn.tab = ret.tab;
   } else _itemReturn = null;
+  // Explicit sibling list (capsule/trip grid) — prev/next swipes through it
+  // instead of a closet category.
+  _itemSiblingIds = (browseCtx && browseCtx.siblings) || null;
+  _itemSiblingLabel = (browseCtx && browseCtx.siblingLabel) || null;
   if (browseCtx) {  // sibling prev/next nav browses the item's own category
     closetCat = browseCtx.cat ?? null;
     closetSub = browseCtx.sub ?? null;
@@ -2505,6 +2516,7 @@ function openItemFrom(id, browseCtx) {
 // so back returns to where the look was opened.
 function openLookFrom(id) {
   _lookReturn = makeScreenReturn("looks");  // capture BEFORE we bring Looks forward
+  _lookSiblingIds = null;                   // opened singly from another screen — no sibling strip
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === "tab-looks"));
   $$("#tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === "looks"));
   $("#title").textContent = TAB_TITLES.looks;
@@ -2579,6 +2591,8 @@ const FIELD_CONFIGS = {
 
 // Items visible in the current subcategory/grid context (for prev/next navigation).
 function siblingItems() {
+  // Explicit list captured at tap time (capsule/trip grid) wins.
+  if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -2604,7 +2618,8 @@ function openItem(id) {
 
   const sibs = siblingItems();
   const sibIdx = sibs.findIndex(x => x.id === id);
-  const sibLabel = closetSub && closetSub !== "__all__" && closetSub !== "__other__"
+  const sibLabel = _itemSiblingIds ? (_itemSiblingLabel || "")
+    : closetSub && closetSub !== "__all__" && closetSub !== "__other__"
     ? closetSub : closetCat || "Closet";
   const sibBar = sibs.length > 1 ? `
     <div class="item-sib-bar">
@@ -5618,6 +5633,7 @@ function looksBack() {
 // filtered if scoped).
 function leaveLook() {
   lookId = null; lookView = "canvas";
+  _lookSiblingIds = null;
   if (_lookReturn) { const r = _lookReturn; _lookReturn = null; return r(); }
   renderLooks();
 }
@@ -5651,13 +5667,31 @@ function openLook(id) {
   const its = outfitItems(o);
   const ic = (svg, label, act, cls) =>
     `<button class="lk-act${cls ? ` ${cls}` : ""}" data-lkact="${act}"><svg viewBox="0 0 24 24">${svg}</svg><span>${label}</span></button>`;
+
+  // Prev/next sibling nav (arrows + swipe), mirroring the item photo view. Siblings
+  // are the looks captured in visual order when the tile was tapped.
+  const sibs = (_lookSiblingIds || []).map(x => outfitById.get(x)).filter(Boolean);
+  const sibIdx = sibs.findIndex(x => x.id === id);
+  const hasSibs = sibs.length > 1 && sibIdx >= 0;
+  const sibBar = hasSibs ? `
+    <div class="item-sib-bar">
+      <button class="item-sib-btn" id="lookPrev" ${sibIdx <= 0 ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="item-sib-label">${sibIdx + 1} of ${sibs.length}</span>
+      <button class="item-sib-btn" id="lookNext" ${sibIdx >= sibs.length - 1 ? "disabled" : ""}>
+        <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>` : "";
+
   const body = $("#looksBody");
   body.innerHTML = `
     ${looksToolbar(esc(outfitName(o)), true, false, id)}
+    ${sibBar}
     ${!o.archived && effectiveArchived(o) ? `<div class="center muted" style="font-size:12.5px;padding:6px 16px 0;color:var(--accent)">Hidden from browse — contains an archived item</div>` : ""}
     <div class="lk-canvas-wrap">
       ${lookHeroBlock(o)}
-      <div class="center muted" style="font-size:12.5px;margin-top:4px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it</div>
+      <div class="center muted" style="font-size:12.5px;margin-top:4px">${its.length} piece${its.length === 1 ? "" : "s"} · tap a piece to open it${hasSibs ? " · swipe to browse" : ""}</div>
     </div>
     <div class="lk-actbar">
       ${ic('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>', "Details", "details")}
@@ -5670,6 +5704,27 @@ function openLook(id) {
   $("#itemBar").hidden = true;
   hydratePhotos(body);
   window.scrollTo(0, 0);
+
+  if (hasSibs) {
+    const goSib = (dir) => {
+      const idx = sibs.findIndex(x => x.id === id);
+      if (dir === "next" && idx < sibs.length - 1) openLook(sibs[idx + 1].id);
+      else if (dir === "prev" && idx > 0) openLook(sibs[idx - 1].id);
+    };
+    const pv = $("#lookPrev"), nx = $("#lookNext");
+    if (pv) pv.onclick = () => goSib("prev");
+    if (nx) nx.onclick = () => goSib("next");
+    const canvas = body.querySelector(".lk-canvas-wrap");
+    if (canvas) {
+      let _lsx = 0, _lsy = 0;
+      canvas.addEventListener("touchstart", e => { _lsx = e.touches[0].clientX; _lsy = e.touches[0].clientY; }, { passive: true });
+      canvas.addEventListener("touchend", e => {
+        const dx = e.changedTouches[0].clientX - _lsx, dy = e.changedTouches[0].clientY - _lsy;
+        if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+        goSib(dx < 0 ? "next" : "prev");
+      }, { passive: true });
+    }
+  }
 }
 
 // Look "Details" metadata page (Edit button on the canvas view).
@@ -11078,6 +11133,7 @@ function switchTab(name) {
   // do NOT route through switchTab.
   _itemReturn = null;
   _lookReturn = null;
+  _itemSiblingIds = null; _itemSiblingLabel = null; _lookSiblingIds = null;
   if (name !== "closet") {
     hideGridBar();
     exitSelectMode();
@@ -11221,7 +11277,13 @@ function wireEvents() {
       return;
     }
     const look = e.target.closest("[data-look]");
-    if (look) return openLook(look.dataset.look);
+    if (look) {
+      // Swipe siblings = the looks in the container just tapped, in visual order
+      // (grid, search results, or the similar-looks strip).
+      const scope = look.closest(".ogrid, #looksSearchResults, .wa-strip") || $("#looksBody");
+      _lookSiblingIds = $$("[data-look]", scope).map(b => b.dataset.look);
+      return openLook(look.dataset.look);
+    }
   });
 
   // build-a-look canvas: toolbar, picker, piece controls
@@ -11308,7 +11370,12 @@ function wireEvents() {
     const pack = e.target.closest("[data-pack]");
     if (pack) { e.stopPropagation(); return togglePack(pack.dataset.pack); }
     const capItem = e.target.closest("[data-cap-item]");
-    if (capItem) return openItemFrom(capItem.dataset.capItem, { cat: null, sub: null });
+    if (capItem) {
+      // Swipe siblings = the capsule/trip pieces in the order they're shown.
+      const ids = $$("#capsulesBody [data-cap-item]").map(b => b.dataset.capItem);
+      const c = capsuleById.get(capsuleId);
+      return openItemFrom(capItem.dataset.capItem, { cat: null, sub: null, siblings: ids, siblingLabel: c ? c.name : "Capsule" });
+    }
     const pick = e.target.closest("[data-pick]");
     if (pick) return togglePick(pick.dataset.pick);
     const card = e.target.closest("[data-cap]");
