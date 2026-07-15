@@ -1130,7 +1130,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r5";
+const APP_VERSION = "2026-07-15 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -4080,6 +4080,53 @@ function looksScopedOutfits() {
   return list;
 }
 function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
+
+// Similar looks (2026-07-15): graduated by piece overlap. Off-by-one relatives
+// come first — one piece swapped, added, or removed — each carrying a diff
+// label (dedup guarantees no two looks share an identical set, so an exact
+// twin never appears). Then higher-overlap looks ranked by Jaccard share, with
+// a floor of 2 shared pieces so "same jeans, everything else different" doesn't
+// count. Archived looks stay out (Archive lens + calendar only). Returns
+// [{o, label, tier}] best-first.
+function similarLooks(o, limit = 8) {
+  const mine = new Set(outfitItemMap.get(o.id) || []);
+  if (!mine.size) return [];
+  const nm = id => { const it = itemById.get(id); return it ? (it.name || "piece") : "piece"; };
+  const scored = [];
+  for (const other of activeOutfits()) {
+    if (other.id === o.id) continue;
+    const theirs = new Set(outfitItemMap.get(other.id) || []);
+    if (!theirs.size) continue;
+    let shared = 0;
+    for (const id of theirs) if (mine.has(id)) shared++;
+    const added = theirs.size - shared;    // pieces they have that I don't
+    const removed = mine.size - shared;    // pieces I have that they don't
+    const offByOne = added <= 1 && removed <= 1 && (added + removed) >= 1;
+    // Off-by-one needs only 1 shared piece (a 2-piece look swapping its top is
+    // "same jeans, new top"); broader-overlap matches need 2.
+    if (offByOne ? shared < 1 : shared < 2) continue;
+    const jaccard = shared / (mine.size + theirs.size - shared);
+    let label;
+    if (offByOne && added === 1 && removed === 1) {
+      const r = [...mine].find(id => !theirs.has(id)), a = [...theirs].find(id => !mine.has(id));
+      label = `${nm(r)} → ${nm(a)}`;
+    } else if (offByOne && added === 1) label = `+ ${nm([...theirs].find(id => !mine.has(id)))}`;
+    else if (offByOne && removed === 1) label = `− ${nm([...mine].find(id => !theirs.has(id)))}`;
+    else label = `${shared} shared`;
+    scored.push({
+      o: other, label,
+      tier: offByOne ? 0 : 1,
+      // within off-by-one: add/remove (distance 1) before a swap (distance 2)
+      dist: added + removed, jaccard,
+      liked: other.rating === 1 ? 1 : 0, worn: outfitWornCount(other),
+    });
+  }
+  scored.sort((a, b) =>
+    a.tier - b.tier || a.dist - b.dist || b.jaccard - a.jaccard ||
+    b.liked - a.liked || b.worn - a.worn);
+  return scored.slice(0, limit);
+}
+
 function outfitPieces(o) {
   // Photoless pieces stay in — they render as the tee placeholder glyph.
   return outfitItems(o).slice()
@@ -5677,6 +5724,19 @@ function openLookDetails(id) {
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
+
+      ${(() => {
+        const sims = similarLooks(o);
+        if (!sims.length) return "";
+        const tiles = sims.map(s => `<button class="otile" data-look="${esc(s.o.id)}">
+          ${outfitCollageHtml(s.o, 4)}
+          ${s.o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
+          <div class="oname">${esc(outfitName(s.o))}</div>
+          <div style="font-size:11px;color:var(--accent);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.label)}</div>
+        </button>`).join("");
+        return `<div class="det-section-label">SIMILAR LOOKS</div>
+          <div class="ogrid" style="padding:4px 0 8px">${tiles}</div>`;
+      })()}
     </div>`;
   $("#itemBar").hidden = true;
   hydratePhotos(body);
