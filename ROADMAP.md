@@ -1,15 +1,18 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-10 r3**. **NEXT UP: Laundry v1 + Trips (planned
-> 2026-07-15, below) — awaiting go-ahead + migration.**
+> Current version: **2026-07-15 r4**. Nothing scheduled — see Back-burner.
+> ⚠️ User still needs to run `migration/items_laundry.sql` (laundry write-UI is
+> hidden until she does).
 
 ---
 
-## 📋 PLANNED — Laundry v1 + Trips (brainstormed 2026-07-15, NOT built)
+## ✅ SHIPPED BUILD — Laundry v1 + Trips (planned + built 2026-07-15, r1→r4)
 
-**Status: decisions locked, nothing built. Blocked on user running
-`migration/items_laundry.sql` (to be written) before any UI ships.**
+**Status: FULLY SHIPPED same day, `2026-07-15 r1`→`r4` (core+suggester → sheet+
+badges+item actions → Home strip+prompt → trips). All laundry write-UI hides
+behind `LAUNDRY_READY()` until the user runs `migration/items_laundry.sql` —
+⚠️ NOT YET RUN. See CLAUDE.md's LAUNDRY entry for implementation names.**
 
 History: laundry was rejected TWICE (v25 `availability` field died of manual
 upkeep; v3 planning said "stays dead"). User deliberately reopened it 2026-07-15.
@@ -70,9 +73,11 @@ exception to the "no nudges, ever" rule — laundry only, don't generalize.
 ### Schema
 
 One migration, `migration/items_laundry.sql`: `items.last_washed date` +
-`items.laundry_state text` (null | 'extra_wear' | 'hamper'). Wash stamp clears
-both; wear-create paths clear 'extra_wear'. **User runs it in the Supabase SQL
-editor BEFORE any UI deploys.**
+`items.laundry_state text` (null | `'extra:<n>'` | `'hamper'`). As built,
+"one more wear" stores the wear-day count at set time (`extra:<n>`) and
+self-expires when a newer wear lands — NO wear-path bookkeeping (improvement
+over the planned clear-on-wear). Wash stamps clear the override.
+**⚠️ User runs it in the Supabase SQL editor; UI shipped gated on it.**
 
 ### Build order (sketch)
 

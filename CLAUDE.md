@@ -21,9 +21,45 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-11 r1. Full rework from v25. ~10,900 lines.**
+**Current state: 2026-07-15 r4. Full rework from v25. ~11,400 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
+
+**LAUNDRY v1 + Trips (2026-07-15, r1→r4) is FULLY SHIPPED** (decisions in
+ROADMAP.md's laundry section — do not re-litigate). ⚠️ **Blocked live on
+`migration/items_laundry.sql`** (adds `items.last_washed` + `items.laundry_state`)
+— all laundry write-UI hides behind `LAUNDRY_READY()` (checks the column exists
+on loaded rows) until the user runs it; read paths need no gate (absent column
+= null = clean). Core model (LAUNDRY section, after the derived helpers): dirty
+is **derived, never stored** — distinct wear-days since `last_washed` ≥
+`WEAR_TOLERANCE[subcategory]` (category fallback; Infinity = shoes/outerwear
+never dirty); **null `last_washed` = clean** (tracking is opt-in by behavior).
+`laundryState()` = one pass over wears → Map(item_id→Set(dates)); build ONCE per
+bulk scan and pass into `isDirty`/`dirtySince`/`suggestibleClean` (items×wears
+perf). One-time overrides in `items.laundry_state`: `'hamper'` (dirty until next
+wash stamp) and `'extra:<n>'` ("one more wear" — stores the wear-day count at
+set time, self-expires when a newer wear lands; NO wear-path bookkeeping).
+`stampWash(ids, date)` stamps ONLY dirty items (an under-tolerance jean wasn't
+in the physical hamper). Surfaces: suggester "🧺 Clean only" chip (Season row,
+default on; pool filter in `suggestOutfits` cleanOnly param + swap/add-layer;
+locked/seed exempt by construction; items dirty `LAUNDRY_RESUGGEST_DAYS`=7+
+re-enter badged so the pool can't starve); `openLaundrySheet` (closet-root
+"🧺 Hamper · N" row, `[data-laundry]`) with load chips from her real sorting
+(`LAUNDRY_LOADS`: Whites/Cools/Warms + All together, keyed on color_family) +
+back-datable date; 🧺 tile badge via `itemGridView` (informational — pickers
+never filter); item photo view `laundryLineHtml` (One more wear / Washed / To
+hamper); wear-again "🧺 in the wash" tag; Home `.laun-row` **previous-day
+confirm strip** (most recent logged day ≤3 back; thumbs pre-marked with derived
+🧺/↩︎, tap = `flipLaundry` override, ✓ = `LAUNDRY_CONFIRM_KEY` and writes
+nothing) which becomes the **"Done laundry lately?" prompt** when the hamper is
+stale (`LAUNDRY_STALE_DAYS`=7; "Not yet" snoozes `LAUNDRY_SNOOZE_DAYS`=3 via
+`LAUNDRY_SNOOZE_KEY`) — her deliberate, laundry-only exception to "no nudges".
+Trips: `planRewearFlags` rewear budget on plan day cards (counts planned
+wear-days per piece since trip start / last laundry day, flags past-tolerance);
+`PLAN_LAUNDRY = "__laundry__"` sentinel INSIDE a day's plan array (invisible to
+look rendering — `planActiveLooks` drops unknown ids) toggled by the day card's
+🧺 chip; capsule detail "wash before you pack" hamper count. **The bucket chip
+icon changed 🧺→🪣 so 🧺 means laundry app-wide.**
 
 **"Bucket + Visibility polish" (2026-07-11 r1) is FULLY SHIPPED:** ① photoless
 items render a muted tee-glyph placeholder everywhere (`PHOTO_PLACEHOLDER`
@@ -51,7 +87,8 @@ var); tapping the header scrolls to top (NOTE: **body is the scroll
 container**, not window — `window.scrollTo` is a no-op app-wide; the header
 tap animates `document.body.scrollTop` with a setTimeout loop because rAF
 stalls in hidden documents).
-**▶ NEXT UP:** nothing scheduled — ask before starting new work.
+**▶ NEXT UP:** nothing scheduled — ask before starting new work. The user still
+needs to run `migration/items_laundry.sql` for laundry to light up.
 
 **Report Cards (2026-07-10) shipped in `2026-07-10 r2`→`r3`** — r2 shipped Brand
 & Retailer report cards; r3 (same day) generalized the engine to 7 dimensions
@@ -213,7 +250,7 @@ Top-of-`<script>` config, then logically grouped sections:
   own ＋ Look / ✨ Suggest / ✎ Build actions — all the existing plan plumbing works because they
   just pass `date = PLAN_BUCKET` (`planDayLabel` special-cases the label; `planCtxSeasonDate`
   anchors season to trip start / today since the bucket has no date; suggest button reads "Add
-  to bucket"). Day cards get a **"🧺 From bucket"** chip (`openBucketAssignSheet`) — assigning
+  to bucket"). Day cards get a **"🪣 From bucket"** chip (was 🧺 until 2026-07-15 — 🧺 now means laundry) (`openBucketAssignSheet`) — assigning
   KEEPS the look in the bucket (one outfit can cover several days); bucket tiles show
   "✓ planned" once used somewhere. `planActiveLooks(c, date)` is the render-side reader — it
   drops deleted AND archived looks (raw ids stay in the JSONB; unarchiving restores them).
@@ -376,6 +413,9 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
   with identical item-sets into one survivor, re-pointing wears. Survivor = non-archived >
   has-layout > oldest. Idempotent. Pairs with the save-time dedup guard in `saveBuilder`
   (`findDuplicateOutfit`/`itemSetKey`). Run once after deploying 2026-06-28 r5.
+- `migration/items_laundry.sql` — adds `items.last_washed` (date) + `items.laundry_state`
+  (text override: `'hamper'` | `'extra:<n>'`). **⚠️ NOT YET RUN as of 2026-07-15** —
+  laundry write-UI hides behind `LAUNDRY_READY()` until it is. Idempotent.
 
 ## Design model
 
@@ -453,7 +493,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-10 r3`.
+  Currently `2026-07-15 r4`.
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
