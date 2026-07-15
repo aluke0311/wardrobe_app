@@ -163,6 +163,15 @@
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .toast-chip { display:inline-block; margin-left:10px; padding:3px 9px; background:rgba(255,255,255,.22); border-radius:999px; font-size:12.5px; font-weight:600; }
   .log-cta { display:block; margin:12px 16px 0; padding:14px; background:var(--accent); color:#fff; border-radius:14px; font-size:16px; font-weight:600; text-align:center; }
+  /* Home laundry row: previous-day confirm strip / "done laundry?" prompt */
+  .laun-row { margin: 12px 16px 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; text-align: left; }
+  .laun-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; }
+  .laun-ok { flex: none; color: var(--accent); font-size: 13px; font-weight: 600; background: none; border: none; padding: 4px 0 4px 8px; }
+  .laun-items { display: flex; gap: 10px; overflow-x: auto; padding: 10px 2px 2px; -webkit-overflow-scrolling: touch; }
+  .laun-it { position: relative; flex: none; background: none; border: none; padding: 0; }
+  .laun-it .cthumb { width: 56px; height: 56px; }
+  .laun-ic { position: absolute; right: -4px; bottom: -4px; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 1px 4px; line-height: 1.3; }
+  .laun-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
   /* ---------- header add button ---------- */
   .addbtn { position: absolute; left: 10px; top: calc(50% + env(safe-area-inset-top) / 2); transform: translateY(-50%);
@@ -1118,7 +1127,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r2";
+const APP_VERSION = "2026-07-15 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1843,6 +1852,40 @@ function availableCount() {
   return items.filter(i => itemStatus(i) === "Available").length;
 }
 
+// ---- Home laundry row ----
+// The user's own, deliberate exception to "no nudges": a passive strip about the
+// most recent logged day — each worn piece pre-marked with the DERIVED hamper
+// guess; tapping a thumb flips it (that write IS the one-time override).
+// Confirming writes nothing (guesses stand either way). When the hamper goes
+// stale the same slot becomes the "done laundry lately?" prompt instead.
+const LAUNDRY_CONFIRM_KEY = "wardrobe.laundryConfirm";
+function laundryReviewDay() {
+  const today = todayStr();
+  let best = null;
+  for (const d of wearDayMap().keys()) if (d < today && (!best || d > best)) best = d;
+  return best && daysSince(best) <= 3 ? best : null;
+}
+function laundryStripHtml() {
+  const day = laundryReviewDay();
+  if (!day || store.getItem(LAUNDRY_CONFIRM_KEY) === day) return "";
+  const ls = laundryState();
+  const ids = [...new Set(wears.filter(w => w.worn_on === day).map(w => w.item_id))];
+  const its = ids.map(id => itemById.get(id))
+    .filter(i => i && itemStatus(i) === "Available" && wearTolerance(i) !== Infinity);
+  if (!its.length) return "";
+  const dayLbl = daysSince(day) === 1 ? "Yesterday"
+    : new Date(day + "T00:00:00").toLocaleDateString(undefined, { weekday: "long" });
+  return `<div class="laun-row" data-laun-day="${esc(day)}">
+    <div class="laun-hdr"><span>🧺 ${esc(dayLbl)}'s wear — hamper or keep?</span><button class="laun-ok" id="launConfirm">✓</button></div>
+    <div class="laun-items">${its.map(i => `
+      <button class="laun-it" data-laun-flip="${esc(i.id)}" title="${esc(i.name || "")}">
+        ${thumbHtml(i.image_path)}
+        <span class="laun-ic">${isDirty(i, ls) ? "🧺" : "↩︎"}</span>
+      </button>`).join("")}</div>
+    <div class="laun-sub">🧺 = to the hamper · ↩︎ = wearable again · tap to flip</div>
+  </div>`;
+}
+
 function renderHome() {
   const tiles = HOME_TILES.map(t => `
     <button class="tile ${t.wide ? "wide" : ""}" data-go="${t.tab}">
@@ -1866,7 +1909,38 @@ function renderHome() {
       <span class="lr-check">✓</span><span class="lr-text">Logged today · ${esc(detail)}</span><span class="lr-plus">＋</span>
     </button>`;
   }
-  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}`;
+  // Laundry slot: stale-hamper prompt wins over the previous-day confirm strip.
+  let laun = "";
+  if (dataReady && LAUNDRY_READY()) {
+    if (laundryStale() && !laundryPromptSnoozed()) {
+      const n = hamperItems().length;
+      laun = `<button class="logged-row" id="homeLaunPrompt">
+        <span class="lr-check">🧺</span><span class="lr-text">Done laundry lately? · ${n} in the hamper</span><span class="lr-plus">＋</span>
+      </button>`;
+    } else {
+      laun = laundryStripHtml();
+    }
+  }
+  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}${laun}`;
+  hydratePhotos($("#homeBody"));
+  const launPrompt = $("#homeLaunPrompt");
+  if (launPrompt) launPrompt.onclick = () => openLaundrySheet({ fromPrompt: true });
+  const launOk = $("#launConfirm");
+  if (launOk) launOk.onclick = (e) => {
+    e.stopPropagation();
+    const day = $("#homeBody").querySelector("[data-laun-day]")?.dataset.launDay;
+    if (day) store.setItem(LAUNDRY_CONFIRM_KEY, day);
+    renderHome();
+  };
+  $("#homeBody").querySelectorAll("[data-laun-flip]").forEach(b => {
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      const it = itemById.get(b.dataset.launFlip);
+      if (!it) return;
+      await flipLaundry(it.id, !isDirty(it));
+      renderHome();
+    };
+  });
   const ctaBtn = $("#homeLogCta");
   // G6: the most common real log is a repeat — offer "wear again" first, not a
   // blank picker.
