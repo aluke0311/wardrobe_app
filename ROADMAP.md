@@ -1,7 +1,89 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-10 r3**. Nothing scheduled — see Back-burner.
+> Current version: **2026-07-10 r3**. **NEXT UP: Laundry v1 + Trips (planned
+> 2026-07-15, below) — awaiting go-ahead + migration.**
+
+---
+
+## 📋 PLANNED — Laundry v1 + Trips (brainstormed 2026-07-15, NOT built)
+
+**Status: decisions locked, nothing built. Blocked on user running
+`migration/items_laundry.sql` (to be written) before any UI ships.**
+
+History: laundry was rejected TWICE (v25 `availability` field died of manual
+upkeep; v3 planning said "stays dead"). User deliberately reopened it 2026-07-15.
+This section supersedes the v3 rejection. The survival condition: dirty state is
+**derived from wears**, the reset costs ~one tap a week, and neglect degrades
+gracefully. Note: the Home laundry row below is the user's own, deliberate first
+exception to the "no nudges, ever" rule — laundry only, don't generalize.
+
+### Locked decisions (do not re-litigate)
+
+- **Dirty is DERIVED, never entered.** Item is "in the hamper" when wears since
+  `items.last_washed` ≥ its rewear tolerance. `last_washed` null = clean (opt-in
+  by behavior; nothing dirty on day one). No stored dirty flag.
+- **`WEAR_TOLERANCE`** per-subcategory constant (pattern: `SUBCAT_FORMALITY`):
+  tees/sleeveless/blouses/leggings/workout 1 · long-sleeves/shorts/skirts 2 ·
+  sweatshirts/pants 3 · sweaters/cardigans 3–4 · jeans 5 · dresses 1–2 ·
+  shoes/outerwear/blazers/tights ∞ (never dirty). Tune from use. No per-item
+  override in v1 (the one-time overrides below cover the real cases).
+- **Reset = her real loads.** Laundry sheet shows load chips derived from
+  `color_family` with hamper counts: **Whites (White, Beige) · Cools (Blue, Teal,
+  Green, Purple, Gray, Black, Metallic) · Warms (Red, Orange, Yellow, Pink,
+  Maroon, Brown) · All together** — mapping APPROVED as a tunable `LAUNDRY_LOADS`
+  constant. Tapping load(s) stamps `last_washed` on matching hamper items. Sheet
+  carries a **date field** ("I did laundry on…", default today, back-datable) —
+  everything recomputes from the derived model.
+- **NO self-clear — prompt instead** (user override of the earlier 14-day
+  self-clear idea): when the hamper is stale (oldest dirty item **7+ days**, no
+  wash logged), the Home row becomes a "done laundry lately?" prompt → laundry
+  sheet (set a date, or **"Not yet"** = snooze **3 days**).
+- **Pool guard:** items dirty **7+ days re-enter the suggestion pool** (badged)
+  even if the prompt is unanswered — suggestions can never starve.
+- **One-time overrides, both directions** (`items.laundry_state`, one column):
+  "**One more wear**" on a hamper item = treated clean until its next logged wear
+  (the wear-create paths clear it); "**To the hamper**" on a clean item = dirty
+  until a wash stamp clears it (coffee-spill case). UI: item-detail photo view
+  contextual quick action + flipping thumbs on the Home row.
+- **Home row = full previous-day confirm strip** (`.laundry-row`, bottom of Home):
+  yesterday's worn items as mini thumbs pre-marked with the derived guess
+  (over tolerance → 🧺, under → ↩︎ rewear). Tap a thumb to flip (= the one-time
+  override, written to DB); ✓ confirms and hides for the day; **confirming
+  guesses writes NOTHING** (derive-first). Same slot hosts the stale prompt.
+- **Suggester: hard filter with 🧺 "clean only" chip** next to the weather chip
+  (default ON, pattern: `_sugg.useWx`). Pool-filtered before combo generation;
+  locked + seeded pieces exempt.
+- **Log pickers / calendar NEVER filter** — logging records reality.
+- **Closet:** hamper badge on tiles + a hamper row on closet root that opens the
+  laundry sheet. NOT a closet lens (lenses are for status); filter-funnel dim ok.
+- **Wear-again strip:** looks with a dirty piece get an "in the wash" badge,
+  stay tappable.
+- **Trips (in first cut):** ① packing checklist "N packed items are in the
+  hamper" warning; ② **rewear budget** on by-day planner cards — count each
+  piece's planned appearances across trip days, flag over-tolerance
+  ("this tee appears Tue + Thu"), informational only; ③ **mid-trip laundry day**
+  marker droppable on a trip day (reserved key in `capsules.plan` JSONB, pattern:
+  `PLAN_BUCKET`) — resets the rewear budget from that day forward. Coming home
+  needs nothing (trip wears are logged wears).
+
+### Schema
+
+One migration, `migration/items_laundry.sql`: `items.last_washed date` +
+`items.laundry_state text` (null | 'extra_wear' | 'hamper'). Wash stamp clears
+both; wear-create paths clear 'extra_wear'. **User runs it in the Supabase SQL
+editor BEFORE any UI deploys.**
+
+### Build order (sketch)
+
+1. Migration file + user runs it.
+2. Constants (`WEAR_TOLERANCE`, `LAUNDRY_LOADS`) + pure derivation helpers
+   (`isDirty(i)`, `dirtySince(i)`, hamper list) — testable from console.
+3. Laundry sheet (load chips + date + counts) + closet-root hamper row + tile badges.
+4. Suggester 🧺 chip (+ 7-day pool re-entry) + wear-again badges.
+5. One-time overrides: item-detail quick action + wear-path clearing of 'extra_wear'.
+6. Home `.laundry-row` (confirm strip + stale prompt + 3-day snooze in `store`).
+7. Trips: packing warning → rewear budget → mid-trip laundry day.
 
 ---
 
