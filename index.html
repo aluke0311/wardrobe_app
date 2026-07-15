@@ -231,6 +231,7 @@
   .lk-heart-btn.on svg { fill: currentColor; }
   .otile-heart { position: absolute; top: 6px; right: 6px; width: 18px; height: 18px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); pointer-events: none; }
   .otile-heart svg { width: 100%; height: 100%; fill: #e0455b; stroke: #fff; stroke-width: 1.2; }
+  .gtile-laun { position: absolute; top: 4px; left: 4px; font-size: 13px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.3)); pointer-events: none; z-index: 2; }
   /* stylebook-style section cards */
   .stats-sec { margin: 18px 14px 0; }
   .stats-sec-hdr { background: #ededf2; border-radius: 14px 14px 0 0; padding: 13px 16px; display: flex; flex-direction: column; }
@@ -1117,7 +1118,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r1";
+const APP_VERSION = "2026-07-15 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1595,6 +1596,11 @@ const LAUNDRY_LOADS = {
 const LAUNDRY_RESUGGEST_DAYS = 7;  // dirty this long → back in the suggestion pool (badged)
 const LAUNDRY_STALE_DAYS = 7;      // hamper this stale → Home "done laundry?" prompt
 const LAUNDRY_SNOOZE_DAYS = 3;     // "Not yet" pushes the prompt this far out
+const LAUNDRY_SNOOZE_KEY = "wardrobe.laundrySnooze";
+function laundryPromptSnoozed() {
+  const d = store.getItem(LAUNDRY_SNOOZE_KEY);
+  return !!d && daysSince(d) < LAUNDRY_SNOOZE_DAYS;
+}
 // Write-UI gate: true once migration/items_laundry.sql has run (loadData selects *
 // so the column then appears on every row). Read paths need no gate — an absent
 // column reads as null last_washed, i.e. everything clean.
@@ -2018,26 +2024,30 @@ function itemGridView(list, cfg = {}) {
 
   const activeSelSet = selSet ?? (select ? selectedIds : new Set());
 
+  // Laundry badge on every item tile (informational only — pickers never filter).
+  const _ls = LAUNDRY_READY() ? laundryState() : null;
+  const launBadge = (i) => (_ls && isDirty(i, _ls) ? `<div class="gtile-laun">🧺</div>` : "");
+
   const tileHtml = (i) => {
     if (packedSet) {
       const isPacked = packedSet.has(i.id);
       return `<button class="gtile${isPacked ? " packed" : ""}" data-${onTap}="${esc(i.id)}">
         <div class="pack-tick" data-pack="${esc(i.id)}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>
-        ${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div>
+        ${launBadge(i)}${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div>
       </button>`;
     }
     const sel = select && activeSelSet.has(i.id);
     const sub = subtitleFn ? subtitleFn(i) : "";
     if (metricOnly) {
       return `<button class="gtile" data-${onTap}="${esc(i.id)}">
-        ${thumbHtml(i.image_path, "gphoto")}
+        ${launBadge(i)}${thumbHtml(i.image_path, "gphoto")}
         <div class="gtile-metric">${esc(sub)}</div>
       </button>`;
     }
     const chk = `<div class="sel-dot${sel ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>`;
     return `<button class="gtile${sel ? " selected" : ""}" data-${onTap}="${esc(i.id)}">
       ${select ? chk : ""}
-      ${thumbHtml(i.image_path, "gphoto")}
+      ${launBadge(i)}${thumbHtml(i.image_path, "gphoto")}
       <div class="gname">${esc(i.name || "Untitled")}</div>
       ${sub ? `<div class="gtile-sub">${esc(sub)}</div>` : ""}
     </button>`;
@@ -2118,7 +2128,99 @@ function renderClosetRoot() {
         <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
         Filter by capsule or trip</button>`
     : "";
-  return clToolbar("Closet", false, true) + top + capFilter + `<div class="frows">${rows}</div>`;
+  const launRow = (!activeCapsuleId && LAUNDRY_READY()) ? (() => {
+    const n = hamperItems().length;
+    return n ? `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n} item${n === 1 ? "" : "s"}</button>` : "";
+  })() : "";
+  return clToolbar("Closet", false, true) + top + capFilter + launRow + `<div class="frows">${rows}</div>`;
+}
+
+// ---- laundry sheet ----
+// "I did laundry": pick the load(s) you ran (her real sorting — whites / cools /
+// warms, sometimes all together), optionally back-date, and stamp the matching
+// hamper items washed. Only DIRTY items get stamped — an under-tolerance jean
+// hanging in the closet wasn't in the physical hamper, so its count keeps running.
+let _lnSel = new Set();
+let _lnFromPrompt = false;
+function _lnLoadItems(load, hamper) {
+  if (load === "All") return hamper;
+  return hamper.filter(i => laundryLoadOf(i.color_family) === load);
+}
+function _lnSelectedIds(hamper) {
+  if (_lnSel.has("All")) return hamper.map(i => i.id);
+  const ids = new Set();
+  for (const load of _lnSel) for (const i of _lnLoadItems(load, hamper)) ids.add(i.id);
+  return [...ids];
+}
+function openLaundrySheet({ fromPrompt = false } = {}) {
+  _lnSel = new Set();
+  _lnFromPrompt = fromPrompt;
+  renderLaundrySheet();
+  $("#logSheet").hidden = false;
+}
+function renderLaundrySheet() {
+  const hamper = hamperItems();
+  const date = $("#lnDate")?.value || todayStr();  // survives chip-toggle re-renders
+  const chips = ["Whites", "Cools", "Warms", "All"].map(l => {
+    const n = _lnLoadItems(l, hamper).length;
+    const lbl = l === "All" ? `All together (${hamper.length})` : `${l} (${n})`;
+    return `<button class="cap-chip${_lnSel.has(l) ? " on" : ""}" data-lnload="${l}" ${n ? "" : "disabled"} style="font-size:14px">${lbl}</button>`;
+  }).join("");
+  const selN = _lnSelectedIds(hamper).length;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="lnCancel">Cancel</button>
+      <h2>Laundry</h2>
+      <span style="width:54px"></span>
+    </div>
+    ${hamper.length ? `
+    <div style="padding:8px 16px 4px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Which loads did you run?</div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:8px">${chips}</div>
+    </div>
+    <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
+      <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
+      <input class="inp" id="lnDate" type="date" value="${date}" max="${todayStr()}" style="flex:1;font-size:16px">
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <button class="btn" id="lnSave" ${selN ? "" : "disabled"}>Mark washed${selN ? ` · ${selN} item${selN === 1 ? "" : "s"}` : ""}</button>
+      ${_lnFromPrompt ? `<button class="lnk" id="lnNotYet" style="font-size:14px;color:var(--muted);padding:4px 0">Not yet</button>` : ""}
+    </div>` : `
+    <div class="center muted" style="padding:28px 24px">Nothing in the hamper 🎉</div>
+    <div style="height:16px"></div>`}`;
+  $("#lnCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logInner").querySelectorAll("[data-lnload]").forEach(b => {
+    b.onclick = () => {
+      const l = b.dataset.lnload;
+      if (_lnSel.has(l)) _lnSel.delete(l);
+      else {
+        // "All together" supersedes individual loads (and vice versa)
+        if (l === "All") _lnSel.clear();
+        else _lnSel.delete("All");
+        _lnSel.add(l);
+      }
+      renderLaundrySheet();
+    };
+  });
+  const save = $("#lnSave");
+  if (save) save.onclick = async () => {
+    const ids = _lnSelectedIds(hamperItems());
+    const day = $("#lnDate")?.value || todayStr();
+    $("#logSheet").hidden = true;
+    try {
+      await stampWash(ids, day);
+      toast(`${ids.length} item${ids.length === 1 ? "" : "s"} marked washed`);
+    } catch (e) { toast(e.message); }
+    const scr = $(".screen.active")?.id;
+    if (scr === "tab-closet" && !detailId) renderCloset();
+    else if (scr === "tab-home") renderHome();
+  };
+  const notYet = $("#lnNotYet");
+  if (notYet) notYet.onclick = () => {
+    store.setItem(LAUNDRY_SNOOZE_KEY, todayStr());
+    $("#logSheet").hidden = true;
+    if ($(".screen.active")?.id === "tab-home") renderHome();
+  };
 }
 
 // Pick a capsule/trip to scope the closet to (reuses the same activeCapsuleId path
@@ -2429,6 +2531,7 @@ function openItem(id) {
     ${sibBar}
     <div class="item-stat-strip">${esc(itemStatLine(i))}</div>
     ${workhorseBadgeHtml(i)}
+    ${laundryLineHtml(i)}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#ccc;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -2449,6 +2552,16 @@ function openItem(id) {
 
   $("#itemShuffle").onclick = () => openSuggestSheet(i.id);
   $("#itemAddLook").onclick = () => openBuilder(null, i.id);
+
+  body.querySelectorAll("[data-laun-act]").forEach(b => {
+    b.onclick = async () => {
+      try {
+        if (b.dataset.launAct === "washed") await stampWash([i.id]);
+        else await flipLaundry(i.id, b.dataset.launAct === "hamper");
+      } catch (e) { toast(e.message); }
+      openItem(i.id);  // refresh the status line
+    };
+  });
 
   const goSib = (dir) => {
     const s = siblingItems(); const idx = s.findIndex(x => x.id === id);
@@ -4098,6 +4211,24 @@ function workhorseBadgeHtml(i) {
   const p = buildItemPerf(items).get(i.id);
   if (!p || p.count < 5 || p.idx == null || p.idx < 1.5) return "";
   return `<div class="item-stat-strip" style="color:var(--accent);font-weight:600">★ Workhorse · worn ${p.idx.toFixed(1)}× as much as similar pieces</div>`;
+}
+
+// Laundry status + one-time-override actions on the item photo view. Hidden for
+// never-dirty categories (shoes/outerwear) and non-Available items.
+function laundryLineHtml(i) {
+  if (!LAUNDRY_READY() || itemStatus(i) !== "Available" || wearTolerance(i) === Infinity) return "";
+  const dirty = isDirty(i);
+  const dd = dirty ? dirtyDays(i) : null;
+  const status = dirty
+    ? `🧺 In the hamper${dd >= 1 ? ` · ${dd} day${dd === 1 ? "" : "s"}` : ""}`
+    : (i.last_washed ? `Washed ${relDate(i.last_washed)}` : "");
+  const acts = dirty
+    ? `<button class="lnk" data-laun-act="extra" style="font-size:13px">↩︎ One more wear</button>
+       <button class="lnk" data-laun-act="washed" style="font-size:13px">✓ Washed</button>`
+    : `<button class="lnk" data-laun-act="hamper" style="font-size:13px">🧺 To hamper</button>`;
+  return `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:14px">
+    ${status ? `<span>${status}</span>` : ""}${acts}
+  </div>`;
 }
 
 function relDate(d) {
@@ -6931,12 +7062,14 @@ function wearAgainCandidates() {
 }
 function openWearAgainChooser(date) {
   const { list: cands, neglectedIds } = wearAgainCandidates();
+  const _ls = LAUNDRY_READY() ? laundryState() : null;
   const strip = cands.length
     ? `<div class="wa-strip">${cands.map(o => `<button class="wa-tile" data-wa-look="${esc(o.id)}">
         ${outfitCollageHtml(o, 4)}
         ${o.rating === 1 ? `<div class="otile-heart" style="width:14px;height:14px"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
         <div class="wa-name">${esc(outfitName(o))}</div>
         ${neglectedIds.has(o.id) ? `<div style="font-size:10px;color:var(--accent);font-weight:600">it's been a while</div>` : ""}
+        ${_ls && outfitItems(o).some(p => isDirty(p, _ls)) ? `<div style="font-size:10px;color:var(--muted)">🧺 in the wash</div>` : ""}
       </button>`).join("")}</div>`
     : `<div class="muted center" style="padding:10px 24px 4px;font-size:13px">No recent looks yet — build one below.</div>`;
   $("#logInner").innerHTML = `
@@ -10794,6 +10927,7 @@ function wireEvents() {
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
+    if (e.target.closest("[data-laundry]")) return openLaundrySheet();
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
