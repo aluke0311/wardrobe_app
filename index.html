@@ -1135,7 +1135,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r9";
+const APP_VERSION = "2026-07-15 r10";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5854,7 +5854,7 @@ function openLookWears(id) {
     ${looksToolbar("When You Wore It", true, false)}
     <div class="det-body">
       ${dates.length
-        ? `<div class="det-card">${rows}</div><div class="center muted" style="font-size:12px;margin-top:8px">Tap a day to set its context.</div>`
+        ? `<div class="det-card">${rows}</div><div class="center muted" style="font-size:12px;margin-top:8px">Tap a day to open it on the calendar.</div>`
         : `<div class="muted center" style="padding:30px">Never worn yet.</div>`}
     </div>`;
   $("#itemBar").hidden = true;
@@ -11257,10 +11257,9 @@ function wireEvents() {
     const wearDate = e.target.closest("[data-wear-date]");
     if (wearDate && lookId) {
       const d = wearDate.dataset.wearDate;
-      const ows = wears.filter(w => w.outfit_id === lookId && w.worn_on === d);
-      const ids = ows.map(w => w.id).filter(Boolean);
-      const cur = ows.flatMap(w => ctxArr(w)).filter((v, i, a) => a.indexOf(v) === i);
-      if (ids.length) openContextSheet(ids, cur, () => openLookWears(lookId));
+      switchTab("calendar");
+      calendarDay = d;
+      renderCalendarDay($("#calendarBody"));
       return;
     }
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
