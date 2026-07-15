@@ -356,6 +356,9 @@
     display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
   .plan-look-name { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .plan-worn { display: inline-block; font-size: 10px; color: #2f9e5e; font-weight: 600; }
+  .plan-launday { font-size: 12px; color: var(--accent); font-weight: 600; margin: -4px 0 8px; }
+  .plan-rewarn { font-size: 12px; color: #b8860b; margin: -4px 0 8px; line-height: 1.5; }
+  .cap-launwarn { margin: 10px 14px 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
   .plan-acts { display: flex; flex-wrap: wrap; gap: 7px; }
   .plan-act { padding: 8px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; border: 1px solid var(--line);
     background: #fff; color: var(--accent); display: inline-flex; align-items: center; gap: 5px; }
@@ -1127,7 +1130,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r3";
+const APP_VERSION = "2026-07-15 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -9135,6 +9138,13 @@ function renderCapsuleDetail() {
         <div class="cap-cov-chips">${covChips}</div>
       </div>
     </div>
+    ${(() => {
+      // Wash-before-you-pack: how much of this capsule/trip is sitting in the hamper.
+      if (!LAUNDRY_READY()) return "";
+      const _ls = laundryState();
+      const dirty = list.filter(i => itemStatus(i) === "Available" && isDirty(i, _ls));
+      return dirty.length ? `<div class="cap-launwarn">🧺 ${dirty.length} piece${dirty.length === 1 ? " is" : "s are"} in the hamper — wash before you pack</div>` : "";
+    })()}
     ${packHtml}
     ${wxHtml}
     ${trip && c.start_date && c.end_date ? `<button class="cap-plan" data-cap-byday>
@@ -9229,9 +9239,51 @@ function tripPlan(c) { return (c && c.plan && typeof c.plan === "object") ? c.pl
 // Reserved plan key: the trip/capsule "outfit bucket" — planned looks not tied
 // to a day yet. Rides the same plan JSONB + add/remove pipeline as real dates.
 const PLAN_BUCKET = "bucket";
+// Reserved SENTINEL inside a day's look array: this trip day is a laundry day
+// (hotel wash etc.) — the rewear budget resets there. Invisible to look rendering
+// because planActiveLooks drops any id outfitById doesn't know.
+const PLAN_LAUNDRY = "__laundry__";
 function planLooksForDate(c, date) {
   const v = tripPlan(c)[date];
   return Array.isArray(v) ? v : (v ? [v] : []);
+}
+function planLaundryDay(c, date) { return planLooksForDate(c, date).includes(PLAN_LAUNDRY); }
+async function togglePlanLaundry(cid, date) {
+  const c = capsuleById.get(cid); if (!c) return;
+  const plan = JSON.parse(JSON.stringify(tripPlan(c)));
+  let arr = Array.isArray(plan[date]) ? plan[date] : (plan[date] ? [plan[date]] : []);
+  if (arr.includes(PLAN_LAUNDRY)) arr = arr.filter(x => x !== PLAN_LAUNDRY); else arr.push(PLAN_LAUNDRY);
+  if (arr.length) plan[date] = arr; else delete plan[date];
+  await setCapsulePlan(c, plan);
+  if (capsuleView === "plan") renderCapsules();
+}
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][Math.min(n % 10, 4)] || "th");
+// Rewear budget: walk the trip days in order, counting each piece's planned
+// wear-days since the trip start (or the last laundry day). A day flags the
+// pieces it pushes PAST their wears-per-wash tolerance. Informational only —
+// nothing blocks; on trips rewearing is often the plan.
+function planRewearFlags(c, dates) {
+  const counts = new Map();
+  const flags = new Map();  // date → [{name, nth}]
+  for (const date of dates) {
+    if (planLaundryDay(c, date)) counts.clear();  // washed; today's outfits count fresh
+    const dayItems = new Set();
+    for (const oid of planActiveLooks(c, date)) {
+      const o = outfitById.get(oid);
+      if (o) for (const it of outfitItems(o)) dayItems.add(it);
+    }
+    for (const it of dayItems) {
+      const tol = wearTolerance(it);
+      if (tol === Infinity) continue;
+      const n = (counts.get(it.id) || 0) + 1;
+      counts.set(it.id, n);
+      if (n > tol) {
+        let a = flags.get(date); if (!a) flags.set(date, a = []);
+        a.push({ name: it.name || "Untitled", nth: n });
+      }
+    }
+  }
+  return flags;
 }
 // Same, but drops deleted/archived looks (archived lives only in Archive + calendar).
 function planActiveLooks(c, date) {
@@ -9366,8 +9418,11 @@ function renderCapsulePlan() {
     </div>
   </div>`;
 
+  const rewearFlags = planRewearFlags(c, dates);
   const dayCards = dates.map(date => {
     const looks = planActiveLooks(c, date);
+    const isLaun = planLaundryDay(c, date);
+    const rw = rewearFlags.get(date);
     const looksHtml = looks.map(oid => {
       const o = outfitById.get(oid);
       const worn = planWorn(date, oid);
@@ -9383,12 +9438,15 @@ function renderCapsulePlan() {
         <div class="plan-day-date">${esc(planDayLabel(date))}<small>${esc(date)}</small></div>
         ${planDayWxHtml(date)}
       </div>
+      ${isLaun ? `<div class="plan-launday">🧺 Laundry day — rewear counts reset</div>` : ""}
+      ${rw ? `<div class="plan-rewarn">${rw.map(f => `⚠︎ ${esc(f.name)} — ${ordinal(f.nth)} wear since laundry`).join("<br>")}</div>` : ""}
       ${looks.length ? `<div class="plan-looks">${looksHtml}</div>` : ""}
       <div class="plan-add-row">
-        ${bucketIds.length ? `<button class="plan-act" data-plan-frombucket="${esc(date)}">🧺 From bucket</button>` : ""}
+        ${bucketIds.length ? `<button class="plan-act" data-plan-frombucket="${esc(date)}">🪣 From bucket</button>` : ""}
         <button class="plan-act" data-plan-assign="${esc(date)}">＋ Look</button>
         <button class="plan-act" data-plan-suggest="${esc(date)}">✨ Suggest</button>
         <button class="plan-act" data-plan-build="${esc(date)}">✎ Build</button>
+        <button class="plan-act" data-plan-laundry="${esc(date)}"${isLaun ? ` style="color:var(--accent);border-color:var(--accent)"` : ""}>🧺${isLaun ? " ✓" : " Laundry"}</button>
       </div>
     </div>`;
   }).join("");
@@ -11127,6 +11185,8 @@ function wireEvents() {
     if (planOpen) { looksLens = "All"; looksFolder = null; return openLookFrom(planOpen.dataset.planOpen); }
     const planFromBucket = e.target.closest("[data-plan-frombucket]");
     if (planFromBucket) return openBucketAssignSheet(planFromBucket.dataset.planFrombucket);
+    const planLaun = e.target.closest("[data-plan-laundry]");
+    if (planLaun) return togglePlanLaundry(capsuleId, planLaun.dataset.planLaundry);
     const planAssign = e.target.closest("[data-plan-assign]");
     if (planAssign) return openPlanLookPicker(planAssign.dataset.planAssign);
     const planSuggest = e.target.closest("[data-plan-suggest]");
