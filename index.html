@@ -1130,7 +1130,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r4";
+const APP_VERSION = "2026-07-15 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2207,7 +2207,7 @@ function renderClosetRoot() {
     : "";
   const launRow = (!activeCapsuleId && LAUNDRY_READY()) ? (() => {
     const n = hamperItems().length;
-    return n ? `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n} item${n === 1 ? "" : "s"}</button>` : "";
+    return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`;
   })() : "";
   return clToolbar("Closet", false, true) + top + capFilter + launRow + `<div class="frows">${rows}</div>`;
 }
@@ -2262,9 +2262,21 @@ function renderLaundrySheet() {
     <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
       <button class="btn" id="lnSave" ${selN ? "" : "disabled"}>Mark washed${selN ? ` · ${selN} item${selN === 1 ? "" : "s"}` : ""}</button>
       ${_lnFromPrompt ? `<button class="lnk" id="lnNotYet" style="font-size:14px;color:var(--muted);padding:4px 0">Not yet</button>` : ""}
-    </div>` : `
+    </div>` : items.some(i => i.last_washed) ? `
     <div class="center muted" style="padding:28px 24px">Nothing in the hamper 🎉</div>
-    <div style="height:16px"></div>`}`;
+    <div style="height:16px"></div>` : `
+    <div style="padding:16px 20px 4px;font-size:14px;line-height:1.5;color:var(--muted)">
+      Nothing is tracked yet — laundry counts from an item's first logged wash.
+      Start fresh by marking the whole closet washed as of a date (your last
+      real laundry day works); wears after it fill the hamper automatically.
+    </div>
+    <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
+      <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
+      <input class="inp" id="lnDate" type="date" value="${date}" max="${todayStr()}" style="flex:1;font-size:16px">
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <button class="btn" id="lnStart">Mark whole closet washed</button>
+    </div>`}`;
   $("#lnCancel").onclick = () => { $("#logSheet").hidden = true; };
   $("#logInner").querySelectorAll("[data-lnload]").forEach(b => {
     b.onclick = () => {
@@ -2297,6 +2309,21 @@ function renderLaundrySheet() {
     store.setItem(LAUNDRY_SNOOZE_KEY, todayStr());
     $("#logSheet").hidden = true;
     if ($(".screen.active")?.id === "tab-home") renderHome();
+  };
+  // Bootstrap: no item has a wash logged yet, so stamp the whole (trackable,
+  // Available) closet clean as of the chosen date — tracking derives from there.
+  const start = $("#lnStart");
+  if (start) start.onclick = async () => {
+    const day = $("#lnDate")?.value || todayStr();
+    const ids = items.filter(i => itemStatus(i) === "Available" && wearTolerance(i) !== Infinity).map(i => i.id);
+    $("#logSheet").hidden = true;
+    try {
+      await stampWash(ids, day);
+      toast(`Laundry tracking started — ${ids.length} items marked washed`);
+    } catch (e) { toast(e.message); }
+    const scr = $(".screen.active")?.id;
+    if (scr === "tab-closet" && !detailId) renderCloset();
+    else if (scr === "tab-home") renderHome();
   };
 }
 
@@ -9446,7 +9473,7 @@ function renderCapsulePlan() {
         <button class="plan-act" data-plan-assign="${esc(date)}">＋ Look</button>
         <button class="plan-act" data-plan-suggest="${esc(date)}">✨ Suggest</button>
         <button class="plan-act" data-plan-build="${esc(date)}">✎ Build</button>
-        <button class="plan-act" data-plan-laundry="${esc(date)}"${isLaun ? ` style="color:var(--accent);border-color:var(--accent)"` : ""}>🧺${isLaun ? " ✓" : " Laundry"}</button>
+        <button class="plan-act" data-plan-laundry="${esc(date)}"${isLaun ? ` style="color:var(--accent);border-color:var(--accent)"` : ""}>🧺 Did laundry${isLaun ? " ✓" : ""}</button>
       </div>
     </div>`;
   }).join("");

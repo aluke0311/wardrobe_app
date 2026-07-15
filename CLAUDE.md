@@ -44,9 +44,12 @@ in the physical hamper). Surfaces: suggester "🧺 Clean only" chip (Season row,
 default on; pool filter in `suggestOutfits` cleanOnly param + swap/add-layer;
 locked/seed exempt by construction; items dirty `LAUNDRY_RESUGGEST_DAYS`=7+
 re-enter badged so the pool can't starve); `openLaundrySheet` (closet-root
-"🧺 Hamper · N" row, `[data-laundry]`) with load chips from her real sorting
-(`LAUNDRY_LOADS`: Whites/Cools/Warms + All together, keyed on color_family) +
-back-datable date; 🧺 tile badge via `itemGridView` (informational — pickers
+"🧺 Hamper · N/empty" row, `[data-laundry]` — ALWAYS visible once migrated, r5)
+with load chips from her real sorting (`LAUNDRY_LOADS`: Whites/Cools/Warms +
+All together, keyed on color_family) + back-datable date — when NO item has a
+`last_washed` yet the sheet instead offers the one-time bootstrap "Mark whole
+closet washed" (`#lnStart`, stamps Available finite-tolerance items; fixes the
+day-one chicken-and-egg where an empty hamper hid the only entry point); 🧺 tile badge via `itemGridView` (informational — pickers
 never filter); item photo view `laundryLineHtml` (One more wear / Washed / To
 hamper); wear-again "🧺 in the wash" tag; Home `.laun-row` **previous-day
 confirm strip** (most recent logged day ≤3 back; thumbs pre-marked with derived
