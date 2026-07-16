@@ -1136,7 +1136,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r14";
+const APP_VERSION = "2026-07-16 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1666,14 +1666,28 @@ function isDirty(i, ls) {
 function dirtySince(i, ls) {
   if (!isDirty(i, ls)) return null;
   const dates = wearDatesSinceWash(i, ls);
+  if (!dates.length) return todayStr();
+  // Never washed in-app (last_washed null) → wearDatesSinceWash is the item's
+  // WHOLE history, so the tolerance-th wear would be an ancient date (a tee's
+  // first wear in 2025 reading as "323 days dirty"). Only a 'hamper' override
+  // gets here; she hampered it because of a RECENT wear, so date it from the
+  // latest one.
+  if (!i.last_washed) return dates[dates.length - 1];
   const tol = wearTolerance(i);
   if (tol !== Infinity && dates.length >= tol) return dates[tol - 1];
-  return dates.length ? dates[dates.length - 1] : todayStr();  // "hamper" override, no wears since wash
+  return dates[dates.length - 1];
 }
 function dirtyDays(i, ls) { const d = dirtySince(i, ls); return d == null ? null : daysSince(d); }
 // Suggester eligibility: clean, or dirty long enough that keeping it filtered
 // would starve the pool while the laundry prompt sits unanswered (re-enters badged).
-function suggestibleClean(i, ls) { return !isDirty(i, ls) || dirtyDays(i, ls) >= LAUNDRY_RESUGGEST_DAYS; }
+// A MANUAL 'hamper' override never re-enters — the amnesty exists because DERIVED
+// dirt can be wrong (she may have washed and not logged it); an explicit "this is
+// dirty" is ground truth, and overriding it would break the Clean-only promise.
+function suggestibleClean(i, ls) {
+  if (!isDirty(i, ls)) return true;
+  if ((i.laundry_state || "") === "hamper") return false;
+  return dirtyDays(i, ls) >= LAUNDRY_RESUGGEST_DAYS;
+}
 
 function hamperItems(ls) {
   ls = ls || laundryState();
