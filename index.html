@@ -167,7 +167,11 @@
   .laun-row { margin: 12px 16px 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; text-align: left; }
   .laun-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; }
   .laun-ok { flex: none; color: var(--accent); font-size: 13px; font-weight: 600; background: none; border: none; padding: 4px 0 4px 8px; }
-  .laun-items { display: flex; gap: 10px; overflow-x: auto; padding: 10px 2px 2px; -webkit-overflow-scrolling: touch; }
+  /* touch-action pins these strips to sideways panning — without it a swipe that
+     starts on the strip scrolls the PAGE up/down instead of the strip. */
+  .laun-items { display: flex; gap: 10px; overflow-x: auto; padding: 10px 2px 2px; -webkit-overflow-scrolling: touch;
+    touch-action: pan-x; overscroll-behavior-x: contain; scrollbar-width: none; }
+  .laun-items::-webkit-scrollbar { display: none; }
   .laun-it { position: relative; flex: none; background: none; border: none; padding: 0; }
   .laun-it .cthumb { width: 56px; height: 56px; }
   .laun-ic { position: absolute; right: -4px; bottom: -4px; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 1px 4px; line-height: 1.3; }
@@ -873,12 +877,14 @@
   .cal-day-foot-add button { color: var(--accent); font-size: 15px; font-weight: 600; padding: 6px 8px; }
   .cal-day-empty { padding: 48px 14px; text-align: center; color: var(--muted); font-size: 15px; }
   /* G6: "wear again" horizontal candidate strip */
-  .wa-strip { display: flex; gap: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 4px 16px 4px; scrollbar-width: none; }
+  .wa-strip { display: flex; gap: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 4px 16px 4px; scrollbar-width: none;
+    touch-action: pan-x; overscroll-behavior-x: contain; }
   .wa-strip::-webkit-scrollbar { display: none; }
   .wa-tile { flex: none; width: 84px; text-align: left; position: relative; }
   .wa-name { font-size: 11.5px; color: var(--text); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Similar-looks strip: bigger tiles (full 3:4 collage), still side-scrollable. */
-  .sim-strip { display: flex; gap: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 6px; scrollbar-width: none; }
+  .sim-strip { display: flex; gap: 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 4px 0 6px; scrollbar-width: none;
+    touch-action: pan-x; overscroll-behavior-x: contain; }
   .sim-strip::-webkit-scrollbar { display: none; }
   .sim-tile { flex: none; width: 132px; text-align: left; position: relative; }
   .sim-tile .oname { font-size: 12.5px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1136,7 +1142,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-16 r2";
+const APP_VERSION = "2026-07-16 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1991,6 +1997,7 @@ let closetLens = "Available";
 let closetCat = null;     // null = root | category name | "Other"
 let closetSub = null;     // null = subcategory list | subcategory | "__other__"
 let searchResults = null; // null = not in search-results mode; else array of items
+let closetHamper = false; // true = full-page hamper contents (its own closet view, like a subcategory)
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
 let _fromBuilder = null;  // stashed builder state when an item is opened from the builder
@@ -2263,7 +2270,8 @@ function openLaundrySheet({ fromPrompt = false } = {}) {
   $("#logSheet").hidden = false;
 }
 function renderLaundrySheet() {
-  const hamper = hamperItems();
+  const ls = laundryState();
+  const hamper = hamperItems(ls);
   const date = $("#lnDate")?.value || todayStr();  // survives chip-toggle re-renders
   const chips = ["Whites", "Cools", "Warms", "All"].map(l => {
     const n = _lnLoadItems(l, hamper).length;
@@ -2358,6 +2366,23 @@ function renderLaundrySheet() {
   };
 }
 
+// Full-page hamper — its own closet view (like a subcategory grid), because the
+// closet row promises "Hamper · N" and a tap should SHOW them. The wash flow
+// (load chips + date) still lives in the sheet, one tap away via "Did laundry".
+function renderClosetHamper() {
+  const ls = laundryState();
+  const list = hamperItems(ls);
+  const sub = (i) => { const d = dirtyDays(i, ls); return d == null ? "" : d === 0 ? "today" : `${d}d`; };
+  const body = list.length
+    ? gridHtml(list, sub)
+    : `<div class="placeholder" style="padding:40px 32px"><b>Nothing in the hamper 🎉</b>
+        <div>Pieces land here once you've worn them enough times since their last wash — or when you tap "🧺 To hamper" on an item.</div></div>`;
+  return clToolbar(`Hamper · ${list.length}`, true, false)
+    + (list.length ? `<div style="padding:10px 14px 2px"><button class="cl-capbtn" data-laundry-wash style="margin:0">🧺 Did laundry — mark these washed</button></div>` : "")
+    + body
+    + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
+}
+
 // Pick a capsule/trip to scope the closet to (reuses the same activeCapsuleId path
 // as "Plan outfits from this"; the banner + ✕ then show across closet + looks).
 function openClosetCapsuleFilter() {
@@ -2430,7 +2455,9 @@ function renderCloset() {
   $("#itemBar").hidden = true;
   $("#app").classList.remove("detail-photo");
   const body = $("#closetBody");
-  if (closetCat && closetSub) {
+  if (closetHamper) {
+    body.innerHTML = renderClosetHamper();
+  } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
       + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
@@ -2462,7 +2489,7 @@ function renderCloset() {
   };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; renderCloset(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; renderCloset(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -2588,7 +2615,8 @@ function closetBack() {
     $("#app").classList.remove("detail-photo");
     renderCloset(); return;
   }
-  if (closetSub) { closetSub = null; }
+  if (closetHamper) { closetHamper = false; }
+  else if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }
   renderCloset();
 }
@@ -2618,6 +2646,7 @@ const FIELD_CONFIGS = {
 function siblingItems() {
   // Explicit list captured at tap time (capsule/trip grid) wins.
   if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
+  if (closetHamper) return hamperItems();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -11288,7 +11317,7 @@ const TAB_TITLES = {
 // not resume a deep subpage left over from last visit. (Programmatic switchTab
 // calls that pre-set folder state and then openItem() don't go through here.)
 function resetTabRoot(name) {
-  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; }
+  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; }
   else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; looksItemFilter = null; }
   else if (name === "calendar") { calendarDay = null; }
 }
@@ -11381,7 +11410,8 @@ function wireEvents() {
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
-    if (e.target.closest("[data-laundry]")) return openLaundrySheet();
+    if (e.target.closest("[data-laundry-wash]")) return openLaundrySheet();
+    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
