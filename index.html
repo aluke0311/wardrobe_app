@@ -861,9 +861,10 @@
   .cal-outfit-notes-btn svg { width: 16px; height: 16px; stroke: var(--muted); stroke-width: 2; fill: none; flex: none; }
   .cal-swipe-acts { position: absolute; right: 0; top: 0; bottom: 0; display: flex; transform: translateX(100%); transition: transform .25s ease; }
   .cal-act { width: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #fff; font-size: 12px; font-weight: 600; border: none; cursor: pointer; }
-  .cal-act-copy { background: #636363; }
-  .cal-act-move { background: #a0a0a0; }
-  .cal-act-del  { background: var(--danger); }
+  .cal-act-copy  { background: #636363; }
+  .cal-act-move  { background: #a0a0a0; }
+  .cal-act-split { background: #4a6d7c; }
+  .cal-act-del   { background: var(--danger); }
   .cal-act svg { width: 18px; height: 18px; stroke: #fff; stroke-width: 2; fill: none; }
   .cal-day-foot { position: sticky; bottom: calc(var(--nav-h) + var(--safe-b)); background: var(--bg); border-top: 1px solid var(--line); padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
   .cal-day-foot-ico svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.6; fill: none; }
@@ -1135,7 +1136,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r11";
+const APP_VERSION = "2026-07-15 r12";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -6769,6 +6770,10 @@ function renderCalendarDay(body) {
           <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
           Move
         </button>
+        ${g.outfitId ? `<button class="cal-act cal-act-split" data-cal-split="${esc(wearIdsStr)}" data-outfit-id="${esc(g.outfitId)}">
+          <svg viewBox="0 0 24 24"><path d="M12 3v6"/><path d="M6 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M18 21a3 3 0 100-6 3 3 0 000 6z"/><path d="M12 9c0 3-4 3-6 6"/><path d="M12 9c0 3 4 3 6 6"/></svg>
+          Split
+        </button>` : ''}
         <button class="cal-act cal-act-del" data-wear-ids="${esc(wearIdsStr)}">
           <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
           Delete
@@ -6880,6 +6885,14 @@ function renderCalendarDay(body) {
         renderCalendarDay(body);
         toast('Removed');
       } catch (e) { toast(e.message); }
+    };
+  });
+
+  body.querySelectorAll('[data-cal-split]').forEach(btn => {
+    btn.onclick = () => {
+      const wearIds  = (btn.dataset.calSplit || '').split(',').filter(Boolean);
+      const outfitId = btn.dataset.outfitId || null;
+      if (wearIds.length && outfitId) openSplitWearSheet(wearIds, outfitId, body);
     };
   });
 
@@ -7020,7 +7033,7 @@ function openContextSheet(wearIds, current, onSaved) {
 function wireCalSwipe(card) {
   const inner = card.querySelector('.cal-outfit-inner');
   const acts  = card.querySelector('.cal-swipe-acts');
-  const W = 210;
+  const W = (acts.querySelectorAll('.cal-act').length || 3) * 70;  // 70px per action
   let startX = 0, opened = false, tracking = false;
 
   card.addEventListener('touchstart', e => {
@@ -7048,6 +7061,72 @@ function wireCalSwipe(card) {
     inner.style.transform = opened ? `translateX(-${W}px)` : 'translateX(0)';
     acts.style.transform  = opened ? 'translateX(0)' : 'translateX(100%)';
   }, { passive: true });
+}
+
+// "Split" an outfit-wear group on a calendar day back into its component solo
+// item wears (outfit_id → null), so a mistakenly-grouped day can be rebuilt.
+// Optionally deletes the outfit record too. The pieces stay logged for the day.
+function openSplitWearSheet(wearIds, outfitId, body) {
+  const o = outfitById.get(outfitId);
+  const rows = wears.filter(w => wearIds.includes(w.id) && w.id);
+  const nItems = new Set(rows.map(w => w.item_id)).size;
+  // Other days this outfit is worn — deleting it affects those too.
+  const otherDays = new Set(wears.filter(w => w.outfit_id === outfitId && w.worn_on !== calendarDay).map(w => w.worn_on));
+  const delNote = otherDays.size
+    ? `<div class="muted" style="font-size:12.5px;margin-top:8px;color:var(--danger)">Heads up: this look is also worn on ${otherDays.size} other day${otherDays.size === 1 ? '' : 's'} — deleting it splits those too.</div>`
+    : '';
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="splCancel">Cancel</button>
+      <h2>Split outfit</h2>
+      <span style="width:52px"></span>
+    </div>
+    <div style="padding:18px 18px 30px">
+      <div class="muted" style="font-size:13.5px;line-height:1.5;margin-bottom:20px">
+        Breaks “${esc(o ? outfitName(o) : 'this look')}” into ${nItems} separate item wear${nItems === 1 ? '' : 's'} for this day.
+        The pieces stay logged — you can then regroup them into the right looks.
+      </div>
+      <div class="sheet-chips" style="flex-direction:column;gap:10px">
+        <button class="sheet-chip" id="splKeep" style="width:100%">Split into pieces · keep the outfit</button>
+        <button class="sheet-chip" id="splDel" style="width:100%;color:var(--danger)">Split &amp; delete the outfit</button>
+      </div>
+      ${delNote}
+    </div>`;
+  $("#logSheet").hidden = false;
+  const close = () => { $("#logSheet").hidden = true; };
+  $("#splCancel").onclick = close;
+  $("#splKeep").onclick = () => splitOutfitWear(wearIds, outfitId, false, body).then(close);
+  $("#splDel").onclick  = () => {
+    if (!confirm(`Delete this outfit? Its wear history is kept as individual items.`)) return;
+    splitOutfitWear(wearIds, outfitId, true, body).then(close);
+  };
+}
+
+async function splitOutfitWear(wearIds, outfitId, deleteOutfit, body) {
+  const ids = wears.filter(w => wearIds.includes(w.id) && w.id).map(w => w.id);
+  if (!ids.length) return;
+  try {
+    // Detach this day's wear rows from the outfit → they become solo item wears.
+    await rest(`/wears?id=in.(${ids.map(i => `"${i}"`).join(',')})`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ outfit_id: null }),
+    });
+    wears.forEach(w => { if (ids.includes(w.id)) w.outfit_id = null; });
+
+    if (deleteOutfit && outfitId) {
+      // Wears on OTHER days FK-cascade to null server-side; mirror that locally.
+      await rest(`/outfits?id=eq.${outfitId}`, { method: "DELETE" });
+      outfits = outfits.filter(o => o.id !== outfitId);
+      outfitById.delete(outfitId);
+      outfitItemMap.delete(outfitId);
+      outfitLinks = outfitLinks.filter(l => l.outfit_id !== outfitId);
+      wears.forEach(w => { if (w.outfit_id === outfitId) w.outfit_id = null; });
+      buildOutfitIndexes();
+    }
+    buildOutfitWearMap();
+    renderCalendarDay(body);
+    toast(deleteOutfit ? "Split · outfit deleted" : "Split into pieces");
+  } catch (e) { toast(e.message); }
 }
 
 // G2: shared create-or-merge logic (was inline in makeLookFromDay). Dedup guard
