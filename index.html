@@ -1135,7 +1135,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r10";
+const APP_VERSION = "2026-07-15 r11";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2531,6 +2531,7 @@ function openLookFrom(id) {
 
 function closetBack() {
   if (selectMode) { exitSelectMode(); renderCloset(); return; }
+  if (detailId && detailView === "wears") { openItemDetails(detailId); return; }
   if (detailId && detailView === "details") { openItem(detailId); return; }
   if (detailId && _reviewMode) {
     _reviewMode = false;
@@ -2777,12 +2778,13 @@ function openItemDetails(id) {
           ${oc ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
         </button>
         <div class="det-divider"></div>
-        <div class="det-row">
-          <div>
+        <button class="det-row" id="detWears"${n ? "" : " disabled"} style="width:100%;text-align:left">
+          <div style="flex:1;min-width:0">
             <div>Worn ${n} day${n === 1 ? "" : "s"}</div>
             <div class="det-sub">Last: ${lastWornText}</div>
           </div>
-        </div>
+          ${n ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
+        </button>
         ${(() => {
           const ctx = itemContexts(i.id);
           if (!ctx.length) return "";
@@ -2900,6 +2902,9 @@ function openItemDetails(id) {
   const outfitsBtn = $("#detOutfits");
   if (outfitsBtn && oc) outfitsBtn.onclick = () => { looksItemFilter = i.id; switchTab("looks"); };
 
+  const wearsBtn = $("#detWears");
+  if (wearsBtn && n) wearsBtn.onclick = () => openItemWears(i.id);
+
   $("#detCapsules").onclick = () => {
     openCapsuleAssign(capsulesForItem(i.id), async (ids) => {
       await saveItemCapsules(i.id, ids);
@@ -2930,6 +2935,44 @@ function openItemDetails(id) {
   body.querySelectorAll("[data-det-field]").forEach(btn => {
     btn.onclick = () => openFieldEdit(id, btn.dataset.detField);
   });
+}
+
+// "Worn on these days" — every distinct day this item was worn; tap a day to
+// open it on the calendar. Multiple outfits on one day collapse to one row
+// (dates are de-duped), matching the day-based wear count.
+function openItemWears(id) {
+  const i = items.find(x => x.id === id);
+  if (!i) return;
+  detailId = id; detailView = "wears";
+  const dates = [...new Set(wears.filter(w => w.item_id === id && w.worn_on).map(w => w.worn_on))]
+    .sort((a, b) => b.localeCompare(a));
+  const rows = dates.map(d => {
+    const cs = [...new Set(wears.filter(w => w.item_id === id && w.worn_on === d).flatMap(w => ctxArr(w)))];
+    const dt = new Date(d + "T00:00:00");
+    const dlabel = dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    const dow = dt.toLocaleDateString(undefined, { weekday: "long" });
+    return `<button class="det-row" data-item-wear-date="${esc(d)}" style="align-items:center">
+      <span style="flex:1;min-width:0">
+        <span style="display:block">${esc(dlabel)}</span>
+        <span style="display:block;color:var(--muted);font-size:12.5px;margin-top:2px">${esc(dow)}${cs.length ? ` · ${esc(cs.join(", "))}` : ""}</span>
+      </span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join("");
+  const body = $("#closetBody");
+  body.innerHTML = `
+    <div class="cltoolbar">
+      <button class="clback" id="clBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cltitle">Worn ${dates.length} day${dates.length === 1 ? "" : "s"}</div>
+      <span style="width:34px"></span>
+    </div>
+    <div class="det-body">
+      ${dates.length
+        ? `<div class="det-card">${rows}</div><div class="center muted" style="font-size:12px;margin-top:8px">Tap a day to open it on the calendar.</div>`
+        : `<div class="muted center" style="padding:30px">Never worn yet.</div>`}
+    </div>`;
+  $("#itemBar").hidden = true;
+  window.scrollTo(0, 0);
 }
 
 // ---- Replace / add / remove an item's photo (reuses the add-item pipeline) ----
@@ -11206,6 +11249,13 @@ function wireEvents() {
   // closet: lens / folders / subcategories / items / back / search
   $("#closetBody").addEventListener("click", (e) => {
     if (e.target.closest("#clBack")) return closetBack();
+    const itemWearDate = e.target.closest("[data-item-wear-date]");
+    if (itemWearDate) {
+      switchTab("calendar");
+      calendarDay = itemWearDate.dataset.itemWearDate;
+      renderCalendarDay($("#calendarBody"));
+      return;
+    }
     if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
