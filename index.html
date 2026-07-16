@@ -1136,7 +1136,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-15 r13";
+const APP_VERSION = "2026-07-15 r14";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -7064,10 +7064,11 @@ function wireCalSwipe(card) {
 }
 
 // "Split" sheet for an outfit-wear group on a calendar day. Three outcomes:
-//   keep    → detach the day's rows from the outfit (become solo item wears),
-//             keep the outfit record. The pieces stay logged for the day.
-//   delWear → delete this day's wear entirely, keep the outfit in your looks.
-//   delBoth → delete this day's wear AND delete the outfit record.
+//   keep    → keep the outfit wear AND also log each piece as a separate solo
+//             item wear for the day (day shows the outfit + each item).
+//   delWear → replace the outfit wear with each piece as a solo item wear
+//             (detach the rows from the outfit); keep the outfit record.
+//   delBoth → delWear, then delete the outfit record too (warns re: other days).
 // Lets a mistakenly-grouped day be rebuilt or cleared cleanly.
 function openSplitWearSheet(wearIds, outfitId, body) {
   const o = outfitById.get(outfitId);
@@ -7093,9 +7094,9 @@ function openSplitWearSheet(wearIds, outfitId, body) {
         “${esc(o ? outfitName(o) : 'this look')}” · ${nItems} piece${nItems === 1 ? '' : 's'} on this day.
       </div>
       <div class="sheet-chips" style="flex-direction:column;gap:10px">
-        ${opt('splKeep', 'Split &amp; keep', `Log the ${nItems} piece${nItems === 1 ? '' : 's'} as separate items; keep the outfit.`, false)}
-        ${opt('splDelWear', 'Split &amp; delete the wear', "Remove this day's wear; keep the outfit in your looks.", true)}
-        ${opt('splDelBoth', 'Split &amp; delete the wear + outfit', "Remove this day's wear and delete the outfit entirely.", true)}
+        ${opt('splKeep', 'Split &amp; keep', `Keep the outfit wear and also log each of the ${nItems} piece${nItems === 1 ? '' : 's'} as a separate item.`, false)}
+        ${opt('splDelWear', 'Split &amp; delete the wear', 'Replace the outfit wear with each piece as a separate item; keep the outfit in your looks.', true)}
+        ${opt('splDelBoth', 'Split &amp; delete the wear + outfit', 'Same as above, and delete the outfit entirely.', true)}
       </div>
       ${delNote}
     </div>`;
@@ -7103,32 +7104,36 @@ function openSplitWearSheet(wearIds, outfitId, body) {
   const close = () => { $("#logSheet").hidden = true; };
   $("#splCancel").onclick = close;
   $("#splKeep").onclick    = () => resolveSplit(wearIds, outfitId, 'keep', body).then(close);
-  $("#splDelWear").onclick = () => {
-    if (!confirm("Delete this day's wear? The outfit stays in your looks.")) return;
-    resolveSplit(wearIds, outfitId, 'delWear', body).then(close);
-  };
+  $("#splDelWear").onclick = () => resolveSplit(wearIds, outfitId, 'delWear', body).then(close);
   $("#splDelBoth").onclick = () => {
-    if (!confirm("Delete this day's wear and delete the outfit? Wears on other days are kept as individual items.")) return;
+    if (!confirm("Delete this outfit? Wears on other days are kept as individual items.")) return;
     resolveSplit(wearIds, outfitId, 'delBoth', body).then(close);
   };
 }
 
 async function resolveSplit(wearIds, outfitId, mode, body) {
-  const ids = wears.filter(w => wearIds.includes(w.id) && w.id).map(w => w.id);
+  const groupWears = wears.filter(w => wearIds.includes(w.id) && w.id);
+  const ids = groupWears.map(w => w.id);
   if (!ids.length) return;
   const idList = ids.map(i => `"${i}"`).join(',');
+  const date = calendarDay;
   try {
     if (mode === 'keep') {
-      // Detach this day's wear rows from the outfit → solo item wears.
+      // Keep the outfit wear; ALSO log each piece as a separate solo item wear.
+      const itemIds = [...new Set(groupWears.map(w => w.item_id))];
+      const payload = itemIds.map(item_id => ({ item_id, worn_on: date, formality_for: deriveWearFormality([item_id]) }));
+      const created = await rest("/wears", {
+        method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify(payload),
+      });
+      if (Array.isArray(created)) wears.push(...created);
+    } else {
+      // delWear / delBoth: detach this day's rows from the outfit → solo items.
       await rest(`/wears?id=in.(${idList})`, {
         method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({ outfit_id: null }),
       });
       wears.forEach(w => { if (ids.includes(w.id)) w.outfit_id = null; });
-    } else {
-      // delWear / delBoth: drop this day's wear rows.
-      await rest(`/wears?id=in.(${idList})`, { method: 'DELETE' });
-      wears = wears.filter(w => !ids.includes(w.id));
     }
 
     if (mode === 'delBoth' && outfitId) {
@@ -7143,9 +7148,9 @@ async function resolveSplit(wearIds, outfitId, mode, body) {
     }
     buildOutfitWearMap();
     renderCalendarDay(body);
-    toast(mode === 'keep' ? "Split into pieces"
-        : mode === 'delWear' ? "Wear deleted"
-        : "Wear + outfit deleted");
+    toast(mode === 'keep' ? "Pieces added alongside the outfit"
+        : mode === 'delWear' ? "Outfit wear split into pieces"
+        : "Split · outfit deleted");
   } catch (e) { toast(e.message); }
 }
 
