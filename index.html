@@ -1136,7 +1136,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-16 r1";
+const APP_VERSION = "2026-07-16 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2271,6 +2271,15 @@ function renderLaundrySheet() {
     return `<button class="cap-chip${_lnSel.has(l) ? " on" : ""}" data-lnload="${l}" ${n ? "" : "disabled"} style="font-size:14px">${lbl}</button>`;
   }).join("");
   const selN = _lnSelectedIds(hamper).length;
+  // Tracking is opt-in per item: it starts the first time an item is stamped
+  // washed. Until ANY item has, offer the whole-closet bootstrap — including
+  // when the hamper already holds manual overrides, which used to hide it.
+  const tracking = items.some(i => i.last_washed);
+  const dateRow = `
+    <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
+      <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
+      <input class="inp" id="lnDate" type="date" value="${date}" max="${todayStr()}" style="flex:1;font-size:16px">
+    </div>`;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="lnCancel">Cancel</button>
@@ -2281,29 +2290,24 @@ function renderLaundrySheet() {
     <div style="padding:8px 16px 4px">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Which loads did you run?</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:8px">${chips}</div>
-    </div>
-    <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
-      <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
-      <input class="inp" id="lnDate" type="date" value="${date}" max="${todayStr()}" style="flex:1;font-size:16px">
-    </div>
-    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+    </div>` : tracking ? `
+    <div class="center muted" style="padding:24px 24px 4px">Nothing in the hamper 🎉</div>` : ""}
+    ${(hamper.length || !tracking) ? dateRow : ""}
+    ${hamper.length ? `
+    <div style="padding:16px 16px 0;display:flex;flex-direction:column;gap:10px">
       <button class="btn" id="lnSave" ${selN ? "" : "disabled"}>Mark washed${selN ? ` · ${selN} item${selN === 1 ? "" : "s"}` : ""}</button>
       ${_lnFromPrompt ? `<button class="lnk" id="lnNotYet" style="font-size:14px;color:var(--muted);padding:4px 0">Not yet</button>` : ""}
-    </div>` : items.some(i => i.last_washed) ? `
-    <div class="center muted" style="padding:28px 24px">Nothing in the hamper 🎉</div>
-    <div style="height:16px"></div>` : `
-    <div style="padding:16px 20px 4px;font-size:14px;line-height:1.5;color:var(--muted)">
-      Nothing is tracked yet — laundry counts from an item's first logged wash.
-      Start fresh by marking the whole closet washed as of a date (your last
-      real laundry day works); wears after it fill the hamper automatically.
+    </div>` : ""}
+    ${!tracking ? `
+    <div style="padding:18px 20px 0;margin-top:${hamper.length ? "14px" : "0"};${hamper.length ? "border-top:1px solid var(--line);" : ""}font-size:13.5px;line-height:1.5;color:var(--muted)">
+      ${hamper.length
+        ? "Wear-count tracking isn't on yet, so only pieces you tap into the hamper count as dirty."
+        : "Nothing is tracked yet — laundry counts from an item's first logged wash."}
+      Mark the whole closet washed as of the date above (your last real laundry
+      day works) and the hamper fills itself from your wear log.
     </div>
-    <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
-      <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
-      <input class="inp" id="lnDate" type="date" value="${date}" max="${todayStr()}" style="flex:1;font-size:16px">
-    </div>
-    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
-      <button class="btn" id="lnStart">Mark whole closet washed</button>
-    </div>`}`;
+    <div style="padding:12px 16px 0"><button class="btn${hamper.length ? " btn-sec" : ""}" id="lnStart">Mark whole closet washed</button></div>` : ""}
+    <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
   $("#lnCancel").onclick = () => { $("#logSheet").hidden = true; };
   $("#logInner").querySelectorAll("[data-lnload]").forEach(b => {
     b.onclick = () => {
