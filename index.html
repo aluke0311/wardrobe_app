@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
+<meta name="app-version" content="2026-07-17 r1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Wardrobe">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%238b8fd0'/%3E%3Cg transform='translate(16 16.4) scale(0.62) translate(-12 -12)'%3E%3Cpath d='M8.2 2.4 3 5.6l2 4.4 2.2-1v12h9.6V9l2.2 1 2-4.4-5.2-3.2a3.3 3.3 0 0 1-7.6 0z' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/g%3E%3C/svg%3E">
 <title>Wardrobe</title>
 <style>
   /* ---------- design tokens ---------- */
@@ -508,7 +515,8 @@
   .chip-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 
   /* ---------- bottom sheets ---------- */
-  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 300; touch-action: none; }
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 300; touch-action: none;
+    transition: opacity .24s ease; }
   .sheet { position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); background: #fff;
     border-radius: 18px 18px 0 0; max-height: 85vh; overflow-y: auto; z-index: 301;
     transition: transform .25s ease; }
@@ -888,6 +896,25 @@
   .sim-strip::-webkit-scrollbar { display: none; }
   .sim-tile { flex: none; width: 132px; text-align: left; position: relative; }
   .sim-tile .oname { font-size: 12.5px; margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- polish round (2026-07-17) ---------- */
+  /* Photos fade in on first display instead of popping (loadPhotoNode). */
+  .ph-fade { opacity: 0; }
+  .ph-fade.ph-in { opacity: 1; transition: opacity .18s ease; }
+  /* Numbers align in stats/counters instead of jiggling between renders. */
+  body { font-variant-numeric: tabular-nums; }
+  /* Desktop: frame the phone-first layout instead of stretching edge-to-edge.
+     Fixed chrome (left:0;right:0) centers via max-width + margin-inline. */
+  @media (min-width: 700px) {
+    body { background: #ededf2; }
+    #app, #login { max-width: 640px; margin: 0 auto; }
+    #app { background: var(--bg); min-height: 100vh; box-shadow: 0 0 32px rgba(0,0,0,.07); }
+    .tabbar, #gridBar, .sheet, #itemBar, .lk-actbar, .bld-pick-overlay {
+      max-width: 640px; margin-inline: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
 </style>
 </head>
 <body>
@@ -1142,7 +1169,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-16 r3";
+const APP_VERSION = "2026-07-17 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1515,6 +1542,7 @@ async function loadData() {
   buildExcludeSet();
   buildSuggestIndexes();
   dataReady = true;
+  saveDataSnapshot();   // fire-and-forget — instant hydration on next boot
 }
 
 // Rebuild capsule lookup maps. Called after each load + after any mutation.
@@ -1592,6 +1620,17 @@ const money = (n) => (n == null ? "—" : "$" + Number(n).toLocaleString(undefin
 const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const todayStr = () => localISO(new Date());
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+// Body is the scroll container (not window) — window.scrollTo is a no-op here.
+const scrollToTop = () => { document.body.scrollTop = 0; document.documentElement.scrollTop = 0; };
+const getScrollTop = () => document.body.scrollTop || document.documentElement.scrollTop || 0;
+// Put the scroll position back after a back-navigation re-render. Tiles are
+// fixed-height so restoring before photos lazy-load is safe; the extra rAF pass
+// covers layout that settles a frame later.
+const restoreScroll = (y) => {
+  if (!y) return;
+  const set = () => { document.body.scrollTop = y; document.documentElement.scrollTop = y; };
+  set(); requestAnimationFrame(set);
+};
 const parseList = (s) => String(s || "").split(",").map(x => x.trim()).filter(Boolean);
 
 /* ===================================================================
@@ -1785,6 +1824,40 @@ function toast(msg, action) {
   toastTimer = setTimeout(() => t.classList.remove("show"), actions.length ? 5500 : 2200);
 }
 
+// Animated bottom-sheet open/close (2026-07-17). The wrapper's `hidden`
+// attribute stays the source of truth — these only add the slide/fade motion.
+// Wrapper markup is always <div id=… hidden><div .sheet-bg><div .sheet></div>.
+const _sheetHideTimers = new Map();
+function showSheet(id) {
+  const w = document.getElementById(id);
+  if (!w) return;
+  const pending = _sheetHideTimers.get(id);
+  if (pending) { clearTimeout(pending); _sheetHideTimers.delete(id); }
+  else if (!w.hidden) return;                    // already open — don't re-animate
+  const s = w.querySelector(".sheet"), bg = w.querySelector(".sheet-bg");
+  w.hidden = false;
+  if (!s) return;
+  s.scrollTop = 0;
+  s.style.transform = "translateY(105%)";
+  if (bg) bg.style.opacity = "0";
+  s.offsetHeight;                                // reflow so the slide-up transitions
+  s.style.transform = "";
+  if (bg) bg.style.opacity = "";
+}
+function hideSheet(id) {
+  const w = document.getElementById(id);
+  if (!w || w.hidden) return;
+  const s = w.querySelector(".sheet"), bg = w.querySelector(".sheet-bg");
+  if (s) s.style.transform = "translateY(105%)";
+  if (bg) bg.style.opacity = "0";
+  _sheetHideTimers.set(id, setTimeout(() => {
+    _sheetHideTimers.delete(id);
+    w.hidden = true;
+    if (s) s.style.transform = "";
+    if (bg) bg.style.opacity = "";
+  }, 240));
+}
+
 // Lazy photo loading: sign + set background only when a node nears the viewport.
 const photoObserver = new IntersectionObserver((entries) => {
   for (const e of entries) {
@@ -1800,13 +1873,25 @@ const photoObserver = new IntersectionObserver((entries) => {
 const PHOTO_PLACEHOLDER = `url("data:image/svg+xml,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-7 -7 38 38"><path d="M8.2 2.4 3 5.6l2 4.4 2.2-1v12h9.6V9l2.2 1 2-4.4-5.2-3.2a3.3 3.3 0 0 1-7.6 0z" fill="none" stroke="#c6c6cf" stroke-width="1.4" stroke-linejoin="round"/></svg>`
 )}")`;
+const _shownPhotos = new Set();  // paths already displayed this session — re-renders set instantly (no flicker)
 async function loadPhotoNode(n) {
   if (n.dataset.photoDone) return;
   n.dataset.photoDone = "1";
-  if (!n.dataset.photo) { n.style.backgroundImage = PHOTO_PLACEHOLDER; return; }
-  const url = await photoUrl(n.dataset.photo);   // local byte cache first, Supabase only on miss
-  if (url) { n.style.backgroundImage = `url("${url}")`; n.style.backgroundColor = "transparent"; }
-  else n.style.backgroundImage = PHOTO_PLACEHOLDER;
+  const path = n.dataset.photo;
+  if (!path) { n.style.backgroundImage = PHOTO_PLACEHOLDER; return; }
+  const url = await photoUrl(path);   // local byte cache first, Supabase only on miss
+  if (!url) { n.style.backgroundImage = PHOTO_PLACEHOLDER; return; }
+  if (_shownPhotos.has(path)) {
+    n.style.backgroundImage = `url("${url}")`; n.style.backgroundColor = "transparent";
+    return;
+  }
+  // First display this session: decode off-DOM, then fade in instead of popping.
+  try { const im = new Image(); im.src = url; if (im.decode) await im.decode(); } catch (_) {}
+  _shownPhotos.add(path);
+  n.classList.add("ph-fade");
+  n.style.backgroundImage = `url("${url}")`; n.style.backgroundColor = "transparent";
+  n.offsetHeight;                     // reflow so the opacity transition runs
+  n.classList.add("ph-in");
 }
 function hydratePhotos(root = document) {
   $$("[data-photo]", root)
@@ -2000,6 +2085,7 @@ let searchResults = null; // null = not in search-results mode; else array of it
 let closetHamper = false; // true = full-page hamper contents (its own closet view, like a subcategory)
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
+let _detailEntryScroll = 0;  // grid scroll position when detail was entered (plain-back restore)
 let _fromBuilder = null;  // stashed builder state when an item is opened from the builder
 // App-wide "return to where I came from". Item detail always renders into the
 // closet screen, so without this, back always lands in the closet. Any non-closet
@@ -2267,7 +2353,7 @@ function openLaundrySheet({ fromPrompt = false } = {}) {
   _lnSel = new Set();
   _lnFromPrompt = fromPrompt;
   renderLaundrySheet();
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
 }
 function renderLaundrySheet() {
   const ls = laundryState();
@@ -2316,7 +2402,7 @@ function renderLaundrySheet() {
     </div>
     <div style="padding:12px 16px 0"><button class="btn${hamper.length ? " btn-sec" : ""}" id="lnStart">Mark whole closet washed</button></div>` : ""}
     <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
-  $("#lnCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#lnCancel").onclick = () => { hideSheet("logSheet"); };
   $("#logInner").querySelectorAll("[data-lnload]").forEach(b => {
     b.onclick = () => {
       const l = b.dataset.lnload;
@@ -2334,7 +2420,7 @@ function renderLaundrySheet() {
   if (save) save.onclick = async () => {
     const ids = _lnSelectedIds(hamperItems());
     const day = $("#lnDate")?.value || todayStr();
-    $("#logSheet").hidden = true;
+    hideSheet("logSheet");
     try {
       await stampWash(ids, day);
       toast(`${ids.length} item${ids.length === 1 ? "" : "s"} marked washed`);
@@ -2346,7 +2432,7 @@ function renderLaundrySheet() {
   const notYet = $("#lnNotYet");
   if (notYet) notYet.onclick = () => {
     store.setItem(LAUNDRY_SNOOZE_KEY, todayStr());
-    $("#logSheet").hidden = true;
+    hideSheet("logSheet");
     if ($(".screen.active")?.id === "tab-home") renderHome();
   };
   // Bootstrap: no item has a wash logged yet, so stamp the whole (trackable,
@@ -2355,7 +2441,7 @@ function renderLaundrySheet() {
   if (start) start.onclick = async () => {
     const day = $("#lnDate")?.value || todayStr();
     const ids = items.filter(i => itemStatus(i) === "Available" && wearTolerance(i) !== Infinity).map(i => i.id);
-    $("#logSheet").hidden = true;
+    hideSheet("logSheet");
     try {
       await stampWash(ids, day);
       toast(`Laundry tracking started — ${ids.length} items marked washed`);
@@ -2401,11 +2487,11 @@ function openClosetCapsuleFilter() {
       <span style="width:54px"></span>
     </div>
     <div style="padding:6px 0 30px">${rows || `<div class="cal-day-empty" style="padding:24px 16px;text-align:center;color:var(--muted)">No capsules or trips yet.</div>`}</div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   hydratePhotos($("#logInner"));
-  $("#capFilterCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#capFilterCancel").onclick = () => { hideSheet("logSheet"); };
   $("#logInner").querySelectorAll("[data-capfilterpick]").forEach(b => {
-    b.onclick = () => { $("#logSheet").hidden = true; planFromCapsule(b.dataset.capfilterpick); };
+    b.onclick = () => { hideSheet("logSheet"); planFromCapsule(b.dataset.capfilterpick); };
   });
 }
 
@@ -2498,7 +2584,8 @@ function makeScreenReturn(homeTab) {
   const active = document.querySelector(".screen.active");
   const tab = active ? active.id.replace("tab-", "") : homeTab;
   if (tab === homeTab) return null;
-  const fn = () => restoreTab(tab);
+  const sc = getScrollTop();               // land back exactly where the user was
+  const fn = () => { restoreTab(tab); restoreScroll(sc); };
   fn.tab = tab;  // lets openItem() label its back button with the real destination
   return fn;
 }
@@ -2613,7 +2700,7 @@ function closetBack() {
     detailId = null; detailView = null;
     $("#itemBar").hidden = true;
     $("#app").classList.remove("detail-photo");
-    renderCloset(); return;
+    renderCloset(); restoreScroll(_detailEntryScroll); _detailEntryScroll = 0; return;
   }
   if (closetHamper) { closetHamper = false; }
   else if (closetSub) { closetSub = null; }
@@ -2656,6 +2743,9 @@ function siblingItems() {
 function openItem(id) {
   const i = items.find(x => x.id === id);
   if (!i) return;
+  // First entry into detail from a grid: remember the grid's scroll position so
+  // plain-back can restore it. Sibling prev/next re-calls keep the original.
+  if (detailId === null) _detailEntryScroll = getScrollTop();
   detailId = id;
   detailView = null;
 
@@ -3020,7 +3110,7 @@ function openItemWears(id) {
         : `<div class="muted center" style="padding:30px">Never worn yet.</div>`}
     </div>`;
   $("#itemBar").hidden = true;
-  window.scrollTo(0, 0);
+  scrollToTop();
 }
 
 // ---- Replace / add / remove an item's photo (reuses the add-item pipeline) ----
@@ -3119,11 +3209,11 @@ function openFieldEdit(id, field) {
   _fieldEditItem = i;
   _fieldOnSave = null;
   renderFieldSheet(i, field, cfg);
-  $("#fieldSheet").hidden = false;
+  showSheet("fieldSheet");
 }
 
 function closeFieldSheet() {
-  $("#fieldSheet").hidden = true;
+  hideSheet("fieldSheet");
   _fieldEditId = null;
   _fieldEditKey = null;
   _fieldPending = undefined;
@@ -3313,21 +3403,21 @@ function openItemMoveSheet(id) {
   selectedIds = new Set([id]);
   moveCatOpen = null;
   renderMoveSheet();
-  $("#moveSheet").hidden = false;
+  showSheet("moveSheet");
 }
 
 function openQuickActions(id) {
   const i = items.find(x => x.id === id);
   if (!i) return;
   $("#qaTitle").textContent = i.name || "Untitled";
-  $("#qaLog").onclick  = () => { $("#quickActSheet").hidden = true; logWearToday(id); };
-  $("#qaLogDate").onclick = () => { $("#quickActSheet").hidden = true; openLogWear(id); };
-  $("#qaLook").onclick = () => { $("#quickActSheet").hidden = true; openBuilder(null, id); };
-  $("#qaMove").onclick = () => { $("#quickActSheet").hidden = true; openItemMoveSheet(id); };
-  $("#quickActSheet").hidden = false;
+  $("#qaLog").onclick  = () => { hideSheet("quickActSheet"); logWearToday(id); };
+  $("#qaLogDate").onclick = () => { hideSheet("quickActSheet"); openLogWear(id); };
+  $("#qaLook").onclick = () => { hideSheet("quickActSheet"); openBuilder(null, id); };
+  $("#qaMove").onclick = () => { hideSheet("quickActSheet"); openItemMoveSheet(id); };
+  showSheet("quickActSheet");
 }
-$("#qaSheetBg").addEventListener("click", () => { $("#quickActSheet").hidden = true; });
-$("#qaCancel").addEventListener("click",  () => { $("#quickActSheet").hidden = true; });
+$("#qaSheetBg").addEventListener("click", () => { hideSheet("quickActSheet"); });
+$("#qaCancel").addEventListener("click",  () => { hideSheet("quickActSheet"); });
 
 // ---- Contexts (wears.context — text[], multi-select) ----
 // Tolerant accessor: returns an array whether context is null, a string (legacy /
@@ -3540,7 +3630,7 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
       </div>` : ""}
       ${contextPickerHtml()}
     </div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   renderContextPicker();
   if (o) {
     $("#postLikeBtn").onclick = () => {
@@ -3549,7 +3639,7 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
   }
 
   const close = () => {
-    $("#logSheet").hidden = true; _logItemId = null; _ctxSuggest = null;
+    hideSheet("logSheet"); _logItemId = null; _ctxSuggest = null;
     if (undoable) toast("Logged ✓", { label: "Undo", fn: () => undoLoggedWears(wearRows) });
   };
   $("#postLogCancel").onclick = close;
@@ -3591,9 +3681,9 @@ function openLogWear(id) {
       ${contextPickerHtml()}
     </div>
   `;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   renderContextPicker();
-  $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#logCancel").onclick = () => { hideSheet("logSheet"); };
   $("#logSave").onclick = async () => {
     const date = $("#logDate").value;
     if (!date) return;
@@ -3607,7 +3697,7 @@ function openLogWear(id) {
       const pushed = Array.isArray(row) && row[0] ? row[0]
         : { item_id: id, worn_on: date, outfit_id: null, context: ctx };
       wears.push(pushed);
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       toast(`Wear logged for ${date}`, { label: "Undo", fn: () => undoLoggedWears([pushed]) });
     } catch (e) { toast(e.message); }
   };
@@ -3749,7 +3839,7 @@ function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } =
     };
     $("#fsReset").onclick = doReset;
     const r2 = $("#fsReset2"); if (r2) r2.onclick = doReset;
-    $("#fsDone").onclick = () => { $("#filterSheet").hidden = true; };
+    $("#fsDone").onclick = () => { hideSheet("filterSheet"); };
 
     $("#fsRows").onclick = (e) => {
       const chip = e.target.closest("[data-chip]");
@@ -3768,8 +3858,8 @@ function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } =
   }
 
   renderBody();
-  $("#filterSheetBg").onclick = () => { $("#filterSheet").hidden = true; };
-  $("#filterSheet").hidden = false;
+  $("#filterSheetBg").onclick = () => { hideSheet("filterSheet"); };
+  showSheet("filterSheet");
 }
 
 /* ===================================================================
@@ -3952,7 +4042,7 @@ function openAddFieldEdit(field) {
     updateAddFieldDisplay(field);
   };
   renderFieldSheet(_addState, field, cfg);
-  $("#fieldSheet").hidden = false;
+  showSheet("fieldSheet");
 }
 
 function updateAddFieldDisplay(field) {
@@ -3982,7 +4072,7 @@ function openAddCatSheet() {
   _addCatMode = true;
   moveCatOpen = null;
   renderAddCatSheet();
-  $("#moveSheet").hidden = false;
+  showSheet("moveSheet");
 }
 
 function renderAddCatSheet() {
@@ -4006,7 +4096,7 @@ function renderAddCatSheet() {
     </div>
     ${rows}
   `;
-  $("#addCatClose").onclick = () => { _addCatMode = false; moveCatOpen = null; $("#moveSheet").hidden = true; };
+  $("#addCatClose").onclick = () => { _addCatMode = false; moveCatOpen = null; hideSheet("moveSheet"); };
   $("#moveInner").querySelectorAll("[data-mv-toggle]").forEach(b => {
     b.onclick = () => { moveCatOpen = moveCatOpen === b.dataset.mvToggle ? null : b.dataset.mvToggle; renderAddCatSheet(); };
   });
@@ -4015,7 +4105,7 @@ function renderAddCatSheet() {
       _addState.category = b.dataset.acat;
       _addState.subcategory = b.dataset.asub;
       _addCatMode = false; moveCatOpen = null;
-      $("#moveSheet").hidden = true;
+      hideSheet("moveSheet");
       // update the category display row in the add form
       const valEl = $("#addCatVal");
       if (valEl) {
@@ -4154,6 +4244,7 @@ let looksLens = "Formality";
 let looksFolder = null;   // null = folder list (Formality/Season) | bucket key | season
 let lookId = null;        // outfit id in detail (null = none)
 let lookView = "canvas";  // when lookId set: "canvas" | "details" | "wears"
+let _lookEntryScroll = 0; // list scroll position when the look was entered (plain-back restore)
 let looksSearchQ = null;  // null = not searching | query string (search by piece/context)
 let looksItemFilter = null;  // item id → Looks shows only looks containing that piece (from item detail)
 
@@ -5079,7 +5170,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
     : null;
   _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season, _suggWx(), null, _suggClean());
   renderSuggestSheet();
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
     // Only apply if the suggestion sheet is still the one showing (#sgClose is ours)
     if (!wx || _sugg.planCtx || $("#logSheet").hidden || !$("#sgClose")) return;
@@ -5206,7 +5297,7 @@ async function wearSuggestedCombo(combo, { force = false } = {}) {
     buildOutfitWearMap();
     // Route into the context capture sheet (shared with daily-loop logging)
     if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
-    else { $("#logSheet").hidden = true; toast("Logged!"); }
+    else { hideSheet("logSheet"); toast("Logged!"); }
   } catch (e) { toast(e.message); }
 }
 
@@ -5336,7 +5427,7 @@ function renderSuggestSheet() {
     </div>` : `
     <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>↻ Try again</button></div>`}`;
 
-  $("#sgClose").onclick = () => { $("#logSheet").hidden = true; };
+  $("#sgClose").onclick = () => { hideSheet("logSheet"); };
 
   const regen = () => {
     _sugg.idx = 0;
@@ -5437,7 +5528,7 @@ function renderSuggestSheet() {
     el.addEventListener("click", () => {
       const it = itemById.get(el.dataset.canvasItem);
       if (!it) return;
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       openItemFrom(it.id, { cat: it.category, sub: it.subcategory });
     });
   });
@@ -5447,7 +5538,7 @@ function renderSuggestSheet() {
     const { capsuleId: cid, date } = _sugg.planCtx;
     try {
       const oid = await saveComboAsOutfit(combo.pieces);
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       // capsules tab is already on the plan view underneath the sheet; addPlanLook re-renders it
       await addPlanLook(cid, date, oid);
       toast("Added to " + planDayLabel(date));
@@ -5457,7 +5548,7 @@ function renderSuggestSheet() {
 
   const buildBtn = $("#logInner").querySelector("[data-sbuild]");
   if (buildBtn && combo) buildBtn.onclick = () => {
-    $("#logSheet").hidden = true;
+    hideSheet("logSheet");
     // seed the builder with the first piece, then open (carry plan context if any)
     openBuilder(null, combo.pieces[0].id, _sugg.planCtx);
     // after builder opens, drop all pieces
@@ -5536,10 +5627,10 @@ function openNewLookSheet() {
       <button class="btn" id="nlSuggest">Suggest an outfit for me</button>
       <button class="btn btn-sec" id="nlBuild">Build manually on canvas</button>
     </div>`;
-  $("#logSheet").hidden = false;
-  $("#nlClose").onclick = () => { $("#logSheet").hidden = true; };
-  $("#nlSuggest").onclick = () => { $("#logSheet").hidden = true; openSuggestSheet(); };
-  $("#nlBuild").onclick = () => { $("#logSheet").hidden = true; openBuilder(); };
+  showSheet("logSheet");
+  $("#nlClose").onclick = () => { hideSheet("logSheet"); };
+  $("#nlSuggest").onclick = () => { hideSheet("logSheet"); openSuggestSheet(); };
+  $("#nlBuild").onclick = () => { hideSheet("logSheet"); openBuilder(); };
 }
 
 async function openExcludeSheet(pieces) {
@@ -5731,7 +5822,7 @@ function leaveLook() {
   lookId = null; lookView = "canvas";
   _lookSiblingIds = null;
   if (_lookReturn) { const r = _lookReturn; _lookReturn = null; return r(); }
-  renderLooks();
+  renderLooks(); restoreScroll(_lookEntryScroll); _lookEntryScroll = 0;
 }
 
 function openRandomLook() {
@@ -5759,6 +5850,7 @@ function lookHeroBlock(o) {
 function openLook(id) {
   const o = outfitById.get(id);
   if (!o) return;
+  if (lookId === null) _lookEntryScroll = getScrollTop();  // list position, for plain-back
   lookId = id; lookView = "canvas";
   const its = outfitItems(o);
   const ic = (svg, label, act, cls) =>
@@ -5799,7 +5891,7 @@ function openLook(id) {
     </div>`;
   $("#itemBar").hidden = true;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
 
   if (hasSibs) {
     const goSib = (dir) => {
@@ -5893,7 +5985,7 @@ function openLookDetails(id) {
     </div>`;
   $("#itemBar").hidden = true;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
 
   // notes auto-save (direct PATCH; skip re-render so typing isn't interrupted)
   const ta = $("#lookNotes");
@@ -5950,7 +6042,7 @@ function openLookWears(id) {
     </div>`;
   $("#itemBar").hidden = true;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
 }
 
 // Duplicate a look (copies name+"copy", layout, formality override, pieces).
@@ -5995,11 +6087,11 @@ function openWearLook(id) {
       <input class="inp" id="logDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
       <div class="muted" style="font-size:13px;margin-top:12px">Logs a wear for all ${its.length} piece${its.length === 1 ? "" : "s"} in this look.</div>
     </div>`;
-  $("#logSheet").hidden = false;
-  $("#logCancel").onclick = () => { $("#logSheet").hidden = true; };
+  showSheet("logSheet");
+  $("#logCancel").onclick = () => { hideSheet("logSheet"); };
   $("#logSave").onclick = async () => {
     const date = $("#logDate").value;
-    if (!date || !its.length) { $("#logSheet").hidden = true; return; }
+    if (!date || !its.length) { hideSheet("logSheet"); return; }
     try {
       const fml = deriveWearFormality(its.map(it => it.id));
       const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, formality_for: fml }));
@@ -6108,11 +6200,11 @@ function openLookFormalityEdit(id) {
       });
       toast("Auto formality restored");
     } catch (e) { o._bucket = null; toast(e.message); }
-    $("#logSheet").hidden = true;
+    hideSheet("logSheet");
     openLook(id);
   };
 
-  $("#fmlCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#fmlCancel").onclick = () => { hideSheet("logSheet"); };
 
   $("#fmlSave").onclick = async () => {
     const prev = o.formality_override;
@@ -6124,25 +6216,25 @@ function openLookFormalityEdit(id) {
         body: JSON.stringify({ formality_override: selected }),
       });
       toast("Formality saved");
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       openLook(id);
     } catch (e) {
       o.formality_override = prev; o._bucket = null;
       toast(e.message);
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
     }
   };
 
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
 }
 
 // ---- add a formality level to a look's pieces (manual; opened from look detail) ----
 function showNudgePiecesSheet(outfitId, bucketKey) {
   const o = outfitById.get(outfitId);
-  if (!o) { $("#logSheet").hidden = true; return; }
+  if (!o) { hideSheet("logSheet"); return; }
   const its = outfitItems(o);
   const targetDefault = BUCKET_RANGES[bucketKey];
-  if (!targetDefault || !its.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
+  if (!targetDefault || !its.length) { toast("Formality saved"); hideSheet("logSheet"); openLook(outfitId); return; }
 
   let target = targetDefault; // single level 1-8 to ADD to each piece's set
 
@@ -6177,7 +6269,7 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
         <div>${pieceRows}</div>
       </div>`;
 
-    $("#nudgeSkip").onclick = () => { $("#logSheet").hidden = true; openLook(outfitId); };
+    $("#nudgeSkip").onclick = () => { hideSheet("logSheet"); openLook(outfitId); };
 
     $("#logInner").querySelectorAll("[data-nudgelvl]").forEach(btn => {
       btn.addEventListener("click", () => { target = +btn.dataset.nudgelvl; renderSheet(); });
@@ -6185,7 +6277,7 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
 
     $("#nudgeApply").onclick = async () => {
       const toNudge = [...$("#logInner").querySelectorAll("[data-nudge]:checked")].map(x => x.dataset.nudge);
-      if (!toNudge.length) { toast("Formality saved"); $("#logSheet").hidden = true; openLook(outfitId); return; }
+      if (!toNudge.length) { toast("Formality saved"); hideSheet("logSheet"); openLook(outfitId); return; }
       try {
         // patch each item individually — each has a different existing set
         await Promise.all(toNudge.map(async iid => {
@@ -6203,12 +6295,12 @@ function showNudgePiecesSheet(outfitId, bucketKey) {
         outfits.forEach(o => { o._bucket = null; });
         toast(`Formality saved · ${toNudge.length} piece${toNudge.length === 1 ? "" : "s"} updated`);
       } catch (e) { toast(e.message); }
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       openLook(outfitId);
     };
   };
 
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   renderSheet();
 }
 
@@ -6239,13 +6331,13 @@ function openOccasionEdit(itemId, onSaved) {
         <div style="margin-top:14px;font-size:13px;color:var(--muted)">Selected: <b style="color:var(--text)">${esc(selLabel)}</b></div>
         ${sel.length ? `<button class="lnk" id="occClear" style="color:var(--danger);font-size:14px;margin-top:10px">Clear</button>` : ""}
       </div>`;
-    $("#occCancel").onclick = () => { $("#logSheet").hidden = true; };
+    $("#occCancel").onclick = () => { hideSheet("logSheet"); };
     $("#occSave").onclick = async () => {
       const prev = it.formality;
       const val = sel.length ? sel : null;
       it.formality = val;
       outfits.forEach(o => { o._bucket = null; });
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       try {
         await rest(`/items?id=eq.${it.id}`, {
           method: "PATCH",
@@ -6271,7 +6363,7 @@ function openOccasionEdit(itemId, onSaved) {
     });
   };
   render();
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
 }
 
 /* ===================================================================
@@ -6389,11 +6481,11 @@ function openBulkEdit() {
   bulkPending = {};
   bulkOpenField = null;
   renderBulkSheet();
-  $("#bulkSheet").hidden = false;
+  showSheet("bulkSheet");
 }
 
 function closeBulkEdit() {
-  $("#bulkSheet").hidden = true;
+  hideSheet("bulkSheet");
   bulkPending = {};
   bulkOpenField = null;
 }
@@ -6515,11 +6607,11 @@ function openMoveSheet() {
   if (!selectedIds.size) return;
   moveCatOpen = null;
   renderMoveSheet();
-  $("#moveSheet").hidden = false;
+  showSheet("moveSheet");
 }
 
 function closeMoveSheet() {
-  $("#moveSheet").hidden = true;
+  hideSheet("moveSheet");
   moveCatOpen = null;
   _moveItemId = null;
   _reviewMoveMode = false;
@@ -6766,14 +6858,14 @@ function openCalDaySheet(dateStr, body) {
       ${!isFuture ? `<button class="sheet-action-btn" id="calDaySheetLook">+ Add look</button>` : ""}
       ${!hasEntries && isFuture ? `<div class="muted" style="text-align:center;font-size:14px;padding:20px 0">Nothing logged yet.</div>` : ""}
     </div>`;
-  $("#logSheet").hidden = false;
-  $("#calDaySheetClose").onclick = () => { $("#logSheet").hidden = true; };
+  showSheet("logSheet");
+  $("#calDaySheetClose").onclick = () => { hideSheet("logSheet"); };
   const viewBtn = $("#calDaySheetView");
-  if (viewBtn) viewBtn.onclick = () => { $("#logSheet").hidden = true; calendarDay = dateStr; renderCalendarDay(body); };
+  if (viewBtn) viewBtn.onclick = () => { hideSheet("logSheet"); calendarDay = dateStr; renderCalendarDay(body); };
   const clothBtn = $("#calDaySheetClothing");
-  if (clothBtn) clothBtn.onclick = () => { $("#logSheet").hidden = true; calendarDay = dateStr; renderCalendarDay(body); openCalAddClothing(); };
+  if (clothBtn) clothBtn.onclick = () => { hideSheet("logSheet"); calendarDay = dateStr; renderCalendarDay(body); openCalAddClothing(); };
   const lookBtn = $("#calDaySheetLook");
-  if (lookBtn) lookBtn.onclick = () => { $("#logSheet").hidden = true; calendarDay = dateStr; renderCalendarDay(body); openCalAddLook(); };
+  if (lookBtn) lookBtn.onclick = () => { hideSheet("logSheet"); calendarDay = dateStr; renderCalendarDay(body); openCalAddLook(); };
 }
 
 function renderCalendarDay(body) {
@@ -6960,13 +7052,13 @@ function renderCalendarDay(body) {
           <input class="inp" id="calCpDate" type="date" value="${today}" max="${today}" style="width:100%;font-size:16px">
           ${action === 'move' ? `<div class="muted" style="font-size:13px;margin-top:10px">Original wear entries will be removed from ${esc(calendarDay)}.</div>` : ''}
         </div>`;
-      $("#logSheet").hidden = false;
-      $("#calCpCancel").onclick = () => { $("#logSheet").hidden = true; };
+      showSheet("logSheet");
+      $("#calCpCancel").onclick = () => { hideSheet("logSheet"); };
       $("#calCpSave").onclick = async () => {
         const newDate = $("#calCpDate").value;
         if (!newDate || newDate === calendarDay) { toast("Pick a different date"); return; }
         const origWears = wears.filter(w => wearIds.includes(w.id));
-        if (!origWears.length) { $("#logSheet").hidden = true; return; }
+        if (!origWears.length) { hideSheet("logSheet"); return; }
         try {
           const payload = origWears.map(w => ({
             item_id: w.item_id, worn_on: newDate,
@@ -6984,7 +7076,7 @@ function renderCalendarDay(body) {
             wears = wears.filter(w => !wearIds.includes(w.id));
           }
           buildOutfitWearMap();
-          $("#logSheet").hidden = true;
+          hideSheet("logSheet");
           toast(`${action === 'copy' ? 'Copied' : 'Moved'} to ${newDate}`);
           renderCalendarDay(body);
         } catch (e) { toast(e.message); }
@@ -7058,9 +7150,9 @@ function openContextSheet(wearIds, current, onSaved) {
       <div class="muted" style="font-size:13px;margin-bottom:4px">Where did you wear this?</div>
       ${contextPickerHtml()}
     </div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   renderContextPicker();
-  $("#ctxCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#ctxCancel").onclick = () => { hideSheet("logSheet"); };
   $("#ctxSave").onclick = async () => {
     const val = ctxSelOrNull();
     try {
@@ -7070,7 +7162,7 @@ function openContextSheet(wearIds, current, onSaved) {
         body: JSON.stringify({ context: val }),
       });
       wears.forEach(w => { if (wearIds.includes(w.id)) w.context = val; });
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       toast(val ? `Marked as ${val.join(", ")}` : "Context cleared");
       if (onSaved) onSaved();
     } catch (e) { toast(e.message); }
@@ -7147,8 +7239,8 @@ function openSplitWearSheet(wearIds, outfitId, body) {
       </div>
       ${delNote}
     </div>`;
-  $("#logSheet").hidden = false;
-  const close = () => { $("#logSheet").hidden = true; };
+  showSheet("logSheet");
+  const close = () => { hideSheet("logSheet"); };
   $("#splCancel").onclick = close;
   $("#splKeep").onclick    = () => resolveSplit(wearIds, outfitId, 'keep', body).then(close);
   $("#splDelWear").onclick = () => resolveSplit(wearIds, outfitId, 'delWear', body).then(close);
@@ -7313,7 +7405,7 @@ function renderCalClothingPicker() {
     </div>
   </div>`;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
   const s = $('#calLogSearch');
   if (s) s.oninput = () => { _capPickFilter = s.value; renderCalLogGrid(); };
   body.onclick = (e) => {
@@ -7431,7 +7523,7 @@ function renderCalLookPicker() {
     <div id="calLookResults">${calLookListHtml()}</div>
   </div>`;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
   const s = $('#calLookSearch');
   if (s) s.oninput = () => {
     _calLookQ = s.value;
@@ -7508,13 +7600,13 @@ function openWearAgainChooser(date) {
       </div>
     </div>
     <div style="height:max(env(safe-area-inset-bottom),16px)"></div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   hydratePhotos($("#logInner"));
-  $("#waCancel").onclick = () => { $("#logSheet").hidden = true; };
-  $("#waAddClothing").onclick = () => { $("#logSheet").hidden = true; calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddClothing(); };
-  $("#waAddLook").onclick = () => { $("#logSheet").hidden = true; calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddLook(); };
+  $("#waCancel").onclick = () => { hideSheet("logSheet"); };
+  $("#waAddClothing").onclick = () => { hideSheet("logSheet"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddClothing(); };
+  $("#waAddLook").onclick = () => { hideSheet("logSheet"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddLook(); };
   $("#logInner").querySelectorAll("[data-wa-look]").forEach(b => {
-    b.onclick = () => { $("#logSheet").hidden = true; calendarDay = date; logLookOnDay(b.dataset.waLook); };
+    b.onclick = () => { hideSheet("logSheet"); calendarDay = date; logLookOnDay(b.dataset.waLook); };
   });
 }
 
@@ -7735,7 +7827,7 @@ function openStatsRange() {
         </div>
       </div>
     </div>`;
-  const close = () => { $("#statsRangeSheet").hidden = true; };
+  const close = () => { hideSheet("statsRangeSheet"); };
   $("#srDone").onclick = close;
   $("#statsRangeBg").onclick = close;
   $("#statsRangeInner").querySelectorAll("[data-srv]").forEach(btn => {
@@ -7749,7 +7841,7 @@ function openStatsRange() {
       statsRebuild();
     });
   });
-  $("#statsRangeSheet").hidden = false;
+  showSheet("statsRangeSheet");
 }
 
 const TOGGLE_GROUPS = {
@@ -9115,7 +9207,7 @@ function openReviewField(i, field) {
   _fieldEditItem = i;
   _fieldOnSave = (val) => { saveField(i.id, field, val); reviewAfterEdit(); };
   renderFieldSheet(i, field, cfg);
-  $("#fieldSheet").hidden = false;
+  showSheet("fieldSheet");
 }
 
 // Open the category/subcategory move sheet for review.
@@ -9125,7 +9217,7 @@ function openReviewMove(i) {
   selectedIds = new Set([i.id]);
   moveCatOpen = i.category || null;   // pre-expand current category (subcategory case)
   renderMoveSheet();
-  $("#moveSheet").hidden = false;
+  showSheet("moveSheet");
 }
 
 // Purchase date editor (empty dates only).
@@ -9155,7 +9247,7 @@ function openReviewDateEdit(i) {
       });
     } catch (e) { i.purchase_date = prevD; toast(e.message); }
   };
-  $("#fieldSheet").hidden = false;
+  showSheet("fieldSheet");
 }
 
 // Open the full item detail from closet review
@@ -9549,9 +9641,9 @@ function openCapsuleLookPicker() {
     </div>
     <div style="padding:6px 16px 0;font-size:13px;color:var(--muted)">Tap a look to add its pieces to this capsule.</div>
     <div style="padding:6px 0 30px">${grid}</div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   hydratePhotos($("#logInner"));
-  $("#lkPickCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#lkPickCancel").onclick = () => { hideSheet("logSheet"); };
   $("#logInner").querySelectorAll("[data-lkpick]").forEach(b => {
     b.onclick = async () => {
       const o = outfitById.get(b.dataset.lkpick);
@@ -9561,7 +9653,7 @@ function openCapsuleLookPicker() {
       if (!itemIds.length) return;
       try {
         await addItemsToCapsule(cid, itemIds);
-        $("#logSheet").hidden = true;
+        hideSheet("logSheet");
         renderCapsules();
         toast("Look's pieces added to capsule");
       } catch (err) { toast(err.message); }
@@ -9826,14 +9918,14 @@ function openBucketAssignSheet(date) {
       <span style="width:54px"></span>
     </div>
     <div style="padding:6px 0 30px">${grid}</div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   hydratePhotos($("#logInner"));
-  $("#bktPickCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#bktPickCancel").onclick = () => { hideSheet("logSheet"); };
   $("#logInner").querySelectorAll("[data-bktpick]").forEach(b => {
     b.onclick = () => {
       const oid = b.dataset.bktpick;
       if (onDay.has(oid)) { toast("Already planned for this day"); return; }
-      $("#logSheet").hidden = true;
+      hideSheet("logSheet");
       addPlanLook(capsuleId, date, oid);
     };
   });
@@ -9862,9 +9954,9 @@ function openPlanLookPicker(date) {
     </div>
     <div style="padding:6px 16px 8px"><input class="inp" id="planPickSearch" placeholder="Search looks…" value=""></div>
     <div id="planPickResults" style="padding:6px 0 30px">${planPickGridHtml()}</div>`;
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
   hydratePhotos($("#logInner"));
-  $("#planPickCancel").onclick = () => { $("#logSheet").hidden = true; };
+  $("#planPickCancel").onclick = () => { hideSheet("logSheet"); };
   const s = $("#planPickSearch");
   if (s) s.oninput = () => {
     _planPickQ = s.value;
@@ -9875,7 +9967,7 @@ function openPlanLookPicker(date) {
 }
 function wirePlanPickTaps(date) {
   $("#logInner").querySelectorAll("[data-planpick]").forEach(b => {
-    b.onclick = () => { $("#logSheet").hidden = true; addPlanLook(capsuleId, date, b.dataset.planpick); };
+    b.onclick = () => { hideSheet("logSheet"); addPlanLook(capsuleId, date, b.dataset.planpick); };
   });
 }
 
@@ -9958,12 +10050,12 @@ function renameCapsule(id) {
     <div style="padding:18px 18px 30px">
       <input class="inp" id="renName" value="${esc(c.name)}" placeholder="Capsule name" style="width:100%;font-size:16px">
     </div>`;
-  $("#logSheet").hidden = false;
-  $("#renCancel").onclick = () => { $("#logSheet").hidden = true; };
+  showSheet("logSheet");
+  $("#renCancel").onclick = () => { hideSheet("logSheet"); };
   $("#renSave").onclick = async () => {
     const name = $("#renName").value.trim();
     if (!name) { toast("Give it a name"); return; }
-    $("#logSheet").hidden = true;
+    hideSheet("logSheet");
     const prev = c.name;
     c.name = name;  // optimistic
     try {
@@ -10259,8 +10351,8 @@ function openCapsuleAssign(currentIds, onSave) {
         <button class="lnk" id="capAssignSave" style="font-weight:700">Save</button>
       </div>
       ${rows || `<div class="sheet-note">No capsules yet. Create one from the Capsules screen.</div>`}`;
-    $("#capAssignCancel").onclick = () => { $("#moveSheet").hidden = true; };
-    $("#capAssignSave").onclick = () => { $("#moveSheet").hidden = true; onSave([...sel]); };
+    $("#capAssignCancel").onclick = () => { hideSheet("moveSheet"); };
+    $("#capAssignSave").onclick = () => { hideSheet("moveSheet"); onSave([...sel]); };
     $("#moveInner").querySelectorAll("[data-cap-tog]").forEach(b => {
       b.onclick = () => {
         const id = b.dataset.capTog;
@@ -10270,7 +10362,7 @@ function openCapsuleAssign(currentIds, onSave) {
     });
   };
   render();
-  $("#moveSheet").hidden = false;
+  showSheet("moveSheet");
 }
 
 // Diff an item's capsule membership against a chosen set, writing capsule_items rows.
@@ -10312,9 +10404,9 @@ function openCapsuleSheet() {
   $("#moveInner").querySelectorAll("[data-cap-target]").forEach(b => {
     b.onclick = () => capSheetPick(b.dataset.capTarget);
   });
-  $("#moveSheet").hidden = false;
+  showSheet("moveSheet");
 }
-function closeCapsuleSheet() { _capSheetMode = false; $("#moveSheet").hidden = true; }
+function closeCapsuleSheet() { _capSheetMode = false; hideSheet("moveSheet"); }
 
 async function capSheetPick(target) {
   const ids = [...selectedIds];
@@ -10467,7 +10559,7 @@ function renderBuilderCanvas() {
       <div class="bld-hint">Drag to move · drag the blue handle to resize · tap a piece to select</div>
     </div>`;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
   const nameInp = $("#bldName");
   if (nameInp) nameInp.oninput = () => { builder.name = nameInp.value; };
   wireBuilderCanvas();
@@ -10557,7 +10649,7 @@ function renderBuilderPicker() {
     ${capBar}
     <div id="bldPickResults" style="padding:8px 0 30px">${builderPickContent()}</div>`;
   hydratePhotos(body);
-  window.scrollTo(0, 0);
+  scrollToTop();
   const s = $("#bldPickSearch");
   if (s) s.oninput = () => { builder.pickQ = s.value; renderBuilderPickerResults(); };
 }
@@ -10769,8 +10861,8 @@ function openMergeFollowUp(oldId, dupId, wearDate) {
         <button class="sheet-chip" id="mergeDelete">Delete it</button>
       </div>
     </div>`;
-  $("#logSheet").hidden = false;
-  const close = () => { $("#logSheet").hidden = true; };
+  showSheet("logSheet");
+  const close = () => { hideSheet("logSheet"); };
   $("#mergeClose").onclick = close;
   $("#mergeKeep").onclick = close;
   if (wearDate) $("#mergeMoveWear").onclick = async () => {
@@ -11195,9 +11287,9 @@ function openLocationSheet(cid) {
   _locSheet = { cid, step: "search", searchQ: "", results: [], loc: null,
     from: (c && c.start_date) || "", to: (c && c.end_date) || "" };
   _renderLocSheet();
-  $("#logSheet").hidden = false;
+  showSheet("logSheet");
 }
-function closeLocationSheet() { _locSheet = null; $("#logSheet").hidden = true; }
+function closeLocationSheet() { _locSheet = null; hideSheet("logSheet"); }
 
 function _renderLocSheet() {
   const s = _locSheet;
@@ -11355,7 +11447,7 @@ function switchTab(name) {
   else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; renderStats(); }
   else if (name === "settings") renderSettings();
 
-  window.scrollTo(0, 0);
+  scrollToTop();
 }
 
 function renderSettings() {
@@ -11378,6 +11470,7 @@ function wireEvents() {
     err.hidden = true; btn.disabled = true; btn.textContent = "Signing in…";
     try {
       await signIn($("#email").value.trim(), $("#pw").value);
+      store.setItem("wardrobe.lastEmail", $("#email").value.trim());
       $("#pw").value = "";
       await bootApp();
     } catch (e2) {
@@ -11615,7 +11708,7 @@ function wireEvents() {
   // move sheet (also covers add-cat sheet which reuses the same container)
   $("#moveBg").addEventListener("click", () => {
     if (_capSheetMode) { closeCapsuleSheet(); }
-    else if (_addCatMode) { _addCatMode = false; moveCatOpen = null; $("#moveSheet").hidden = true; }
+    else if (_addCatMode) { _addCatMode = false; moveCatOpen = null; hideSheet("moveSheet"); }
     else closeMoveSheet();
   });
 
@@ -11629,7 +11722,7 @@ function wireEvents() {
   $("#fieldBg").addEventListener("click", closeFieldSheet);
 
   // log wear / location sheet
-  $("#logBg").addEventListener("click", () => { if (_locSheet) _locSheet = null; $("#logSheet").hidden = true; });
+  $("#logBg").addEventListener("click", () => { if (_locSheet) _locSheet = null; hideSheet("logSheet"); });
 
   // add item: field rows + category picker
   document.getElementById("tab-add").addEventListener("click", (e) => {
@@ -11729,10 +11822,115 @@ function wireSheetSwipe(sheetId, bgId) {
     if (!dragging) return;
     dragging = false;
     sheet.classList.remove("dragging");
-    sheet.style.transform = "";
+    // Past the dismiss threshold: leave the dragged offset in place so
+    // hideSheet's close animation continues from where the finger let go.
     if (dy > 90) { const bg = document.getElementById(bgId); if (bg) bg.click(); }
+    else sheet.style.transform = "";
   });
 }
+
+/* ===================================================================
+   DATA SNAPSHOT + FRESHNESS (2026-07-17)
+   Instant boot: hydrate from a Cache Storage snapshot of the last good
+   loadData(), then fetch fresh behind. Return-to-app: silently refetch
+   after >5 min hidden (or a date rollover) when the UI is at rest.
+   =================================================================== */
+const DATA_CACHE = "wardrobe-data-v1";
+const SNAPSHOT_KEY = "wardrobe-data-snapshot";   // resolves under the app's path
+const SNAPSHOT_MAX_AGE = 7 * 86400000;           // stale snapshots feel like bugs — skip past 7d
+const REFRESH_AFTER_HIDDEN_MS = 5 * 60000;
+
+async function saveDataSnapshot() {
+  if (!("caches" in window)) return;
+  try {
+    const cache = await caches.open(DATA_CACHE);
+    const body = JSON.stringify({ ts: Date.now(), user_id: session?.user?.id || null,
+      items, wears, outfits, outfitLinks, capsules, capsuleLinks, exclusions });
+    await cache.put(SNAPSHOT_KEY, new Response(body, { headers: { "Content-Type": "application/json" } }));
+  } catch (_) {}
+}
+async function clearDataSnapshot() {
+  if (!("caches" in window)) return;
+  try { (await caches.open(DATA_CACHE)).delete(SNAPSHOT_KEY); } catch (_) {}
+}
+// Hydrate state from the snapshot. Returns true when the app is usable from it.
+async function loadDataSnapshot() {
+  if (!("caches" in window)) return false;
+  try {
+    const r = await (await caches.open(DATA_CACHE)).match(SNAPSHOT_KEY);
+    if (!r) return false;
+    const d = await r.json();
+    if (!d || d.user_id !== session?.user?.id) return false;
+    if (Date.now() - (d.ts || 0) > SNAPSHOT_MAX_AGE) return false;
+    items = d.items || []; wears = d.wears || []; outfits = d.outfits || [];
+    outfitLinks = d.outfitLinks || []; capsules = d.capsules || [];
+    capsuleLinks = d.capsuleLinks || []; exclusions = d.exclusions || [];
+    buildOutfitIndexes(); buildCapsuleIndexes(); buildExcludeSet(); buildSuggestIndexes();
+    dataReady = true;
+    return true;
+  } catch (_) { return false; }
+}
+
+function activeTabName() {
+  const s = document.querySelector(".screen.active");
+  return s ? s.id.slice(4) : null;                 // "tab-home" → "home"
+}
+// Safe to swap the data arrays out from under the UI? Anything mid-edit says no.
+function uiCanRefetch() {
+  for (const id of ["bulkSheet", "moveSheet", "quickActSheet", "fieldSheet", "logSheet",
+                    "statsFilterSheet", "filterSheet", "statsRangeSheet"])
+    { const w = document.getElementById(id); if (w && !w.hidden) return false; }
+  const tab = activeTabName();
+  if (tab === "add" || tab === "builder") return false;
+  if (_reviewMode || statsView === "review") return false;
+  if (capsuleView === "form" || capsuleView === "pick") return false;
+  if (selectMode) return false;
+  return true;
+}
+// Re-render only true root surfaces; open details/pickers keep their DOM and
+// simply see fresh data on their next navigation.
+function rerenderRootAfterRefresh() {
+  const tab = activeTabName();
+  if (tab === "home") renderHome();
+  else if (tab === "closet" && !detailId) renderCloset();
+  else if (tab === "looks" && !lookId) renderLooks();
+  else if (tab === "calendar") renderCalendar();
+  else if (tab === "stats" && statsView !== "review") renderStats();
+}
+
+// "Update available" toast — GH Pages caches hard, so a deployed fix can sit
+// unseen for days. Reads the app-version <meta> from the first 2KB of our own
+// index.html (cache-busted); reload goes through location.replace with a query
+// because a plain reload() can re-serve the same stale cached copy.
+let _verToastShown = null;
+async function checkForNewVersion() {
+  try {
+    const r = await fetch(`index.html?v=${Date.now()}`,
+      { headers: { Range: "bytes=0-2047" }, cache: "no-store" });
+    if (!(r.ok || r.status === 206)) return;
+    const m = /name="app-version" content="([^"]+)"/.exec(await r.text());
+    if (!m || m[1] === APP_VERSION || m[1] === _verToastShown) return;
+    _verToastShown = m[1];
+    toast(`Update available · ${m[1]}`,
+      { label: "Reload", fn: () => location.replace(location.pathname + "?v=" + Date.now()) });
+  } catch (_) {}
+}
+
+let _lastHiddenAt = 0;
+let _uiDay = todayStr();
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { _lastHiddenAt = Date.now(); return; }
+  if (!session?.access_token || !dataReady) return;
+  const dayChanged = todayStr() !== _uiDay;
+  if (dayChanged) _uiDay = todayStr();
+  const longAway = _lastHiddenAt && Date.now() - _lastHiddenAt > REFRESH_AFTER_HIDDEN_MS;
+  if (longAway) checkForNewVersion();
+  if ((longAway || dayChanged) && uiCanRefetch()) {
+    loadData().then(() => { prunePhotoCache(); rerenderRootAfterRefresh(); }).catch(() => {});
+  } else if (dayChanged && activeTabName() === "home") {
+    renderHome();   // logged-row / laundry strip roll over even if a refetch was skipped
+  }
+});
 
 /* ===================================================================
    AUTH / BOOT
@@ -11740,6 +11938,8 @@ function wireSheetSwipe(sheetId, bgId) {
 function showLogin() {
   $("#login").classList.add("active");
   $("#app").hidden = true;
+  const em = $("#email");
+  if (em && !em.value) em.value = store.getItem("wardrobe.lastEmail") || "";
 }
 function showApp() {
   $("#login").classList.remove("active");
@@ -11747,6 +11947,7 @@ function showApp() {
 }
 function handleSignedOut() {
   saveSession(null);
+  clearDataSnapshot();
   items = []; wears = []; outfits = []; outfitLinks = []; dataReady = false; _urlCache.clear();
   itemById = new Map(); outfitById = new Map(); outfitItemMap = new Map(); outfitWearMap = new Map();
   showLogin();
@@ -11754,13 +11955,16 @@ function handleSignedOut() {
 
 async function bootApp() {
   showApp();
-  switchTab("home");      // land on home immediately, even before data arrives
+  const fromSnapshot = await loadDataSnapshot();  // instant: whole app usable before any network
+  switchTab("home");
+  checkForNewVersion();   // fire-and-forget
   try {
     await loadData();
     prewarmUrlCache();    // fire-and-forget: batch-sign all photo URLs into cache
     prunePhotoCache();    // fire-and-forget: drop cached bytes for photos no item references
-    renderHome();         // re-render so tile subtitles (counts) fill in
+    rerenderRootAfterRefresh();  // user may have navigated off Home while data fetched
   } catch (e) {
+    if (fromSnapshot) return;    // app already works on cached data — fail silently
     $("#homeBody").innerHTML = `<div class="placeholder"><b>Couldn't load data</b>
       <div class="err">${esc(e.message)}</div>
       <button class="btn" style="max-width:180px" onclick="retryLoad()">Retry</button></div>`;

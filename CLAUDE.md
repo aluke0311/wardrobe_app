@@ -13,6 +13,9 @@ library. If something seems to need a library, ask the user first.
 ## Hard constraints (do not break)
 
 - Keep it a single `index.html`. No external JS/CSS assets, no `<script src>`.
+  Sole exceptions (user-approved 2026-07-17, PWA install): `manifest.json` +
+  `icon-180.png` + `icon-512.png` in repo root. **No service worker, ever** —
+  that would be a real second JS file.
 - Plain `fetch` only for all Supabase calls.
 - Mobile-first; the user mostly uses this on a phone and takes photos with it.
 - Only the publishable (anon) key ever appears in client code — it's safe to
@@ -21,7 +24,7 @@ library. If something seems to need a library, ask the user first.
 
 ## Architecture (inside `index.html`)
 
-**Current state: 2026-07-15 r4. Full rework from v25. ~11,400 lines.**
+**Current state: 2026-07-17 r1. Full rework from v25. ~11,900 lines.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
@@ -90,6 +93,37 @@ var); tapping the header scrolls to top (NOTE: **body is the scroll
 container**, not window — `window.scrollTo` is a no-op app-wide; the header
 tap animates `document.body.scrollTop` with a setTimeout loop because rAF
 stalls in hidden documents).
+**"Feels Professional" polish round (2026-07-17 r1) is FULLY SHIPPED** (decisions
+in ROADMAP.md's polish section; dark mode REJECTED — don't re-propose). All
+perceived-quality, no features/schema: ① **PWA install** — `manifest.json` +
+`icon-180/512.png` (repo-root files, the approved one-file exceptions),
+apple-touch-icon + standalone metas, SVG data-URI favicon. ② **Sheet motion** —
+`showSheet(id)`/`hideSheet(id)` helpers (slide-up/down + backdrop fade; wrapper
+`hidden` stays the source of truth, `hideSheet` delays `hidden=true` ~240ms) —
+**never toggle a sheet wrapper's `.hidden` directly**; drag-dismiss hands its
+offset to `hideSheet` for continuity. ③ **Freshness** — `visibilitychange`
+handler: >5 min hidden (or date rollover) + `uiCanRefetch()` (no sheet open, no
+builder/add/review/pick/select) → silent `loadData()` +
+`rerenderRootAfterRefresh()` (roots only: home / closet-sans-detail /
+looks-sans-look / calendar / stats-sans-review). ④ **Snapshot instant-boot** —
+`saveDataSnapshot()` after every `loadData` into Cache Storage
+(`DATA_CACHE`/`SNAPSHOT_KEY`, 7d max age, user-id-checked); `bootApp` hydrates
+from it before any network and fails silently if fresh fetch dies;
+`handleSignedOut` clears it. ⑤ **Update toast** — `checkForNewVersion()`
+Range-fetches own index.html, compares `<meta name="app-version">` (MUST stay
+in lockstep with `APP_VERSION` — deploy skill bumps both) → "Update available"
+toast; reload via `location.replace(+query)` because plain reload can re-serve
+the stale cached copy. ⑥ **Scroll** — `scrollToTop()`/`getScrollTop()`/
+`restoreScroll(y)` (body is the scroll container; the 9 dead `window.scrollTo`
+calls were converted); `makeScreenReturn` thunks restore origin scroll;
+`_detailEntryScroll`/`_lookEntryScroll` restore grid/list position on plain
+back (captured only when `detailId`/`lookId` was null, so sibling prev/next
+keeps the original). ⑦ **Photo fade-in** — `loadPhotoNode` decodes off-DOM then
+fades (`.ph-fade`/`.ph-in`); `_shownPhotos` Set skips the fade on re-renders
+(no added flicker). ⑧ Papercuts: tabular-nums body-wide, desktop ≥700px frame
+(app + all fixed chrome capped at 640px), login email prefill
+(`wardrobe.lastEmail`), `prefers-reduced-motion` guard.
+
 **▶ NEXT UP:** nothing scheduled — ask before starting new work. The user still
 needs to run `migration/items_laundry.sql` for laundry to light up.
 
@@ -496,7 +530,9 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-15 r4`.
+  Currently `2026-07-17 r1`. ⚠️ Since 2026-07-17 the version lives in TWO
+  places that must stay in lockstep: the `APP_VERSION` constant AND the
+  `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
 - Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
   `OCCASION_LADDER`, `CONTEXTS`) — change them there.
@@ -527,6 +563,15 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 
 ## Known gotchas
 
+- **Bottom sheets open/close ONLY via `showSheet(id)`/`hideSheet(id)`** (2026-07-17)
+  — never set a sheet wrapper's `.hidden` directly. `hideSheet` animates first and
+  flips `hidden=true` ~240ms later, so code that *reads* `.hidden` right after a
+  close sees `false`; the wrapper ids list in `uiCanRefetch()` must gain any NEW
+  sheet wrapper added later.
+- **Screen-top scrolling**: use `scrollToTop()` / `getScrollTop()` /
+  `restoreScroll(y)` — `window.scrollTo` is a no-op (body is the scroll container).
+  Back-nav scroll restore: `makeScreenReturn` thunks carry it; plain closet/look
+  back uses `_detailEntryScroll`/`_lookEntryScroll`.
 - **`localStorage` in restricted contexts**: `data:` URL open throws "Storage is
   disabled". `store` wrapper handles it — never use `localStorage` directly.
 - **WebP encode**: `canvas.toBlob(..., 'image/webp')` silently returns PNG on some

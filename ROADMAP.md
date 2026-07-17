@@ -1,9 +1,99 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-15 r4**. Nothing scheduled — see Back-burner.
+> Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
+> Nothing scheduled — see Back-burner.
 > ⚠️ User still needs to run `migration/items_laundry.sql` (laundry write-UI is
 > hidden until she does).
+
+---
+
+## ✅ SHIPPED BUILD — "Feels Professional" polish round (planned + built 2026-07-17, r1)
+
+**Goal: perceived quality only — no new features, no capture, no schema.** From
+the 2026-07-17 product review ("what would make this feel professional and a joy
+to use"). User answered: **everything except dark mode** (E skipped entirely —
+including the token-hygiene pass; do not start it). No migrations needed.
+
+### Locked decisions (do not re-litigate)
+
+- **A1/A2 Install as home-screen app**: add `manifest.json` + `icon-180.png` +
+  `icon-512.png` (real files in repo root — user approved bending "one file";
+  the constraint's letter is no external JS/CSS, which these aren't). Display
+  `standalone`; `start_url`/`scope` = `/wardrobe_app/` (GH Pages subpath!).
+  `<link rel="manifest">` + `<link rel="apple-touch-icon" href="icon-180.png">`
+  + legacy `apple-mobile-web-app-capable` metas. Icon = Claude-drafted
+  periwinkle (#8b8fd0) full-bleed square, white tee glyph (match
+  `PHOTO_PLACEHOLDER`); iOS masks its own corners — do NOT pre-round.
+  **NO service worker** (would be a real second JS file — rejected).
+- **A3 Freshness on return**: `visibilitychange → visible` handler. If hidden
+  >5 min AND the UI is "at rest" → silent `loadData()` + re-render current tab
+  ROOT only. "At rest" = no sheet visible, `builder == null`, tab ≠ add, not
+  `_reviewMode`, no item/look detail open (skip re-render but still refetch is
+  NOT safe mid-edit — skip everything when not at rest; next return catches it).
+  If the DATE rolled over while hidden → always re-render Home (logged-row /
+  laundry strip recompute). Failures are silent (no toast on background fetch).
+- **D1 Snapshot instant-boot**: stale-while-revalidate via Cache Storage
+  (pattern: photo byte cache). After each successful `loadData` → stash JSON
+  snapshot {items, wears, outfits, outfitLinks, capsules, capsuleLinks,
+  exclusions, ts, user_id}. On boot: hydrate from snapshot immediately if
+  <7 days old AND user_id matches, render, then fresh `loadData()` behind and
+  re-render current root (reuse A3's at-rest guard). Skip cleanly where
+  `caches` unavailable.
+- **C1 Dead scroll fix**: `window.scrollTo(0,0)` is a no-op app-wide (body is
+  the scroll container — CLAUDE.md r3 note). Add `scrollToTop()` helper setting
+  `document.body.scrollTop` + `documentElement`; replace all 9 call sites.
+- **C2 Scroll restoration on back**: capture scrollTop inside
+  `makeItemReturn`/`makeScreenReturn` (they already snapshot view state) and in
+  the plain closet grid→item path; restore after the return re-render (one rAF
+  after `hydratePhotos`; tiles are fixed-height so early restore clamps safely).
+- **B1 Sheet entrance/exit animation**: one `showSheet(el|id, bgEl?)` /
+  `hideSheet(...)` helper — slide up from `translateY(100%)` on open (force
+  reflow, then clear transform so the existing `.sheet` transition runs),
+  animate down + backdrop fade on close, `hidden=true` after ~250ms. Cancel
+  pending hide timers on reopen. Swap ALL sheet open/close sites. Keep `hidden`
+  semantics identical (code checks `sheet.hidden` for state). Must not fight
+  `wireSheetSwipe`'s inline transform (drag-dismiss).
+- **B2 Photo fade-in**: preload via `Image.decode()` on the blob URL, then set
+  background + fade opacity ~150ms. **Only on first display per session** —
+  track shown `image_path`s in a session Set; cache-hit re-renders set
+  instantly (avoid worsening re-render flicker).
+- **A4 Version toast**: add a version marker near the TOP of `<head>` (meta
+  `app-version`, kept in sync with `APP_VERSION` — update the `deploy-wardrobe`
+  skill to bump BOTH). On boot + on A3's return path: cache-busted `Range`
+  fetch of first ~2KB of own index.html, regex the marker, compare. If newer →
+  toast "Update available" + "Reload" chip → `location.replace(path + '?v=' +
+  Date.now())` (plain reload() can re-serve the stale cached copy). Toast once
+  per detected version (store last-dismissed).
+- **B3 reduced-motion**: `prefers-reduced-motion: reduce` kills
+  transitions/animations globally.
+- **F papercuts (all approved)**: F1 inline SVG data-URI favicon (tee glyph,
+  periwinkle) · F2 `font-variant-numeric: tabular-nums` on stat/KPI/count
+  surfaces · F3 desktop frame: `@media (min-width: 700px)` max-width ~640px
+  centered on `#app` AND every fixed element (header, tabbar, sheets, gridbar,
+  toast — fixed `left:0;right:0` + `max-width` + `margin-inline:auto`) · F4
+  login email prefill (`store` key `wardrobe.lastEmail`, saved on sign-in).
+- **REJECTED: dark mode** (user's phone stays light; would be the only item
+  that rots). Don't propose again this round.
+
+### Build order (Fable-first: judgment-heavy → mechanical)
+
+1. ✅ this ROADMAP section
+2. B1 sheet animation helper (most call sites, most care)
+3. A3 freshness + D1 snapshot boot (share the at-rest guard)
+4. C1 + C2 scroll fix + restoration
+5. A4 version toast (+ deploy-wardrobe skill edit)
+6. A1/A2 manifest + icons
+7. B2 photo fade, B3 reduced motion, F1–F4 papercuts
+8. Verify in preview (login screen parses = syntax OK; console clean), deploy
+   via `deploy-wardrobe` (new day → `2026-07-17 r1`), close out docs/memory.
+
+**Status: FULLY SHIPPED `2026-07-17 r1`, same session as the review.** All items
+above landed and were verified in preview (script parses clean, sheet lifecycle,
+snapshot round-trip, update-toast end-to-end, desktop frame). Implementation
+names in CLAUDE.md's polish-round entry. Reminder for the user: after this
+deploy, **re-add the app to the home screen** to pick up the icon + standalone
+mode, and sign in once there (standalone storage is separate).
 
 ---
 

@@ -20,6 +20,13 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
      an earlier session may already have deployed today's `r1`.
    The UI prints `APP_VERSION` verbatim.
 
+   ⚠️ **Also bump the `<meta name="app-version">` tag in `<head>` to the SAME
+   value** (added 2026-07-17). The in-app update check (`checkForNewVersion`)
+   Range-fetches the first 2KB of the deployed page and compares that meta tag
+   against the running `APP_VERSION` — if the two ever diverge, users get a
+   phantom "Update available" toast (or never see a real one). One value, two
+   places, always in lockstep.
+
 2. **Stage and commit** with a clear, specific message describing what changed
    (not "update index.html"). End the commit body with the standard
    `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer for the
