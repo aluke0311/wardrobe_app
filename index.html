@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r2">
+<meta name="app-version" content="2026-07-18 r3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r2";
+const APP_VERSION = "2026-07-18 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -10827,15 +10827,22 @@ function openBuilder(outfitId = null, seedItemId = null, planCtx = null) {
   } else if (seedItemId && itemById.has(seedItemId)) {
     pieces = [{ item_id: seedItemId, ...defaultPlacement(0) }];
   }
+  // Picker mode (B, 2026-07-18): "all" = flat rail over the whole pool with
+  // category chips (no folder depth — back always means the same thing);
+  // "browse" = the classic folder drill. Persisted; capsule/trip scope
+  // defaults to "all" (small pools are where flat shines).
+  const scoped = (planCtx && planCtx.capsuleId) || tripModeId;
+  const storedMode = store.getItem("wardrobe.pickmode.builder");
+  const pickAll = storedMode ? storedMode === "all" : !!scoped;
   builder = { outfitId, name, pieces, selIdx: pieces.length ? pieces.length - 1 : -1, picking: false, pickCat: null, pickSub: null, pickQ: "",
-              planCtx: planCtx || null, scopeCapsuleId: planCtx ? planCtx.capsuleId : null };
+              pickAll, planCtx: planCtx || null, scopeCapsuleId: planCtx ? planCtx.capsuleId : null };
   $("#app").classList.add("builder-mode");
   switchTab("builder");
 }
 
 function renderBuilder() {
   if (!builder) return;
-  if (builder.picking && builderInItemMode()) {
+  if (builder.picking && (builder.pickAll || builderInItemMode())) {
     renderBuilderCanvas();    // canvas stays visible behind the rail
     renderBuilderRail();
   } else if (builder.picking) {
@@ -10843,6 +10850,14 @@ function renderBuilder() {
   } else {
     renderBuilderCanvas();
   }
+}
+
+// Toggle between the two picker modes; the preference sticks per user choice.
+function setBuilderPickAll(on) {
+  builder.pickAll = on;
+  store.setItem("wardrobe.pickmode.builder", on ? "all" : "browse");
+  builder.pickCat = null; builder.pickSub = null;
+  renderBuilder();
 }
 
 // True once we're down to an item list (a subfolder, or a flat category with no
@@ -10855,11 +10870,17 @@ function builderInItemMode() {
 }
 
 function builderRailPool() {
-  // builderPool() honors builder.scopeCapsuleId (trip-day planning), so the rail
-  // stays scoped to the trip's pieces — same as the folder/subfolder lists.
-  const pool = builderPool().filter(i => (i.category || "Other") === builder.pickCat);
-  const list = builder.pickSub ? pool.filter(i => (i.subcategory || "") === builder.pickSub) : pool;
-  return sortItems(list, "color");  // rail always browses by color, every section
+  // builderPool() honors builder.scopeCapsuleId (trip-day planning) AND trip
+  // mode, so the rail stays scoped — same as the folder/subfolder lists.
+  const pool = builderPool();
+  if (builder.pickAll) {
+    // "All" mode: the whole pool in one rail, chip-filtered — no folder depth.
+    const list = builder.pickCat ? pool.filter(i => (i.category || "Other") === builder.pickCat) : pool;
+    return sortItems(list, "category");
+  }
+  const catPool = pool.filter(i => (i.category || "Other") === builder.pickCat);
+  const list = builder.pickSub ? catPool.filter(i => (i.subcategory || "") === builder.pickSub) : catPool;
+  return sortItems(list, "category");  // grouped: category > subcat > color
 }
 
 // Bottom item slider over the visible canvas; tap an item to drop it in (rail stays open).
@@ -10870,15 +10891,31 @@ function renderBuilderRail() {
   const cells = list.length
     ? list.map(i => `<div class="bld-rail-item${have.has(i.id) ? " in" : ""}" data-railadd="${esc(i.id)}" data-photo="${esc(i.image_path || "")}"></div>`).join("")
     : `<div class="muted" style="padding:20px 12px;font-size:13px">No items</div>`;
+  let chips = "";
+  if (builder.pickAll) {
+    const pool = builderPool();
+    const counts = new Map();
+    for (const i of pool) { const c = i.category || "Other"; counts.set(c, (counts.get(c) || 0) + 1); }
+    const cats = [...counts.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
+    const chip = (key, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-railcat="${esc(key)}">${esc(lbl)}</button>`;
+    chips = `<div class="cap-catbar" style="padding:0 10px 6px">${chip("", `All ${pool.length}`, !builder.pickCat)}${cats.map(c => chip(c, `${c} ${counts.get(c)}`, builder.pickCat === c)).join("")}</div>`;
+  }
+  const backBtn = builder.pickAll
+    ? `<button class="lnk" data-railbrowse>🗂 Browse</button>`
+    : `<button class="lnk" data-railback>‹ ${esc(builder.pickCat || "Folders")}</button>`;
+  const title = builder.pickAll
+    ? `${esc(builder.pickCat || "All items")} · ${list.length}`
+    : `${esc(builder.pickSub || builder.pickCat || "Items")} · ${list.length}`;
   const ov = document.createElement("div");
   ov.className = "bld-pick-overlay";
   ov.innerHTML = `
     <div class="bld-rail">
       <div class="bld-rail-hdr">
-        <button class="lnk" data-railback>‹ ${esc(builder.pickCat || "Folders")}</button>
-        <div class="bld-rail-title">${esc(builder.pickSub || builder.pickCat || "Items")} · ${list.length}</div>
+        ${backBtn}
+        <div class="bld-rail-title">${title}</div>
         <button class="lnk" data-railclose style="font-weight:700">Done</button>
       </div>
+      ${chips}
       <div class="bld-rail-scroll">${cells}</div>
     </div>`;
   body.appendChild(ov);
@@ -11002,7 +11039,7 @@ function renderBuilderPicker() {
     <div class="bld-top">
       <button class="lnk" id="bldPickBack">${esc(backLabel)}</button>
       <div class="bld-name" style="cursor:default">${esc(title)}</div>
-      <span style="width:48px"></span>
+      <button class="lnk" data-ballmode title="Flat list">▦ All</button>
     </div>
     <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
       <input class="inp" id="bldPickSearch" style="flex:1" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}">
@@ -11971,6 +12008,10 @@ function wireEvents() {
     if (bcap) { builder.scopeCapsuleId = bcap.dataset.bcap || null; builder.pickCat = null; builder.pickSub = null; return renderBuilder(); }
     const railadd = e.target.closest("[data-railadd]");
     if (railadd) return addPieceToBuilder(railadd.dataset.railadd, true);  // keep rail open
+    const railcat = e.target.closest("[data-railcat]");
+    if (railcat) { builder.pickCat = railcat.dataset.railcat || null; return renderBuilder(); }
+    if (e.target.closest("[data-railbrowse]")) return setBuilderPickAll(false);
+    if (e.target.closest("[data-ballmode]")) return setBuilderPickAll(true);
     if (e.target.closest("[data-railback]")) return builderPickBack();
     if (e.target.closest("[data-railclose]")) { builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = ""; return renderBuilder(); }
     const badd = e.target.closest("[data-badd]");
