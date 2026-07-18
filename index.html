@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r3">
+<meta name="app-version" content="2026-07-18 r4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r3";
+const APP_VERSION = "2026-07-18 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2103,6 +2103,11 @@ function tripDashHtml(c) {
     `<button class="cap-chip" data-td-cap>🧳 ${dated ? "Packing list" : "Capsule"}</button>`,
   ].join("");
 
+  const unpackHtml = phase === "unpack"
+    ? `<button class="td-laun" data-td-unpack style="margin-top:10px">🧳
+        <span style="flex:1">Trip's over — unpack &amp; see the recap</span>
+        <span style="color:var(--accent);font-weight:600">›</span></button>`
+    : "";
   return `<div class="trip-dash">
     <div class="td-banner">
       <div class="td-title">
@@ -2113,6 +2118,7 @@ function tripDashHtml(c) {
       <button class="cb-x" data-td-exit title="Exit trip mode">✕</button>
     </div>
     ${planHtml}
+    ${unpackHtml}
     ${launHtml}
     <div class="td-chips">${chips}</div>
     ${daysHtml}
@@ -2238,6 +2244,7 @@ function wireTripDash(tc) {
   if (!tc) return;
   const on = (sel, fn) => body.querySelectorAll(sel).forEach(el => { el.onclick = fn; });
   on("[data-td-exit]", () => exitTripMode());
+  on("[data-td-unpack]", () => openTripRecap(tc.id, { unpack: true }));
   on("[data-td-suggest]", () => openSuggestSheet(null, tc.id));
   on("[data-td-laundry]", () => openLaundrySheet({ pool: capsuleItems(tc.id) }));
   on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });
@@ -2437,6 +2444,82 @@ function tripMissingPieces(itemIds) {
   const members = new Set((capsuleLinkMap.get(c.id) || []).map(l => l.item_id));
   const missing = [...new Set(itemIds)].filter(id => id && !members.has(id) && itemById.get(id));
   return missing.length ? { c, missing } : null;
+}
+
+// ---- Unpack + recap (step D) ----
+// Pure derivation from wears in the trip's date range vs capsule members —
+// nothing stored, so the recap works retroactively for any past dated trip.
+function tripRecapData(c) {
+  const members = capsuleItems(c.id);
+  const wearDays = new Map();  // item_id → Set(dates)
+  const lookDays = new Map();  // outfit_id → Set(dates)
+  for (const w of wears) {
+    if (w.worn_on < c.start_date || w.worn_on > c.end_date) continue;
+    if (w.item_id) { let s = wearDays.get(w.item_id); if (!s) wearDays.set(w.item_id, s = new Set()); s.add(w.worn_on); }
+    if (w.outfit_id) { let s = lookDays.get(w.outfit_id); if (!s) lookDays.set(w.outfit_id, s = new Set()); s.add(w.worn_on); }
+  }
+  const worn = members.filter(i => wearDays.has(i.id));
+  const dead = members.filter(i => !wearDays.has(i.id));
+  let mostWorn = null, mostN = 0;
+  for (const i of worn) { const n = wearDays.get(i.id).size; if (n > mostN) { mostN = n; mostWorn = i; } }
+  let topLook = null, topLookN = 0;
+  for (const [oid, s] of lookDays) {
+    const o = outfitById.get(oid);
+    if (o && s.size > topLookN) { topLookN = s.size; topLook = o; }
+  }
+  return { members, worn, dead, mostWorn, mostN, topLook, topLookN, days: tripDates(c).length };
+}
+
+// Unpack sheet: recap + (when unpacking a live trip) send worn pieces to the
+// hamper and end the mode. `unpack: false` = recap-only (past trips).
+function openTripRecap(cid, { unpack = false } = {}) {
+  const c = capsuleById.get(cid);
+  if (!c || !isDatedTrip(c)) return;
+  const r = tripRecapData(c);
+  const tile = (i) => `<button class="wa-tile" data-unpack-item="${esc(i.id)}" style="width:72px">
+    ${thumbHtml(i.image_path || null)}
+    <div class="wa-name">${esc(i.name || "Untitled")}</div>
+  </button>`;
+  const deadHtml = r.dead.length
+    ? `<div class="td-plan-lbl" style="margin:16px 0 6px">🧳 Dead weight · ${r.dead.length} piece${r.dead.length === 1 ? "" : "s"} never left the suitcase</div>
+       <div class="wa-strip" style="padding:0">${r.dead.map(tile).join("")}</div>`
+    : `<div style="margin-top:16px;font-size:14px">🎉 Every packed piece got worn — perfect packing.</div>`;
+  const canHamper = unpack && LAUNDRY_READY() && r.worn.length;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="unpCancel">${unpack ? "Later" : "Close"}</button>
+      <h2>${unpack ? "Unpack" : "Trip recap"}</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:14px 18px 30px">
+      <div style="font-size:15px;font-weight:700">${esc(c.name)}</div>
+      <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(fmtDate(c.start_date))} – ${esc(fmtDate(c.end_date))} · ${r.days} day${r.days === 1 ? "" : "s"}</div>
+      <div style="font-size:14px;line-height:1.6">
+        <b>${r.worn.length} of ${r.members.length}</b> packed pieces worn
+        ${r.mostWorn ? `<br>Most worn: <b>${esc(r.mostWorn.name || "Untitled")}</b> · ${r.mostN} day${r.mostN === 1 ? "" : "s"}` : ""}
+        ${r.topLook && r.topLookN > 1 ? `<br>Repeated look: <b>${esc(outfitName(r.topLook))}</b> · ${r.topLookN} days` : ""}
+      </div>
+      ${deadHtml}
+      ${canHamper ? `<button class="btn" id="unpHamper" style="margin-top:20px">🧺 Send ${r.worn.length} worn piece${r.worn.length === 1 ? "" : "s"} to the hamper</button>` : ""}
+      ${unpack ? `<button class="btn${canHamper ? " btn-sec" : ""}" id="unpEnd" style="margin-top:10px">End trip mode</button>` : ""}
+    </div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#unpCancel").onclick = () => hideSheet("logSheet");
+  $("#logInner").querySelectorAll("[data-unpack-item]").forEach(b => {
+    b.onclick = () => { hideSheet("logSheet"); openItemFrom(b.dataset.unpackItem); };
+  });
+  const hamperBtn = $("#unpHamper");
+  if (hamperBtn) hamperBtn.onclick = async () => {
+    hamperBtn.disabled = true;
+    try {
+      const ls = laundryState();
+      await Promise.all(r.worn.map(i => flipLaundry(i.id, true, ls)));
+      hamperBtn.textContent = `✓ ${r.worn.length} in the hamper`;
+    } catch (e) { toast(e.message); hamperBtn.disabled = false; }
+  };
+  const endBtn = $("#unpEnd");
+  if (endBtn) endBtn.onclick = () => { hideSheet("logSheet"); exitTripMode(); };
 }
 
 // Items in the current lens. An active capsule overrides the status lens entirely
@@ -9955,6 +10038,10 @@ function renderCapsuleDetail() {
       <svg viewBox="0 0 24 24"><path d="M12 3l-1.5 3L4 9v11h16V9l-6.5-3z"/><path d="M12 6v14"/></svg>
       Plan outfits from this
     </button>
+    ${trip && c.start_date && c.end_date && c.end_date < todayStr() ? `<button class="cap-plan sec" data-cap-recap style="margin-top:8px">
+      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-6 3 3 5-8"/></svg>
+      Trip recap
+    </button>` : ""}
     <button class="cap-plan" data-cap-suggest style="background:var(--accent);margin-top:8px">
       <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
       Suggest an outfit
@@ -12041,6 +12128,7 @@ function wireEvents() {
       return;
     }
     if (e.target.closest("[data-cap-byday]")) return openTripPlan(capsuleId);
+    if (e.target.closest("[data-cap-recap]")) return openTripRecap(capsuleId);
     if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);
     if (e.target.closest("[data-cap-suggest]")) return openSuggestSheet(null, capsuleId);
     const planRemove = e.target.closest("[data-plan-remove]");
