@@ -557,7 +557,9 @@ Orange, Yellow, Beige, Brown, White, Gray, Black, Metallic.
 
 ## Migration
 
-Full reset planned once feature-complete — see `migration/RESET_PLAN.md`.
+**The full data reset is DONE (user confirmed 2026-07-18)** — the live data is
+real, not provisional; treat it as the irreplaceable asset it is.
+`migration/RESET_PLAN.md` is historical.
 `migration/` holds throwaway importers (NOT shipped; libraries OK there).
 `migration/.env` (gitignored) holds the service-role key + Airtable token.
 `schema.sql` (repo root) = canonical target state.

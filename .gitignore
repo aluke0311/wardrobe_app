@@ -1,2 +1,4 @@
 .DS_Store
 reference-images/
+migration/.env
+migration/backup/

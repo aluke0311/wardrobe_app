@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r6">
+<meta name="app-version" content="2026-07-18 r7">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r6";
+const APP_VERSION = "2026-07-18 r7";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -11955,15 +11955,119 @@ function switchTab(name) {
 }
 
 function renderSettings() {
+  const lastBk = store.getItem("wardrobe.lastBackup");
   $("#settingsBody").innerHTML = `
     <div style="padding:24px 18px" class="stack">
       <div class="card stack">
         <div><div class="fld">Signed in as</div><div id="set_email">${esc(session?.user?.email || "")}</div></div>
         <button class="btn" id="signOutBtn" style="background:var(--danger)">Sign out</button>
       </div>
+      <div class="card stack">
+        <div><div class="fld">Your data</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">${items.length} items · ${wears.length} wears · ${outfits.length} looks.
+          ${lastBk ? `Last backup ${esc(lastBk)}.` : "Never backed up."}</div></div>
+        <button class="btn" id="setBackup">Download backup (JSON)</button>
+        <div class="muted" style="font-size:12px;line-height:1.45">Photos aren't in the JSON — run
+          <code>python3 migration/backup_photos.py</code> on your Mac for a full offline copy (data + photos).</div>
+        <button class="btn btn-sec" id="setHealth">Run data health check</button>
+        <div id="setHealthOut"></div>
+      </div>
       <div class="center muted" style="font-size:12px"><span class="appver">${esc(APP_VERSION)}</span></div>
     </div>`;
   $("#signOutBtn").onclick = () => handleSignedOut();
+  $("#setBackup").onclick = downloadBackup;
+  $("#setHealth").onclick = () => runDataHealthCheck();
+}
+
+// ---- Data safety (2026-07-18) ----
+// One-tap JSON export of every table. The dataset is the irreplaceable part
+// of this app (the code is rebuildable) — this is the cheap insurance.
+function downloadBackup() {
+  const payload = {
+    exported_at: new Date().toISOString(),
+    app_version: APP_VERSION,
+    user: session?.user?.email || null,
+    items, wears, outfits,
+    outfit_items: outfitLinks,
+    capsules, capsule_items: capsuleLinks,
+    exclusions,
+  };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `wardrobe-backup-${todayStr()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  store.setItem("wardrobe.lastBackup", todayStr());
+  toast("Backup downloaded — keep it somewhere safe");
+  renderSettings();
+}
+
+// Chunked bulk DELETE (in.() URL length safety).
+async function _bulkDeleteRows(table, ids) {
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    await rest(`/${table}?id=in.(${chunk.map(id => `"${id}"`).join(",")})`, { method: "DELETE" });
+  }
+}
+
+// Integrity scan over the loaded state. Conservative by design: only rows that
+// are unambiguously broken (dangling references, impossible dates) get a Fix
+// button; anything that could be intentional is report-only.
+function runDataHealthCheck() {
+  const today = todayStr();
+  const checks = [];
+  const orphanWears = wears.filter(w => w.id && w.item_id && !itemById.has(w.item_id));
+  checks.push({ label: "Wear rows pointing at deleted items", rows: orphanWears,
+    fix: () => _bulkDeleteRows("wears", orphanWears.map(w => w.id)) });
+  const futureWears = wears.filter(w => w.id && w.worn_on && w.worn_on > today);
+  checks.push({ label: "Wears dated in the future", rows: futureWears,
+    fix: () => _bulkDeleteRows("wears", futureWears.map(w => w.id)) });
+  const orphanLinks = outfitLinks.filter(l => !outfitById.has(l.outfit_id) || !itemById.has(l.item_id));
+  checks.push({ label: "Look-piece links with a missing look or item", rows: orphanLinks,
+    fix: async () => { for (const l of orphanLinks) await rest(`/outfit_items?outfit_id=eq.${l.outfit_id}&item_id=eq.${l.item_id}`, { method: "DELETE" }); } });
+  const orphanCapLinks = capsuleLinks.filter(l => !capsuleById.has(l.capsule_id) || !itemById.has(l.item_id));
+  checks.push({ label: "Capsule links with a missing capsule or item", rows: orphanCapLinks,
+    fix: async () => { for (const l of orphanCapLinks) await rest(`/capsule_items?capsule_id=eq.${l.capsule_id}&item_id=eq.${l.item_id}`, { method: "DELETE" }); } });
+  const orphanEx = exclusions.filter(x => x.id && (!itemById.has(x.item_a) || !itemById.has(x.item_b)));
+  checks.push({ label: "Exclusions referencing deleted items", rows: orphanEx,
+    fix: () => _bulkDeleteRows("exclusions", orphanEx.map(x => x.id)) });
+  // Report-only (could be intentional):
+  const emptyLooks = outfits.filter(o => !(outfitItemMap.get(o.id) || []).some(id => itemById.has(id)));
+  checks.push({ label: "Looks with no pieces (report only)", rows: emptyLooks });
+  const dupKey = new Map();
+  for (const w of wears) { const k = `${w.item_id}|${w.worn_on}`; dupKey.set(k, (dupKey.get(k) || 0) + 1); }
+  const dupCount = [...dupKey.values()].filter(n => n > 1).length;
+  checks.push({ label: "Same item logged twice on one day (report only — double-logs can be intentional)", rows: { length: dupCount } });
+
+  const out = $("#setHealthOut");
+  if (!out) return;
+  const broken = checks.filter(c => c.rows.length);
+  if (!broken.length) {
+    out.innerHTML = `<div style="font-size:14px;padding:6px 0">✅ All clean — no integrity problems found.</div>`;
+    return;
+  }
+  out.innerHTML = broken.map((c, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:13.5px">
+      <span style="flex:1">${esc(c.label)}</span>
+      <b>${c.rows.length}</b>
+      ${c.fix ? `<button class="lnk" data-health-fix="${i}" style="color:var(--accent);font-weight:700">Fix</button>` : ""}
+    </div>`).join("");
+  out.querySelectorAll("[data-health-fix]").forEach(b => {
+    b.onclick = async () => {
+      const c = broken[+b.dataset.healthFix];
+      b.disabled = true; b.textContent = "…";
+      try {
+        await c.fix();
+        await loadData();
+        toast(`Fixed · ${c.rows.length} row${c.rows.length === 1 ? "" : "s"} removed`);
+        renderSettings();
+        runDataHealthCheck();
+      } catch (e) { toast(e.message); b.disabled = false; b.textContent = "Fix"; }
+    };
+  });
 }
 
 function wireEvents() {
