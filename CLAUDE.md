@@ -765,4 +765,16 @@ https://aluke0311.github.io/wardrobe_app/
 panel (the port is passed explicitly as of 2026-07-09 — it used to default to 8000
 while the panel proxied 4173). Auth/data only fully work against the real
 `https://` deploy; locally you get the login screen, but the whole script parses
-and pure helpers are testable from the console.
+and pure helpers are testable from the console. ⚠️ The panel's browser caches
+index.html — always load with a fresh query string (`/?v=<anything>`).
+
+**Self-test harness (2026-07-18): `migration/selftest.html`** — open
+`http://localhost:4173/migration/selftest.html?v=<bust>` in the preview browser;
+it loads the app in an iframe and asserts the derivation logic (trip phases,
+sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
+formality, recap math, exclusions, version-lockstep). Summary line = `N/N
+passed`. **Run it before every deploy; add a test whenever a session's ad-hoc
+console verification proves something worth keeping true.** Gotchas baked in:
+app globals are top-level const/let (invisible on `contentWindow` — the harness
+injects an eval-bridge Proxy), and Sets passed into app code must be created in
+the IFRAME's realm (`W.Set`) or `instanceof Set` fails.

@@ -976,6 +976,15 @@ All screens are fully built. Per-release detail in `archive/CLAUDE_build_history
 
 ## Back-burner (not yet scheduled)
 
+- **Picker shell unification** (parked 2026-07-18): the flat pickers already
+  share their data layer (pickerPoolBase/pickerCatBar/pickerGridHtml/
+  togglePick); the remaining duplication is thin render shells + wiring
+  (renderCalClothingPicker vs renderCapsulePicker). Deliberately NOT refactored
+  blind — do it behind `migration/selftest.html` the next time a picker change
+  is needed anyway.
+- **Data-safety follow-ons**: backup nudge when last backup > 30d (nudge rule
+  is soft now); restore-from-backup script in migration/.
+
 These are agreed-on ideas parked for a future session. No timeline.
 
 **Features:**

@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<!-- Wardrobe app self-test harness (2026-07-18). NOT shipped — lives in
+     migration/ like all tooling. Run it with the local preview server:
+         http://localhost:4173/migration/selftest.html
+     It loads the real app in an iframe (login screen is fine — these are
+     pure-helper tests over mock state) and asserts the derivation logic that
+     the app's correctness hangs on. Add a test here whenever a session's
+     ad-hoc console verification proves something worth keeping true. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Wardrobe self-test</title>
+<style>
+  body { font: 14px/1.5 -apple-system, sans-serif; margin: 24px; max-width: 720px; }
+  h1 { font-size: 18px; }
+  .pass { color: #2f9e5e; }
+  .fail { color: #c0392b; font-weight: 700; }
+  #summary { font-size: 16px; font-weight: 700; margin: 12px 0; }
+  li { margin: 2px 0; }
+  iframe { display: none; }
+</style>
+</head>
+<body>
+<h1>Wardrobe self-test</h1>
+<div id="summary">Loading app…</div>
+<ul id="results"></ul>
+<iframe id="app" src="/index.html?selftest=1"></iframe>
+<script>
+const results = [];
+function t(name, fn) {
+  try {
+    const r = fn();
+    if (r === true) results.push({ name, ok: true });
+    else results.push({ name, ok: false, msg: JSON.stringify(r) });
+  } catch (e) {
+    results.push({ name, ok: false, msg: e.message });
+  }
+}
+function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b) ? true : `${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`; }
+
+document.getElementById("app").addEventListener("load", () => setTimeout(run, 300));
+
+function run() {
+  const frame = document.getElementById("app");
+  // The app's globals are top-level const/let — lexical bindings, NOT
+  // contentWindow properties. Inject a classic script (shares the page's
+  // global lexical scope) exposing an eval bridge, wrapped in a Proxy so
+  // tests can read/write app globals naturally as W.name.
+  const doc = frame.contentDocument;
+  const bridge = doc.createElement("script");
+  bridge.textContent = `window.__app = new Proxy({}, {
+    get(_, k) { if (k === "__isBridge") return true; try { return eval(k); } catch { return undefined; } },
+    set(_, k, v) { window.__tmpv = v; try { eval(k + " = window.__tmpv"); } catch (e) { console.error(e); } return true; },
+  });`;
+  doc.body.appendChild(bridge);
+  const W = frame.contentWindow.__app;
+  if (!W || typeof W.todayStr !== "function") {
+    document.getElementById("summary").textContent = "FAIL: app script did not parse (todayStr missing)";
+    return;
+  }
+  const today = W.todayStr();
+  const D = (n) => W.shiftDate(today, n);
+
+  // ---- version lockstep (phantom update-toast guard) ----
+  t("APP_VERSION matches <meta app-version>", () =>
+    eq(W.APP_VERSION, W.document.querySelector('meta[name="app-version"]').content));
+
+  // ---- dates ----
+  t("shiftDate crosses month boundaries", () =>
+    eq([W.shiftDate("2026-07-01", -3), W.shiftDate("2026-07-31", 2)], ["2026-06-28", "2026-08-02"]));
+
+  // ---- trip phases ----
+  const trip = { start_date: "2026-07-16", end_date: "2026-07-20" };
+  t("tripPhase: trip / pack / null / unpack / null", () =>
+    eq([W.tripPhase(trip, "2026-07-18"), W.tripPhase(trip, "2026-07-14"), W.tripPhase(trip, "2026-07-12"),
+        W.tripPhase(trip, "2026-07-22"), W.tripPhase(trip, "2026-07-28")],
+       ["trip", "pack", null, "unpack", null]));
+  t("tripPhase: undated capsule has no phases", () => eq(W.tripPhase({ start_date: null, end_date: null }), null));
+  t("tripDayNum is 1-based", () => eq(W.tripDayNum(trip, "2026-07-18"), 3));
+
+  // ---- sort keys ----
+  t("gridSortKey maps legacy 'color' → 'category'", () => {
+    const gsk = W._gridSortKeys;  // real object — mutate directly, not via the proxy
+    gsk.closet = "color";
+    const a = W.gridSortKey("closet");
+    gsk.closet = "colorfam";
+    const b = W.gridSortKey("closet");
+    delete gsk.closet;
+    return eq([a, b, W.gridSortKey("closet")], ["category", "colorfam", "category"]);
+  });
+  const mockSort = [
+    { name: "b-tee", category: "Tops", subcategory: "Tee shirts", color_family: "Blue" },
+    { name: "g-jean", category: "Bottoms", subcategory: "Jeans", color_family: "Green" },
+    { name: "b-jean", category: "Bottoms", subcategory: "Jeans", color_family: "Blue" },
+  ];
+  t("colorfam = true color sort (spectrum, then category)", () =>
+    eq(W.sortItems(mockSort, "colorfam").map(i => i.name), ["g-jean", "b-tee", "b-jean"]));
+  t("category = composite (cat > sub > color)", () =>
+    eq(W.sortItems(mockSort, "category").map(i => i.name), ["b-tee", "g-jean", "b-jean"]));
+
+  // ---- filters ----
+  t("clearFilterState empties every Set + q in place", () => {
+    // Sets must come from the IFRAME's realm — instanceof is realm-specific.
+    const S = W.Set;
+    const st = { q: "hi", brand: new S(["X"]), color: new S(["Blue"]) };
+    W.clearFilterState(st);
+    return eq([st.q, st.brand.size, st.color.size], ["", 0, 0]);
+  });
+
+  // ---- laundry derivation ----
+  function laundrySetup() {
+    W.items = [{ id: "i1", name: "Tee", category: "Tops", subcategory: "Tee shirts", status: "Available",
+                 last_washed: D(-10), laundry_state: null }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.wears = [];
+  }
+  t("null last_washed = clean (opt-in tracking)", () => {
+    laundrySetup();
+    W.items[0].last_washed = null;
+    W.wears = [{ item_id: "i1", worn_on: D(-1) }, { item_id: "i1", worn_on: D(-2) }];
+    return eq(W.isDirty(W.items[0]), false);
+  });
+  t("wears since wash ≥ tolerance ⇒ dirty (tee tolerance 1)", () => {
+    laundrySetup();
+    W.wears = [{ item_id: "i1", worn_on: D(-2) }];
+    return eq(W.isDirty(W.items[0]), true);
+  });
+  t("'hamper' override forces dirty with zero wears", () => {
+    laundrySetup();
+    W.items[0].laundry_state = "hamper";
+    return eq(W.isDirty(W.items[0]), true);
+  });
+  t("'extra:<n>' grants one more wear, expires on a newer wear-day", () => {
+    laundrySetup();
+    W.wears = [{ item_id: "i1", worn_on: D(-3) }];
+    W.items[0].laundry_state = "extra:1";      // set when 1 wear-day existed
+    const clean = W.isDirty(W.items[0]);
+    W.wears.push({ item_id: "i1", worn_on: D(-1) });  // newer wear lands
+    const dirty = W.isDirty(W.items[0]);
+    return eq([clean, dirty], [false, true]);
+  });
+  t("shoes/outerwear never dirty (Infinity tolerance)", () => {
+    W.items = [{ id: "s1", category: "Shoes", subcategory: "Sneakers", status: "Available", last_washed: D(-300), laundry_state: null }];
+    W.itemById = new Map([["s1", W.items[0]]]);
+    W.wears = Array.from({ length: 40 }, (_, k) => ({ item_id: "s1", worn_on: D(-k - 1) }));
+    return eq(W.isDirty(W.items[0]), false);
+  });
+
+  // ---- formality ----
+  t("matchesFormality reads the explicit level set", () => {
+    // (formalityOk itself is a closure-local inside suggestOutfits — the
+    // canonical global predicate is matchesFormality.)
+    const it = { formality: [3, 5], name: "x", category: "Tops", subcategory: "Blouses" };
+    return eq([W.matchesFormality(it, 3), W.matchesFormality(it, 5), W.matchesFormality(it, 4)],
+              [true, true, false]);
+  });
+  t("deriveWearFormality: shared level wins", () => {
+    W.items = [
+      { id: "a", formality: [3, 4], category: "Tops", name: "x" },
+      { id: "b", formality: [4, 5], category: "Bottoms", name: "y" },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    return eq(W.deriveWearFormality(["a", "b"]), 4);
+  });
+
+  // ---- looks ----
+  t("itemSetKey is order-independent and dedups", () =>
+    eq(W.itemSetKey(["b", "a", "b"]), W.itemSetKey(["a", "b"])));
+  t("outfitFullyInCapsule requires every piece", () => {
+    W.itemById = new Map([["a", { id: "a" }], ["b", { id: "b" }]]);
+    W.outfitItemMap = new Map([["o1", ["a", "b"]], ["o2", ["a"]]]);
+    W.capsuleLinkMap = new Map([["c1", [{ item_id: "a" }]]]);
+    return eq([W.outfitFullyInCapsule({ id: "o1" }, "c1"), W.outfitFullyInCapsule({ id: "o2" }, "c1")], [false, true]);
+  });
+
+  // ---- contexts ----
+  t("ctxArr handles null / string / array", () =>
+    eq([W.ctxArr(null), W.ctxArr({ context: "Work" }), W.ctxArr({ context: ["a", "b"] })],
+       [[], ["Work"], ["a", "b"]]));
+
+  // ---- trip mode helpers ----
+  function tripSetup() {
+    const c = { id: "c1", name: "Trip", start_date: D(-2), end_date: D(4), plan: {} };
+    W.capsules = [c];
+    W.capsuleById = new Map([["c1", c]]);
+    W.items = [{ id: "a", name: "A" }, { id: "b", name: "B" }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.capsuleLinks = [{ capsule_id: "c1", item_id: "a" }];
+    W.capsuleLinkMap = new Map([["c1", W.capsuleLinks]]);
+    return c;
+  }
+  t("tripWearContext stamps Travel only inside trip dates + mode", () => {
+    tripSetup();
+    W.tripModeId = "c1";
+    const inRange = W.tripWearContext(today);
+    const outRange = W.tripWearContext(D(30));
+    W.tripModeId = null;
+    const off = W.tripWearContext(today);
+    return eq([inRange, outRange, off], [["Travel"], null, null]);
+  });
+  t("tripMissingPieces: member → null, non-member → offer", () => {
+    tripSetup();
+    W.tripModeId = "c1";
+    const m1 = W.tripMissingPieces(["a"]);
+    const m2 = W.tripMissingPieces(["a", "b"]);
+    W.tripModeId = null;
+    return eq([m1, m2 && m2.missing], [null, ["b"]]);
+  });
+
+  // ---- trip recap ----
+  t("tripRecapData: worn/dead split, most-worn, repeated look", () => {
+    const c = { id: "c1", name: "T", start_date: D(-8), end_date: D(-2) };
+    W.capsuleById = new Map([["c1", c]]);
+    W.items = [{ id: "a", name: "A" }, { id: "b", name: "B" }, { id: "c", name: "C" }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.capsuleLinkMap = new Map([["c1", ["a", "b", "c"].map(id => ({ capsule_id: "c1", item_id: id }))]]);
+    W.outfits = [{ id: "o1", name: "L" }];
+    W.outfitById = new Map([["o1", W.outfits[0]]]);
+    W.wears = [
+      { item_id: "a", worn_on: D(-7), outfit_id: "o1" },
+      { item_id: "a", worn_on: D(-5), outfit_id: "o1" },
+      { item_id: "b", worn_on: D(-5) },
+      { item_id: "a", worn_on: D(30) },   // outside range — ignored
+    ];
+    const r = W.tripRecapData(c);
+    return eq([r.worn.map(i => i.id), r.dead.map(i => i.id), r.mostWorn.id, r.mostN, r.topLook.id, r.topLookN, r.days],
+              [["a", "b"], ["c"], "a", 2, "o1", 2, 7]);
+  });
+
+  // ---- exclusions ----
+  t("isExcluded normalizes pair order", () => {
+    W.exclusions = [{ item_a: "a", item_b: "b" }];
+    W.buildExcludeSet();
+    return eq([W.isExcluded("a", "b"), W.isExcluded("b", "a"), W.isExcluded("a", "c")], [true, true, false]);
+  });
+
+  // ---- render summary ----
+  const ul = document.getElementById("results");
+  let pass = 0;
+  for (const r of results) {
+    const li = document.createElement("li");
+    li.className = r.ok ? "pass" : "fail";
+    li.textContent = (r.ok ? "✓ " : "✗ ") + r.name + (r.ok ? "" : " — " + r.msg);
+    ul.appendChild(li);
+    if (r.ok) pass++;
+  }
+  const sum = document.getElementById("summary");
+  sum.textContent = `${pass}/${results.length} passed`;
+  sum.className = pass === results.length ? "pass" : "fail";
+  document.title = `${pass}/${results.length} — Wardrobe self-test`;
+}
+</script>
+</body>
+</html>
