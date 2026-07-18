@@ -2,9 +2,55 @@
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
 > Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
-> Current version: **2026-07-18 r6** ("Trip Mode + Tap Tax" round — SHIPPED
-> same day, r1→r6, one deploy per build-order step).
-> Nothing scheduled — see Back-burner.
+> Current version: **2026-07-18 r7** (Trip Mode round r1→r6 + data safety r7).
+> **▶ IN PROGRESS: "Loop Resilience + Payoff" round — first section below.**
+
+---
+
+## PLANNED BUILD — "Loop Resilience + Payoff" (planned 2026-07-18, from the
+post-trip-mode product review; user answered "defaults except: not-this first,
+gap page before Year in Review")
+
+**Locked decisions (do not re-litigate):** no schema changes anywhere.
+- **C1 "Not this" (HER TOP INTEREST — build first):** session-only piece bans
+  in the suggestion sheet (`_sugg.banned` Set, reset per sheet open). Ban a
+  piece → it's excluded from the pool/swaps/layers for the rest of the sheet
+  session and the current combo swaps it out immediately. Locked+seed pieces
+  can't be banned (banning a locked piece unlocks it first). No persistence.
+- **C3 pool-starvation line:** when the engine returns fewer than the asked-for
+  batch, one muted line naming the biggest hider (🧺 clean-only / capsule
+  scope / formality level) with counts. Computed only when starved.
+- **C2 variety seeding:** per-sheet-open random salt per item (small additive
+  score jitter in `suggestOutfits`) so consecutive sessions lean into
+  different corners of the closet. Small enough to break ties, not override
+  real affinity.
+- **B1 trip-offer dismissal = once per TRIP** (was per-day): `TRIP_OFFER_KEY`
+  dismissal becomes permanent per capsule (legacy stored dates stay truthy).
+  Manual entry stays on capsule detail.
+- **A1 catch-up strip:** Home row when any of the last **3** days (not today)
+  has zero wears and isn't skipped: per missed day, "Log" (→ that calendar day
+  + wear-again chooser) or "skip" (marks deliberately-unlogged in a `store`
+  JSON set `wardrobe.skipDays`, pruned to recent). Today is the CTA's job.
+- **E1 backup nudge:** Home row when `wardrobe.lastBackup` is null or >30d —
+  one tap runs `downloadBackup()` directly (which must re-render the CURRENT
+  screen, not always Settings).
+- **D2 closet-gap page (before D1, her call):** Stats page "Closet vs life" —
+  per context: share of wears vs share of the Available closet eligible for
+  that context's formality level (`contextFormalityLevel`), sorted by delta;
+  calls out underserved (high wear share, thin closet) and overserved.
+  Factored as pure `buildGapStats()` for the selftest harness.
+- **D1 Year in Review:** any-time card stack in Stats with year chips
+  (current year = "so far"): totals + coverage, most-worn item, top 5, CPW
+  champion, top looks, context mix, new-this-year hit rate, dead weight,
+  longest logged streak. Pure `buildWrappedStats(year)`.
+- **E2 restore script:** `migration/restore_backup.py` — disaster-recovery
+  re-upload of a backup `data.json` into an EMPTY project; refuses non-empty
+  tables without `--force`. Stdlib only.
+
+**Build order (Fable-first):** ① this spec → ② C1+C3+C2+B1 (suggester
+cluster, deploy r8) → ③ A1+E1 (Home rows, r9) → ④ D2 gap page (r10) →
+⑤ D1 Year in Review (r11) → ⑥ E2 + selftest additions + docs close-out.
+Run `migration/selftest.html` before every deploy.
 
 ---
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r7">
+<meta name="app-version" content="2026-07-18 r8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r7";
+const APP_VERSION = "2026-07-18 r8";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2134,7 +2134,9 @@ function tripOfferHtml() {
     .filter(x => { const p = tripPhase(x); return p === "trip" || p === "pack"; })
     .sort((a, b) => a.start_date.localeCompare(b.start_date))[0];
   if (!c) return "";
-  if (store.getItem(TRIP_OFFER_KEY + c.id) === today) return "";
+  // B1 (2026-07-18): dismissal is once per TRIP, not per day — a skipped trip
+  // shouldn't greet you every morning. (Legacy per-day date values stay truthy.)
+  if (store.getItem(TRIP_OFFER_KEY + c.id)) return "";
   const phase = tripPhase(c);
   const txt = phase === "trip"
     ? (today === c.start_date ? `${c.name} starts today — enter trip mode?` : `On your ${c.name} trip? Enter trip mode`)
@@ -5388,6 +5390,8 @@ function scoreCombo(its, target, season = null, wx = null) {
     }
   }
   s += Math.min(3, aff);
+  // C2 session variety salt — see _saltFor (tie-breaker, not a preference).
+  s += its.reduce((n, p) => n + _saltFor(p.id), 0);
   // NOTE: no rotation/last-worn weighting by design — suggestions are random
   // among pieces that plausibly match, not biased toward unworn items.
   return s;
@@ -5625,6 +5629,8 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.season = planCtx ? seasonOf(planCtxSeasonDate(planCtx)) : currentSeason();
   _sugg.idx = 0;
   _sugg.locked = new Set();
+  _sugg.banned = new Set();      // "not this" — session-only, reset every open
+  _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
   _sugg.useClean = true;
   // Weather: plan days use the trip's per-day forecast; otherwise home weather
@@ -5632,10 +5638,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.wx = planCtx
     ? (_planWx[planCtx.date] || null)
     : (_homeWx.date === todayStr() ? _homeWx.wx : null);
-  const pool = capsuleId
-    ? capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available")
-    : null;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, pool, _sugg.season, _suggWx(), null, _suggClean());
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean());
   renderSuggestSheet();
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -5650,9 +5653,51 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   });
 }
 
+// Effective suggestion pool: capsule members or the whole Available closet,
+// minus any session-banned pieces ("not this", 2026-07-18). Always returns a
+// real array now (the engine treats it as capsulePool either way).
 function _suggPool() {
-  if (!_sugg.capsuleId) return null;
-  return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
+  let pool = _sugg.capsuleId
+    ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
+    : items.filter(i => itemStatus(i) === "Available");
+  if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
+  return pool;
+}
+
+// C2 variety seeding (2026-07-18): a per-sheet-open random salt per item,
+// added to combo scores — big enough to break ties so consecutive sessions
+// lean into different corners of the closet, far too small to override real
+// affinity/weather/formality signals.
+const SUGGEST_SALT = 0.35;
+let _suggSessionSalt = new Map();
+function _saltFor(id) {
+  let v = _suggSessionSalt.get(id);
+  if (v == null) { v = Math.random() * SUGGEST_SALT; _suggSessionSalt.set(id, v); }
+  return v;
+}
+
+// C3 (2026-07-18): when the batch comes back short, say WHICH filter is
+// hiding the most — keeps trust in the engine instead of "it's broken".
+function suggestStarvationNote() {
+  if (!_sugg.results || _sugg.results.length >= 8) return "";
+  const base = _sugg.capsuleId
+    ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
+    : items.filter(i => itemStatus(i) === "Available");
+  const eligible = base.filter(i => i.image_path && !isNoSuggest(i));
+  const bits = [];
+  if (_suggClean() && LAUNDRY_READY()) {
+    const ls = laundryState();
+    const hidden = eligible.filter(i => !suggestibleClean(i, ls)).length;
+    if (hidden) bits.push(`🧺 clean-only is hiding ${hidden}`);
+  }
+  if (_sugg.targetLevel) {
+    const off = eligible.filter(i => !(itemFormalitySet(i) || []).includes(_sugg.targetLevel)).length;
+    if (off) bits.push(`${off} don't cover ${occLabel(_sugg.targetLevel)}`);
+  }
+  if (_sugg.banned && _sugg.banned.size) bits.push(`${_sugg.banned.size} set aside`);
+  if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
+  if (!bits.length) return "";
+  return `<div class="center muted" style="font-size:12px;padding:4px 12px 0">Pool is tight — ${esc(bits.join(" · "))}</div>`;
 }
 
 // Friendly slot name for the swap chips.
@@ -5677,7 +5722,7 @@ function swapSuggestionPiece(pieceId) {
   const asLayer = !!layerPc && layerPc.id === pieceId;
   const slot = asLayer ? "Outerwear" : suggestSlot(old);
   const others = combo.pieces.filter(p => p.id !== pieceId);
-  const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
+  const pool = _suggPool();  // always an array now; bans already excluded
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
   const ls = laundryState();
   let cands = pool.filter(i =>
@@ -5715,10 +5760,37 @@ function comboLayerPiece(combo) { return layerPieceOf(combo.pieces); }
 // V3 "+ Layer": add a compatible outerwear/layer piece to the current combo,
 // using the same filters as a slot swap (season, exclusions, target level,
 // pure-function isolation). Random among candidates, like the engine.
+// "Not this" (C1, 2026-07-18): session-ban a piece — it leaves the pool for
+// every regenerate/swap/layer until the sheet closes, and the current combo
+// swaps it out immediately. Locked pieces unlock first; the seed can't be
+// banned (it's the whole point of a seeded shuffle).
+function banSuggestionPiece(pieceId) {
+  if (pieceId === _sugg.seedItemId) return;
+  _sugg.locked.delete(pieceId);
+  _sugg.banned.add(pieceId);
+  const combo = _sugg.results[_sugg.idx];
+  const inCombo = combo && combo.pieces.some(p => p.id === pieceId);
+  if (!inCombo) return renderSuggestSheet();
+  // Try a targeted swap; if nothing else fits the slot, drop a layer or re-roll.
+  const before = combo.pieces.map(p => p.id).join(",");
+  swapSuggestionPiece(pieceId);
+  const after = _sugg.results[_sugg.idx]?.pieces.map(p => p.id).join(",");
+  if (before === after) {
+    const layerPc = comboLayerPiece(combo);
+    if (layerPc && layerPc.id === pieceId && combo.pieces.length > 2) {
+      combo.pieces = combo.pieces.filter(p => p.id !== pieceId);  // layer is optional — just drop it
+      return renderSuggestSheet();
+    }
+    _sugg.idx = 0;
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
+    renderSuggestSheet();
+  }
+}
+
 function addSuggestionLayer() {
   const combo = _sugg.results[_sugg.idx];
   if (!combo) return;
-  const pool = _suggPool() || items.filter(i => itemStatus(i) === "Available");
+  const pool = _suggPool();  // always an array now; bans already excluded
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
   const ls = laundryState();
   let cands = pool.filter(i =>
@@ -5877,6 +5949,7 @@ function renderSuggestSheet() {
           return `<span style="display:inline-flex;gap:1px">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
             <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>↻ ${esc(lbl)}</button>
+            ${p.id === _sugg.seedItemId ? "" : `<button class="cap-chip" data-sban="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Not this piece today">⃠</button>`}
           </span>`;
         }).join("")}
         ${!layerPc
@@ -5884,8 +5957,9 @@ function renderSuggestSheet() {
           : (_sugg.locked.has(layerPc.id) ? "" : `<button class="cap-chip" data-sunlayer="${esc(layerPc.id)}" style="font-size:12px">× Layer</button>`)}
       </div>`;
       })() : ""}
-      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it through reshuffles${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
+      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it · ⃠ hides it this session${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
+      ${suggestStarvationNote()}
     </div>
     ${combo ? `
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
@@ -5941,6 +6015,11 @@ function renderSuggestSheet() {
 
   $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
+  });
+
+  // C1 "not this": session-ban + immediate replacement.
+  $("#logInner").querySelectorAll("[data-sban]").forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); banSuggestionPiece(b.dataset.sban); };
   });
 
   // V3 lock-a-piece: locking doesn't reshuffle — it marks the piece so the NEXT
