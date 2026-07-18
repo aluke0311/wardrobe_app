@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r5">
+<meta name="app-version" content="2026-07-18 r6">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r5";
+const APP_VERSION = "2026-07-18 r6";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2685,7 +2685,13 @@ function renderClosetRoot() {
   }
   const other = av.filter(isOtherCat);
   if (other.length) rows += rowHtml(folderThumb(other), "Other", other.length, `data-cat="Other"`);
-  if (!rows) rows = `<div class="placeholder"><b>Nothing here</b></div>`;
+  if (!rows) {
+    const msg = activeCapsuleId ? ["No pieces in this capsule yet", "Add some from the capsule's ＋ Add items."]
+      : closetLens === "Storage" ? ["Nothing in storage", "Move a piece here from its detail page."]
+      : closetLens === "Archive" ? ["Nothing archived", "Archived pieces land here when you let them go."]
+      : ["Nothing here yet", "Add your first piece with the ＋ up top."];
+    rows = `<div class="placeholder"><b>${msg[0]}</b><div>${msg[1]}</div></div>`;
+  }
   const top = activeCapsuleId ? "" : lensHtml();
   const capFilter = (!activeCapsuleId && capsules.length)
     ? `<button class="cl-capbtn" data-cap-filter>
@@ -8024,8 +8030,16 @@ function wearAgainCandidates() {
 function openWearAgainChooser(date) {
   const { list: cands, neglectedIds } = wearAgainCandidates();
   const _ls = LAUNDRY_READY() ? laundryState() : null;
-  const strip = cands.length
-    ? `<div class="wa-strip">${cands.map(o => `<button class="wa-tile" data-wa-look="${esc(o.id)}">
+  // A4 (2026-07-18): the getting-out-of-bed flow — a ✨ Suggest tile at the
+  // FRONT of the strip, so "surprise me" is two taps from a cold open.
+  // TODAY only ("Wear this today" logs today; past-date suggestions are
+  // explicitly not a use case — her call).
+  const suggestTile = date !== todayStr() ? "" : `<button class="wa-tile" id="waSuggest" style="text-align:center">
+      <div style="height:74px;display:flex;align-items:center;justify-content:center;font-size:30px;border:1.5px dashed var(--accent);border-radius:12px;background:var(--accent-soft)">✨</div>
+      <div class="wa-name" style="color:var(--accent);font-weight:600">Suggest new</div>
+    </button>`;
+  const strip = (suggestTile || cands.length)
+    ? `<div class="wa-strip">${suggestTile}${cands.map(o => `<button class="wa-tile" data-wa-look="${esc(o.id)}">
         ${outfitCollageHtml(o, 4)}
         ${o.rating === 1 ? `<div class="otile-heart" style="width:14px;height:14px"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
         <div class="wa-name">${esc(outfitName(o))}</div>
@@ -8052,6 +8066,8 @@ function openWearAgainChooser(date) {
   showSheet("logSheet");
   hydratePhotos($("#logInner"));
   $("#waCancel").onclick = () => { hideSheet("logSheet"); };
+  const sg = $("#waSuggest");
+  if (sg) sg.onclick = () => { hideSheet("logSheet"); openSuggestSheet(); };
   $("#waAddClothing").onclick = () => { hideSheet("logSheet"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddClothing(); };
   $("#waAddLook").onclick = () => { hideSheet("logSheet"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddLook(); };
   $("#logInner").querySelectorAll("[data-wa-look]").forEach(b => {

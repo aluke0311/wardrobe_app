@@ -2,13 +2,20 @@
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
 > Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
-> **▶ NEXT: "Trip Mode + Tap Tax" round — planned 2026-07-18, first section below.**
-> `migration/items_laundry.sql` CONFIRMED RUN on the live DB (2026-07-18, REST
-> column probe) — laundry is fully live, no blockers.
+> Current version: **2026-07-18 r6** ("Trip Mode + Tap Tax" round — SHIPPED
+> same day, r1→r6, one deploy per build-order step).
+> Nothing scheduled — see Back-burner.
 
 ---
 
-## PLANNED BUILD — "Trip Mode + Tap Tax" (planned 2026-07-18)
+## ✅ SHIPPED BUILD — "Trip Mode + Tap Tax" (planned + built 2026-07-18, r1→r6)
+
+**Status: FULLY SHIPPED same day, one deploy per build-order step (r1 trip
+mode core+E1 → r2 filter/sort merge+✕ → r3 builder Browse/All rail → r4
+unpack+recap → r5 post-log staleness fix+E4 → r6 ✨ tile+E2/E3/E5+docs).
+Implementation names in CLAUDE.md's trip-mode entry. Every step verified in
+local preview (parse + mocked pure-helper/render tests; full auth flows need
+the live deploy).**
 
 **Goal: an app-wide trip/capsule mode + a tap-tax fix pack + a consistency
 sweep. NO schema changes, NO migrations** — the whole mode derives from

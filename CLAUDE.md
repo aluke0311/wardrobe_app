@@ -125,14 +125,48 @@ fades (`.ph-fade`/`.ph-in`); `_shownPhotos` Set skips the fade on re-renders
 (app + all fixed chrome capped at 640px), login email prefill
 (`wardrobe.lastEmail`), `prefers-reduced-motion` guard.
 
-**▶ NEXT UP:** **"Trip Mode + Tap Tax" round — planned 2026-07-18, spec in
-ROADMAP.md's first section** (trip/capsule mode, fix pack incl. the post-log
-context staleness bug, filter+sort merge with a true color sort, Browse/All
-picker toggle, unpack flow, consistency sweep; no schema changes). Build order
-rule (user, 2026-07-18): **judgment-heavy items FIRST so a cheaper model can
-finish the mechanical tail if Fable runs out.** NOTE the "no nudges" rule is
-now SOFT (user, 2026-07-18). `migration/items_laundry.sql` is CONFIRMED RUN
-(2026-07-18) — laundry is fully live; no blockers.
+**"Trip Mode + Tap Tax" round (2026-07-18, r1→r6) is FULLY SHIPPED** (spec +
+locked decisions in ROADMAP.md's trip-mode section — do not re-litigate; the
+"no nudges" rule is SOFT as of this round). No schema changes. Key pieces:
+**TRIP MODE** — `tripModeId` (`TRIP_MODE_KEY` in `store`, restored in `init`,
+validated at end of `loadData`); phases DERIVED from capsule dates via
+`tripPhase(c)` (pack ≤`PACK_LEAD_DAYS`=3 before start · trip · unpack
+≤`UNPACK_GRACE_DAYS`=3 after end; undated capsule = "capsule mode", no
+phases). `enterTripMode`/`exitTripMode` (also set/clear `activeCapsuleId`;
+the shared `scopeBannerHtml()` banner's ✕ EXITS THE MODE — one mental model).
+Home: `tripDashHtml` takeover (day counter, today's planned looks +
+`planWoreIt` one-tap, `_planWx` weather via `loadTripHomeWx`, suitcase hamper
+row, remaining-days strip, ✨/plan/packing chips) + `tripOfferHtml` auto-offer
+banner (per-day dismissable, `TRIP_OFFER_KEY`); wiring in `wireTripDash`.
+Scoping: wear-again chooser + `openSuggestSheet` default pool + calendar
+pickers (`_pickTripScope`, "✈️ Suitcase only" chip escape) + `builderPool`.
+`tripWearContext(date)` auto-stamps `TRIP_CONTEXT`="Travel" on EVERY
+wear-create POST during trip dates (post-log sheet shows it pre-selected);
+`tripPlanSync(outfitId, date)` records logged looks into that day's plan;
+`tripMissingPieces` offers add-to-capsule (post-log row + toast chip); Add
+Item pre-ticks the trip capsule; laundry sheet takes a pool (`_lnPool`) —
+trip laundry washes only the suitcase. **UNPACK/RECAP** — `tripRecapData(c)`
+(pure derivation: worn vs dead-weight, most-worn, repeated look — retroactive
+for any past dated trip) + `openTripRecap(cid, {unpack})` (worn→hamper via
+`flipLaundry` overrides, End trip mode); dashboard unpack-phase row +
+capsule-detail "Trip recap" button on past trips. **FILTER+SORT (A3/A2)** —
+sort lives IN `openFilterSheet` (`sortable: true` on closet/calendar/capsule
+pickers; title "Filter & sort"); the 3 standalone sort popovers are GONE.
+⚠️ Sort keys renamed: `"category"` = the composite (was misleadingly keyed
+"color"), `"colorfam"` = NEW true color sort; `gridSortKey()` maps legacy
+stored `"color"`→`"category"` — never write key "color" again. One-tap clear:
+`funnelBtnHtml(id, state, onClear)` renders an adjacent ✕ when active
+(`_funnelClearFns` registry + one capture-phase listener in `wireEvents`;
+closet/looks/stats toolbars registered manually). **PICKER TOGGLE (B)** —
+`builder.pickAll` ("all" = the bottom RAIL over the whole `builderPool()`
+with category jump chips, zero folder depth; "browse" = classic drill),
+toggled via `setBuilderPickAll` (🗂/▦ buttons in rail hdr + picker hdr),
+persisted `wardrobe.pickmode.builder`, capsule/trip scope defaults to all.
+**A1/E4** — `openPostLogSheet`'s `close()` re-renders the calendar day/Home
+beneath it (the "set context twice" bug); `openLogWear` + `logWearToday`
+refresh photo-view stat strip / day view too. **A4** — ✨ "Suggest new" tile
+at the front of the wear-again strip, TODAY only (past-date suggestions
+rejected by user).
 
 **Report Cards (2026-07-10) shipped in `2026-07-10 r2`→`r3`** — r2 shipped Brand
 & Retailer report cards; r3 (same day) generalized the engine to 7 dimensions
