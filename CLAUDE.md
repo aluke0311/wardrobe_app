@@ -29,11 +29,12 @@ The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`
 Do not use v25 as a reference for current UI code.
 
 **LAUNDRY v1 + Trips (2026-07-15, r1→r4) is FULLY SHIPPED** (decisions in
-ROADMAP.md's laundry section — do not re-litigate). ⚠️ **Blocked live on
-`migration/items_laundry.sql`** (adds `items.last_washed` + `items.laundry_state`)
-— all laundry write-UI hides behind `LAUNDRY_READY()` (checks the column exists
-on loaded rows) until the user runs it; read paths need no gate (absent column
-= null = clean). Core model (LAUNDRY section, after the derived helpers): dirty
+ROADMAP.md's laundry section — do not re-litigate). `migration/items_laundry.sql`
+(adds `items.last_washed` + `items.laundry_state`) **CONFIRMED RUN on the live
+DB 2026-07-18** (REST column probe) — laundry is fully live. The
+`LAUNDRY_READY()` gate (checks the column exists on loaded rows) stays in the
+code as harmless belt-and-suspenders; read paths never needed a gate (absent
+column = null = clean). Core model (LAUNDRY section, after the derived helpers): dirty
 is **derived, never stored** — distinct wear-days since `last_washed` ≥
 `WEAR_TOLERANCE[subcategory]` (category fallback; Infinity = shoes/outerwear
 never dirty); **null `last_washed` = clean** (tracking is opt-in by behavior).
@@ -124,8 +125,14 @@ fades (`.ph-fade`/`.ph-in`); `_shownPhotos` Set skips the fade on re-renders
 (app + all fixed chrome capped at 640px), login email prefill
 (`wardrobe.lastEmail`), `prefers-reduced-motion` guard.
 
-**▶ NEXT UP:** nothing scheduled — ask before starting new work. The user still
-needs to run `migration/items_laundry.sql` for laundry to light up.
+**▶ NEXT UP:** **"Trip Mode + Tap Tax" round — planned 2026-07-18, spec in
+ROADMAP.md's first section** (trip/capsule mode, fix pack incl. the post-log
+context staleness bug, filter+sort merge with a true color sort, Browse/All
+picker toggle, unpack flow, consistency sweep; no schema changes). Build order
+rule (user, 2026-07-18): **judgment-heavy items FIRST so a cheaper model can
+finish the mechanical tail if Fable runs out.** NOTE the "no nudges" rule is
+now SOFT (user, 2026-07-18). `migration/items_laundry.sql` is CONFIRMED RUN
+(2026-07-18) — laundry is fully live; no blockers.
 
 **Report Cards (2026-07-10) shipped in `2026-07-10 r2`→`r3`** — r2 shipped Brand
 & Retailer report cards; r3 (same day) generalized the engine to 7 dimensions
@@ -451,8 +458,8 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
   has-layout > oldest. Idempotent. Pairs with the save-time dedup guard in `saveBuilder`
   (`findDuplicateOutfit`/`itemSetKey`). Run once after deploying 2026-06-28 r5.
 - `migration/items_laundry.sql` — adds `items.last_washed` (date) + `items.laundry_state`
-  (text override: `'hamper'` | `'extra:<n>'`). **⚠️ NOT YET RUN as of 2026-07-15** —
-  laundry write-UI hides behind `LAUNDRY_READY()` until it is. Idempotent.
+  (text override: `'hamper'` | `'extra:<n>'`). **CONFIRMED RUN 2026-07-18** (verified
+  via anon-key REST column probe; `LAUNDRY_READY()` gate stays as belt-and-suspenders).
 
 ## Design model
 

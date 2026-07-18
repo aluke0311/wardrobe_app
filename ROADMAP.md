@@ -2,9 +2,221 @@
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
 > Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
-> Nothing scheduled — see Back-burner.
-> ⚠️ User still needs to run `migration/items_laundry.sql` (laundry write-UI is
-> hidden until she does).
+> **▶ NEXT: "Trip Mode + Tap Tax" round — planned 2026-07-18, first section below.**
+> `migration/items_laundry.sql` CONFIRMED RUN on the live DB (2026-07-18, REST
+> column probe) — laundry is fully live, no blockers.
+
+---
+
+## PLANNED BUILD — "Trip Mode + Tap Tax" (planned 2026-07-18)
+
+**Goal: an app-wide trip/capsule mode + a tap-tax fix pack + a consistency
+sweep. NO schema changes, NO migrations** — the whole mode derives from
+`capsules.start_date/end_date`, the `capsules.plan` JSONB, wears, and `store`
+keys. Decisions locked in the 2026-07-18 brainstorm (three iterations, all
+questions answered). Note for this round: the **"no nudges" rule is now SOFT**
+(her words 2026-07-18: "I don't mind nudges — that rule is soft if it exists at
+all"). Derived, dismissable prompts are fine. Predictable NAVIGATION is still
+hard doctrine.
+
+### Locked decisions (do not re-litigate)
+
+**A · Fix pack (small, standalone, build first)**
+
+- **A1 Post-log context staleness bug (user-reported "set it twice").**
+  Diagnosed: `openPostLogSheet` (~line 3612) saves context to DB + local rows
+  but never re-renders the screen behind it — calendar day card still shows
+  "Add context" (data IS saved; reopening shows it selected). Fix: give
+  `openPostLogSheet` an `onSaved` option (mirror `openContextSheet`'s, ~7141);
+  every caller passes the right re-render (calendar day → `renderCalendarDay`,
+  Home → `renderHome` so the `.logged-row` contexts refresh, etc.). Fire it
+  only when a context was actually written.
+- **A2 One-tap filter clear.** `funnelBtnHtml(id, state)` (~3769) renders an
+  adjacent ✕ button whenever `hasActiveFilter(state)` — tap = reset the state
+  clone + fire that surface's onApply. One component change propagates to every
+  funnel surface. No sheet visit to clear.
+- **A3 Merge sort into the filter sheet + fix the sort-label lie.** Today the
+  default sort key is internally `"color"` but actually sorts category >
+  subcategory > color, labeled **"Category" in the closet popover but "Color"
+  in the picker popovers** — and no true color sort exists (user: "sort by
+  color… only category, which doesn't make sense"; also "I always have trouble
+  finding sort").
+  - `openFilterSheet` gains a **Sort row at the top** (per-surface via the
+    existing `gridSortKey()`/`setGridSort()`/`_gridSurface` plumbing); sheet
+    title becomes "Filter & sort".
+  - **Retire all three standalone sort popovers**: closet `[data-sort]` popover
+    (~1028/6417/11693), calendar `#calLogSortPop` (~7412), capsule picker
+    `#capPickSortPop` (~11060).
+  - **Key rename + true color sort**: rename the composite key to
+    `"category"` (label "Category" everywhere); `gridSortKey()` maps legacy
+    stored `"color"` → `"category"` (keys persist in
+    `store` `wardrobe.sort.<surface>`). NEW `"color"` comparator = true color:
+    `COLOR_FAMILIES` declaration order (already spectrum-ish) → category →
+    subcat → name within a color.
+- **A4 ✨ Suggest for TODAY — the getting-out-of-bed flow.** The wear-again
+  chooser (`openWearAgainChooser`, ~7575) gets a **✨ Suggest tile at the front
+  of the strip** → `openSuggestSheet()`. "Wear this today" already logs today
+  with full look create-or-merge. Two taps from a cold open (Home CTA → ✨).
+  Explicitly NOT a past-date feature — she confirmed back-dated suggestions are
+  not a use case; do not add ✨ to arbitrary calendar days.
+
+**B · Picker toggle — Browse/All everywhere (replaces the earlier
+"auto-flatten small pools" idea; user chose an explicit toggle: predictable
+mode beats magic layout)**
+
+- Every clothing-picking surface gets a header toggle: **🗂 Browse** (the
+  folder drill that exists today) / **▦ All** (flat multi-select grid + search
+  + funnel + sort — i.e., exactly the calendar +Clothing picker she likes).
+- Surfaces: builder picker (`renderBuilderPicker` ~10629), capsule add-items
+  picker (`renderCapsulePicker`), calendar +Clothing (`openCalAddClothing`
+  ~7366 — already flat, gains the Browse option for symmetry), trip-plan
+  pickers via the same components.
+- **Persist per surface** in `store` (`wardrobe.pickmode.<surface>`, same
+  pattern as `wardrobe.sort.<surface>`). Defaults = each surface's current
+  behavior, EXCEPT capsule-scoped pools default to All (small pools are where
+  flat shines).
+- Builder flat mode keeps rail semantics: tap = `addPieceToBuilder(id, true)`,
+  picker stays open. Back from either mode lands in the same place — flat mode
+  has no depth by construction (this also answers her "back lands in different
+  places depending how many folders deep" complaint).
+
+**C · Trip mode / capsule mode (the flagship)**
+
+- **State**: `store` key `wardrobe.tripMode` = capsule id. Entering also sets
+  `activeCapsuleId` (existing scoping); exiting clears both. Three phases
+  derived from capsule dates, never stored: **pack** (start − `PACK_LEAD_DAYS`
+  = 3), **trip** (start ≤ today ≤ end), **unpack** (≤ `UNPACK_GRACE_DAYS` = 3
+  after end).
+- **Entry** (decision: yes, auto-offer): Home banner on/after start date for a
+  dated trip capsule — "✈️ <name> starts today — Enter trip mode", dismissable
+  (per-capsule store key). Manual entry button on capsule detail: dated →
+  "Start trip mode", undated → "Enter capsule mode" (same machinery minus the
+  date-driven pieces).
+- **Home takeover** (decision: takeover, but ALL app functionality stays,
+  scoped): `renderHome` (~2003) branches when trip mode is on. Dashboard:
+  trip banner (Day X of N · name · exit ✕) · **today's planned look card**
+  (from `capsules.plan`; "Wore it" → `planWoreIt` ~9783; nothing planned →
+  "✨ Suggest from your suitcase" → `openSuggestSheet(null, cid, {capsuleId,
+  date: today})`) · destination weather (`buildTripWeather`/`_planWx`, NOT
+  `loadHomeWeather`) · **suitcase hamper row** ("🧺 3 of 24 dirty", opens the
+  scoped laundry sheet) · mini-strip of remaining days' plans. The normal tile
+  grid renders BELOW the dashboard — every tile works, capsule-scoped.
+- **Scoping**: `activeCapsuleId` already scopes Closet + Looks; extend to the
+  wear-again chooser (`wearAgainCandidates` filters to `outfitFullyInCapsule`),
+  the suggester default pool, and the calendar log pickers. **Escape hatch
+  everywhere** (decision: yes, offer): pickers get a "whole closet" affordance
+  for that picking session; logging a NON-packed item in trip mode → after the
+  log, offer chip "Add to trip capsule?" (toast chip). Add Item in trip mode
+  auto-ticks the trip capsule in `_addState.capsules` (visible, un-tickable).
+- **"Travel" context** (decision: derive + auto-stamp "Travel", other contexts
+  addable): add `"Travel"` to `CONTEXT_SEED`. In trip mode, every wear-create
+  path's post-log sheet opens with **Travel pre-selected** (via `presetCtx` —
+  visible, un-tappable, composes with Church etc.). NOT a silent write: all
+  wear paths already fire the post-log sheet, so cancel = declined, consistent
+  with "each log asks exactly once". No per-trip named contexts (rejected —
+  generic Travel keeps the contexts list clean; the trip itself is derivable
+  from capsule dates).
+- **Log-writes-to-plan** (her ask: "logging an outfit while on a trip and
+  adding to the plan should be easier"): logging any look on a date inside the
+  trip range → `addPlanLook(cid, date, outfitId)` if not already there; the
+  day's planned card shows done. Works with the existing "Wore it" reverse
+  path. A worn outfit IS the plan, fulfilled — never make her do both.
+- **Trip laundry day** (the founding feature): `openLaundrySheet` (~2352)
+  gains an optional pool — trip mode passes dirty **capsule members only**
+  ("washing the suitcase, not the closet"). Load chips unchanged ("All
+  together" already exists — hotel reality). `stampWash` unchanged (takes
+  ids). A `PLAN_LAUNDRY` day in the plan surfaces on the dashboard as
+  "Laundry day — wash your suitcase?" → scoped sheet.
+- **Capsule mode** (undated) = banner + scoping + scoped laundry + Add-Item
+  auto-assign + bucket looks card on Home. No day cards, no weather, no
+  phases. Shares ~90% of the plumbing.
+
+**D · Unpack flow + trip recap (decision: in v1)**
+
+- Trigger: app open during the unpack phase while trip mode is active (or a
+  manual "End trip" in the banner). One screen: capsule members split into
+  **worn on trip** (any wear in the date range — pre-marked → hamper via the
+  existing one-time `'hamper'` override) and **never worn**.
+  Hamper writes go behind `LAUNDRY_READY()` like all laundry write-UI
+  (belt-and-suspenders — the migration is CONFIRMED RUN 2026-07-18, laundry
+  is fully live).
+- **Dead-weight recap**: "5 pieces traveled 7 days and never left the
+  suitcase" + most-worn piece + outfit repeat count. Not stored — pure
+  derivation, so add a "Trip recap" row on the capsule detail of any PAST
+  dated trip (re-viewable forever, works retroactively for old trips).
+- Completing unpack (or dismissing it) exits trip mode.
+
+**E · Consistency / professionalism sweep (the unifying ask)**
+
+- **E1 One scope-banner component**: the two duplicated capsule-scope banners
+  (~2504 closet, ~5714 looks) + the new trip banner become one
+  `scopeBannerHtml()` — same look, same ✕ behavior, trip variant adds Day X
+  of N. Any scoped surface shows it, so a short list is never a mystery.
+- **E2 Icon language audit**: ✨ = suggest, 🧺 = laundry (done last round),
+  🪣 = bucket, 🔒 = lock, ✈️ = trip — one meaning each, everywhere. Check
+  every suggest entry point uses ✨.
+- **E3 Empty-state pass**: every grid/list empty state gets the same style +
+  one useful action (empty lens → "Add an item", empty hamper → "Nothing
+  dirty", empty capsule → "Add pieces", empty day → log affordances already
+  exist). Plain warm copy, no lorem-ipsum cuteness.
+- **E4 Sheet-mutation audit** (A1 generalized): every sheet that writes data
+  must re-render the surface beneath it on save. Audit all `showSheet`
+  callers; `openContextSheet`/`openCalNotes` already comply; fix any others
+  found (A1 is the known offender).
+- **E5 Picker header standard**: same header row order everywhere a picker
+  opens: Back/Cancel · title · Browse/All toggle · search · funnel(+✕).
+
+### Rejected / out of scope this round
+
+- Past-date suggestions (not a use case — her call).
+- Auto-flattening pickers by pool size (superseded by the explicit B toggle).
+- Per-trip named contexts (generic "Travel" instead).
+- Any schema change (nothing in this round touches the DB shape;
+  `items_laundry.sql` is confirmed run, so no migration prerequisites at all).
+- Dark mode (standing rejection).
+
+### Build order (STRICT Fable-first — user rule 2026-07-18: "keep things that
+benefit from being coded by Fable first so that if I run out, I can continue
+easily with Sonnet or Opus." Order = descending judgment-density, NOT size or
+user-visible urgency. Each numbered step should leave the app deployable.)
+
+1. ✅ this ROADMAP section (the plan itself is the highest-leverage Fable work)
+2. **C trip/capsule mode core** — the architectural piece: mode state + phase
+   derivation, entry/exit banner, Home takeover, scoping extension + escape
+   hatches, Travel preset, log-writes-to-plan, scoped laundry pool, weather
+   source switch. Most cross-cutting decisions live here; get them made and
+   the patterns established.
+3. **A3 filter/sort merge + legacy sort-key mapping** — touches every surface;
+   the key-rename compat mapping is the subtle part. Include A2's ✕ (trivial
+   once inside `funnelBtnHtml`).
+4. **B picker toggle** — new shared component pattern across three pickers
+   (builder rail semantics are the judgment call).
+5. **D unpack + recap** — derivation logic (worn-in-range split, dead-weight,
+   retroactive recap row) is Fable-worthy; the screen itself is mechanical.
+6. **E1 scope-banner component + E4 sheet-mutation audit** — E4 needs judgment
+   to audit; the fixes it finds are mechanical.
+--- everything below is safely finishable by Sonnet/Opus from this spec ---
+7. **A1 post-log `onSaved`** (fully diagnosed above — mechanical now), then
+   **A4 ✨ suggest tile** (one tile + one call).
+8. **E2 icon audit, E3 empty states, E5 picker headers** (checklist work).
+9. Verify in preview (script parses = login renders; console clean; walk the
+   trip-mode lifecycle with a test capsule), deploy via `deploy-wardrobe`
+   (new day → `2026-07-18 r1`), close out docs/memory. **Deploy after EVERY
+   numbered step** (her standing "always deploy after building" preference —
+   and it means a model handoff never strands unshipped work).
+
+### Build conventions for this plan
+
+- Constants at top of script: `PACK_LEAD_DAYS = 3`, `UNPACK_GRACE_DAYS = 3`,
+  `TRIP_CONTEXT = "Travel"`.
+- New sheets/wrappers must be added to `uiCanRefetch()`'s wrapper list and use
+  `showSheet`/`hideSheet` only (CLAUDE.md gotcha).
+- All new item-photo surfaces route through `photoUrl`/`loadPhotoNode`;
+  `background-size: contain`.
+- Non-closet item/look opens via `openItemFrom`/`openLookFrom` (return
+  thunks) — the trip dashboard is a new entry point, wire it correctly.
+- Version bumps: `APP_VERSION` AND the `<meta name="app-version">` tag, in
+  lockstep.
 
 ---
 
@@ -100,9 +312,9 @@ mode, and sign in once there (standalone storage is separate).
 ## ✅ SHIPPED BUILD — Laundry v1 + Trips (planned + built 2026-07-15, r1→r4)
 
 **Status: FULLY SHIPPED same day, `2026-07-15 r1`→`r4` (core+suggester → sheet+
-badges+item actions → Home strip+prompt → trips). All laundry write-UI hides
-behind `LAUNDRY_READY()` until the user runs `migration/items_laundry.sql` —
-⚠️ NOT YET RUN. See CLAUDE.md's LAUNDRY entry for implementation names.**
+badges+item actions → Home strip+prompt → trips). `migration/items_laundry.sql`
+CONFIRMED RUN on the live DB (verified 2026-07-18 via REST column probe) —
+laundry is fully live. See CLAUDE.md's LAUNDRY entry for implementation names.**
 
 History: laundry was rejected TWICE (v25 `availability` field died of manual
 upkeep; v3 planning said "stays dead"). User deliberately reopened it 2026-07-15.

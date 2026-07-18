@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-17 r1">
+<meta name="app-version" content="2026-07-18 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -172,6 +172,30 @@
   .log-cta { display:block; margin:12px 16px 0; padding:14px; background:var(--accent); color:#fff; border-radius:14px; font-size:16px; font-weight:600; text-align:center; }
   /* Home laundry row: previous-day confirm strip / "done laundry?" prompt */
   .laun-row { margin: 12px 16px 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; text-align: left; }
+  /* trip mode: Home dashboard */
+  .trip-dash { margin: 12px 16px 4px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .trip-dash .td-banner { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--accent-soft); }
+  .trip-dash .td-title { flex: 1; min-width: 0; }
+  .trip-dash .td-name { font-size: 15px; font-weight: 700; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trip-dash .td-sub { font-size: 12.5px; color: var(--accent); opacity: .8; }
+  .trip-dash .td-wx { flex: none; font-size: 13px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .trip-dash .td-plan { padding: 10px 14px 2px; }
+  .trip-dash .td-plan-lbl { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .td-look { display: flex; align-items: center; gap: 10px; padding: 6px 0; width: 100%; text-align: left; }
+  .td-look .tdl-collage { width: 56px; flex: none; }
+  .td-look .tdl-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .td-look .tdl-wore { flex: none; font-size: 13px; font-weight: 600; color: var(--accent); padding: 6px 12px; border: 1px solid var(--accent); border-radius: 18px; }
+  .td-look .tdl-worn { flex: none; font-size: 13px; font-weight: 600; color: #2f9e5e; }
+  .trip-dash .td-chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px 12px; }
+  .trip-dash .td-laun { display: flex; align-items: center; gap: 8px; width: calc(100% - 28px); margin: 0 14px; padding: 9px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; font-size: 13.5px; text-align: left; }
+  .td-days { display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 2px 14px 12px; scrollbar-width: none; }
+  .td-days::-webkit-scrollbar { display: none; }
+  .td-day { flex: none; min-width: 52px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 12px; text-align: center; font-size: 11.5px; color: var(--muted); }
+  .td-day .d { font-weight: 700; color: var(--ink, #222); font-size: 12.5px; }
+  .td-day.today { border-color: var(--accent); }
+  /* trip-mode offer banner (auto-derived from capsule dates, dismissable) */
+  .trip-offer { display: flex; align-items: center; gap: 10px; margin: 12px 16px 0; padding: 12px 14px; background: var(--accent-soft); border-radius: 14px; }
+  .trip-offer .to-t { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; color: var(--accent); text-align: left; }
   .laun-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; }
   .laun-ok { flex: none; color: var(--accent); font-size: 13px; font-weight: 600; background: none; border: none; padding: 4px 0 4px 8px; }
   /* touch-action pins these strips to sideways panning — without it a swipe that
@@ -1169,7 +1193,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-17 r1";
+const APP_VERSION = "2026-07-18 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -1542,6 +1566,12 @@ async function loadData() {
   buildExcludeSet();
   buildSuggestIndexes();
   dataReady = true;
+  // Trip mode persists across sessions; re-assert the scope (or self-clear if
+  // the capsule is gone). Runs on every load — idempotent.
+  if (tripModeId) {
+    if (capsuleById.get(tripModeId)) activeCapsuleId = tripModeId;
+    else { tripModeId = null; store.removeItem(TRIP_MODE_KEY); if (activeCapsuleId) activeCapsuleId = null; }
+  }
   saveDataSnapshot();   // fire-and-forget — instant hydration on next boot
 }
 
@@ -2000,6 +2030,127 @@ function laundryStripHtml() {
   </div>`;
 }
 
+// ---- trip mode: Home dashboard ----
+let _tripWxHomeFor = null;  // capsule id the dashboard last loaded _planWx for
+async function loadTripHomeWx(c) {
+  if (_tripWxHomeFor === c.id && _planWxLoadedFor === c.id) return;
+  _tripWxHomeFor = c.id;
+  const cached = _wxCache[c.id];
+  let days;
+  if (cached && Date.now() - cached.ts < WX_TTL) days = cached.days;
+  else { try { days = await buildTripWeather(c); _wxCache[c.id] = { days, ts: Date.now() }; } catch { days = []; } }
+  _planWx = {};
+  (days || []).forEach(d => { _planWx[d.date] = d; });
+  _planWxLoadedFor = c.id;
+  if ($(".screen.active")?.id === "tab-home" && tripModeId === c.id) renderHome();
+}
+
+function tripDashHtml(c) {
+  const today = todayStr();
+  const dated = isDatedTrip(c);
+  const phase = tripPhase(c);
+  const dates = dated ? tripDates(c) : [];
+  let sub;
+  if (phase === "trip") sub = `Day ${tripDayNum(c, today)} of ${dates.length}`;
+  else if (phase === "pack") sub = `starts ${fmtDate(c.start_date)}`;
+  else if (phase === "unpack") sub = "trip finished — unpack when ready";
+  else if (dated) sub = `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`;
+  else sub = "Capsule mode";
+  const wx = dated && phase === "trip" ? planDayWxHtml(today) : "";
+
+  // Today's plan (trip phase only): planned looks with a one-tap "Wore it".
+  let planHtml = "";
+  if (phase === "trip") {
+    const planned = planActiveLooks(c, today);
+    const laundryDay = planLaundryDay(c, today);
+    const rows = planned.map(oid => {
+      const o = outfitById.get(oid);
+      if (!o) return "";
+      return `<div class="td-look" data-td-look="${esc(oid)}">
+        <div class="tdl-collage">${outfitCollageHtml(o, 4)}</div>
+        <div class="tdl-name">${esc(outfitName(o))}</div>
+        ${planWorn(today, oid) ? `<span class="tdl-worn">✓ Worn</span>` : `<button class="tdl-wore" data-td-wore="${esc(oid)}">Wore it</button>`}
+      </div>`;
+    }).join("");
+    planHtml = `<div class="td-plan">
+      <div class="td-plan-lbl">Today${laundryDay ? " · 🧺 laundry day" : ""}</div>
+      ${rows || `<div class="muted" style="font-size:13.5px;padding:2px 0 4px">Nothing planned for today.</div>`}
+    </div>`;
+  }
+
+  // Suitcase hamper (works for every phase, incl. capsule mode).
+  let launHtml = "";
+  if (LAUNDRY_READY()) {
+    const members = capsuleItems(c.id).filter(i => itemStatus(i) === "Available");
+    const _ls = laundryState();
+    const dirty = members.filter(i => isDirty(i, _ls));
+    const verb = phase === "pack" ? "wash before you pack" : "in the hamper";
+    launHtml = `<button class="td-laun" data-td-laundry>🧺
+      <span style="flex:1">${dirty.length ? `${dirty.length} of ${members.length} pieces ${verb}` : `Suitcase is clean · ${members.length} pieces`}</span>
+      <span style="color:var(--accent);font-weight:600">＋</span></button>`;
+  }
+
+  // Remaining days mini-strip (trip phase): plan coverage + weather at a glance.
+  let daysHtml = "";
+  if (phase === "trip" || phase === "pack") {
+    const rest = dates.filter(d => d >= today);
+    if (rest.length > 1) {
+      daysHtml = `<div class="td-days">${rest.map(d => {
+        const w = _planWx[d];
+        const n = planActiveLooks(c, d).length;
+        const dow = new Date(d + "T00:00:00").toLocaleDateString(undefined, { weekday: "short" });
+        return `<button class="td-day${d === today ? " today" : ""}" data-td-plandate="${esc(d)}">
+          <div class="d">${esc(dow)}</div>
+          <div>${w && w.maxT != null ? `${wmoEmoji(w.code)} ${w.maxT}°` : "·"}</div>
+          <div>${planLaundryDay(c, d) ? "🧺" : n ? `${n} planned` : "—"}</div>
+        </button>`;
+      }).join("")}</div>`;
+    }
+  }
+
+  const chips = [
+    `<button class="cap-chip" data-td-suggest>✨ Suggest</button>`,
+    dated ? `<button class="cap-chip" data-td-plans>🗓 Trip plan</button>`
+          : `<button class="cap-chip" data-td-plans>Planned outfits</button>`,
+    `<button class="cap-chip" data-td-cap>🧳 ${dated ? "Packing list" : "Capsule"}</button>`,
+  ].join("");
+
+  return `<div class="trip-dash">
+    <div class="td-banner">
+      <div class="td-title">
+        <div class="td-name">${dated ? "✈️ " : ""}${esc(c.name)}</div>
+        <div class="td-sub">${esc(sub)}</div>
+      </div>
+      ${wx ? `<span class="td-wx">${wx}</span>` : ""}
+      <button class="cb-x" data-td-exit title="Exit trip mode">✕</button>
+    </div>
+    ${planHtml}
+    ${launHtml}
+    <div class="td-chips">${chips}</div>
+    ${daysHtml}
+  </div>`;
+}
+
+// Auto-offer banner: a dated trip overlapping today (or about to start) that the
+// mode isn't on for. Dismissal is per-day, so it quietly comes back tomorrow.
+function tripOfferHtml() {
+  if (tripModeId) return "";
+  const today = todayStr();
+  const c = capsules.filter(isDatedTrip)
+    .filter(x => { const p = tripPhase(x); return p === "trip" || p === "pack"; })
+    .sort((a, b) => a.start_date.localeCompare(b.start_date))[0];
+  if (!c) return "";
+  if (store.getItem(TRIP_OFFER_KEY + c.id) === today) return "";
+  const phase = tripPhase(c);
+  const txt = phase === "trip"
+    ? (today === c.start_date ? `${c.name} starts today — enter trip mode?` : `On your ${c.name} trip? Enter trip mode`)
+    : `${c.name} starts ${fmtDate(c.start_date)} — start packing?`;
+  return `<div class="trip-offer" data-trip-offer="${esc(c.id)}" data-trip-offer-phase="${phase}">
+    <span style="flex:none">✈️</span><span class="to-t">${esc(txt)}</span>
+    <button class="cb-x" data-trip-offer-x="${esc(c.id)}">✕</button>
+  </div>`;
+}
+
 function renderHome() {
   const tiles = HOME_TILES.map(t => `
     <button class="tile ${t.wide ? "wide" : ""}" data-go="${t.tab}">
@@ -2035,8 +2186,14 @@ function renderHome() {
       laun = laundryStripHtml();
     }
   }
-  $("#homeBody").innerHTML = `<div class="launch">${tiles}</div>${cta}${laun}`;
+  // Trip mode: the dashboard takes over the top of Home; the tile grid stays
+  // below it (every screen still works, scoped to the capsule).
+  const tc = dataReady ? tripCapsule() : null;
+  const dash = tc ? tripDashHtml(tc) : (dataReady ? tripOfferHtml() : "");
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${cta}${laun}`;
   hydratePhotos($("#homeBody"));
+  if (tc && isDatedTrip(tc) && (tc.locations || []).length && _planWxLoadedFor !== tc.id) loadTripHomeWx(tc);
+  wireTripDash(tc);
   const launPrompt = $("#homeLaunPrompt");
   if (launPrompt) launPrompt.onclick = () => openLaundrySheet({ fromPrompt: true });
   const launOk = $("#launConfirm");
@@ -2070,6 +2227,46 @@ function renderHome() {
     calendarDay = today;
     renderCalendarDay($("#calendarBody"));
   };
+}
+
+// Handlers for the trip dashboard + the trip-mode offer banner on Home.
+function wireTripDash(tc) {
+  const body = $("#homeBody");
+  const offer = body.querySelector("[data-trip-offer]");
+  if (offer) {
+    const cid = offer.dataset.tripOffer;
+    offer.onclick = () => {
+      if (offer.dataset.tripOfferPhase === "pack") {
+        switchTab("capsules"); capsuleId = cid; capsuleView = "detail"; renderCapsules();
+      } else enterTripMode(cid);
+    };
+    const x = body.querySelector("[data-trip-offer-x]");
+    if (x) x.onclick = (e) => {
+      e.stopPropagation();
+      store.setItem(TRIP_OFFER_KEY + cid, todayStr());
+      renderHome();
+    };
+  }
+  if (!tc) return;
+  const on = (sel, fn) => body.querySelectorAll(sel).forEach(el => { el.onclick = fn; });
+  on("[data-td-exit]", () => exitTripMode());
+  on("[data-td-suggest]", () => openSuggestSheet(null, tc.id));
+  on("[data-td-laundry]", () => openLaundrySheet({ pool: capsuleItems(tc.id) }));
+  on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });
+  on("[data-td-cap]", () => { switchTab("capsules"); capsuleId = tc.id; capsuleView = "detail"; renderCapsules(); });
+  body.querySelectorAll("[data-td-plandate]").forEach(el => {
+    el.onclick = () => { switchTab("capsules"); openTripPlan(tc.id); };
+  });
+  body.querySelectorAll("[data-td-look]").forEach(el => {
+    el.onclick = () => openLookFrom(el.dataset.tdLook);
+  });
+  body.querySelectorAll("[data-td-wore]").forEach(el => {
+    el.onclick = async (e) => {
+      e.stopPropagation();
+      await planWoreIt(todayStr(), el.dataset.tdWore);
+      renderHome();
+    };
+  });
 }
 
 /* ===================================================================
@@ -2154,6 +2351,88 @@ let bulkPending = {};     // bulk edit: field -> pending value
 let bulkOpenField = null; // which field row is expanded in bulk edit sheet
 
 let activeCapsuleId = null; // when set, Closet is scoped to this capsule's items
+
+/* ===================================================================
+   TRIP MODE  (2026-07-18)
+   App-wide mode scoped to one capsule. Three phases, DERIVED from the
+   capsule's dates, never stored: pack (lead-up) → trip → unpack (grace).
+   Entering also sets activeCapsuleId (the existing scoping); the scope
+   banner's ✕ exits the mode. Undated capsules get the same mode minus
+   every date-driven piece ("capsule mode").
+   =================================================================== */
+const PACK_LEAD_DAYS = 3;     // pack phase starts this many days before a trip
+const UNPACK_GRACE_DAYS = 3;  // unpack/recap offered this long after it ends
+const TRIP_CONTEXT = "Travel";
+const TRIP_MODE_KEY = "wardrobe.tripMode";
+const TRIP_OFFER_KEY = "wardrobe.tripOffer.";  // + capsule id → date offer was dismissed
+let tripModeId = null;        // capsule id while the mode is on (persisted)
+let _pickTripScope = false;   // calendar/log pickers: true = pool limited to the trip capsule
+
+function shiftDate(dstr, n) { const d = new Date(dstr + "T00:00:00"); d.setDate(d.getDate() + n); return localISO(d); }
+function isDatedTrip(c) { return !!(c && c.start_date && c.end_date); }
+// The mode's capsule, validated (self-clears if the capsule was deleted).
+function tripCapsule() {
+  if (!tripModeId) return null;
+  const c = capsuleById.get(tripModeId);
+  if (!c) { tripModeId = null; store.removeItem(TRIP_MODE_KEY); }
+  return c || null;
+}
+function tripPhase(c, day) {
+  if (!isDatedTrip(c)) return null;
+  const d = day || todayStr();
+  if (d >= c.start_date && d <= c.end_date) return "trip";
+  if (d < c.start_date) return d >= shiftDate(c.start_date, -PACK_LEAD_DAYS) ? "pack" : null;
+  return d <= shiftDate(c.end_date, UNPACK_GRACE_DAYS) ? "unpack" : null;
+}
+function tripDayNum(c, day) {
+  return Math.round((new Date(day + "T00:00:00") - new Date(c.start_date + "T00:00:00")) / 86400000) + 1;
+}
+function enterTripMode(cid) {
+  const c = capsuleById.get(cid);
+  if (!c) return;
+  tripModeId = cid;
+  store.setItem(TRIP_MODE_KEY, cid);
+  activeCapsuleId = cid;
+  closetCat = null; closetSub = null; searchResults = null;
+  switchTab("home");
+  toast(isDatedTrip(c) ? `✈️ Trip mode · ${c.name}` : `Capsule mode · ${c.name}`);
+}
+function exitTripMode() {
+  tripModeId = null;
+  store.removeItem(TRIP_MODE_KEY);
+  activeCapsuleId = null;
+  toast("Trip mode off");
+  const scr = $(".screen.active")?.id;
+  if (scr === "tab-home") renderHome();
+  else if (scr === "tab-closet" && !detailId) renderCloset();
+  else if (scr === "tab-looks" && !lookId) renderLooks();
+  else if (scr === "tab-capsules") renderCapsules();
+}
+// Auto-stamped wear context while ON a trip (dated capsules only — wearing a
+// home capsule isn't "Travel"). Composes with anything she adds in the sheet.
+function tripWearContext(date) {
+  const c = tripCapsule();
+  if (!c || !isDatedTrip(c)) return null;
+  return (date >= c.start_date && date <= c.end_date) ? [TRIP_CONTEXT] : null;
+}
+// A look logged on a trip day IS that day's plan, fulfilled — record it there
+// so she never has to do both. Fire-and-forget from the wear paths.
+async function tripPlanSync(outfitId, date) {
+  const c = tripCapsule();
+  if (!c || !outfitId || !isDatedTrip(c)) return;
+  if (date < c.start_date || date > c.end_date) return;
+  if (planLooksForDate(c, date).includes(outfitId)) return;
+  await addPlanLook(c.id, date, outfitId);
+}
+// Pieces just logged that aren't packed → offer to add them to the trip capsule
+// (keeps the capsule honest when she wears something she didn't pack).
+function tripMissingPieces(itemIds) {
+  const c = tripCapsule();
+  if (!c) return null;
+  const members = new Set((capsuleLinkMap.get(c.id) || []).map(l => l.item_id));
+  const missing = [...new Set(itemIds)].filter(id => id && !members.has(id) && itemById.get(id));
+  return missing.length ? { c, missing } : null;
+}
 
 // Items in the current lens. An active capsule overrides the status lens entirely
 // (you want to see everything you packed, regardless of Available/Storage).
@@ -2338,6 +2617,7 @@ function renderClosetRoot() {
 // hamper items washed. Only DIRTY items get stamped — an under-tolerance jean
 // hanging in the closet wasn't in the physical hamper, so its count keeps running.
 let _lnSel = new Set();
+let _lnPool = null;  // Set of item ids scoping the laundry sheet (trip mode), or null
 let _lnFromPrompt = false;
 function _lnLoadItems(load, hamper) {
   if (load === "All") return hamper;
@@ -2349,15 +2629,22 @@ function _lnSelectedIds(hamper) {
   for (const load of _lnSel) for (const i of _lnLoadItems(load, hamper)) ids.add(i.id);
   return [...ids];
 }
-function openLaundrySheet({ fromPrompt = false } = {}) {
+function openLaundrySheet({ fromPrompt = false, pool = null } = {}) {
   _lnSel = new Set();
   _lnFromPrompt = fromPrompt;
+  // Trip mode: wash the suitcase, not the closet — pool limits the hamper to
+  // the passed items (capsule members). Null = whole closet, as ever.
+  _lnPool = pool ? new Set(pool.map(i => i.id)) : null;
   renderLaundrySheet();
   showSheet("logSheet");
 }
+function _lnHamper(ls) {
+  const h = hamperItems(ls);
+  return _lnPool ? h.filter(i => _lnPool.has(i.id)) : h;
+}
 function renderLaundrySheet() {
   const ls = laundryState();
-  const hamper = hamperItems(ls);
+  const hamper = _lnHamper(ls);
   const date = $("#lnDate")?.value || todayStr();  // survives chip-toggle re-renders
   const chips = ["Whites", "Cools", "Warms", "All"].map(l => {
     const n = _lnLoadItems(l, hamper).length;
@@ -2368,7 +2655,8 @@ function renderLaundrySheet() {
   // Tracking is opt-in per item: it starts the first time an item is stamped
   // washed. Until ANY item has, offer the whole-closet bootstrap — including
   // when the hamper already holds manual overrides, which used to hide it.
-  const tracking = items.some(i => i.last_washed);
+  // Scoped (trip) sheets never show the whole-closet bootstrap.
+  const tracking = items.some(i => i.last_washed) || !!_lnPool;
   const dateRow = `
     <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
       <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
@@ -2377,7 +2665,7 @@ function renderLaundrySheet() {
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="lnCancel">Cancel</button>
-      <h2>Laundry</h2>
+      <h2>${_lnPool ? "Trip laundry" : "Laundry"}</h2>
       <span style="width:54px"></span>
     </div>
     ${hamper.length ? `
@@ -2418,7 +2706,7 @@ function renderLaundrySheet() {
   });
   const save = $("#lnSave");
   if (save) save.onclick = async () => {
-    const ids = _lnSelectedIds(hamperItems());
+    const ids = _lnSelectedIds(_lnHamper());
     const day = $("#lnDate")?.value || todayStr();
     hideSheet("logSheet");
     try {
@@ -2495,15 +2783,27 @@ function openClosetCapsuleFilter() {
   });
 }
 
-// Banner shown across Closet screens while a capsule scopes the view.
-function capsuleBanner() {
+// Shared scope banner (E1): one component for every capsule-scoped surface.
+// Trip mode gets its own wording + the ✕ exits the MODE (one mental model:
+// the banner IS the mode); plain planning scope keeps its old behavior.
+function scopeBannerHtml(prefix) {
   const c = capsuleById.get(activeCapsuleId);
   if (!c) return "";
+  if (tripModeId === c.id) {
+    const p = tripPhase(c);
+    const day = p === "trip" ? ` · Day ${tripDayNum(c, todayStr())} of ${tripDates(c).length}` : "";
+    return `<div class="cap-banner">
+      <div class="cb-t">${isDatedTrip(c) ? "✈️ " : ""}${esc(c.name)}${day}</div>
+      <button class="cb-x" data-cap-clear title="Exit trip mode">✕</button>
+    </div>`;
+  }
   return `<div class="cap-banner">
-    <div class="cb-t">Planning · ${esc(c.name)}</div>
+    <div class="cb-t">${esc(prefix)} · ${esc(c.name)}</div>
     <button class="cb-x" data-cap-clear>✕</button>
   </div>`;
 }
+// Banner shown across Closet screens while a capsule scopes the view.
+function capsuleBanner() { return scopeBannerHtml("Planning"); }
 
 function renderClosetCategory(cat) {
   const inCat = cat === "Other" ? lensItems().filter(isOtherCat) : lensItems().filter(i => i.category === cat);
@@ -3569,19 +3869,23 @@ async function logWearToday(id, { force = false } = {}) {
   }
   try {
     const fml = deriveWearFormality([id]);
+    const wctx = tripWearContext(today);  // trip mode: auto-stamp "Travel"
     const rows = await rest("/wears", {
       method: "POST",
       headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify({ item_id: id, worn_on: today, formality_for: fml }),
+      body: JSON.stringify({ item_id: id, worn_on: today, formality_for: fml, ...(wctx ? { context: wctx } : {}) }),
     });
     const wear = Array.isArray(rows) && rows[0]
       ? rows[0]
-      : { id: null, item_id: id, worn_on: today, outfit_id: null, context: null, formality_for: fml };
+      : { id: null, item_id: id, worn_on: today, outfit_id: null, context: wctx || null, formality_for: fml };
     wears.push(wear);
-    toast("Wear logged", [
+    const chips = [
       { label: "Undo", fn: () => undoLoggedWears([wear]) },
       { label: "Add context →", fn: () => openPostLogSheet([wear]) },
-    ]);
+    ];
+    const miss = tripMissingPieces([id]);
+    if (miss) chips.push({ label: `＋ ${miss.c.name}`, fn: async () => { await addItemsToCapsule(miss.c.id, miss.missing); toast(`Added to ${miss.c.name}`); } });
+    toast("Wear logged", chips);
   } catch (e) { toast(e.message); }
 }
 
@@ -3612,6 +3916,10 @@ async function undoLoggedWears(rows) {
 function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
   _logItemId = wearRows.length === 1 ? wearRows[0].item_id : null;
   _ctxSel = presetCtx && presetCtx.length ? [...presetCtx] : []; _ctxAddOpen = false;
+  // Trip mode: "Travel" arrives pre-selected (the POST already stamped it) —
+  // visible and un-tappable, composing with whatever else she picks.
+  const _twc = tripWearContext(wearRows[0]?.worn_on || todayStr());
+  if (_twc && !_ctxSel.includes(TRIP_CONTEXT)) _ctxSel.push(TRIP_CONTEXT);
   _ctxSuggest = weekdayTopContext(wearRows[0]?.worn_on || todayStr());
   const oid = wearRows.length && wearRows.every(r => r.outfit_id && r.outfit_id === wearRows[0].outfit_id)
     ? wearRows[0].outfit_id : null;
@@ -3628,10 +3936,29 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
         <label style="font-size:13px;color:var(--muted)">Loved wearing this look?</label>
         <button class="lk-heart-btn${o.rating === 1 ? " on" : ""}" id="postLikeBtn"><svg viewBox="0 0 24 24" style="width:26px;height:26px;stroke:currentColor;stroke-width:1.8;fill:none">${HEART_SVG}</svg></button>
       </div>` : ""}
+      ${(() => {
+        // Trip mode: worn pieces that aren't packed → one-tap add to the capsule.
+        const miss = tripMissingPieces(wearRows.map(r => r.item_id));
+        if (!miss) return "";
+        return `<div id="postTripRow" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 12px;background:var(--accent-soft);border-radius:12px;font-size:13.5px">
+          <span style="flex:1">✈️ ${miss.missing.length === 1 ? "1 piece isn't" : miss.missing.length + " pieces aren't"} in ${esc(miss.c.name)}</span>
+          <button id="postTripAdd" style="color:var(--accent);font-weight:700">Add</button>
+        </div>`;
+      })()}
       ${contextPickerHtml()}
     </div>`;
   showSheet("logSheet");
   renderContextPicker();
+  const tripAdd = $("#postTripAdd");
+  if (tripAdd) tripAdd.onclick = async () => {
+    const miss = tripMissingPieces(wearRows.map(r => r.item_id));
+    if (!miss) return;
+    try {
+      await addItemsToCapsule(miss.c.id, miss.missing);
+      const row = $("#postTripRow");
+      if (row) row.innerHTML = `<span style="flex:1">✓ Added to ${esc(miss.c.name)}</span>`;
+    } catch (e) { toast(e.message); }
+  };
   if (o) {
     $("#postLikeBtn").onclick = () => {
       toggleLikeLook(oid).then(r => { const btn = $("#postLikeBtn"); if (btn) btn.classList.toggle("on", r === 1); });
@@ -3889,6 +4216,9 @@ function renderAdd() {
   // reset state on fresh open
   if (_addPhotoUrl) { URL.revokeObjectURL(_addPhotoUrl); _addPhotoUrl = null; }
   _addState = { status: "Available" };  // purchase date left blank — user sets it if they want
+  // Trip mode: something bought on a trip belongs in the trip capsule —
+  // pre-tick it (visible in the Capsules row, un-tickable there).
+  if (tripModeId && capsuleById.get(tripModeId)) _addState.capsules = [tripModeId];
   if (_addSeed) { Object.assign(_addState, _addSeed); _addSeed = null; }
   _addPhotoBlob = null;
   _renderAddBody();
@@ -5150,6 +5480,9 @@ function contextFormalityLevel(context) {
 }
 
 function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
+  // Trip/capsule mode: every suggest entry point defaults to the suitcase pool
+  // unless the caller scoped it explicitly.
+  if (!capsuleId && tripModeId && capsuleById.get(tripModeId)) capsuleId = tripModeId;
   _sugg.seedItemId = seedItemId;
   _sugg.capsuleId = capsuleId;
   _sugg.planCtx = planCtx || null;
@@ -5288,13 +5621,15 @@ async function wearSuggestedCombo(combo, { force = false } = {}) {
       return;
     }
     const fml = deriveWearFormality(combo.pieces.map(p => p.id));
+    const wctx = tripWearContext(today);  // trip mode: auto-stamp "Travel"
     const rows = await rest("/wears", {
       method: "POST",
       headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today, outfit_id: oid, formality_for: fml }))),
+      body: JSON.stringify(combo.pieces.map(p => ({ item_id: p.id, worn_on: today, outfit_id: oid, formality_for: fml, ...(wctx ? { context: wctx } : {}) }))),
     });
     if (Array.isArray(rows)) wears.push(...rows);
     buildOutfitWearMap();
+    tripPlanSync(oid, today);  // trip mode: a worn look IS that day's plan
     // Route into the context capture sheet (shared with daily-loop logging)
     if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
     else { hideSheet("logSheet"); toast("Logged!"); }
@@ -5707,12 +6042,7 @@ async function openExcludeSheet(pieces) {
 
 function looksCapsuleBanner() {
   if (!activeCapsuleId) return "";
-  const c = capsuleById.get(activeCapsuleId);
-  if (!c) return "";
-  return `<div class="cap-banner">
-    <div class="cb-t">Wearable from · ${esc(c.name)}</div>
-    <button class="cb-x" data-cap-clear>✕</button>
-  </div>`;
+  return scopeBannerHtml("Wearable from");
 }
 
 // Looks matching a query — by piece (name/brand/category/sub) or by context
@@ -7369,6 +7699,7 @@ function openCalAddClothing() {
   _capPickCat = null;
   _capPickSub = null;          // reset so a stale subcategory filter can't hide items
   _capPickStatus = "Available"; // reset so a stale status lens can't hide items
+  _pickTripScope = !!tripCapsule();  // trip mode: default to the suitcase
   pickerFilter = newFilterState();
   renderCalClothingPicker();
 }
@@ -7391,7 +7722,9 @@ function renderCalClothingPicker() {
       ${funnelBtnHtml("calLogFilter", pickerFilter)}
     </div>
     ${(() => { const b = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${l}</button>`;
-      return `<div class="cap-catbar" style="padding-top:6px">${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
+      const trip = tripCapsule();
+      const scope = trip ? `<button class="cap-chip${_pickTripScope ? " on" : ""}" data-pick-tripscope>✈️ Suitcase only</button>` : "";
+      return `<div class="cap-catbar" style="padding-top:6px">${scope}${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px;gap:8px">
       <span style="font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</span>
       <div style="display:flex;gap:8px;align-items:center">
@@ -7418,6 +7751,7 @@ function renderCalClothingPicker() {
     if (e.target.closest('#calLogDone')) return saveCalClothingLog();
     if (e.target.closest('#calLogAsLook')) return saveCalClothingLogAsLook();
     if (e.target.closest('#calLogFilter')) return openFilterSheet(pickerFilter, { onApply: renderCalClothingPicker, title: "Filter Clothing", dims: PICKER_FILTER_DIMS });
+    if (e.target.closest('[data-pick-tripscope]')) { _pickTripScope = !_pickTripScope; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
     const ps = e.target.closest('[data-pick-status]');
     if (ps) { _capPickStatus = ps.dataset.pickStatus; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
     const pc = e.target.closest('[data-pickcat]');
@@ -7442,7 +7776,8 @@ async function saveCalClothingLog() {
   if (!ids.length) return renderCalendarDay(body);
   const date = calendarDay;
   try {
-    const payload = ids.map(item_id => ({ item_id, worn_on: date, formality_for: deriveWearFormality([item_id]) }));  // solo wears, no outfit_id
+    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const payload = ids.map(item_id => ({ item_id, worn_on: date, formality_for: deriveWearFormality([item_id]), ...(wctx ? { context: wctx } : {}) }));  // solo wears, no outfit_id
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
@@ -7470,7 +7805,8 @@ async function saveCalClothingLogAsLook() {
   try {
     const { outfitId } = await createLookFromItems(ids);
     const fml = deriveWearFormality(ids);
-    const payload = ids.map(item_id => ({ item_id, worn_on: date, outfit_id: outfitId, formality_for: fml }));
+    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const payload = ids.map(item_id => ({ item_id, worn_on: date, outfit_id: outfitId, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
@@ -7478,6 +7814,7 @@ async function saveCalClothingLogAsLook() {
     const pushed = Array.isArray(rows) ? rows : payload.map(p => ({ ...p }));
     wears.push(...pushed);
     buildOutfitWearMap();
+    tripPlanSync(outfitId, date);  // trip mode: a worn look IS that day's plan
     renderCalendarDay(body);
     openPostLogSheet(pushed, { undoable: true });
   } catch (e) { toast(e.message); }
@@ -7487,6 +7824,7 @@ async function saveCalClothingLogAsLook() {
 let calLookFilter = newFilterState(); // P3: funnel for the calendar +Look picker
 function openCalAddLook() {
   _calLookQ = "";
+  _pickTripScope = !!tripCapsule();  // trip mode: default to suitcase-wearable looks
   calLookFilter = newFilterState();
   renderCalLookPicker();
 }
@@ -7496,6 +7834,7 @@ function calLookListHtml() {
   // L5: liked looks first, then most-recently-created.
   let list = activeOutfits().slice()
     .sort((a, b) => (b.rating === 1 ? 1 : 0) - (a.rating === 1 ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  if (_pickTripScope && tripModeId) list = list.filter(o => outfitFullyInCapsule(o, tripModeId));
   if (q) list = list.filter(o => outfitName(o).toLowerCase().includes(q));
   if (hasActiveFilter(calLookFilter)) list = list.filter(o => outfitMatchesFilter(o, calLookFilter));
   const capped = list.slice(0, 150);
@@ -7520,6 +7859,7 @@ function renderCalLookPicker() {
       <input class="inp" id="calLookSearch" style="flex:1" placeholder="Search looks…" value="${esc(_calLookQ)}">
       ${funnelBtnHtml("calLookFilterBtn", calLookFilter)}
     </div>
+    ${tripCapsule() ? `<div class="cap-catbar" style="padding:0 14px 8px"><button class="cap-chip${_pickTripScope ? " on" : ""}" data-pick-tripscope>✈️ Suitcase only</button></div>` : ""}
     <div id="calLookResults">${calLookListHtml()}</div>
   </div>`;
   hydratePhotos(body);
@@ -7532,6 +7872,7 @@ function renderCalLookPicker() {
   };
   body.onclick = (e) => {
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
+    if (e.target.closest('[data-pick-tripscope]')) { _pickTripScope = !_pickTripScope; return renderCalLookPicker(); }
     if (e.target.closest('#calLookFilterBtn')) return openFilterSheet(calLookFilter, { onApply: renderCalLookPicker, title: "Filter Looks", dims: LOOKS_FILTER_DIMS });
     const lk = e.target.closest('[data-callook]');
     if (lk) return logLookOnDay(lk.dataset.callook);
@@ -7549,7 +7890,9 @@ function outfitSeasonWornCount(o, season) {
   return n;
 }
 function wearAgainCandidates() {
-  const all = activeOutfits();
+  // Trip/capsule mode: only looks wearable entirely from the capsule.
+  let all = activeOutfits();
+  if (activeCapsuleId) all = all.filter(o => outfitFullyInCapsule(o, activeCapsuleId));
   const cutoff = localISO(new Date(Date.now() - 14 * 86400000));
   const season = currentSeason();
   const recentIds = new Set(wears.filter(w => w.outfit_id && w.worn_on >= cutoff).map(w => w.outfit_id));
@@ -7562,7 +7905,8 @@ function wearAgainCandidates() {
   // off the 12 cap) — reserve 2 slots for them so resurfacing happens where she
   // actually logs, not just on the Stats page. Prefer in-season ones.
   const neglected = [];
-  const negPool = likedNeglectedOutfits();
+  let negPool = likedNeglectedOutfits();
+  if (activeCapsuleId) negPool = negPool.filter(o => outfitFullyInCapsule(o, activeCapsuleId));
   const inSeasonNeg = negPool.filter(o => { const s = outfitSeasons(o); return !s.length || s.includes(season); });
   for (const o of [...inSeasonNeg, ...negPool]) {
     if (neglected.length >= 2) break;
@@ -7623,7 +7967,8 @@ async function logLookOnDay(id, { force = false } = {}) {
   }
   try {
     const fml = deriveWearFormality(its.map(it => it.id));
-    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, formality_for: fml }));
+    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
       body: JSON.stringify(payload),
@@ -7631,6 +7976,7 @@ async function logLookOnDay(id, { force = false } = {}) {
     if (Array.isArray(rows)) wears.push(...rows);
     else payload.forEach(p => wears.push(p));
     buildOutfitWearMap();
+    tripPlanSync(id, date);  // trip mode: a worn look IS that day's plan
     renderCalendarDay($('#calendarBody'));
     if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
     else toast(`Logged ${outfitName(o)} for ${date}`);
@@ -9582,6 +9928,11 @@ function renderCapsuleDetail() {
     })()}
     ${packHtml}
     ${wxHtml}
+    <button class="cap-plan" data-trip-toggle style="${tripModeId === c.id ? "background:var(--accent-soft);color:var(--accent)" : "background:var(--accent)"};margin-bottom:8px">
+      <svg viewBox="0 0 24 24"><path d="M2 16l20-6-3 8-4-1-3 3-2-4z"/><path d="M9 12L4 8l3-1 6 3"/></svg>
+      ${tripModeId === c.id ? (isDatedTrip(c) ? "End trip mode" : "Exit capsule mode")
+        : (isDatedTrip(c) ? "✈️ Start trip mode" : "Enter capsule mode")}
+    </button>
     ${trip && c.start_date && c.end_date ? `<button class="cap-plan" data-cap-byday>
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
       Plan outfits by day
@@ -9787,7 +10138,8 @@ async function planWoreIt(date, outfitId) {
   if (!its.length) { toast("This look has no pieces"); return; }
   try {
     const fml = deriveWearFormality(its.map(it => it.id));
-    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: outfitId, formality_for: fml }));
+    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: outfitId, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
     const rows = await rest("/wears", {
       method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
       body: JSON.stringify(payload),
@@ -10179,6 +10531,7 @@ function openCapsulePicker(id) {
   _capPickCat = null;
   _capPickSub = null;
   _capPickStatus = "Available";
+  _pickTripScope = false;  // adding items TO a capsule needs the whole closet
   pickerFilter = newFilterState();
   capsuleView = "pick";
   renderCapsules();
@@ -10189,6 +10542,12 @@ function pickerPoolBase() {
   let pool = _capPickStatus === "All"
     ? items.filter(i => itemStatus(i) !== "Archive")
     : items.filter(i => itemStatus(i) === _capPickStatus);
+  // Trip mode (calendar log picker only): default to the suitcase, with the
+  // "Suitcase only" chip as the whole-closet escape hatch.
+  if (_pickTripScope && tripModeId) {
+    const set = new Set((capsuleLinkMap.get(tripModeId) || []).map(l => l.item_id));
+    pool = pool.filter(i => set.has(i.id));
+  }
   const q = _capPickFilter.trim().toLowerCase();
   if (q) pool = pool.filter(i =>
     (i.name || "").toLowerCase().includes(q) ||
@@ -10664,8 +11023,9 @@ function renderBuilderPickerResults() {
 function builderPool() {
   // Photoless items are allowed — they place on the canvas as the tee placeholder.
   let pool = items.filter(i => itemStatus(i) !== "Archive");
-  if (builder && builder.scopeCapsuleId) {
-    const set = new Set((capsuleLinkMap.get(builder.scopeCapsuleId) || []).map(l => l.item_id));
+  const scopeCid = (builder && builder.scopeCapsuleId) || tripModeId;  // trip mode scopes too
+  if (scopeCid) {
+    const set = new Set((capsuleLinkMap.get(scopeCid) || []).map(l => l.item_id));
     pool = pool.filter(i => set.has(i.id));
   }
   if (hasActiveFilter(builderFilter)) pool = pool.filter(i => itemMatchesFilter(i, builderFilter, { noStatusDefault: true }));
@@ -11500,7 +11860,10 @@ function wireEvents() {
       renderCalendarDay($("#calendarBody"));
       return;
     }
-    if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset(); }
+    if (e.target.closest("[data-cap-clear]")) {
+      if (tripModeId && tripModeId === activeCapsuleId) return exitTripMode();
+      activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset();
+    }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
     if (e.target.closest("[data-laundry-wash]")) return openLaundrySheet();
@@ -11521,7 +11884,10 @@ function wireEvents() {
   // looks: lens / folders / outfit tiles / detail actions
   $("#looksBody").addEventListener("click", (e) => {
     if (e.target.closest("#looksBack")) return looksBack();
-    if (e.target.closest("[data-cap-clear]")) { activeCapsuleId = null; return renderLooks(); }
+    if (e.target.closest("[data-cap-clear]")) {
+      if (tripModeId && tripModeId === activeCapsuleId) return exitTripMode();
+      activeCapsuleId = null; return renderLooks();
+    }
     const lgc = e.target.closest("[data-lookcols]");
     if (lgc) return setLookCols(+lgc.dataset.lookcols);
     if (e.target.closest("#looksGrid")) { const pop = $("#lookGridPop"); if (pop) pop.hidden = !pop.hidden; return; }
@@ -11624,6 +11990,11 @@ function wireEvents() {
   $("#capsulesBody").addEventListener("click", (e) => {
     if (e.target.closest("#capBack")) return capsuleBack();
     if (e.target.closest("[data-cap-new]")) return openCapsuleNew();
+    if (e.target.closest("[data-trip-toggle]")) {
+      if (tripModeId === capsuleId) exitTripMode();  // re-renders this screen
+      else enterTripMode(capsuleId);
+      return;
+    }
     if (e.target.closest("[data-cap-byday]")) return openTripPlan(capsuleId);
     if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);
     if (e.target.closest("[data-cap-suggest]")) return openSuggestSheet(null, capsuleId);
@@ -11990,6 +12361,7 @@ window.retryLoad = retryLoad;
     const k = store.getItem(`wardrobe.sort.${s}`);
     if (k) _gridSortKeys[s] = k;
   });
+  tripModeId = store.getItem(TRIP_MODE_KEY) || null;  // validated after loadData
   wireEvents();
   loadSession();
   if (session?.access_token) bootApp();
