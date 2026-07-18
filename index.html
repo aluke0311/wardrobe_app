@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r4">
+<meta name="app-version" content="2026-07-18 r5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r4";
+const APP_VERSION = "2026-07-18 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -3973,6 +3973,8 @@ async function logWearToday(id, { force = false } = {}) {
     ];
     const miss = tripMissingPieces([id]);
     if (miss) chips.push({ label: `＋ ${miss.c.name}`, fn: async () => { await addItemsToCapsule(miss.c.id, miss.missing); toast(`Added to ${miss.c.name}`); } });
+    // E4: the photo view's stat strip (wear count / last worn) must not go stale
+    if (detailId && detailView !== "details") openItem(detailId);
     toast("Wear logged", chips);
   } catch (e) { toast(e.message); }
 }
@@ -4055,6 +4057,12 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
 
   const close = () => {
     hideSheet("logSheet"); _logItemId = null; _ctxSuggest = null;
+    // A1 fix (2026-07-18, user-reported "set context twice"): this sheet saved
+    // context/hearts fine but never redrew the screen underneath, so the
+    // calendar day card (and Home's logged-row) kept showing stale state.
+    const scr = $(".screen.active")?.id;
+    if (scr === "tab-calendar" && calendarDay) renderCalendarDay($("#calendarBody"));
+    else if (scr === "tab-home") renderHome();
     if (undoable) toast("Logged ✓", { label: "Undo", fn: () => undoLoggedWears(wearRows) });
   };
   $("#postLogCancel").onclick = close;
@@ -4113,6 +4121,11 @@ function openLogWear(id) {
         : { item_id: id, worn_on: date, outfit_id: null, context: ctx };
       wears.push(pushed);
       hideSheet("logSheet");
+      // E4: redraw whatever the sheet was covering (same staleness class as A1)
+      const scr = $(".screen.active")?.id;
+      if (scr === "tab-calendar" && calendarDay) renderCalendarDay($("#calendarBody"));
+      else if (scr === "tab-home") renderHome();
+      else if (detailId && detailView !== "details") openItem(detailId);
       toast(`Wear logged for ${date}`, { label: "Undo", fn: () => undoLoggedWears([pushed]) });
     } catch (e) { toast(e.message); }
   };
