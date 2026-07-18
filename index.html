@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r1">
+<meta name="app-version" content="2026-07-18 r2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -512,13 +512,13 @@
   .gb-right { display: flex; align-items: center; gap: 14px; position: relative; }
   #gbGrid svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   #gbSelect { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px; }
-  #gridPickerPop, #sortMenuPop { position: absolute; bottom: calc(100% + 6px); right: 0;
+  #gridPickerPop { position: absolute; bottom: calc(100% + 6px); right: 0;
     background: #fff; border: 1px solid var(--line); border-radius: 12px;
     box-shadow: 0 6px 24px rgba(0,0,0,.13); overflow: hidden; z-index: 200; min-width: 160px; }
   #gridPickerPop { right: 40px; }
-  #gridPickerPop button, #sortMenuPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
-  #gridPickerPop button.on, #sortMenuPop button.on { color: var(--accent); font-weight: 600; }
-  #gridPickerPop button:not(:last-child), #sortMenuPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
+  #gridPickerPop button { display: block; width: 100%; padding: 13px 20px; text-align: left; font-size: 15px; }
+  #gridPickerPop button.on { color: var(--accent); font-weight: 600; }
+  #gridPickerPop button:not(:last-child) { border-bottom: 1px solid var(--line); }
   /* looks-per-row popover — same look as #gridPickerPop but drops DOWN from the top toolbar */
   #lookGridPop { position: absolute; top: calc(100% + 4px); right: 0;
     background: #fff; border: 1px solid var(--line); border-radius: 12px;
@@ -1039,24 +1039,12 @@
       <span id="gbCount" class="gb-count"></span>
     </div>
     <div class="gb-right" style="margin-left:auto">
-      <button class="gb-sort" id="gbSort" title="Sort" hidden>
-        <svg viewBox="0 0 24 24"><path d="M3 6h18M7 12h10M11 18h2"/></svg>
-      </button>
       <button class="gb-filter" id="gbFilter" title="Filter" hidden>
         <svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg>
       </button>
       <button id="gbGrid" title="Grid density">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
       </button>
-      <div id="sortMenuPop" hidden>
-        <button data-sort="color">Category</button>
-        <button data-sort="name">Name</button>
-        <button data-sort="newest">Newest first</button>
-        <button data-sort="most-worn">Most worn</button>
-        <button data-sort="least-worn">Least worn</button>
-        <button data-sort="formality">Formality</button>
-        <button data-sort="price">Price</button>
-      </div>
       <div id="gridPickerPop" hidden>
         <button data-cols="2">2 per row</button>
         <button data-cols="3">3 per row</button>
@@ -1193,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r1";
+const APP_VERSION = "2026-07-18 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2308,8 +2296,14 @@ let lookCols = 2;         // looks per row (2–4), persisted to localStorage (d
 let selectMode = false;   // multi-select active
 
 // ---- sort system (shared across all grid surfaces) ----
+// 2026-07-18: the default composite (category > subcategory > color) was
+// internally keyed "color" AND labeled inconsistently ("Category" in the
+// closet menu, "Color" in picker menus) with no true color sort at all.
+// Now: key "category" = the composite, key "colorfam" = real color order.
+// gridSortKey() maps legacy stored "color" → "category".
 const SORT_OPTS = [
-  { key: "color",     label: "Category" },
+  { key: "category",  label: "Category" },
+  { key: "colorfam",  label: "Color" },
   { key: "name",      label: "Name" },
   { key: "newest",    label: "Newest first" },
   { key: "most-worn", label: "Most worn" },
@@ -2317,9 +2311,13 @@ const SORT_OPTS = [
   { key: "formality", label: "Formality" },
   { key: "price",     label: "Price" },
 ];
+const SORT_LABELS = Object.fromEntries(SORT_OPTS.map(o => [o.key, o.label]));
 let _gridSurface = "closet";
 let _gridSortKeys = {};   // surface → sort key; defaults to "color"
-function gridSortKey(surface) { return _gridSortKeys[surface ?? _gridSurface] || "color"; }
+function gridSortKey(surface) {
+  const k = _gridSortKeys[surface ?? _gridSurface] || "category";
+  return k === "color" ? "category" : k;  // legacy stored key for the composite
+}
 function setGridSort(key) {
   _gridSortKeys[_gridSurface] = key;
   store.setItem(`wardrobe.sort.${_gridSurface}`, key);
@@ -2334,6 +2332,13 @@ function sortItems(list, key) {
     case "least-worn":return [...list].sort((a, b) => wearCount(a.id) - wearCount(b.id));
     case "formality": return [...list].sort((a, b) => itemFormality(a) - itemFormality(b));
     case "price":     return [...list].sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
+    case "colorfam":  return [...list].sort((a, b) => {
+      // True color sort: family spectrum order first, category grouping within.
+      const cd = (colorOrder[a.color_family] ?? 99) - (colorOrder[b.color_family] ?? 99);
+      if (cd !== 0) return cd;
+      const catD = (CATEGORIES.indexOf(a.category) + 1 || 99) - (CATEGORIES.indexOf(b.category) + 1 || 99);
+      return catD !== 0 ? catD : (a.name || "").localeCompare(b.name || "");
+    });
     default:          return [...list].sort((a, b) => {
       // Default: category > subcategory > color > name (taxonomy declaration order).
       const catD = (CATEGORIES.indexOf(a.category) + 1 || 99) - (CATEGORIES.indexOf(b.category) + 1 || 99);
@@ -2553,7 +2558,6 @@ function itemGridView(list, cfg = {}) {
 // ---- grid bar show/hide ----
 function showGridBar(surface) {
   if (surface) _gridSurface = surface;
-  $("#gbSort").hidden = false;
   $("#gridBar").hidden = false;
   $("#app").classList.add("has-gridbar");
   updateGridBar();
@@ -2561,17 +2565,18 @@ function showGridBar(surface) {
 function hideGridBar() {
   $("#gridBar").hidden = true;
   $("#app").classList.remove("has-gridbar");
-  $("#sortMenuPop").hidden = true;
   $("#gridPickerPop").hidden = true;
 }
 
 function clToolbar(title, showBack, showPlus) {
   const filterN = filterActiveCount(closetFilter);
+  _funnelClearFns.clSearch = { state: closetFilter, onClear: () => renderCloset() };
   const right = `<div style="display:flex;align-items:center;gap:2px">
     <div style="position:relative">
       <button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
       ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
     </div>
+    ${filterN ? `<button class="cb-x" data-funnel-clear="clSearch" title="Clear filters" style="width:24px;height:24px;color:var(--muted)">✕</button>` : ""}
     ${showPlus ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>` : ""}
   </div>`;
   return `<div class="cltoolbar">
@@ -4093,11 +4098,22 @@ let builderFilter = newFilterState();
 let pickerFilter = newFilterState();
 // Shared funnel-button + count-badge markup for a picker toolbar (builder, calendar
 // +Clothing, capsule add-items). Extracted so new picker surfaces don't copy-paste it.
-function funnelBtnHtml(id, state) {
+// Clear every dim of a filter state IN PLACE (the object is shared by reference).
+function clearFilterState(state) {
+  for (const k of Object.keys(state)) if (state[k] instanceof Set) state[k] = new Set();
+  state.q = "";
+}
+// One-tap clear (A2, 2026-07-18): when a filter is active the funnel grows an
+// adjacent ✕ — no sheet visit to clear. onClear = the surface's re-render,
+// kept in a registry keyed by button id; one delegated listener in wireEvents.
+const _funnelClearFns = {};
+function funnelBtnHtml(id, state, onClear) {
   const n = filterActiveCount(state);
-  return `<div style="position:relative">
+  if (onClear) _funnelClearFns[id] = { state, onClear };
+  return `<div style="position:relative;display:flex;align-items:center;gap:2px">
     <button class="clsearch" id="${esc(id)}"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
     ${n ? `<span class="filter-badge">${n}</span>` : ""}
+    ${n && onClear ? `<button class="cb-x" data-funnel-clear="${esc(id)}" title="Clear filters" style="width:24px;height:24px;color:var(--muted)">✕</button>` : ""}
   </div>`;
 }
 function distinctScalar(field) { return [...new Set(items.map(i => i[field]).filter(Boolean))].sort(); }
@@ -4111,14 +4127,24 @@ function distinctArr(field) { const s = new Set(); items.forEach(i => (i[field] 
 
 // Retired standalone search screen — logic folded into openFilterSheet + itemMatchesFilter.
 function openSearch() {
-  openFilterSheet(closetFilter, { onApply: renderCloset, title: "Filter Closet", dims: CLOSET_FILTER_DIMS });
+  openFilterSheet(closetFilter, { onApply: renderCurrentGrid, title: "Filter & sort", dims: CLOSET_FILTER_DIMS, sortable: true });
 }
 
-function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } = {}) {
+function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims, sortable = false } = {}) {
   const activeDims = dims || FILTERS;
   let openRow = null;
 
   function renderBody() {
+    // Sort lives IN the filter sheet now (2026-07-18) — one place to look on
+    // every surface; the old standalone sort popovers are retired.
+    const sortRow = sortable ? (() => {
+      const cur = gridSortKey();
+      return `<div style="margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Sort by</div>
+        <div class="schips">${SORT_OPTS.map(o =>
+          `<button class="schip ${cur === o.key ? "on" : ""}" data-fsort="${o.key}">${esc(o.label)}</button>`).join("")}</div>
+      </div>`;
+    })() : "";
     const rowSummary = (key) => {
       const set = state[key];
       if (!set || set.size === 0) return "Any";
@@ -4150,6 +4176,7 @@ function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } =
         <button class="lnk" id="fsDone" style="font-weight:700">Done</button>
       </div>
       <div class="sbody">
+        ${sortRow}
         <input class="inp" id="fsQuery" placeholder="Keyword search…" value="${esc(state.q || "")}">
         <div class="srows" id="fsRows">${rows}</div>
         ${activeN ? `<div style="text-align:right;margin-top:14px"><button class="lnk" id="fsReset2" style="color:var(--danger)">Reset all</button></div>` : ""}
@@ -4167,6 +4194,9 @@ function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims } =
     $("#fsReset").onclick = doReset;
     const r2 = $("#fsReset2"); if (r2) r2.onclick = doReset;
     $("#fsDone").onclick = () => { hideSheet("filterSheet"); };
+    $("#filterSheetInner").querySelectorAll("[data-fsort]").forEach(b => {
+      b.onclick = () => { setGridSort(b.dataset.fsort); onApply(); renderBody(); };
+    });
 
     $("#fsRows").onclick = (e) => {
       const chip = e.target.closest("[data-chip]");
@@ -4969,6 +4999,7 @@ function emptyLooks() {
 // fills the otherwise-unused right slot with a like toggle instead of an empty span.
 function looksToolbar(title, showBack, showShuffle, heartId) {
   const filterN = filterActiveCount(looksFilter);
+  _funnelClearFns.looksFilter = { state: looksFilter, onClear: () => { looksSearchQ = null; renderLooks(); } };
   const heartO = heartId ? outfitById.get(heartId) : null;
   const right = showShuffle
     ? `<div style="display:flex;align-items:center;gap:2px">
@@ -4982,6 +5013,7 @@ function looksToolbar(title, showBack, showShuffle, heartId) {
              <button class="clsearch" id="looksFilter" title="Filter looks"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
              ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
            </div>
+           ${filterN ? `<button class="cb-x" data-funnel-clear="looksFilter" title="Clear filters" style="width:24px;height:24px;color:var(--muted)">✕</button>` : ""}
            <button class="clsearch" id="looksNew" title="Build a look"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
            <button class="clsearch" id="looksShuffle" title="Random look"><svg viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20L21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg></button>
          </div>`
@@ -6739,21 +6771,10 @@ function renderCurrentGrid() {
   else if (_gridSurface === "search") { searchResults = sortItems(searchResults || []); renderCloset(); }
 }
 
-function openSortMenu() {
-  const pop = $("#sortMenuPop");
-  pop.hidden = !pop.hidden;
-  if (!pop.hidden) {
-    $("#gridPickerPop").hidden = true;
-    const cur = gridSortKey();
-    pop.querySelectorAll("[data-sort]").forEach(b => b.classList.toggle("on", b.dataset.sort === cur));
-  }
-}
-
 function openGridPicker() {
   const pop = $("#gridPickerPop");
   pop.hidden = !pop.hidden;
   if (!pop.hidden) {
-    $("#sortMenuPop").hidden = true;
     pop.querySelectorAll("[data-cols]").forEach(b => b.classList.toggle("on", +b.dataset.cols === gridCols));
   }
 }
@@ -7704,9 +7725,6 @@ function openCalAddClothing() {
   renderCalClothingPicker();
 }
 
-const PICK_SORT_OPTS = SORT_OPTS.map(o => o.key);
-const PICK_SORT_LABELS = Object.fromEntries(SORT_OPTS.map(o => [o.key, o.key === "newest" ? "Newest" : o.label]));
-
 function renderCalClothingPicker() {
   const body = $('#calendarBody');
   const sortKey = gridSortKey();
@@ -7719,7 +7737,7 @@ function renderCalClothingPicker() {
     <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
     <div style="padding:6px 14px 0;display:flex;gap:8px;align-items:center">
       <input class="inp" id="calLogSearch" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}">
-      ${funnelBtnHtml("calLogFilter", pickerFilter)}
+      ${funnelBtnHtml("calLogFilter", pickerFilter, renderCalClothingPicker)}
     </div>
     ${(() => { const b = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${l}</button>`;
       const trip = tripCapsule();
@@ -7729,28 +7747,19 @@ function renderCalClothingPicker() {
       <span style="font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</span>
       <div style="display:flex;gap:8px;align-items:center">
         <button id="calLogAsLook" ${_capPick.size < 2 ? "hidden" : ""} style="font-size:13px;color:var(--accent);font-weight:600;padding:4px 10px;border:1px solid var(--accent);border-radius:20px;white-space:nowrap">Log as look</button>
-        <button id="calLogSort" style="font-size:13px;color:var(--muted);padding:4px 10px;border:1px solid var(--line);border-radius:20px">${esc(PICK_SORT_LABELS[sortKey] || "Sort")}</button>
       </div>
     </div>
     <div id="calLogResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
-    <div id="calLogSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
-      ${PICK_SORT_OPTS.map(k => `<button data-cpsort="${k}" style="display:block;width:100%;padding:13px 20px;text-align:left;font-size:15px${k===sortKey?";color:var(--accent);font-weight:600":""}">${PICK_SORT_LABELS[k]}</button>`).join("")}
-    </div>
   </div>`;
   hydratePhotos(body);
   scrollToTop();
   const s = $('#calLogSearch');
   if (s) s.oninput = () => { _capPickFilter = s.value; renderCalLogGrid(); };
   body.onclick = (e) => {
-    const sortPop = $('#calLogSortPop');
-    if (e.target.closest('#calLogSort')) { if (sortPop) sortPop.hidden = !sortPop.hidden; return; }
-    const sortOpt = e.target.closest('[data-cpsort]');
-    if (sortOpt) { setGridSort(sortOpt.dataset.cpsort); if (sortPop) sortPop.hidden = true; return renderCalClothingPicker(); }
-    if (sortPop && !sortPop.hidden) sortPop.hidden = true;  // any other tap closes the menu
     if (e.target.closest('#calLogCancel')) return renderCalendarDay(body);
     if (e.target.closest('#calLogDone')) return saveCalClothingLog();
     if (e.target.closest('#calLogAsLook')) return saveCalClothingLogAsLook();
-    if (e.target.closest('#calLogFilter')) return openFilterSheet(pickerFilter, { onApply: renderCalClothingPicker, title: "Filter Clothing", dims: PICKER_FILTER_DIMS });
+    if (e.target.closest('#calLogFilter')) return openFilterSheet(pickerFilter, { onApply: renderCalClothingPicker, title: "Filter & sort", dims: PICKER_FILTER_DIMS, sortable: true });
     if (e.target.closest('[data-pick-tripscope]')) { _pickTripScope = !_pickTripScope; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
     const ps = e.target.closest('[data-pick-status]');
     if (ps) { _capPickStatus = ps.dataset.pickStatus; _capPickCat = null; _capPickSub = null; return renderCalClothingPicker(); }
@@ -7857,7 +7866,7 @@ function renderCalLookPicker() {
     <div style="text-align:center;font-size:13px;color:var(--muted);padding:0 0 4px">${esc(calDayLabel(calendarDay))}</div>
     <div style="padding:6px 14px 8px;display:flex;gap:8px;align-items:center">
       <input class="inp" id="calLookSearch" style="flex:1" placeholder="Search looks…" value="${esc(_calLookQ)}">
-      ${funnelBtnHtml("calLookFilterBtn", calLookFilter)}
+      ${funnelBtnHtml("calLookFilterBtn", calLookFilter, renderCalLookPicker)}
     </div>
     ${tripCapsule() ? `<div class="cap-catbar" style="padding:0 14px 8px"><button class="cap-chip${_pickTripScope ? " on" : ""}" data-pick-tripscope>✈️ Suitcase only</button></div>` : ""}
     <div id="calLookResults">${calLookListHtml()}</div>
@@ -8413,6 +8422,8 @@ function statsToolbar(title, showBack, showRange) {
       <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
       ${n ? `<span class="filter-badge">${n}</span>` : ""}
     </button>
+    ${n ? (_funnelClearFns.stFilter = { state: statsFilter, onClear: statsRebuild },
+      `<button class="cb-x" data-funnel-clear="stFilter" title="Clear filters" style="width:24px;height:24px;color:var(--muted)">✕</button>`) : ""}
   </div>`;
 }
 
@@ -10623,26 +10634,18 @@ function capsulePickSuggestHtml() {
 
 function renderCapsulePicker() {
   const c = capsuleById.get(capsuleId);
-  const sortKey = gridSortKey();
-  const sortLabel = { color: "Color", name: "Name", newest: "Newest", "most-worn": "Most worn", "least-worn": "Least worn", formality: "Formality", price: "Price" }[sortKey] || "Sort";
   const right = `<div style="display:flex;align-items:center;gap:8px">
-    <button id="capPickSort" style="font-size:13px;color:var(--muted);padding:4px 6px;border:1px solid var(--line);border-radius:20px">${esc(sortLabel)}</button>
     <button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>
   </div>`;
   const lensBtn = (s, lbl) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${lbl}</button>`;
   return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
     <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
       <input class="inp" id="capPickSearch" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}">
-      ${funnelBtnHtml("capPickFilter", pickerFilter)}
+      ${funnelBtnHtml("capPickFilter", pickerFilter, () => renderCapsules())}
     </div>
     <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
     <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
-    <div id="capPickResults">${capsulePickSuggestHtml()}${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>
-    <div id="capPickSortPop" hidden style="position:fixed;bottom:80px;right:14px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.13);overflow:hidden;z-index:200;min-width:150px">
-      ${["color","name","newest","most-worn","least-worn","formality","price"].map(k =>
-        `<button data-cpsort="${k}" style="display:block;width:100%;padding:13px 20px;text-align:left;font-size:15px${k===sortKey?";color:var(--accent);font-weight:600":""}">${{color:"Color",name:"Name",newest:"Newest first","most-worn":"Most worn","least-worn":"Least worn",formality:"Formality",price:"Price"}[k]}</button>`
-      ).join("")}
-    </div>`;
+    <div id="capPickResults">${capsulePickSuggestHtml()}${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>`;
 }
 
 function togglePick(id) {
@@ -11003,7 +11006,7 @@ function renderBuilderPicker() {
     </div>
     <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
       <input class="inp" id="bldPickSearch" style="flex:1" placeholder="Search${builder.pickCat ? " in " + builder.pickCat : " your closet"}…" value="${esc(builder.pickQ)}">
-      ${funnelBtnHtml("bldPickFilter", builderFilter)}
+      ${funnelBtnHtml("bldPickFilter", builderFilter, () => renderBuilderPicker())}
     </div>
     ${capBar}
     <div id="bldPickResults" style="padding:8px 0 30px">${builderPickContent()}</div>`;
@@ -11412,18 +11415,10 @@ function wireCapsules() {
     if (s) s.oninput = () => { _capPickFilter = s.value; renderPickerGrid(); };
     const done = $("#capPickDone"); if (done) done.onclick = saveCapsulePicker;
     const filterBtn = $("#capPickFilter");
-    if (filterBtn) filterBtn.onclick = () => openFilterSheet(pickerFilter, { onApply: () => renderCapsules(), title: "Filter Clothing", dims: PICKER_FILTER_DIMS });
+    if (filterBtn) filterBtn.onclick = () => openFilterSheet(pickerFilter, { onApply: () => renderPickerGrid(), title: "Filter & sort", dims: PICKER_FILTER_DIMS, sortable: true });
     body.querySelectorAll("[data-pick-status]").forEach(b => {
       b.onclick = () => { _capPickStatus = b.dataset.pickStatus; _capPickCat = null; _capPickSub = null; renderPickerGrid(); };
     });
-    const sortBtn = $("#capPickSort");
-    const sortPop = $("#capPickSortPop");
-    if (sortBtn && sortPop) {
-      sortBtn.onclick = (e) => { e.stopPropagation(); sortPop.hidden = !sortPop.hidden; };
-      sortPop.querySelectorAll("[data-cpsort]").forEach(b => {
-        b.onclick = () => { setGridSort(b.dataset.cpsort); sortPop.hidden = true; renderPickerGrid(); };
-      });
-    }
     return;
   }
   const dn = $("#capDetNotes");
@@ -11439,10 +11434,6 @@ function renderPickerGrid() {
   // update lens chip active state
   const lens = $("#capPickLens");
   if (lens) lens.querySelectorAll("[data-pick-status]").forEach(b => b.classList.toggle("on", b.dataset.pickStatus === _capPickStatus));
-  // update sort button label
-  const sortKey = gridSortKey();
-  const sortBtn = $("#capPickSort");
-  if (sortBtn) sortBtn.textContent = { color: "Color", name: "Name", newest: "Newest", "most-worn": "Most worn", "least-worn": "Least worn", formality: "Formality", price: "Price" }[sortKey] || "Sort";
 }
 
 /* ===================================================================
@@ -11823,6 +11814,19 @@ function renderSettings() {
 }
 
 function wireEvents() {
+  // One-tap filter clear (A2): every funnel's adjacent ✕, wherever it renders.
+  // Capture phase so per-screen body.onclick delegation can't swallow it.
+  document.addEventListener("click", (e) => {
+    const fc = e.target.closest("[data-funnel-clear]");
+    if (!fc) return;
+    const reg = _funnelClearFns[fc.dataset.funnelClear];
+    if (!reg) return;
+    e.stopPropagation();
+    e.preventDefault();
+    clearFilterState(reg.state);
+    reg.onClear();
+  }, true);
+
   // login
   $("#loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -12054,25 +12058,18 @@ function wireEvents() {
 
   // grid action bar
   $("#gbSelect").addEventListener("click", toggleSelectMode);
-  $("#gbSort").addEventListener("click", openSortMenu);
   $("#gbGrid").addEventListener("click", openGridPicker);
   $("#gbEdit").addEventListener("click", () => { if (selectedIds.size) openBulkEdit(); });
   $("#gbDelete").addEventListener("click", () => { if (selectedIds.size) deleteSelected(); });
   $("#gbMove").addEventListener("click", () => { if (selectedIds.size) openMoveSheet(); });
   $("#gbCapsule").addEventListener("click", () => { if (selectedIds.size) openCapsuleSheet(); });
-  $("#sortMenuPop").addEventListener("click", (e) => {
-    const b = e.target.closest("[data-sort]");
-    if (b) { setGridSort(b.dataset.sort); $("#sortMenuPop").hidden = true; renderCurrentGrid(); }
-  });
   $("#gridPickerPop").addEventListener("click", (e) => {
     const b = e.target.closest("[data-cols]");
     if (b) setGridCols(+b.dataset.cols);
   });
-  // close sort/density pops on outside tap
+  // close the density pop on outside tap
   document.addEventListener("click", (e) => {
-    if (!e.target.closest("#gbSort") && !e.target.closest("#sortMenuPop")) $("#sortMenuPop").hidden = true;
     if (!e.target.closest("#gbGrid") && !e.target.closest("#gridPickerPop")) $("#gridPickerPop").hidden = true;
-    const csp = $("#capPickSortPop"); if (csp && !e.target.closest("#capPickSort") && !e.target.closest("#capPickSortPop")) csp.hidden = true;
   }, true);
   // bulk edit sheet
   $("#bulkBg").addEventListener("click", closeBulkEdit);
