@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-19 r1">
+<meta name="app-version" content="2026-07-19 r2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-19 r1";
+const APP_VERSION = "2026-07-19 r2";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -8661,6 +8661,7 @@ function renderStats() {
   if (statsView === "grid")        { renderStatsGridPage();    return; }
   if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
   if (statsView === "contexts")    { renderStatsContextsPage(); return; }
+  if (statsView === "gap")         { renderStatsGapPage();      return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -8930,6 +8931,7 @@ function renderStatsMain() {
           ${row("Most Worn Looks", topLookSub, "looks:most-worn")}
           ${row("Liked Looks", `${likedCount} look${likedCount === 1 ? "" : "s"}${neglectedCount ? ` · ${neglectedCount} neglected` : ""}`, "looks:liked-neglected")}
           ${row("Contexts", contextsRowSub, "looks:contexts")}
+          ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
         </div>
       </div>
 
@@ -8995,6 +8997,9 @@ function renderStatsMain() {
       }
       if (action === "looks:contexts") {
         statsView = "contexts"; renderStats(); return;
+      }
+      if (action === "gap") {
+        statsView = "gap"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -9257,6 +9262,74 @@ function renderStatsContextsPage() {
   $("#statsBody").querySelectorAll("[data-sctxrow]").forEach(el => {
     el.addEventListener("click", () => { statsContextSel = el.dataset.sctxrow; statsView = "context-detail"; renderStats(); });
   });
+}
+
+/* ---- Closet vs Life (gap analysis, 2026-07-19) ----
+   The original closet-vs-life-gap thesis finally gets its page: per context,
+   the share of your logged life it represents vs. the share of the Available
+   closet that can dress it (formality-eligible via contextFormalityLevel).
+   Pure derivation — factored for the selftest harness. Shares deliberately
+   overlap across contexts (one blouse can serve Campus AND Church): this is
+   coverage, not a partition. */
+function buildGapStats() {
+  const ctxCounts = new Map();
+  let totalCtx = 0;
+  for (const w of wears) for (const c of ctxArr(w)) {
+    ctxCounts.set(c, (ctxCounts.get(c) || 0) + 1);
+    totalCtx++;
+  }
+  const avail = items.filter(i => itemStatus(i) === "Available");
+  const rows = [];
+  for (const [ctx, n] of ctxCounts) {
+    if (n < 5) continue;                      // noise floor
+    const lvl = contextFormalityLevel(ctx);
+    if (!lvl) continue;                       // no formality signal yet
+    const eligible = avail.filter(i => (itemFormalitySet(i) || []).includes(lvl));
+    const wearShare = totalCtx ? n / totalCtx : 0;
+    const closetShare = avail.length ? eligible.length / avail.length : 0;
+    rows.push({ ctx, lvl, wearN: n, wearShare, closetN: eligible.length, closetShare,
+                delta: wearShare - closetShare });
+  }
+  rows.sort((a, b) => b.delta - a.delta);
+  return { rows, totalCtx, availN: avail.length };
+}
+
+function renderStatsGapPage() {
+  const g = buildGapStats();
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  const verdict = g.rows.length && g.rows[0].delta >= 0.05
+    ? `<div style="padding:14px 18px 4px;font-size:14px;line-height:1.5">You live in <b>${esc(g.rows[0].ctx)}</b> more than your closet does — it's ${pct(g.rows[0].wearShare)} of your logged life but only ${pct(g.rows[0].closetShare)} of the closet can dress it.</div>`
+    : g.rows.length ? `<div style="padding:14px 18px 4px;font-size:14px">No big gaps — the closet tracks your life pretty well.</div>` : "";
+  const bar = (share, color) => `<div style="height:8px;border-radius:4px;background:var(--line);overflow:hidden;flex:1">
+    <div style="height:100%;width:${Math.min(100, Math.round(share * 100))}%;background:${color}"></div></div>`;
+  const rowsHtml = g.rows.map(r => {
+    const chip = r.delta >= 0.05
+      ? `<span style="font-size:11px;font-weight:700;color:var(--danger)">underserved +${Math.round(r.delta * 100)}</span>`
+      : r.delta <= -0.05
+      ? `<span style="font-size:11px;font-weight:600;color:var(--muted)">well stocked</span>`
+      : `<span style="font-size:11px;font-weight:600;color:#2f9e5e">balanced</span>`;
+    return `<div style="padding:11px 18px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:7px">
+        <span style="font-size:14.5px;font-weight:600;flex:1">${esc(r.ctx)}</span>
+        <span style="font-size:11.5px;color:var(--muted)">${r.lvl}. ${esc(occLabel(r.lvl))}</span>
+        ${chip}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        ${bar(r.wearShare, "var(--accent)")}
+        <span style="font-size:11.5px;color:var(--muted);width:110px;flex:none">${pct(r.wearShare)} of wears</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${bar(r.closetShare, "var(--muted)")}
+        <span style="font-size:11.5px;color:var(--muted);width:110px;flex:none">${pct(r.closetShare)} of closet fits</span>
+      </div>
+    </div>`;
+  }).join("");
+  $("#statsBody").innerHTML = statsToolbar("Closet vs Life", true, false)
+    + (g.rows.length
+      ? verdict + `<div style="padding-top:6px">${rowsHtml}</div>
+        <div class="stats-note">"Of closet fits" = share of Available pieces whose formality covers that context's level — pieces can serve several contexts, so columns don't add to 100%. Contexts need 5+ tagged wears and a formality signal to appear.</div>`
+      : `<div class="placeholder"><b>Not enough context data yet</b><div>Tag contexts when you log (5+ wears per context) and this page fills itself in.</div></div>`);
+  wireStatsToolbar();
 }
 
 function renderStatsContextDetailPage() {
