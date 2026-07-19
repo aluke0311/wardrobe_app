@@ -234,6 +234,24 @@ function run() {
     return eq([W.isExcluded("a", "b"), W.isExcluded("b", "a"), W.isExcluded("a", "c")], [true, true, false]);
   });
 
+  // ---- suggester correctness (2026-07-19 fix pack) ----
+  t("targetLevel is a HARD filter — no casual fallback at Dressed Up", () => {
+    const mk = (id, cat, sub) => ({ id, name: id, category: cat, subcategory: sub, color_family: "Blue",
+      status: "Available", image_path: "x", formality: [3], tags: [], season: [] });
+    W.items = [mk("t", "Tops", "Blouses"), mk("b", "Bottoms", "Jeans"), mk("s", "Shoes", "Flats")];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.wears = []; W.outfits = []; W.outfitLinks = []; W.exclusions = [];
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    const none = W.suggestOutfits(6, null, null, null, null, null, false).length;
+    const some = W.suggestOutfits(3, null, null, null, null, null, false).length;
+    return eq([none, some > 0], [0, true]);
+  });
+  t("layerPieceOf: with two flagged tops, the LAST (ow-slot) one is the layer", () => {
+    const top = (id, tags) => ({ id, category: "Tops", subcategory: "Blouses", tags: tags || [] });
+    const got = W.layerPieceOf([top("base", ["layer"]), { id: "b", category: "Bottoms" }, top("lay", ["layer"])]);
+    return eq(got && got.id, "lay");
+  });
+
   // ---- suggester session state (2026-07-19 round) ----
   t("_suggPool excludes banned pieces", () => {
     W.items = [{ id: "a", status: "Available" }, { id: "b", status: "Available" }];

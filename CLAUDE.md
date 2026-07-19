@@ -125,6 +125,19 @@ fades (`.ph-fade`/`.ph-in`); `_shownPhotos` Set skips the fade on re-renders
 (app + all fixed chrome capped at 640px), login email prefill
 (`wardrobe.lastEmail`), `prefers-reduced-motion` guard.
 
+**Fix pack 2026-07-19 r4 (user-reported, same day):** ① one-piece looks are
+outlawed — `createLookFromItems` guards <2 (saveBuilder already did); existing
+strays surface in the data health check with a bulk fix that DECONSTRUCTS them
+(wears survive as solo wears). ② `deconstructLook(id)` + a "Deconstruct look"
+row on the look details page ("not really a look" — keeps every wear, drops
+the grouping; shares `deconstructLookCore` with deleteLook/health check).
+③ tops-vs-layers: `layerPieceOf` picks the LAST flagged top (the ow-slot one)
+so labels don't swap when the base is also layer-flagged; combo generation
+skips stacking two layerable tops. ④ **suggester `targetLevel` is now a HARD
+filter** in the engine + swap + add-layer — a "Dressed Up" ask returns
+fewer/zero results (starvation note explains) instead of silently falling
+back to casual (the capsule-mode bug she hit). Selftest 31/31.
+
 **"Loop Resilience + Payoff" round (2026-07-18→19, through 2026-07-19 r3) is
 FULLY SHIPPED** (spec in ROADMAP.md's section — decisions locked from the
 2026-07-18 product review). Pieces: **suggester** — ⃠ per-piece session bans

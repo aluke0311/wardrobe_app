@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-19 r3">
+<meta name="app-version" content="2026-07-19 r4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-19 r3";
+const APP_VERSION = "2026-07-19 r4";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5494,8 +5494,12 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       if (inS.length) pool = inS;
     }
     if (targetLevel) {
-      const f = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
-      if (f.length) pool = f;
+      // HARD filter (2026-07-19, user-reported): a "Dressed Up" ask must never
+      // silently fall back to casual pieces because the pool (esp. a small
+      // capsule) can't cover the level. Fewer/no results + the starvation
+      // note beat wrong-level outfits. (Seed/locked stay exempt by
+      // construction; the season filter above keeps its soft fallback.)
+      pool = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
     }
     // Random sample (Fisher–Yates) — no unworn/last-worn bias. A larger sample than
     // before so a single batch mixes more distinct pieces (less "same item every time").
@@ -5542,6 +5546,9 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
         combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel, season, wx) });
         for (const ow of outerwear.slice(0, 2)) {
           if (ow.id === t.id) continue;  // a layerable top can't be its own layer
+          // Two layerable tops stacked (button-up over button-up) reads wrong —
+          // a top-as-layer only goes over a non-layerable base (2026-07-19).
+          if (ow.category === "Tops" && isLayer(t)) continue;
           const its4 = [t, bt, sh, ow];
           if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel, season, wx) });
         }
@@ -5799,8 +5806,8 @@ function swapSuggestionPiece(pieceId) {
     inSeason(i, _sugg.season) &&
     !others.some(o => isExcluded(i.id, o.id)));
   if (_sugg.targetLevel) {
-    const f = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
-    if (f.length) cands = f;
+    // hard, matching the engine (2026-07-19) — no silent level fallback
+    cands = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
   }
   cands = cands.filter(i => {
     const test = [...others, i];
@@ -5820,7 +5827,11 @@ function layerPieceOf(pieces) {
   const ow = pieces.find(p => suggestSlot(p) === "Outerwear");
   if (ow) return ow;
   const tops = pieces.filter(p => p.category === "Tops");
-  return tops.length >= 2 ? tops.find(isLayer) || null : null;
+  // With two tops, the LAYER is the one added in the outerwear slot — combos
+  // push it last. Scanning forward mislabeled a layer-flagged BASE top as the
+  // layer (and the actual layer as "Top") whenever both were flagged
+  // (2026-07-19, user-reported tops/layers confusion).
+  return tops.length >= 2 ? [...tops].reverse().find(isLayer) || null : null;
 }
 function comboLayerPiece(combo) { return layerPieceOf(combo.pieces); }
 
@@ -5868,8 +5879,8 @@ function addSuggestionLayer() {
     inSeason(i, _sugg.season) &&
     !combo.pieces.some(p => isExcluded(i.id, p.id)));
   if (_sugg.targetLevel) {
-    const f = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
-    if (f.length) cands = f;
+    // hard, matching the engine (2026-07-19) — no silent level fallback
+    cands = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
   }
   cands = cands.filter(i => {
     const test = [...combo.pieces, i];
@@ -6578,6 +6589,13 @@ function openLookDetails(id) {
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
 
+      <div class="det-card" style="margin-top:14px">
+        <button class="det-row" id="lookDecon">
+          <span class="det-lbl" style="color:var(--danger)">Deconstruct look</span>
+          <span class="det-val" style="font-size:12px;color:var(--muted)">not really a look — keep the wears, drop the grouping</span>
+        </button>
+      </div>
+
       ${(() => {
         const sims = similarLooks(o);
         if (!sims.length) return "";
@@ -6755,17 +6773,38 @@ async function archiveLook(id) {
 }
 
 // ---- delete a look (history is preserved: wears.outfit_id is SET NULL) ----
+// Core removal shared by delete + deconstruct + the health-check bulk fix:
+// the outfit row goes, its wear rows survive as individual wears (DB FK is
+// SET NULL; mirrored locally). No navigation, no confirm — callers own those.
+async function deconstructLookCore(id) {
+  await rest(`/outfits?id=eq.${id}`, { method: "DELETE" });
+  outfits = outfits.filter(o => o.id !== id);
+  outfitById.delete(id);
+  outfitItemMap.delete(id);
+  outfitLinks = outfitLinks.filter(l => l.outfit_id !== id);
+  wears.forEach(w => { if (w.outfit_id === id) w.outfit_id = null; });
+  buildOutfitWearMap();
+}
+
 async function deleteLook(id) {
   if (!confirm("Delete this look? Your wear history is kept — only the saved outfit is removed.")) return;
   try {
-    await rest(`/outfits?id=eq.${id}`, { method: "DELETE" });
-    outfits = outfits.filter(o => o.id !== id);
-    outfitById.delete(id);
-    outfitItemMap.delete(id);
-    wears.forEach(w => { if (w.outfit_id === id) w.outfit_id = null; });
-    buildOutfitWearMap();
+    await deconstructLookCore(id);
     leaveLook();
     toast("Look deleted");
+  } catch (e) { toast(e.message); }
+}
+
+// "Not really a look" escape hatch (2026-07-19, user request): every wear of
+// it stays in history as the individual pieces; the look itself disappears.
+async function deconstructLook(id) {
+  const o = outfitById.get(id);
+  const n = o ? outfitWornCount(o) : 0;
+  if (!confirm(`Deconstruct this look? Its ${n} wear${n === 1 ? "" : "s"} stay in your history as the individual pieces — only the grouping is removed.`)) return;
+  try {
+    await deconstructLookCore(id);
+    leaveLook();
+    toast("Look deconstructed — wears kept");
   } catch (e) { toast(e.message); }
 }
 
@@ -7896,6 +7935,7 @@ async function resolveSplit(wearIds, outfitId, mode, body) {
 // merges into an existing non-archived look with the same item-set instead of
 // creating a duplicate outfit record (mirrors saveBuilder/saveComboAsOutfit).
 async function createLookFromItems(itemIds, { name } = {}) {
+  if (!itemIds || itemIds.length < 2) throw new Error("A look needs at least 2 pieces");
   const dup = findDuplicateOutfit(itemIds, null);
   if (dup) return { outfitId: dup.id, isNew: false };
   const oRows = await rest("/outfits?select=*", {
@@ -12411,6 +12451,11 @@ function runDataHealthCheck() {
   const orphanEx = exclusions.filter(x => x.id && (!itemById.has(x.item_a) || !itemById.has(x.item_b)));
   checks.push({ label: "Exclusions referencing deleted items", rows: orphanEx,
     fix: () => _bulkDeleteRows("exclusions", orphanEx.map(x => x.id)) });
+  // One-piece looks shouldn't exist (user rule 2026-07-19; import-era strays) —
+  // fix = deconstruct: the look goes, its wears stay as individual pieces.
+  const soloLooks = outfits.filter(o => (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id)).length === 1);
+  checks.push({ label: "One-piece looks (fix keeps their wears as solo wears)", rows: soloLooks,
+    fix: async () => { for (const o of soloLooks) await deconstructLookCore(o.id); } });
   // Report-only (could be intentional):
   const emptyLooks = outfits.filter(o => !(outfitItemMap.get(o.id) || []).some(id => itemById.has(id)));
   checks.push({ label: "Looks with no pieces (report only)", rows: emptyLooks });
@@ -12563,6 +12608,7 @@ function wireEvents() {
     }
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
     if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
+    if (e.target.closest("#lookDecon")) { if (lookId) deconstructLook(lookId); return; }
     if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
     const pieceOpen = e.target.closest("[data-piece-open]");
     if (pieceOpen) {
