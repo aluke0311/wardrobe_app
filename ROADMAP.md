@@ -2,14 +2,19 @@
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
 > Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
-> Current version: **2026-07-18 r7** (Trip Mode round r1→r6 + data safety r7).
-> **▶ IN PROGRESS: "Loop Resilience + Payoff" round — first section below.**
+> Current version: **2026-07-19 r3** ("Loop Resilience + Payoff" round —
+> SHIPPED 2026-07-18→19). Nothing scheduled — see Back-burner.
 
 ---
 
-## PLANNED BUILD — "Loop Resilience + Payoff" (planned 2026-07-18, from the
-post-trip-mode product review; user answered "defaults except: not-this first,
-gap page before Year in Review")
+## ✅ SHIPPED BUILD — "Loop Resilience + Payoff" (planned 2026-07-18, built
+2026-07-18→19, r8 → 2026-07-19 r3)
+
+**Status: FULLY SHIPPED, one deploy per step (r8 suggester cluster+B1 →
+07-19 r1 catch-up+backup nudge → r2 gap page → r3 Year in Review; restore
+script + selftest additions in the close-out commit). Selftest: 29/29.**
+From the post-trip-mode product review; user answered "defaults except:
+not-this first, gap page before Year in Review".
 
 **Locked decisions (do not re-litigate):** no schema changes anywhere.
 - **C1 "Not this" (HER TOP INTEREST — build first):** session-only piece bans

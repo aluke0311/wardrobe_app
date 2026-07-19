@@ -234,6 +234,75 @@ function run() {
     return eq([W.isExcluded("a", "b"), W.isExcluded("b", "a"), W.isExcluded("a", "c")], [true, true, false]);
   });
 
+  // ---- suggester session state (2026-07-19 round) ----
+  t("_suggPool excludes banned pieces", () => {
+    W.items = [{ id: "a", status: "Available" }, { id: "b", status: "Available" }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W._sugg.capsuleId = null;
+    W._sugg.banned = new (W.Set)(["b"]);
+    const ids = W._suggPool().map(i => i.id);
+    W._sugg.banned = new (W.Set)();
+    return eq(ids, ["a"]);
+  });
+  t("variety salt is stable within a session and bounded", () => {
+    W._suggSessionSalt = new (W.Map)();
+    const v1 = W._saltFor("x"), v2 = W._saltFor("x");
+    return eq([v1 === v2, v1 >= 0 && v1 <= 0.35], [true, true]);
+  });
+
+  // ---- catch-up strip ----
+  t("missedDays: last 3 days minus logged minus skipped", () => {
+    W.wears = [{ item_id: "i", worn_on: D(-2) }];
+    W.store.setItem(W.SKIP_DAYS_KEY, JSON.stringify([D(-3)]));
+    const miss = W.missedDays();
+    W.store.removeItem(W.SKIP_DAYS_KEY);
+    return eq(miss, [D(-1)]);
+  });
+
+  // ---- closet-vs-life gap ----
+  t("buildGapStats: shares, delta, noise floor", () => {
+    W.items = [
+      { id: "c1", status: "Available", formality: [3], category: "Tops", subcategory: "Blouses" },
+      { id: "c2", status: "Available", formality: [5], category: "Tops", subcategory: "Blouses" },
+      { id: "c3", status: "Available", formality: [5], category: "Tops", subcategory: "Blouses" },
+      { id: "c4", status: "Available", formality: [5], category: "Tops", subcategory: "Blouses" },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.wears = [
+      ...Array.from({ length: 6 }, (_, k) => ({ item_id: "c1", worn_on: D(-k - 1), context: ["Campus"], formality_for: 3 })),
+      { item_id: "c2", worn_on: D(-1), context: ["Work"], formality_for: 5 },  // under noise floor
+    ];
+    const g = W.buildGapStats();
+    return eq([g.rows.length, g.rows[0].ctx, g.rows[0].closetN,
+               Math.round(g.rows[0].wearShare * 100), Math.round(g.rows[0].closetShare * 100)],
+              [1, "Campus", 1, 86, 25]);
+  });
+
+  // ---- year in review ----
+  t("longestStreak counts consecutive days", () => {
+    const s = new (W.Set)(["2026-03-01", "2026-03-02", "2026-03-03", "2026-03-07", "2026-03-08"]);
+    return eq(W.longestStreak(s), 3);
+  });
+  t("buildWrappedStats: year scoping, gift-free CPW, dead weight", () => {
+    const Y = +today.slice(0, 4);
+    W.items = [
+      { id: "h", name: "h", status: "Available", price: "40", acquisition: "New" },
+      { id: "g", name: "g", status: "Available", price: "40", acquisition: "Gift" },
+      { id: "z", name: "z", status: "Available", price: "10", acquisition: "New", purchase_date: `${Y - 1}-01-01` },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.outfits = []; W.outfitById = new Map();
+    W.wears = [
+      { item_id: "h", worn_on: `${Y}-02-01` }, { item_id: "h", worn_on: `${Y}-02-02` }, { item_id: "h", worn_on: `${Y}-02-03` },
+      { item_id: "g", worn_on: `${Y}-03-01` }, { item_id: "g", worn_on: `${Y}-03-02` }, { item_id: "g", worn_on: `${Y}-03-03` },
+      { item_id: "h", worn_on: `${Y - 1}-06-01` },  // out of year
+    ];
+    const s = W.buildWrappedStats(Y);
+    return eq([s.daysLogged, s.topItems[0].item.id, s.cpw.length, s.cpw[0] && s.cpw[0].item.id,
+               s.dead.map(i => i.id), s.streak],
+              [6, "h", 1, "h", ["z"], 3]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

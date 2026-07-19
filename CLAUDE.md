@@ -125,6 +125,27 @@ fades (`.ph-fade`/`.ph-in`); `_shownPhotos` Set skips the fade on re-renders
 (app + all fixed chrome capped at 640px), login email prefill
 (`wardrobe.lastEmail`), `prefers-reduced-motion` guard.
 
+**"Loop Resilience + Payoff" round (2026-07-18→19, through 2026-07-19 r3) is
+FULLY SHIPPED** (spec in ROADMAP.md's section — decisions locked from the
+2026-07-18 product review). Pieces: **suggester** — ⃠ per-piece session bans
+(`_sugg.banned`, `banSuggestionPiece`; `_suggPool()` now ALWAYS returns the
+effective pool minus bans), pool-starvation note (`suggestStarvationNote`),
+per-sheet-open variety salt (`_saltFor`, `SUGGEST_SALT`=0.35, added in
+`scoreCombo`); **Home** — catch-up strip (`catchupHtml`/`missedDays`/
+`skipDay`, `SKIP_DAYS_KEY` store set pruned 30d; "Log →" jumps to that day's
+wear-again chooser) + backup-staleness row (30d, taps `downloadBackup` which
+re-renders the CURRENT screen); **Stats** — "Closet vs Life" gap page
+(`buildGapStats` pure: wear share vs formality-eligible closet share per
+context, 5+ wears noise floor; `statsView "gap"`) and "Year in Review"
+(`buildWrappedStats(year)` pure + `renderStatsWrapped` card stack, year
+chips, gift-free all-time CPW champions, dead weight, `longestStreak`;
+`statsView "wrapped"`); **trips** — offer dismissal now once per TRIP.
+**Data safety (r7, same series):** Settings Data card (`downloadBackup` JSON
+export + `runDataHealthCheck` with one-tap fixes for dangling rows),
+`migration/backup_photos.py` (full offline backup) + `restore_backup.py`
+(disaster recovery, refuses non-empty tables without --force), both stdlib-
+only; `migration/backup/` + `.env` gitignored.
+
 **"Trip Mode + Tap Tax" round (2026-07-18, r1→r6) is FULLY SHIPPED** (spec +
 locked decisions in ROADMAP.md's trip-mode section — do not re-litigate; the
 "no nudges" rule is SOFT as of this round). No schema changes. Key pieces:
