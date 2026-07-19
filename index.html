@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-18 r8">
+<meta name="app-version" content="2026-07-19 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-18 r8";
+const APP_VERSION = "2026-07-19 r1";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -2018,6 +2018,48 @@ function laundryStripHtml() {
   </div>`;
 }
 
+// ---- catch-up strip (A1, 2026-07-18) ----
+// Unlogged recent days rot the dataset silently; surface the last 3 (not
+// today — that's the CTA's job) with a one-tap path in and a "skip" that
+// marks a day deliberately unlogged (store-only, pruned to 30 days).
+const SKIP_DAYS_KEY = "wardrobe.skipDays";
+function skippedDays() {
+  try { return new Set(JSON.parse(store.getItem(SKIP_DAYS_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+function skipDay(d) {
+  const s = skippedDays();
+  s.add(d);
+  const cutoff = shiftDate(todayStr(), -30);
+  store.setItem(SKIP_DAYS_KEY, JSON.stringify([...s].filter(x => x >= cutoff)));
+}
+function missedDays() {
+  const skip = skippedDays();
+  const wd = wearDayMap();
+  const out = [];
+  for (let n = 1; n <= 3; n++) {
+    const d = shiftDate(todayStr(), -n);
+    if (!wd.has(d) && !skip.has(d)) out.push(d);
+  }
+  return out;
+}
+function catchupHtml() {
+  const miss = missedDays();
+  if (!miss.length) return "";
+  const row = (d) => {
+    const lbl = new Date(d + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0">
+      <span style="flex:1;font-size:13.5px">${esc(lbl)}</span>
+      <button class="lnk" data-cu-log="${esc(d)}" style="color:var(--accent);font-weight:700;font-size:13px">Log →</button>
+      <button class="cb-x" data-cu-skip="${esc(d)}" title="Didn't get dressed / don't care" style="width:24px;height:24px;color:var(--muted)">✕</button>
+    </div>`;
+  };
+  return `<div class="laun-row">
+    <div style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Catch up?</div>
+    ${miss.map(row).join("")}
+  </div>`;
+}
+
 // ---- trip mode: Home dashboard ----
 let _tripWxHomeFor = null;  // capsule id the dashboard last loaded _planWx for
 async function loadTripHomeWx(c) {
@@ -2186,8 +2228,33 @@ function renderHome() {
   // below it (every screen still works, scoped to the capsule).
   const tc = dataReady ? tripCapsule() : null;
   const dash = tc ? tripDashHtml(tc) : (dataReady ? tripOfferHtml() : "");
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${cta}${laun}`;
+  const catchup = dataReady ? catchupHtml() : "";
+  // Backup staleness (E1): one tap runs the download right here.
+  let bk = "";
+  if (dataReady) {
+    const last = store.getItem("wardrobe.lastBackup");
+    if (!last || last <= shiftDate(todayStr(), -30)) {
+      const ago = last ? `last backup ${Math.round((new Date(todayStr()) - new Date(last)) / 86400000)} days ago` : "no backup yet";
+      bk = `<button class="logged-row" id="homeBackupRow" style="border:1px solid var(--line);background:var(--bg)">
+        <span class="lr-check">🗄</span><span class="lr-text">Your data — ${esc(ago)}</span><span class="lr-plus">＋</span>
+      </button>`;
+    }
+  }
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${cta}${catchup}${laun}${bk}`;
   hydratePhotos($("#homeBody"));
+  $("#homeBody").querySelectorAll("[data-cu-log]").forEach(b => {
+    b.onclick = () => {
+      switchTab("calendar");
+      calendarDay = b.dataset.cuLog;
+      renderCalendarDay($("#calendarBody"));
+      openWearAgainChooser(b.dataset.cuLog);
+    };
+  });
+  $("#homeBody").querySelectorAll("[data-cu-skip]").forEach(b => {
+    b.onclick = () => { skipDay(b.dataset.cuSkip); renderHome(); };
+  });
+  const bkRow = $("#homeBackupRow");
+  if (bkRow) bkRow.onclick = () => downloadBackup();
   if (tc && isDatedTrip(tc) && (tc.locations || []).length && _planWxLoadedFor !== tc.id) loadTripHomeWx(tc);
   wireTripDash(tc);
   const launPrompt = $("#homeLaunPrompt");
@@ -12081,7 +12148,9 @@ function downloadBackup() {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   store.setItem("wardrobe.lastBackup", todayStr());
   toast("Backup downloaded — keep it somewhere safe");
-  renderSettings();
+  const scr = $(".screen.active")?.id;
+  if (scr === "tab-home") renderHome();       // E1 nudge row lives here too
+  else if (scr === "tab-settings") renderSettings();
 }
 
 // Chunked bulk DELETE (in.() URL length safety).
