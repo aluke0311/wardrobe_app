@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-19 r2">
+<meta name="app-version" content="2026-07-19 r3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-19 r2";
+const APP_VERSION = "2026-07-19 r3";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -8662,6 +8662,7 @@ function renderStats() {
   if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
   if (statsView === "contexts")    { renderStatsContextsPage(); return; }
   if (statsView === "gap")         { renderStatsGapPage();      return; }
+  if (statsView === "wrapped")     { renderStatsWrapped();      return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -8936,6 +8937,13 @@ function renderStatsMain() {
       </div>
 
       <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Year in Review</div><div class="s">Your closet, wrapped</div></div>
+        <div class="stats-sec-body">
+          ${row(String(new Date().getFullYear()), "The year so far — most worn, best $/wear, dead weight", "wrapped")}
+        </div>
+      </div>
+
+      <div class="stats-sec">
         <div class="stats-sec-hdr"><div class="t">Report Cards</div><div class="s">Who's earning their place</div></div>
         <div class="stats-sec-body">
           ${row("Brands", "Best & worst by wear rate and $/wear", "report:brand")}
@@ -9000,6 +9008,9 @@ function renderStatsMain() {
       }
       if (action === "gap") {
         statsView = "gap"; renderStats(); return;
+      }
+      if (action === "wrapped") {
+        statsView = "wrapped"; statsWrappedYear = null; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -9330,6 +9341,151 @@ function renderStatsGapPage() {
         <div class="stats-note">"Of closet fits" = share of Available pieces whose formality covers that context's level — pieces can serve several contexts, so columns don't add to 100%. Contexts need 5+ tagged wears and a formality signal to appear.</div>`
       : `<div class="placeholder"><b>Not enough context data yet</b><div>Tag contexts when you log (5+ wears per context) and this page fills itself in.</div></div>`);
   wireStatsToolbar();
+}
+
+/* ---- Year in Review (2026-07-19) ----
+   Spotify-Wrapped for the closet: pure derivation over one calendar year,
+   viewable any time (current year = "so far"). No capture, no storage. */
+let statsWrappedYear = null;
+
+function longestStreak(dateSet) {
+  const arr = [...dateSet].sort();
+  let best = 0, cur = 0, prev = null;
+  for (const d of arr) {
+    cur = (prev && shiftDate(prev, 1) === d) ? cur + 1 : 1;
+    if (cur > best) best = cur;
+    prev = d;
+  }
+  return best;
+}
+
+function buildWrappedStats(year) {
+  const start = `${year}-01-01`, end = `${year}-12-31`;
+  const today = todayStr();
+  const yearWears = wears.filter(w => w.worn_on >= start && w.worn_on <= end);
+  const days = new Set(yearWears.map(w => w.worn_on));
+  const elapsedEnd = today < end ? today : end;
+  const elapsed = Math.max(1, Math.round((new Date(elapsedEnd) - new Date(start)) / 86400000) + 1);
+
+  const itemDays = new Map(), lookDays = new Map(), ctxCounts = new Map();
+  for (const w of yearWears) {
+    if (w.item_id && itemById.has(w.item_id)) {
+      let s = itemDays.get(w.item_id); if (!s) itemDays.set(w.item_id, s = new Set()); s.add(w.worn_on);
+    }
+    if (w.outfit_id && outfitById.has(w.outfit_id)) {
+      let s = lookDays.get(w.outfit_id); if (!s) lookDays.set(w.outfit_id, s = new Set()); s.add(w.worn_on);
+    }
+    for (const c of ctxArr(w)) ctxCounts.set(c, (ctxCounts.get(c) || 0) + 1);
+  }
+  const topItems = [...itemDays.entries()].map(([id, s]) => ({ item: itemById.get(id), n: s.size }))
+    .sort((a, b) => b.n - a.n).slice(0, 5);
+  const topLooks = [...lookDays.entries()].map(([id, s]) => ({ o: outfitById.get(id), n: s.size }))
+    .sort((a, b) => b.n - a.n).slice(0, 3);
+  const totalCtx = [...ctxCounts.values()].reduce((a, b) => a + b, 0);
+  const topCtx = [...ctxCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([c, n]) => ({ c, n, share: totalCtx ? n / totalCtx : 0 }));
+
+  // $/wear champions: worn 3+ days this year, real price, gifts excluded
+  // (CPW itself stays all-time — app doctrine).
+  const cpw = [...itemDays.entries()]
+    .filter(([id, s]) => s.size >= 3)
+    .map(([id]) => itemById.get(id))
+    .filter(i => i && i.acquisition !== "Gift" && parseFloat(i.price) > 0 && wearCount(i.id) > 0)
+    .map(i => ({ item: i, cpw: parseFloat(i.price) / wearCount(i.id) }))
+    .sort((a, b) => a.cpw - b.cpw).slice(0, 3);
+
+  // New this year: bought in-year → did it earn wears?
+  const bought = items.filter(i => i.purchase_date && i.purchase_date >= start && i.purchase_date <= end);
+  const boughtWorn = bought.filter(i => itemDays.has(i.id));
+  // Dead weight: Available, owned before Jan 1, zero wear-days all year.
+  const dead = items.filter(i => itemStatus(i) === "Available"
+    && (!i.purchase_date || i.purchase_date < start) && !itemDays.has(i.id));
+
+  const seasonCounts = new Map();
+  for (const d of days) { const s = seasonOf(d); seasonCounts.set(s, (seasonCounts.get(s) || 0) + 1); }
+
+  return { year, totalWears: yearWears.length, daysLogged: days.size, elapsed,
+           coverage: days.size / elapsed, streak: longestStreak(days),
+           topItems, topLooks, topCtx, cpw,
+           boughtN: bought.length, boughtWornN: boughtWorn.length,
+           dead, seasonCounts, inProgress: today < end };
+}
+
+function renderStatsWrapped() {
+  const year = statsWrappedYear || +todayStr().slice(0, 4);
+  const s = buildWrappedStats(year);
+  const years = [...new Set(wears.map(w => +String(w.worn_on).slice(0, 4)).filter(y => y > 2000))].sort((a, b) => b - a);
+  const yearChips = years.length > 1 ? `<div class="cap-catbar" style="padding:8px 14px 0">${years.map(y =>
+    `<button class="cap-chip${y === year ? " on" : ""}" data-wr-year="${y}">${y}</button>`).join("")}</div>` : "";
+  const card = (inner, accent) => `<div style="margin:12px 14px;padding:18px 16px;border-radius:16px;border:1px solid var(--line);${accent ? "background:var(--accent-soft);" : ""}">${inner}</div>`;
+  const big = (v, lbl) => `<div style="text-align:center"><div style="font-size:34px;font-weight:800;color:var(--accent)">${v}</div><div style="font-size:12.5px;color:var(--muted)">${lbl}</div></div>`;
+  const lbl = (t) => `<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">${t}</div>`;
+
+  const hero = card(`
+    <div style="text-align:center;font-size:15px;font-weight:700;margin-bottom:14px">${year}${s.inProgress ? " · so far" : ""}</div>
+    <div style="display:flex;justify-content:space-around">
+      ${big(s.daysLogged, "days logged")}
+      ${big(`${Math.round(s.coverage * 100)}%`, "of days")}
+      ${big(s.streak, "day streak")}
+    </div>`, true);
+
+  const mostWorn = s.topItems.length ? card(lbl("Most worn") + `
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">
+      ${thumbHtml(s.topItems[0].item.image_path)}
+      <div><div style="font-size:16px;font-weight:700">${esc(s.topItems[0].item.name || "Untitled")}</div>
+      <div style="font-size:13px;color:var(--muted)">${s.topItems[0].n} day${s.topItems[0].n === 1 ? "" : "s"} on your body</div></div>
+    </div>
+    ${s.topItems.slice(1).map(({ item, n }, k) => `<div style="display:flex;gap:10px;font-size:13.5px;padding:3px 0">
+      <span style="color:var(--muted);width:16px">${k + 2}.</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || "Untitled")}</span><span style="color:var(--muted)">${n}d</span>
+    </div>`).join("")}`) : "";
+
+  const cpwCard = s.cpw.length ? card(lbl("Cost-per-wear champion") + `
+    <div style="display:flex;align-items:center;gap:14px">
+      ${thumbHtml(s.cpw[0].item.image_path)}
+      <div><div style="font-size:15px;font-weight:700">${esc(s.cpw[0].item.name || "Untitled")}</div>
+      <div style="font-size:13px;color:var(--muted)">${money(s.cpw[0].cpw)}/wear and falling</div></div>
+    </div>
+    ${s.cpw.slice(1).map(({ item, cpw }) => `<div style="display:flex;gap:10px;font-size:13px;padding:4px 0 0;color:var(--muted)">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || "Untitled")}</span><span>${money(cpw)}/wear</span>
+    </div>`).join("")}`) : "";
+
+  const looksCard = s.topLooks.length ? card(lbl("Signature looks") + `
+    <div class="ogrid" style="padding:0">${s.topLooks.map(({ o, n }) => `<button class="otile" data-wr-look="${esc(o.id)}">
+      ${outfitCollageHtml(o, 4)}<div class="oname">${esc(outfitName(o))}</div><div class="ometa">${n} day${n === 1 ? "" : "s"}</div>
+    </button>`).join("")}</div>`) : "";
+
+  const ctxCard = s.topCtx.length ? card(lbl("Where you showed up") + s.topCtx.map(({ c, n, share }) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+      <span style="font-size:13.5px;width:110px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c)}</span>
+      <div style="flex:1;height:8px;border-radius:4px;background:var(--line);overflow:hidden"><div style="height:100%;width:${Math.round(share * 100)}%;background:var(--accent)"></div></div>
+      <span style="font-size:12px;color:var(--muted);width:34px;text-align:right">${Math.round(share * 100)}%</span>
+    </div>`).join("")) : "";
+
+  const newCard = s.boughtN ? card(lbl("New this year") + `
+    <div style="font-size:14px;line-height:1.6">${s.boughtN} piece${s.boughtN === 1 ? "" : "s"} joined the closet —
+    <b>${s.boughtWornN}</b> already earning wears${s.boughtN - s.boughtWornN ? `, ${s.boughtN - s.boughtWornN} still waiting for a first outing` : ""}.</div>`) : "";
+
+  const deadCard = card(lbl("Slept all year") + (s.dead.length ? `
+    <div style="font-size:14px;margin-bottom:10px"><b>${s.dead.length}</b> piece${s.dead.length === 1 ? "" : "s"} you owned in January ${s.inProgress ? "haven't" : "never"} left the closet.</div>
+    <div style="display:flex;gap:8px">${s.dead.slice(0, 4).map(i => `<button data-wr-item="${esc(i.id)}" style="width:56px">${thumbHtml(i.image_path)}</button>`).join("")}${s.dead.length > 4 ? `<div class="muted" style="align-self:center;font-size:12px">+${s.dead.length - 4}</div>` : ""}</div>`
+    : `<div style="font-size:14px">🎉 Every piece you owned got worn this year.</div>`));
+
+  $("#statsBody").innerHTML = statsToolbar("Year in Review", true, false)
+    + yearChips
+    + (s.daysLogged ? hero + mostWorn + cpwCard + looksCard + ctxCard + newCard + deadCard
+      : `<div class="placeholder"><b>No wears logged in ${year}</b></div>`)
+    + `<div style="height:24px"></div>`;
+  wireStatsToolbar();
+  hydratePhotos($("#statsBody"));
+  $("#statsBody").querySelectorAll("[data-wr-year]").forEach(b => {
+    b.onclick = () => { statsWrappedYear = +b.dataset.wrYear; renderStats(); };
+  });
+  $("#statsBody").querySelectorAll("[data-wr-look]").forEach(b => {
+    b.onclick = () => openLookFrom(b.dataset.wrLook);
+  });
+  $("#statsBody").querySelectorAll("[data-wr-item]").forEach(b => {
+    b.onclick = () => openItemFromStats(b.dataset.wrItem);
+  });
 }
 
 function renderStatsContextDetailPage() {
