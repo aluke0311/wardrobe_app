@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-19 r6">
+<meta name="app-version" content="2026-07-19 r7">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,13 +1185,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-19 r6";
+const APP_VERSION = "2026-07-19 r7";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "⃠ on a suggested piece hides it for the rest of the session",
-  "Suggestions now honor the formality level strictly — and offer packing fixes when a capsule can't cover it",
-  "Deconstruct look (details page) + finders for one-piece and incomplete looks in the data health check",
+  "The hamper is back in trip mode — closet row + hamper page now show the suitcase's dirty pieces",
+  "⃠ on a suggested piece hides it for the session; formality level is strict, with packing fixes when a capsule can't cover it",
+  "Deconstruct look + finders for one-piece and incomplete looks in the data health check",
   "New in Stats: Closet vs Life gap page and Year in Review",
 ];
 
@@ -1322,8 +1322,10 @@ async function api(path, opts = {}, _retried = false) {
   catch (e) {
     // Honest failure copy (2026-07-19): say what it means for her data, not
     // just that TCP had a bad day. Surfaced by every toast(e.message) caller.
+    // "Didn't go through" is deliberately direction-neutral (covers failed
+    // reads too, e.g. the retry-load path — not everything is a save).
     throw new Error(navigator.onLine === false
-      ? "You're offline — that didn't save. It'll work again when you're back online."
+      ? "You're offline — that didn't go through. It'll work when you're back online."
       : "Can't reach the server right now — that didn't go through. Try again in a moment.");
   }
 
@@ -2812,8 +2814,11 @@ function renderClosetRoot() {
         <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
         Filter by capsule or trip</button>`
     : "";
-  const launRow = (!activeCapsuleId && LAUNDRY_READY()) ? (() => {
-    const n = hamperItems().length;
+  // Hamper row stays visible while capsule/trip-scoped (user-reported bug
+  // 2026-07-19: trip mode hid the hamper) — scoped to the capsule's members,
+  // same as everything else under the banner.
+  const launRow = LAUNDRY_READY() ? (() => {
+    const n = _scopedHamper().length;
     return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`;
   })() : "";
   return clToolbar("Closet", false, true) + top + capFilter + launRow + `<div class="frows">${rows}</div>`;
@@ -2948,12 +2953,22 @@ function renderLaundrySheet() {
   };
 }
 
+// Hamper list, honoring an active capsule/trip scope (suitcase hamper).
+function _scopedHamper(ls) {
+  let list = hamperItems(ls);
+  if (activeCapsuleId) {
+    const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
+    list = list.filter(i => set.has(i.id));
+  }
+  return list;
+}
+
 // Full-page hamper — its own closet view (like a subcategory grid), because the
 // closet row promises "Hamper · N" and a tap should SHOW them. The wash flow
 // (load chips + date) still lives in the sheet, one tap away via "Did laundry".
 function renderClosetHamper() {
   const ls = laundryState();
-  const list = hamperItems(ls);
+  const list = _scopedHamper(ls);
   const sub = (i) => { const d = dirtyDays(i, ls); return d == null ? "" : d === 0 ? "today" : `${d}d`; };
   const body = list.length
     ? gridHtml(list, sub)
@@ -3241,7 +3256,7 @@ const FIELD_CONFIGS = {
 function siblingItems() {
   // Explicit list captured at tap time (capsule/trip grid) wins.
   if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
-  if (closetHamper) return hamperItems();
+  if (closetHamper) return _scopedHamper();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -12701,7 +12716,10 @@ function wireEvents() {
     }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
-    if (e.target.closest("[data-laundry-wash]")) return openLaundrySheet();
+    if (e.target.closest("[data-laundry-wash]")) {
+      // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
+      return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
+    }
     if (e.target.closest("[data-laundry]")) { closetHamper = true; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
