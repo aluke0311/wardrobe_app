@@ -7,8 +7,9 @@
 
 ---
 
-## ▶ PLANNED BUILD — Round A "Tomorrow" (planning + prediction + activity gear)
-### Planned 2026-07-20 from the two-list feature brainstorm. Decisions LOCKED — do not re-litigate.
+## ✅ SHIPPED BUILD — Round A "Tomorrow" (planning + prediction + activity gear)
+### Planned + BUILT 2026-07-20 from the two-list feature brainstorm. Decisions LOCKED — do not re-litigate.
+### Steps ①② deployed r1; steps ③–⑦ deployed r2 (kv migration confirmed run same day).
 
 **Thesis:** the app answers "what did I wear" and "what could I wear right now";
 this round makes it answer "what will I wear" — future-day contexts, per-day
@@ -16,9 +17,13 @@ outfit plans, a Tomorrow card on Home, and an activity/gear rework so planned
 workout days can actually generate outfits.
 
 **Migration gate:** `migration/kv_store.sql` (new `kv` table: `user_id, key,
-value jsonb`, PK (user_id,key), RLS own_rows) must be CONFIRMED RUN (anon-key
-REST probe) before any UI that writes `kv` deploys. Steps ①② below don't touch
-`kv` and may build+deploy first.
+value jsonb`, PK (user_id,key), RLS own_rows) — **CONFIRMED RUN 2026-07-20**
+(anon-key REST probe returned 200). Now live; keys in use: `dayplan`, `wxlog`.
+
+**Selftest note (2026-07-20):** user asked for NO browser testing at all —
+selftest cases are still ADDED (36 total incl. gear/dayplan) but not run in a
+browser by default; syntax verified via osascript/JavaScriptCore. See
+[[verify-cli-not-preview]].
 
 **Locked decisions (user, 2026-07-20):**
 - **One activity: Workout** (`gear:workout` in `items.tags`, sentinel-tag

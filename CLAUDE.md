@@ -28,6 +28,41 @@ library. If something seems to need a library, ask the user first.
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
+**Round A "Tomorrow" (2026-07-20, r1→r2) is FULLY SHIPPED** (decisions in
+ROADMAP.md's Round A section — do not re-litigate). Three parts:
+① **Activity/gear rework** (r1, no migration): `GEAR_WORKOUT_TAG`/`GEAR_RAIN_TAG`
+sentinel tags (`isWorkoutGear`/`isRainGear`/`setWorkoutGear`/`setRainGear`,
+item-detail SUGGESTIONS toggles). `suggestOutfits` gained an 8th arg
+`activity` — `"workout"` filters the pool to `isWorkoutGear` and bypasses
+`formalityOk` (the tag IS cohesion); normal mode now explicitly drops the whole
+Workout category and gates `gear:rain` behind `wmoIsWet(wx.code)` (boosted +2
+when wet). `WORKOUT_SLOTS` maps Workout subcats to real slots (bras/swim →
+null = never suggested). Sheet: 🏋️ Workout chip (`_sugg.activity`, mutually
+exclusive with formality/context asks, clears locks on flip); empty-state
+`suggestGearDoorHtml` → `openGearTagSheet` (one-pass tagging + a "Gear-only"
+toggle that sets `formality [1]` via `setGearOnlyFormality`/`isGearOnly` so the
+existing pure-Utility isolation keeps gear off normal days). **Level 1 renamed
+"Function"→"Utility"** (labels only; stored bucket key `"function"` unchanged).
+② **kv store** (r2): new `kv` table (`migration/kv_store.sql`, CONFIRMED RUN
+2026-07-20) → `kvData` Map loaded in `loadData`, `kvSet(key,value)` optimistic
+upsert (POST `Prefer: resolution=merge-duplicates`), included in the snapshot.
+③ **Day plans + Tomorrow** (r2): `dayPlan(date)` reads `kvData("dayplan")` =
+`{date: [{contexts:[], outfit:id|null}]}` — ordered ENTRIES (one outfit across
+contexts = one multi-context entry; an outfit change = 2 entries; outfit null =
+context set, look TBD). `saveDayPlan`+`pruneDayPlan` (past 7d/future 30d window,
+pure for selftest). `entrySuggestLevel` (dressier context wins) / `entryActivity`
+(Workout context → activity mode) drive suggestions. `openDayPlanSheet(date)` =
+the editor (context multi-select + Pick/✨Suggest/✎Build per entry, reuses the
+suggester/builder via a `planCtx={kv:true,date,entryIdx,level,activity}` — see
+`data-swear`/`finishBuilder`/`builderCancel` kv branches). `wearPlannedEntry`
+logs an entry stamping ALL its contexts. Home (suppressed in trip mode):
+`tomorrowCardHtml` (all-day, planned looks or a cached `tomorrowGenPieces`
+generated combo + 📌 Keep), `todayPlanRowsHtml` (one-tap Wear-it), `planAheadRowHtml`
+→ `openWeekPlanSheet` (7-day overview). Calendar day view (today/future, non-trip):
+planned-look Wear-it rows + a 📅 Plan button. `loadHomeWeather` now fetches
+today+tomorrow in one call (`_homeWx.wx2`) and logs the day's weather to
+`kvData("wxlog")` (≤1 write/day, 400d window) as groundwork for style-twins.
+
 **LAUNDRY v1 + Trips (2026-07-15, r1→r4) is FULLY SHIPPED** (decisions in
 ROADMAP.md's laundry section — do not re-litigate). `migration/items_laundry.sql`
 (adds `items.last_washed` + `items.laundry_state`) **CONFIRMED RUN on the live
@@ -544,6 +579,9 @@ Canonical definition: **`schema.sql`** in repo root. Six tables, all RLS-scoped 
 - `migration/items_laundry.sql` — adds `items.last_washed` (date) + `items.laundry_state`
   (text override: `'hamper'` | `'extra:<n>'`). **CONFIRMED RUN 2026-07-18** (verified
   via anon-key REST column probe; `LAUNDRY_READY()` gate stays as belt-and-suspenders).
+- `migration/kv_store.sql` — new `kv` table (`user_id, key, value jsonb`, PK
+  (user_id,key), RLS own_rows) for small app state (Round A day plans + wxlog).
+  **CONFIRMED RUN 2026-07-20** (anon-key REST probe returned 200).
 
 ## Design model
 

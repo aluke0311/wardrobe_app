@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-20 r1">
+<meta name="app-version" content="2026-07-20 r2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,14 +1185,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-20 r1";
+const APP_VERSION = "2026-07-20 r2";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "🏋️ Workout mode in the suggester — builds run/hike/lift outfits from pieces you tag as gear (tap the chip to start tagging)",
-  "Rain gear only gets suggested on wet days; workout gear never leaks into normal days",
-  "Formality level 1 is now called Utility (was Function)",
-  "Incomplete-looks review has a one-tap Deconstruct-all button",
+  "📅 Plan ahead: set contexts and outfits for future days (Home → Plan ahead, or 📅 on today's calendar) — multiple outfits per day, multiple contexts per outfit",
+  "Tomorrow card on Home: your planned looks, or a fresh clean-weather-context suggestion; planned-today rows log with one tap",
+  "🏋️ Workout mode in the suggester + gear tags (rain gear only on wet days); level 1 renamed Utility",
+  "Deconstruct-all for incomplete looks",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -1524,6 +1524,7 @@ let outfits = [];      // all outfits (saved sets of items worn together)
 let outfitLinks = [];  // outfit_items join rows {outfit_id, item_id}
 let capsules = [];     // capsule rows {id,name,kind,start_date,end_date,notes,...}
 let capsuleLinks = []; // capsule_items join rows {capsule_id, item_id, packed}
+let kvData = new Map(); // kv table: key -> jsonb value (Round A small-state store)
 let dataReady = false;
 
 // Derived indexes (rebuilt by buildOutfitIndexes after each load).
@@ -1553,7 +1554,7 @@ async function restAll(path) {
 
 async function loadData() {
   dataReady = false;
-  const [it, wr, of, oi, cp, ci, ex] = await Promise.all([
+  const [it, wr, of, oi, cp, ci, ex, kv] = await Promise.all([
     restAll("items?select=*&order=created_at.desc"),
     restAll("wears?select=*&order=worn_on.desc"),
     restAll("outfits?select=*&order=created_at.desc"),
@@ -1561,6 +1562,7 @@ async function loadData() {
     restAll("capsules?select=*&order=created_at.desc"),
     restAll("capsule_items?select=*"),  // includes `packed` once that column exists
     restAll("exclusions?select=*").catch(() => []),
+    restAll("kv?select=key,value").catch(() => []),  // Round A small-state store
   ]);
   items = it || [];
   wears = wr || [];
@@ -1569,6 +1571,7 @@ async function loadData() {
   capsules = cp || [];
   capsuleLinks = ci || [];
   exclusions = ex || [];
+  kvData = new Map((kv || []).map(r => [r.key, r.value]));
   buildOutfitIndexes();
   buildCapsuleIndexes();
   buildExcludeSet();
@@ -1581,6 +1584,224 @@ async function loadData() {
     else { tripModeId = null; store.removeItem(TRIP_MODE_KEY); if (activeCapsuleId) activeCapsuleId = null; }
   }
   saveDataSnapshot();   // fire-and-forget — instant hydration on next boot
+}
+
+/* ---- kv store (Round A "Tomorrow", 2026-07-20) ----
+   Tiny per-user key/value rows (migration/kv_store.sql) for small app state
+   that isn't item/wear/outfit shaped. Loaded with everything else; writes are
+   optimistic upserts. Current keys: "dayplan". */
+async function kvSet(key, value) {
+  kvData.set(key, value);  // optimistic
+  try {
+    await rest("/kv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify([{ user_id: session.user.id, key, value }]),
+    });
+    saveDataSnapshot();
+  } catch (e) { toast(e.message); }
+}
+
+/* Day plans: kvData("dayplan") = { "<YYYY-MM-DD>": [entry, ...] } where an
+   entry is { contexts: [names], outfit: <outfit id>|null }. One outfit worn
+   across contexts = one entry with several contexts; an outfit change = a
+   second entry. Entries with outfit null are "context set, outfit TBD".
+   Intentions only, never wears — logging converts (see wearPlannedEntry). */
+const DAYPLAN_KEY = "dayplan";
+const DAYPLAN_KEEP_PAST = 7, DAYPLAN_KEEP_FUTURE = 30;
+function dayPlanAll() { const v = kvData.get(DAYPLAN_KEY); return v && typeof v === "object" ? v : {}; }
+function dayPlan(date) { const v = dayPlanAll()[date]; return Array.isArray(v) ? v : []; }
+// Pure so the selftest can cover the prune window (today injectable).
+function pruneDayPlan(all, today) {
+  const lo = shiftDate(today, -DAYPLAN_KEEP_PAST), hi = shiftDate(today, DAYPLAN_KEEP_FUTURE);
+  for (const d of Object.keys(all)) if (d < lo || d > hi || !(all[d] || []).length) delete all[d];
+  return all;
+}
+async function saveDayPlan(date, entries) {
+  const all = JSON.parse(JSON.stringify(dayPlanAll()));
+  all[date] = entries || [];
+  await kvSet(DAYPLAN_KEY, pruneDayPlan(all, todayStr()));
+}
+// Suggest level for a multi-context entry: every context's usual level when
+// they agree; the dressier one when they don't (safer to be the overdressed
+// person at campus than underdressed at dinner). Null = no signal.
+function entrySuggestLevel(ctxs) {
+  const lvls = (ctxs || []).map(c => contextFormalityLevel(c)).filter(Boolean);
+  return lvls.length ? Math.max(...lvls) : null;
+}
+// The Workout-mapped context runs the suggester in activity mode instead.
+function entryActivity(ctxs) { return (ctxs || []).includes("Workout") ? "workout" : null; }
+// Attach a look to a day plan: fills the targeted entry's outfit slot, or
+// appends a fresh context-less entry when no entry was targeted.
+async function addKvPlanLook(date, outfitId, entryIdx = null) {
+  const entries = JSON.parse(JSON.stringify(dayPlan(date)));
+  if (entryIdx != null && entries[entryIdx]) entries[entryIdx].outfit = outfitId;
+  else entries.push({ contexts: [], outfit: outfitId });
+  await saveDayPlan(date, entries);
+}
+
+/* ---- Day-plan editor (Round A) --------------------------------------------
+   Plan any day: entries of contexts + an optional look. Rendered into
+   #logSheet like the other pickers. Close re-renders the screen beneath
+   (the post-log staleness lesson). */
+function _dpWx(date) {
+  if (_planWx[date]) return _planWx[date];
+  if (_homeWx.date === todayStr()) {
+    if (date === todayStr()) return _homeWx.wx;
+    if (date === shiftDate(todayStr(), 1)) return _homeWx.wx2;
+  }
+  return null;
+}
+function _dpSuggestCtx(date, entryIdx, ctxs) {
+  const wx = _dpWx(date);
+  if (wx) _planWx[date] = wx;  // openSuggestSheet reads _planWx[planCtx.date]
+  return { kv: true, date, entryIdx, level: entryActivity(ctxs) ? null : entrySuggestLevel(ctxs), activity: entryActivity(ctxs) };
+}
+function openDayPlanSheet(date) {
+  const entries = dayPlan(date);
+  const wx = _dpWx(date);
+  const ctxOpts = contextOptions();
+  const entryCard = (e, idx) => {
+    const shown = [...new Set([...ctxOpts.slice(0, 10), ...(e.contexts || [])])];
+    const chips = shown.map(c =>
+      `<button class="cap-chip${(e.contexts || []).includes(c) ? " on" : ""}" data-dp-ctx="${idx}|${esc(c)}" style="font-size:12.5px">${esc(c)}</button>`).join("");
+    const lvls = [...new Set((e.contexts || []).map(c => contextFormalityLevel(c)).filter(Boolean))];
+    const mixNote = lvls.length > 1
+      ? `<div class="muted" style="font-size:11.5px;padding-top:4px">Contexts differ in formality — suggesting for ${esc(occLabel(Math.max(...lvls)))}</div>` : "";
+    const o = e.outfit ? outfitById.get(e.outfit) : null;
+    const worn = o && planWorn(date, o.id);
+    const lookHtml = o ? `
+      <div style="display:flex;align-items:center;gap:10px;padding-top:8px">
+        <button data-dp-open="${esc(o.id)}" style="width:56px;flex:none">${outfitCollageHtml(o, 4)}</button>
+        <button data-dp-open="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
+          <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</div>
+          ${worn ? `<div style="font-size:12px;color:var(--accent)">✓ worn</div>` : ""}
+        </button>
+        ${!worn && date <= todayStr() ? `<button class="cap-chip" data-dp-wear="${idx}" style="flex:none">Wear it ✓</button>` : ""}
+        <button class="cap-chip" data-dp-detach="${idx}" style="flex:none;color:var(--muted)" title="Remove the look, keep the plan">✕</button>
+      </div>` : `
+      <div style="display:flex;gap:6px;padding-top:8px">
+        <button class="cap-chip" data-dp-pick="${idx}">＋ Look</button>
+        <button class="cap-chip" data-dp-suggest="${idx}">✨ Suggest</button>
+        <button class="cap-chip" data-dp-build="${idx}">✎ Build</button>
+      </div>`;
+    return `<div class="det-card" style="margin:0 16px 10px;padding:10px 12px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;color:var(--muted)">Outfit ${entries.length > 1 ? idx + 1 : ""} · contexts</div>
+        <button class="lnk" data-dp-rm="${idx}" style="font-size:12px;color:var(--muted)">remove</button>
+      </div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:6px">${chips}</div>
+      ${mixNote}${lookHtml}
+    </div>`;
+  };
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="dpClose">Done</button>
+      <h2>Plan · ${esc(planDayLabel(date))}</h2>
+      <div style="width:48px"></div>
+    </div>
+    ${wx && wx.maxT != null ? `<div class="center muted" style="font-size:12.5px;padding:0 16px 8px">${wmoEmoji(wx.code)} ${wx.maxT}° / ${wx.minT}°</div>` : ""}
+    ${entries.map(entryCard).join("") || `<div class="center muted" style="font-size:13px;padding:4px 16px 12px">Nothing planned yet — set the day's context now, pick the outfit whenever.</div>`}
+    <div style="padding:0 16px 16px"><button class="btn btn-sec" id="dpAdd" style="width:100%">＋ ${entries.length ? "Another outfit" : "Plan this day"}</button></div>
+    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  const save = async (next) => { await saveDayPlan(date, next); openDayPlanSheet(date); };
+  $("#dpClose").onclick = () => {
+    hideSheet("logSheet");
+    const tab = activeTabName();
+    if (tab === "home") renderHome();
+    else if (tab === "calendar") renderCalendar();
+  };
+  $("#dpAdd").onclick = () => save([...JSON.parse(JSON.stringify(entries)), { contexts: [], outfit: null }]);
+  $("#logInner").querySelectorAll("[data-dp-ctx]").forEach(b => b.onclick = () => {
+    const [idx, ctx] = b.dataset.dpCtx.split("|");
+    const next = JSON.parse(JSON.stringify(entries));
+    const e = next[+idx]; if (!e) return;
+    e.contexts = (e.contexts || []).includes(ctx) ? e.contexts.filter(c => c !== ctx) : [...(e.contexts || []), ctx];
+    save(next);
+  });
+  $("#logInner").querySelectorAll("[data-dp-rm]").forEach(b => b.onclick = () => {
+    const next = JSON.parse(JSON.stringify(entries)); next.splice(+b.dataset.dpRm, 1); save(next);
+  });
+  $("#logInner").querySelectorAll("[data-dp-detach]").forEach(b => b.onclick = () => {
+    const next = JSON.parse(JSON.stringify(entries));
+    if (next[+b.dataset.dpDetach]) next[+b.dataset.dpDetach].outfit = null;
+    save(next);
+  });
+  $("#logInner").querySelectorAll("[data-dp-open]").forEach(b => b.onclick = () => {
+    hideSheet("logSheet"); openLookFrom(b.dataset.dpOpen);
+  });
+  $("#logInner").querySelectorAll("[data-dp-pick]").forEach(b => b.onclick = () => openPlanLookPickerKv(date, +b.dataset.dpPick));
+  $("#logInner").querySelectorAll("[data-dp-suggest]").forEach(b => b.onclick = () => {
+    const idx = +b.dataset.dpSuggest;
+    openSuggestSheet(null, null, _dpSuggestCtx(date, idx, (entries[idx] || {}).contexts));
+  });
+  $("#logInner").querySelectorAll("[data-dp-build]").forEach(b => b.onclick = () => {
+    hideSheet("logSheet");
+    openBuilder(null, null, { kv: true, date, entryIdx: +b.dataset.dpBuild });
+  });
+  $("#logInner").querySelectorAll("[data-dp-wear]").forEach(b => b.onclick = () => wearPlannedEntry(date, +b.dataset.dpWear));
+}
+
+// Attach a saved look to a plan entry: recent-first list with a name search.
+function openPlanLookPickerKv(date, entryIdx, q = "") {
+  const lastWornOf = o => { const s = outfitWearMap.get(o.id); return s && s.size ? [...s].sort().pop() : ""; };
+  let list = activeOutfits().slice().sort((a, b) => lastWornOf(b).localeCompare(lastWornOf(a)));
+  const needle = q.trim().toLowerCase();
+  if (needle) list = list.filter(o => outfitName(o).toLowerCase().includes(needle));
+  const rows = list.slice(0, 40).map(o => `
+    <div style="display:flex;align-items:center;gap:10px;padding:6px 16px;border-bottom:1px solid var(--line)">
+      <div style="width:56px;flex:none">${outfitCollageHtml(o, 4)}</div>
+      <button data-dpl-pick="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
+        <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.rating === 1 ? "♥ " : ""}${esc(outfitName(o))}</div>
+        <div style="font-size:12px;color:var(--muted)">${lastWornOf(o) ? "worn " + lastWornOf(o) : "never worn"}</div>
+      </button>
+    </div>`).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="dplBack">Back</button>
+      <h2>Pick a look</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div style="padding:0 16px 8px"><input class="inp" id="dplQ" placeholder="Search looks…" value="${esc(q)}"></div>
+    <div style="max-height:55vh;overflow-y:auto">${rows || `<div class="center muted" style="padding:24px 0">No looks match</div>`}</div>
+    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
+  hydratePhotos($("#logInner"));
+  $("#dplBack").onclick = () => openDayPlanSheet(date);
+  const qEl = $("#dplQ");
+  let qT; qEl.oninput = () => { clearTimeout(qT); qT = setTimeout(() => openPlanLookPickerKv(date, entryIdx, qEl.value), 250); };
+  if (q) { qEl.focus(); qEl.setSelectionRange(qEl.value.length, qEl.value.length); }
+  $("#logInner").querySelectorAll("[data-dpl-pick]").forEach(b => b.onclick = async () => {
+    await addKvPlanLook(date, b.dataset.dplPick, entryIdx);
+    openDayPlanSheet(date);
+  });
+}
+
+// Log a planned entry as actually worn: wear rows carry ALL the entry's
+// contexts (multi-context days were the point — one outfit across contexts).
+async function wearPlannedEntry(date, entryIdx) {
+  const entry = dayPlan(date)[entryIdx];
+  const o = entry && entry.outfit ? outfitById.get(entry.outfit) : null;
+  if (!o) return;
+  const its = outfitItems(o);
+  if (!its.length) { toast("This look has no pieces"); return; }
+  if (wears.some(w => w.outfit_id === o.id && w.worn_on === date)) { toast("Already logged that day"); return; }
+  try {
+    const fml = deriveWearFormality(its.map(it => it.id));
+    const twc = tripWearContext(date);
+    const ctx = [...new Set([...(entry.contexts || []), ...(twc || [])])];
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: o.id, formality_for: fml, ...(ctx.length ? { context: ctx } : {}) }));
+    const rows = await rest("/wears", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    if (Array.isArray(rows)) wears.push(...rows); else payload.forEach(p => wears.push(p));
+    buildOutfitWearMap();
+    tripPlanSync(o.id, date);
+    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { presetCtx: entry.contexts || [], undoable: true });
+    else { toast("Logged as worn"); if (activeTabName() === "home") renderHome(); }
+  } catch (e) { toast(e.message); }
 }
 
 // Rebuild capsule lookup maps. Called after each load + after any mutation.
@@ -1971,15 +2192,28 @@ async function loadHomeWeather() {
   const today = todayStr();
   if (_homeWx.date === today || _homeWx.loading) return _homeWx.wx;
   _homeWx.loading = true;
-  let wx = null;
+  let wx = null, wx2 = null;
   try {
     const loc = await getHomeLocation();
     if (loc) {
-      const result = await fetchWeatherRange(loc.lat, loc.lon, today, today);
+      // Same single call now covers tomorrow too (Round A Tomorrow card).
+      const tm = shiftDate(today, 1);
+      const result = await fetchWeatherRange(loc.lat, loc.lon, today, tm);
       wx = result[today] || null;
+      wx2 = result[tm] || null;
     }
   } catch (e) { /* offline/denied — suggester degrades to season-only */ }
-  _homeWx = { date: today, wx, loading: false };
+  _homeWx = { date: today, wx, wx2, loading: false };
+  // Quietly log today's weather (kv "wxlog", ≤1 write/day, ~400d window) —
+  // builds the history that will power "what did I wear last time it was
+  // like this" (style twins, deferred until this has some depth).
+  if (wx && session?.user && !(kvData.get("wxlog") || {})[today]) {
+    const log = { ...(kvData.get("wxlog") || {}) };
+    log[today] = { maxT: wx.maxT, minT: wx.minT, code: wx.code };
+    const cut = shiftDate(today, -400);
+    for (const d of Object.keys(log)) if (d < cut) delete log[d];
+    kvSet("wxlog", log);  // fire-and-forget
+  }
   return wx;
 }
 
@@ -2236,6 +2470,117 @@ function tripOfferHtml() {
   </div>`;
 }
 
+/* ---- Round A: Tomorrow card + today's planned rows + plan-ahead ----
+   All suppressed in trip mode (the trip dashboard owns those days). The
+   Tomorrow card is visible ALL DAY (user decision 2026-07-20). */
+
+// One generated outfit per context-only entry, cached per render-day so
+// re-renders never re-roll it out from under her (predictability).
+let _tmCombo = { key: null, pieces: null };
+function tomorrowGenPieces(date, entry) {
+  const act = entryActivity(entry.contexts);
+  const key = `${date}|${(entry.contexts || []).join(",")}|${_dpWx(date) ? "wx" : ""}|${act || ""}`;
+  if (_tmCombo.key === key) return _tmCombo.pieces;
+  const res = suggestOutfits(act ? null : entrySuggestLevel(entry.contexts), null, null, seasonOf(date), _dpWx(date), null, true, act);
+  _tmCombo = { key, pieces: res.length ? res[0].pieces : null };
+  return _tmCombo.pieces;
+}
+function _planThumbStrip(pieces) {
+  return `<div style="display:flex;gap:6px;align-items:center">${pieces.map(p =>
+    `<div style="width:44px;height:44px;flex:none">${thumbHtml(p.image_path)}</div>`).join("")}</div>`;
+}
+function tomorrowCardHtml() {
+  if (!dataReady || tripModeId) return "";
+  const tm = shiftDate(todayStr(), 1);
+  const entries = dayPlan(tm);
+  const wx = _dpWx(tm);
+  const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
+  const hdr = `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 2px 8px">
+    <div style="font-size:13px;font-weight:600;color:var(--muted)">Tomorrow · ${esc(planDayLabel(tm))}${wxBit}</div>
+    <button class="lnk" data-tm-edit style="font-size:12.5px">${entries.length ? "✎ Edit" : "＋ Plan"}</button>
+  </div>`;
+  let body = "";
+  if (!entries.length) {
+    body = `<button data-tm-edit style="width:100%;text-align:left;font-size:13.5px;color:var(--muted);padding:2px">Nothing planned — tap to set tomorrow's context or outfit.</button>`;
+  } else {
+    body = entries.map((e, idx) => {
+      const ctxs = (e.contexts || []).join(", ");
+      const o = e.outfit ? outfitById.get(e.outfit) : null;
+      if (o) return `<button data-tm-look="${esc(o.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:4px 0">
+        <span style="width:48px;flex:none">${outfitCollageHtml(o, 4)}</span>
+        <span style="flex:1;min-width:0">
+          <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
+          ${ctxs ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs)}</span>` : ""}
+        </span>
+      </button>`;
+      const pieces = tomorrowGenPieces(tm, e);
+      if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found; tap ✨ to dig.</div>
+        <div style="display:flex;gap:6px;padding:2px 0"><button class="cap-chip" data-tm-refine="${idx}">✨ Suggest</button></div>`;
+      const why = [ctxs || (entrySuggestLevel(e.contexts) ? occLabel(entrySuggestLevel(e.contexts)) : ""), "clean picks"].filter(Boolean).join(" · ");
+      return `<div style="padding:4px 0">
+        ${_planThumbStrip(pieces)}
+        <div style="display:flex;align-items:center;gap:8px;padding-top:4px">
+          <span class="muted" style="font-size:12px;flex:1">${esc(why)}</span>
+          <button class="cap-chip" data-tm-keep="${idx}" style="font-size:12px" title="Save this as the plan">📌 Keep</button>
+          <button class="cap-chip" data-tm-refine="${idx}" style="font-size:12px">✨</button>
+        </div>
+      </div>`;
+    }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
+  }
+  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}</div>`;
+}
+function todayPlanRowsHtml() {
+  if (!dataReady || tripModeId) return "";
+  const today = todayStr();
+  return dayPlan(today).map((e, idx) => {
+    const o = e.outfit ? outfitById.get(e.outfit) : null;
+    if (!o || planWorn(today, o.id)) return "";
+    const ctxs = (e.contexts || []).join(", ");
+    return `<button class="logged-row" data-tp-wear="${idx}">
+      <span class="lr-check">📅</span>
+      <span class="lr-text">Planned: ${esc(outfitName(o))}${ctxs ? " · " + esc(ctxs) : ""}</span>
+      <span class="lr-plus">✓</span>
+    </button>`;
+  }).join("");
+}
+function planAheadRowHtml() {
+  if (!dataReady || tripModeId) return "";
+  const n = Object.entries(dayPlanAll()).filter(([d, v]) => d > todayStr() && (v || []).length).length;
+  return `<button class="logged-row" data-plan-ahead style="border:1px solid var(--line);background:var(--bg)">
+    <span class="lr-check">📅</span><span class="lr-text">Plan ahead${n ? ` · ${n} day${n === 1 ? "" : "s"} planned` : ""}</span><span class="lr-plus">＋</span>
+  </button>`;
+}
+function openWeekPlanSheet() {
+  const today = todayStr();
+  const rows = [...Array(7)].map((_, n) => {
+    const d = shiftDate(today, n);
+    const label = n === 0 ? "Today" : n === 1 ? "Tomorrow" : planDayLabel(d);
+    const entries = dayPlan(d);
+    const sum = entries.length
+      ? entries.map(e => {
+          const o = e.outfit ? outfitById.get(e.outfit) : null;
+          return o ? outfitName(o) : ((e.contexts || []).join("/") || "outfit TBD");
+        }).join(" · ")
+      : "—";
+    return `<button data-wk-day="${d}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 16px;border-bottom:1px solid var(--line)">
+      <span style="width:86px;flex:none;font-size:13.5px;font-weight:600">${esc(label)}</span>
+      <span style="flex:1;min-width:0;font-size:13px;color:${entries.length ? "var(--text)" : "var(--muted)"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sum)}</span>
+      <svg class="chev" viewBox="0 0 24 24" style="flex:none"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="wkClose">Done</button>
+      <h2>Plan ahead</h2>
+      <div style="width:48px"></div>
+    </div>
+    ${rows}
+    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
+  showSheet("logSheet");
+  $("#wkClose").onclick = () => { hideSheet("logSheet"); if (activeTabName() === "home") renderHome(); };
+  $("#logInner").querySelectorAll("[data-wk-day]").forEach(b => b.onclick = () => openDayPlanSheet(b.dataset.wkDay));
+}
+
 function renderHome() {
   const tiles = HOME_TILES.map(t => `
     <button class="tile ${t.wide ? "wide" : ""}" data-go="${t.tab}">
@@ -2287,8 +2632,44 @@ function renderHome() {
       </button>`;
     }
   }
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${cta}${catchup}${laun}${bk}`;
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${catchup}${laun}${bk}${planAheadRowHtml()}`;
   hydratePhotos($("#homeBody"));
+  // Round A planning wiring
+  $("#homeBody").querySelectorAll("[data-tp-wear]").forEach(b => {
+    b.onclick = () => wearPlannedEntry(todayStr(), +b.dataset.tpWear);
+  });
+  $("#homeBody").querySelectorAll("[data-tm-edit]").forEach(b => {
+    b.onclick = () => openDayPlanSheet(shiftDate(todayStr(), 1));
+  });
+  $("#homeBody").querySelectorAll("[data-tm-look]").forEach(b => {
+    b.onclick = () => openLookFrom(b.dataset.tmLook);
+  });
+  $("#homeBody").querySelectorAll("[data-tm-refine]").forEach(b => {
+    b.onclick = () => {
+      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmRefine;
+      openSuggestSheet(null, null, _dpSuggestCtx(tm, idx, (dayPlan(tm)[idx] || {}).contexts));
+    };
+  });
+  $("#homeBody").querySelectorAll("[data-tm-keep]").forEach(b => {
+    b.onclick = async () => {
+      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmKeep;
+      const pieces = tomorrowGenPieces(tm, dayPlan(tm)[idx] || {});
+      if (!pieces) return;
+      b.disabled = true;
+      try {
+        const oid = await saveComboAsOutfit(pieces);
+        await addKvPlanLook(tm, oid, idx);
+        toast("Planned for tomorrow");
+        renderHome();
+      } catch (e) { toast(e.message); b.disabled = false; }
+    };
+  });
+  const planAhead = $("#homeBody").querySelector("[data-plan-ahead]");
+  if (planAhead) planAhead.onclick = () => openWeekPlanSheet();
+  // Tomorrow card wants tomorrow's forecast; one lazy fetch/day (no-op after).
+  if (dataReady && !tripModeId && _homeWx.date !== todayStr() && !_homeWx.loading) {
+    loadHomeWeather().then(() => { if (activeTabName() === "home") renderHome(); });
+  }
   $("#homeBody").querySelectorAll("[data-cu-log]").forEach(b => {
     b.onclick = () => {
       switchTab("calendar");
@@ -5813,7 +6194,9 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.seedItemId = seedItemId;
   _sugg.capsuleId = capsuleId;
   _sugg.planCtx = planCtx || null;
-  _sugg.targetLevel = null;
+  // kv day-plan entries can pre-seed a level (from their contexts' usual
+  // formality) or activity mode (a Workout-context entry).
+  _sugg.targetLevel = (planCtx && planCtx.level) || null;
   _sugg.activeContext = null;
   _sugg.season = planCtx ? seasonOf(planCtxSeasonDate(planCtx)) : currentSeason();
   _sugg.idx = 0;
@@ -5822,7 +6205,8 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
   _sugg.useClean = true;
-  _sugg.activity = null;
+  _sugg.activity = (planCtx && planCtx.activity) || null;
+  if (_sugg.activity) _sugg.targetLevel = null;  // mutually exclusive asks
   // Weather: plan days use the trip's per-day forecast; otherwise home weather
   // (cached per day). If it isn't in memory yet, fetch and fold it in once.
   _sugg.wx = planCtx
@@ -6414,13 +6798,21 @@ function renderSuggestSheet() {
 
   const wearBtn = $("#logInner").querySelector("[data-swear]");
   if (wearBtn && combo && _sugg.planCtx) wearBtn.onclick = async () => {
-    const { capsuleId: cid, date } = _sugg.planCtx;
+    const pc = _sugg.planCtx;
     try {
       const oid = await saveComboAsOutfit(combo.pieces);
       hideSheet("logSheet");
-      // capsules tab is already on the plan view underneath the sheet; addPlanLook re-renders it
-      await addPlanLook(cid, date, oid);
-      toast("Added to " + planDayLabel(date));
+      if (pc.kv) {
+        // Round A day plan (kv), not a capsule plan.
+        await addKvPlanLook(pc.date, oid, pc.entryIdx ?? null);
+        toast("Planned for " + planDayLabel(pc.date));
+        if (activeTabName() === "home") renderHome();
+        else if (activeTabName() === "calendar") renderCalendar();
+      } else {
+        // capsules tab is already on the plan view underneath the sheet; addPlanLook re-renders it
+        await addPlanLook(pc.capsuleId, pc.date, oid);
+        toast("Added to " + planDayLabel(pc.date));
+      }
     } catch (e) { toast(e.message); }
   };
   else if (wearBtn && combo) wearBtn.onclick = () => wearSuggestedCombo(combo);
@@ -7946,6 +8338,18 @@ function renderCalendarDay(body) {
         : '';
     })()}
     ${onThisDay}
+    ${dateStr === todayStr() && !tripModeId ? dayPlan(dateStr).map((e, idx) => {
+      const o = e.outfit ? outfitById.get(e.outfit) : null;
+      if (!o || planWorn(dateStr, o.id)) return "";
+      const ctxs = (e.contexts || []).join(", ");
+      return `<button class="otd-row" data-cal-plan-wear="${idx}">
+        <div class="otd-text" style="flex:1">
+          <div class="otd-title">📅 Planned: ${esc(outfitName(o))}</div>
+          ${ctxs ? `<div class="otd-sub">${esc(ctxs)}</div>` : ""}
+        </div>
+        <span class="cap-chip" style="flex:none">Wear it ✓</span>
+      </button>`;
+    }).join("") : ""}
     <div class="cal-day-foot">
       <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
       <div class="cal-day-foot-add">
@@ -7953,6 +8357,7 @@ function renderCalendarDay(body) {
         <button id="calWearAgain">↻ Wear again</button>
         <button id="calAddClothing">+ Clothing</button>
         <button id="calAddLook">+ Look</button>
+        ${dateStr >= todayStr() && !tripModeId ? `<button id="calPlanDay">📅 Plan</button>` : ""}
       </div>
     </div>
   </div>`;
@@ -7966,6 +8371,11 @@ function renderCalendarDay(body) {
   $('#calWearAgain').onclick   = () => openWearAgainChooser(dateStr);
   const makeLookBtn = $('#calMakeLook');
   if (makeLookBtn) makeLookBtn.onclick = () => makeLookFromDay(dateStr, body);
+  const planDayBtn = $('#calPlanDay');
+  if (planDayBtn) planDayBtn.onclick = () => openDayPlanSheet(dateStr);
+  body.querySelectorAll('[data-cal-plan-wear]').forEach(b => {
+    b.onclick = () => wearPlannedEntry(dateStr, +b.dataset.calPlanWear);
+  });
 
   // Horizontal swipe to navigate days; skip if touch starts on a swipeable card
   const _dayTb = body.querySelector('.tabbody');
@@ -12016,6 +12426,7 @@ function builderCancel() {
   const planCtx = builder ? builder.planCtx : null;
   builder = null;
   $("#app").classList.remove("builder-mode");
+  if (planCtx && planCtx.kv) { switchTab("home"); openDayPlanSheet(planCtx.date); return; }
   if (planCtx) { switchTab("capsules"); capsuleId = planCtx.capsuleId; capsuleView = "plan"; renderCapsules(); return; }
   switchTab("looks");
   if (oid) openLook(oid);
@@ -12279,6 +12690,13 @@ function finishBuilder(id, msg) {
   const planCtx = builder && builder.planCtx;
   builder = null;
   $("#app").classList.remove("builder-mode");
+  if (planCtx && planCtx.kv) {
+    // Round A day plan (kv): attach + land back on the day's plan editor.
+    switchTab("home");
+    addKvPlanLook(planCtx.date, id, planCtx.entryIdx ?? null).then(() => openDayPlanSheet(planCtx.date));
+    toast("Planned for " + planDayLabel(planCtx.date));
+    return;
+  }
   if (planCtx) {
     switchTab("capsules");                 // resets capsuleView — set plan state AFTER
     capsuleId = planCtx.capsuleId; capsuleView = "plan";
@@ -13243,7 +13661,8 @@ async function saveDataSnapshot() {
   try {
     const cache = await caches.open(DATA_CACHE);
     const body = JSON.stringify({ ts: Date.now(), user_id: session?.user?.id || null,
-      items, wears, outfits, outfitLinks, capsules, capsuleLinks, exclusions });
+      items, wears, outfits, outfitLinks, capsules, capsuleLinks, exclusions,
+      kv: [...kvData.entries()] });
     await cache.put(SNAPSHOT_KEY, new Response(body, { headers: { "Content-Type": "application/json" } }));
   } catch (_) {}
 }
@@ -13263,6 +13682,7 @@ async function loadDataSnapshot() {
     items = d.items || []; wears = d.wears || []; outfits = d.outfits || [];
     outfitLinks = d.outfitLinks || []; capsules = d.capsules || [];
     capsuleLinks = d.capsuleLinks || []; exclusions = d.exclusions || [];
+    kvData = new Map(d.kv || []);
     buildOutfitIndexes(); buildCapsuleIndexes(); buildExcludeSet(); buildSuggestIndexes();
     dataReady = true;
     return true;

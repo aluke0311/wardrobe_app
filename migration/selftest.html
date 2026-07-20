@@ -321,6 +321,64 @@ function run() {
               [6, "h", 1, "h", ["z"], 3]);
   });
 
+  // ---- Round A: gear + day plans (2026-07-20) ----
+  t("suggestSlot: workout subcats map to real slots, bras/swim to none", () => {
+    return eq([
+      W.suggestSlot({ category: "Workout", subcategory: "Workout tops" }),
+      W.suggestSlot({ category: "Workout", subcategory: "Active shorts" }),
+      W.suggestSlot({ category: "Workout", subcategory: "Sports bras" }),
+      W.suggestSlot({ category: "Workout", subcategory: "Swimwear" }),
+      W.suggestSlot({ category: "Tops", subcategory: "Cardigans" }),
+    ], ["Tops", "Bottoms", null, null, "Outerwear"]);
+  });
+  t("gear helpers: tags + gear-only formality", () => {
+    const run = { tags: ["gear:workout"], formality: [1] };
+    const dual = { tags: ["gear:workout"], formality: [1, 2] };
+    const rain = { tags: ["gear:rain"], formality: [2] };
+    return eq([W.isWorkoutGear(run), W.isRainGear(run), W.isRainGear(rain),
+               W.isGearOnly(run), W.isGearOnly(dual)],
+              [true, false, true, true, false]);
+  });
+  t("engine: workout mode pools gear only; normal mode excludes Workout cat + dry-day rain gear", () => {
+    const mk = (id, cat, sub, tags, fml) => ({ id, name: id, category: cat, subcategory: sub, tags, formality: fml, status: "Available", image_path: "x.jpg", color_family: "Black" });
+    const pool = [
+      mk("rt", "Workout", "Workout tops", ["gear:workout"], [1]),
+      mk("rs", "Workout", "Active shorts", ["gear:workout"], [1]),
+      mk("sn", "Shoes", "Sneakers", ["gear:workout"], [1]),
+      mk("tee", "Tops", "Tee shirts", [], [2, 3]),
+      mk("jean", "Bottoms", "Jeans", [], [2, 3]),
+      mk("flat", "Shoes", "Flats", [], [2, 3]),
+      mk("rj", "Outerwear", "Jackets", ["gear:rain"], [2, 3]),
+    ];
+    W.itemById = new Map(pool.map(i => [i.id, i]));
+    W._excludeSet = new (W.Set)();
+    const act = W.suggestOutfits(null, null, pool, null, null, null, false, "workout");
+    const actIds = new (W.Set)(act.flatMap(c => c.pieces.map(p => p.id)));
+    const dry = W.suggestOutfits(null, null, pool, null, { maxT: 70, minT: 50, code: 0 }, null, false, null);
+    const dryIds = new (W.Set)(dry.flatMap(c => c.pieces.map(p => p.id)));
+    const wet = W.suggestOutfits(null, null, pool, null, { maxT: 60, minT: 45, code: 61 }, null, false, null);
+    const wetIds = new (W.Set)(wet.flatMap(c => c.pieces.map(p => p.id)));
+    return eq([act.length > 0, actIds.has("tee"), actIds.has("rt"), dryIds.has("rj"), dryIds.has("rt"), wetIds.has("rj")],
+              [true, false, true, false, false, true]);
+  });
+  t("pruneDayPlan: rolling window, empty days dropped", () => {
+    const all = {
+      [W.shiftDate(today, -10)]: [{ contexts: ["Work"], outfit: null }],
+      [W.shiftDate(today, -3)]: [{ contexts: ["Work"], outfit: null }],
+      [W.shiftDate(today, 2)]: [],
+      [W.shiftDate(today, 5)]: [{ contexts: [], outfit: "o1" }],
+      [W.shiftDate(today, 40)]: [{ contexts: ["Work"], outfit: null }],
+    };
+    const out = W.pruneDayPlan(JSON.parse(JSON.stringify(all)), today);
+    return eq(Object.keys(out).sort(), [W.shiftDate(today, -3), W.shiftDate(today, 5)].sort());
+  });
+  t("entrySuggestLevel: dressier context wins; entryActivity keys on Workout", () => {
+    W.wears = [];  // force seed fallback in contextFormalityLevel
+    return eq([W.entrySuggestLevel(["Errands", "Work"]), W.entrySuggestLevel([]),
+               W.entryActivity(["Workout", "Errands"]), W.entryActivity(["Work"])],
+              [5, null, "workout", null]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
