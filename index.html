@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-19 r4">
+<meta name="app-version" content="2026-07-19 r5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1181,7 +1181,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-19 r4";
+const APP_VERSION = "2026-07-19 r5";
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 const TAXONOMY = {
@@ -5774,6 +5774,25 @@ function suggestStarvationNote() {
   return `<div class="center muted" style="font-size:12px;padding:4px 12px 0">Pool is tight — ${esc(bits.join(" · "))}</div>`;
 }
 
+// Zero-state door (2026-07-19): a level-starved CAPSULE isn't a dead end —
+// show the closet pieces that would cover the level, addable in one tap.
+function suggestLevelDoorHtml() {
+  if (!_sugg.capsuleId || !_sugg.targetLevel || (_sugg.results && _sugg.results.length)) return "";
+  const members = new Set((capsuleLinkMap.get(_sugg.capsuleId) || []).map(l => l.item_id));
+  const cands = items.filter(i => itemStatus(i) === "Available" && !members.has(i.id)
+    && i.image_path && !isNoSuggest(i)
+    && (itemFormalitySet(i) || []).includes(_sugg.targetLevel)).slice(0, 8);
+  if (!cands.length) return "";
+  return `<div style="padding:12px 16px 0">
+    <div class="center muted" style="font-size:12.5px;margin-bottom:8px">These closet pieces cover ${esc(occLabel(_sugg.targetLevel))} — add to the suitcase?</div>
+    <div class="wa-strip" style="padding:0">${cands.map(i => `<div class="wa-tile" style="width:72px">
+      <button data-sgdoor-open="${esc(i.id)}" style="display:block;width:100%">${thumbHtml(i.image_path)}</button>
+      <div class="wa-name">${esc(i.name || "Untitled")}</div>
+      <button class="cap-chip" data-sgdoor-add="${esc(i.id)}" style="width:100%;font-size:11px;justify-content:center;margin-top:2px">＋ Add</button>
+    </div>`).join("")}</div>
+  </div>`;
+}
+
 // Friendly slot name for the swap chips.
 function suggSlotLabel(i) {
   const slot = suggestSlot(i);
@@ -6038,6 +6057,7 @@ function renderSuggestSheet() {
       ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it · ⃠ hides it this session${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
       ${suggestStarvationNote()}
+      ${suggestLevelDoorHtml()}
     </div>
     ${combo ? `
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
@@ -6098,6 +6118,21 @@ function renderSuggestSheet() {
   // C1 "not this": session-ban + immediate replacement.
   $("#logInner").querySelectorAll("[data-sban]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); banSuggestionPiece(b.dataset.sban); };
+  });
+
+  // Zero-state door: add a covering closet piece to the capsule, then re-roll.
+  $("#logInner").querySelectorAll("[data-sgdoor-add]").forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await addItemsToCapsule(_sugg.capsuleId, [b.dataset.sgdoorAdd]);
+        toast("Added to the suitcase");
+        regen();
+      } catch (e) { toast(e.message); b.disabled = false; }
+    };
+  });
+  $("#logInner").querySelectorAll("[data-sgdoor-open]").forEach(b => {
+    b.onclick = () => { hideSheet("logSheet"); openItemFrom(b.dataset.sgdoorOpen); };
   });
 
   // V3 lock-a-piece: locking doesn't reshuffle — it marks the piece so the NEXT
@@ -6793,6 +6828,69 @@ async function deleteLook(id) {
     leaveLook();
     toast("Look deleted");
   } catch (e) { toast(e.message); }
+}
+
+// Incomplete outfit (2026-07-19, user request): can't plausibly be worn as-is —
+// no one-piece (dress/swimsuit) AND not top+bottom. Shoes are NEVER required
+// (an outfit without shoes = worn at home, her rule). Workout pieces count as
+// their top/bottom equivalents. One-piece looks have their own check.
+function outfitIncomplete(o) {
+  const its = outfitItems(o);
+  if (its.length < 2) return false;
+  let top = false, bottom = false, one = false;
+  for (const i of its) {
+    const cat = i.category, sub = i.subcategory || "";
+    if (cat === "Dresses" || sub === "Swimwear") one = true;
+    else if (cat === "Tops" || sub === "Workout tops" || sub === "Sports bras") top = true;
+    else if (cat === "Bottoms" || sub === "Active shorts") bottom = true;
+  }
+  return !(one || (top && bottom));
+}
+
+// Review sheet for incomplete looks: see them, open them, deconstruct the
+// junk ones one tap at a time (wears always survive).
+function openIncompleteLooksSheet() {
+  const list = outfits.filter(outfitIncomplete);
+  const rows = list.map(o => {
+    const cats = [...new Set(outfitItems(o).map(i => i.subcategory || i.category || "?"))].join(" + ");
+    const n = outfitWornCount(o);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line)">
+      <button data-il-open="${esc(o.id)}" style="width:56px;flex:none">${outfitCollageHtml(o, 4)}</button>
+      <button data-il-open="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
+        <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(cats)} · ${n} wear${n === 1 ? "" : "s"}</div>
+      </button>
+      <button class="cap-chip" data-il-decon="${esc(o.id)}" style="flex:none;color:var(--danger)">Deconstruct</button>
+    </div>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="ilClose">Done</button>
+      <h2>Incomplete looks</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="muted" style="font-size:12.5px;padding:4px 18px 8px">No dress and no top+bottom pair — probably import strays. Deconstructing keeps every wear as the individual pieces.</div>
+    ${rows || `<div class="center muted" style="padding:28px 16px">🎉 None left.</div>`}
+    <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#ilClose").onclick = () => {
+    hideSheet("logSheet");
+    if ($(".screen.active")?.id === "tab-settings") { renderSettings(); runDataHealthCheck(); }
+  };
+  $("#logInner").querySelectorAll("[data-il-open]").forEach(b => {
+    b.onclick = () => { hideSheet("logSheet"); openLookFrom(b.dataset.ilOpen); };
+  });
+  $("#logInner").querySelectorAll("[data-il-decon]").forEach(b => {
+    b.onclick = async () => {
+      const o = outfitById.get(b.dataset.ilDecon);
+      if (!o) return;
+      if (!confirm(`Deconstruct "${outfitName(o)}"? Its wears stay as the individual pieces.`)) return;
+      b.disabled = true;
+      try { await deconstructLookCore(o.id); toast("Deconstructed — wears kept"); openIncompleteLooksSheet(); }
+      catch (e) { toast(e.message); b.disabled = false; }
+    };
+  });
 }
 
 // "Not really a look" escape hatch (2026-07-19, user request): every wear of
@@ -12456,6 +12554,11 @@ function runDataHealthCheck() {
   const soloLooks = outfits.filter(o => (outfitItemMap.get(o.id) || []).filter(id => itemById.has(id)).length === 1);
   checks.push({ label: "One-piece looks (fix keeps their wears as solo wears)", rows: soloLooks,
     fix: async () => { for (const o of soloLooks) await deconstructLookCore(o.id); } });
+  // Incomplete looks (no dress, no top+bottom; shoes never required) get a
+  // REVIEW list, not a blanket fix — some pairings may be hers on purpose.
+  const incomplete = outfits.filter(outfitIncomplete);
+  checks.push({ label: "Incomplete looks (no dress, no top+bottom pair)", rows: incomplete,
+    review: openIncompleteLooksSheet });
   // Report-only (could be intentional):
   const emptyLooks = outfits.filter(o => !(outfitItemMap.get(o.id) || []).some(id => itemById.has(id)));
   checks.push({ label: "Looks with no pieces (report only)", rows: emptyLooks });
@@ -12475,8 +12578,12 @@ function runDataHealthCheck() {
     <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:13.5px">
       <span style="flex:1">${esc(c.label)}</span>
       <b>${c.rows.length}</b>
-      ${c.fix ? `<button class="lnk" data-health-fix="${i}" style="color:var(--accent);font-weight:700">Fix</button>` : ""}
+      ${c.fix ? `<button class="lnk" data-health-fix="${i}" style="color:var(--accent);font-weight:700">Fix</button>`
+        : c.review ? `<button class="lnk" data-health-review="${i}" style="color:var(--accent);font-weight:700">Review →</button>` : ""}
     </div>`).join("");
+  out.querySelectorAll("[data-health-review]").forEach(b => {
+    b.onclick = () => broken[+b.dataset.healthReview].review();
+  });
   out.querySelectorAll("[data-health-fix]").forEach(b => {
     b.onclick = async () => {
       const c = broken[+b.dataset.healthFix];
