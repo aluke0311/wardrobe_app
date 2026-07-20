@@ -1027,6 +1027,14 @@ All screens are fully built. Per-release detail in `archive/CLAUDE_build_history
 
 ## Back-burner (not yet scheduled)
 
+- **Home attention-slot hierarchy** (proposed 2026-07-19, not picked): cap
+  stacked Home rows (trip > catch-up > laundry > backup) at ONE above the
+  fold, rest collapse to a quiet expandable line; unify the row components'
+  styling. Revisit if Home starts feeling naggy in real use.
+- **In-app confirm sheets** (proposed 2026-07-19, not picked): replace the
+  ~8 native confirm() calls with a styled confirm sheet in the app's design
+  language.
+
 - **Picker shell unification** (parked 2026-07-18): the flat pickers already
   share their data layer (pickerPoolBase/pickerCatBar/pickerGridHtml/
   togglePick); the remaining duplication is thin render shells + wiring

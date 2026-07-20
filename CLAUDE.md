@@ -125,6 +125,22 @@ fades (`.ph-fade`/`.ph-in`); `_shownPhotos` Set skips the fade on re-renders
 (app + all fixed chrome capped at 640px), login email prefill
 (`wardrobe.lastEmail`), `prefers-reduced-motion` guard.
 
+**Usability batch 2026-07-19 r5+r6 (from the "how would you improve
+usability/professionalism now" review; user picked 3/4/5/6+keyboard+finder,
+PARKED Home attention-slot hierarchy + in-app confirm sheets — see
+Back-burner):** r5 ① `outfitIncomplete(o)` (no dress/swimsuit AND no
+top+bottom; shoes NEVER required — "no shoes = worn at home" is her rule;
+workout subcats count as top/bottom) + health-check "Incomplete looks" row →
+`openIncompleteLooksSheet` review list with per-look deconstruct.
+② zero-state door: level-starved capsule suggestions render
+`suggestLevelDoorHtml` — up to 8 closet pieces covering the level with
+one-tap add-to-capsule then re-roll. r6 ③ `WHATS_NEW` const (deploy skill
+refreshes it with APP_VERSION) + `maybeShowWhatsNew()` in bootApp (first run
+of a new version toasts the changelog; `wardrobe.seenVersion`).
+④ `api()` network-failure copy is honest about data ("You're offline — that
+didn't save"). ⑤ `.cb-x`/`.laun-ok` get ::after hit-area expansion (~44px).
+⑥ review-card price input `inputmode=decimal`. Selftest 31/31.
+
 **Fix pack 2026-07-19 r4 (user-reported, same day):** ① one-piece looks are
 outlawed — `createLookFromItems` guards <2 (saveBuilder already did); existing
 strays surface in the data health check with a bulk fix that DECONSTRUCTS them
