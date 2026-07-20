@@ -27,6 +27,14 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
    phantom "Update available" toast (or never see a real one). One value, two
    places, always in lockstep.
 
+   **Also refresh `WHATS_NEW`** (the const right under `APP_VERSION`, added
+   2026-07-19): replace its bullets with 2–4 plain-language, user-facing lines
+   describing what THIS deploy (or deploy batch) changes — it powers the
+   one-time "What's new" toast after each update. Skip only for deploys with
+   zero user-visible change (then leave the old bullets; the toast still
+   shows once per version, so stale bullets are worse than repeated ones —
+   when in doubt, update).
+
 2. **Stage and commit** with a clear, specific message describing what changed
    (not "update index.html"). End the commit body with the standard
    `Co-Authored-By: Claude <model> <noreply@anthropic.com>` trailer for the
