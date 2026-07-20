@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-19 r7">
+<meta name="app-version" content="2026-07-20 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,14 +1185,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-19 r7";
+const APP_VERSION = "2026-07-20 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "The hamper is back in trip mode — closet row + hamper page now show the suitcase's dirty pieces",
-  "⃠ on a suggested piece hides it for the session; formality level is strict, with packing fixes when a capsule can't cover it",
-  "Deconstruct look + finders for one-piece and incomplete looks in the data health check",
-  "New in Stats: Closet vs Life gap page and Year in Review",
+  "🏋️ Workout mode in the suggester — builds run/hike/lift outfits from pieces you tag as gear (tap the chip to start tagging)",
+  "Rain gear only gets suggested on wet days; workout gear never leaks into normal days",
+  "Formality level 1 is now called Utility (was Function)",
+  "Incomplete-looks review has a one-tap Deconstruct-all button",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -1218,11 +1218,11 @@ const colorHex = (name) => (COLOR_FAMILIES.find(c => c[0] === name) || [])[1] ||
 
 // Formality scale 1-8. Each level = a y/n "could I wear this here?" context.
 const OCCASION_LADDER = [
-  "Function", "Very Casual", "Casual", "Polished Casual",
+  "Utility", "Very Casual", "Casual", "Polished Casual",
   "Smart Casual", "Dressed Up", "Business Professional", "Formal",
 ];
 const OCCASION_HINTS = [
-  "workout, hiking, rain", "home, errands", "chorus rehearsal, casual lunch",
+  "workout gear, gardening, grubby chores", "home, errands", "chorus rehearsal, casual lunch",
   "date nights, matinees, parties", "normal work day",
   "cocktail parties, weddings, evening events", "interviews, conferences", "black tie",
 ];
@@ -3527,6 +3527,16 @@ function openItemDetails(id) {
           <span class="det-lbl" style="flex:1;min-width:0">Use as a layer<span class="det-sub" style="display:block">e.g. an open button-up over a tee</span></span>
           <span class="tgl${isLayer(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
         </button>` : ""}
+        <div class="det-divider"></div>
+        <button class="det-row" id="detWorkoutGear" style="width:100%;text-align:left">
+          <span class="det-lbl" style="flex:1;min-width:0">Workout gear<span class="det-sub" style="display:block">suggestible for runs, lifts, hikes…</span></span>
+          <span class="tgl${isWorkoutGear(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
+        </button>
+        <div class="det-divider"></div>
+        <button class="det-row" id="detRainGear" style="width:100%;text-align:left">
+          <span class="det-lbl" style="flex:1;min-width:0">Rain gear<span class="det-sub" style="display:block">only suggested on wet days</span></span>
+          <span class="tgl${isRainGear(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
+        </button>
       </div>
 
     </div>
@@ -3557,6 +3567,20 @@ function openItemDetails(id) {
     const next = !isLayer(i);
     e.currentTarget.querySelector(".tgl")?.classList.toggle("on", next);  // instant feedback
     await setLayer(i.id, next);
+    openItemDetails(i.id);
+  };
+
+  $("#detWorkoutGear").onclick = async (e) => {
+    const next = !isWorkoutGear(i);
+    e.currentTarget.querySelector(".tgl")?.classList.toggle("on", next);  // instant feedback
+    await setWorkoutGear(i.id, next);
+    openItemDetails(i.id);
+  };
+
+  $("#detRainGear").onclick = async (e) => {
+    const next = !isRainGear(i);
+    e.currentTarget.querySelector(".tgl")?.classList.toggle("on", next);  // instant feedback
+    await setRainGear(i.id, next);
     openItemDetails(i.id);
   };
 
@@ -4797,7 +4821,7 @@ const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phon
 
 // Formality folders — one per level on the 1-8 scale.
 const FORMALITY_BUCKETS = [
-  { key: "function", label: "Function"             },  // 1
+  { key: "function", label: "Utility"              },  // 1 (stored key stays "function")
   { key: "vcasual",  label: "Very Casual"           },  // 2
   { key: "casual",   label: "Casual"                },  // 3
   { key: "pcasual",  label: "Polished Casual"       },  // 4
@@ -5406,8 +5430,16 @@ function isExcluded(a, b) { return _excludeSet.has([a, b].sort().join(":")); }
 // Sentinel tags stored in items.tags (no schema change needed).
 const NO_SUGGEST_TAG = "no-suggest";
 const LAYER_TAG = "layer";  // a top that doubles as a layer (e.g. a button-up over a tee)
+// Gear tags (Round A "Tomorrow", 2026-07-20). gear:workout = eligible for the
+// suggester's Workout activity mode (run/lift/yoga/bike/hike share one pool).
+// gear:rain = weather-conditional: in NORMAL suggestions only when wet.
+// Exclusion from normal days comes from formality [1]-only, never from the tag.
+const GEAR_WORKOUT_TAG = "gear:workout";
+const GEAR_RAIN_TAG = "gear:rain";
 function isNoSuggest(i) { return !!i && (i.tags || []).includes(NO_SUGGEST_TAG); }
 function isLayer(i) { return !!i && (i.tags || []).includes(LAYER_TAG); }
+function isWorkoutGear(i) { return !!i && (i.tags || []).includes(GEAR_WORKOUT_TAG); }
+function isRainGear(i) { return !!i && (i.tags || []).includes(GEAR_RAIN_TAG); }
 async function setItemTag(id, tag, on) {
   const i = itemById.get(id); if (!i) return;
   const tags = (i.tags || []).filter(t => t !== tag);
@@ -5419,10 +5451,18 @@ async function setItemTag(id, tag, on) {
 }
 async function setNoSuggest(id, on) { return setItemTag(id, NO_SUGGEST_TAG, on); }
 async function setLayer(id, on) { return setItemTag(id, LAYER_TAG, on); }
+async function setWorkoutGear(id, on) { return setItemTag(id, GEAR_WORKOUT_TAG, on); }
+async function setRainGear(id, on) { return setItemTag(id, GEAR_RAIN_TAG, on); }
 
 // Slot a piece falls into for suggestions. Cardigans dress like outerwear,
-// so they never fill the "shirt" slot.
-function suggestSlot(i) { return i.subcategory === "Cardigans" ? "Outerwear" : i.category; }
+// so they never fill the "shirt" slot. Workout subcats map to real slots for
+// activity mode (normal mode excludes the whole category up front); bras and
+// swimwear are never suggested (null slot — user decision 2026-07-20).
+const WORKOUT_SLOTS = { "Workout tops": "Tops", "Active shorts": "Bottoms", "Sports bras": null, "Swimwear": null };
+function suggestSlot(i) {
+  if (i.category === "Workout") return WORKOUT_SLOTS[i.subcategory] ?? null;
+  return i.subcategory === "Cardigans" ? "Outerwear" : i.category;
+}
 
 const NEUTRAL_COLORS = new Set(["White","Gray","Black","Beige","Brown","Metallic"]);
 
@@ -5490,10 +5530,12 @@ function scoreCombo(its, target, season = null, wx = null) {
     } else if (heavyTop && its.some(i => i.category === "Outerwear")) {
       s -= 2;  // mild day: don't stack outerwear over a sweater
     }
-    // precipitation: closed shoes over open ones (category-level only)
+    // precipitation: closed shoes over open ones (category-level only), and
+    // rain gear earns its place (it's pool-gated to wet days in normal mode)
     if (wmoIsWet(wx.code)) {
       if (its.some(i => i.subcategory === "Sandals")) s -= 2;
       if (its.some(i => i.subcategory === "Boots")) s += 1.5;
+      if (its.some(isRainGear)) s += 2;
     }
   } else if (season) {
     if (season === "Summer") { if (hasLayer && !dressy) s -= 3; }
@@ -5524,9 +5566,21 @@ function scoreCombo(its, target, season = null, wx = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   let avail = base.filter(i => i.image_path && !isNoSuggest(i));
+  if (activity === "workout") {
+    // Activity mode (Round A): pool = tagged gear only; formality is moot
+    // (the tag IS the cohesion), so callers pass targetLevel null.
+    avail = avail.filter(isWorkoutGear);
+  } else {
+    // Normal mode: the Workout category never suggests (pre-Round-A behavior,
+    // now explicit since WORKOUT_SLOTS gives those items real slots), and rain
+    // gear only exists when the day is actually wet (locked/seed exempt by
+    // construction — locked pins its slot, the seed is unshifted post-filter).
+    avail = avail.filter(i => i.category !== "Workout");
+    if (!(wx && wmoIsWet(wx.code))) avail = avail.filter(i => !isRainGear(i));
+  }
   // Laundry: hamper items sit out. Locked pieces bypass via the pinned-slot path
   // and the seed is unshifted after filtering, so both are exempt by construction.
   // Items dirty LAUNDRY_RESUGGEST_DAYS+ re-enter (badged) so an unanswered
@@ -5576,8 +5630,9 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   const outerwear = slot("Outerwear");
 
   const exFree = its => !its.some((a, i) => its.some((b, j) => i < j && isExcluded(a.id, b.id)));
-  // Pure-function items (set = [1] only) must never mix with non-function items.
-  const formalityOk = its => {
+  // Pure-utility items (set = [1] only) must never mix with non-utility items.
+  // Activity mode skips the check: the gear tag is the cohesion signal there.
+  const formalityOk = activity ? () => true : its => {
     const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
     const hasFunc = its.some(isPureFunc);
     return !hasFunc || its.every(p => (itemFormalitySet(p) || []).includes(1));
@@ -5722,7 +5777,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set() };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), activity: null };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
@@ -5767,12 +5822,13 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
   _sugg.useClean = true;
+  _sugg.activity = null;
   // Weather: plan days use the trip's per-day forecast; otherwise home weather
   // (cached per day). If it isn't in memory yet, fetch and fold it in once.
   _sugg.wx = planCtx
     ? (_planWx[planCtx.date] || null)
     : (_homeWx.date === todayStr() ? _homeWx.wx : null);
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean());
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity);
   renderSuggestSheet();
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -5781,7 +5837,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean());
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity);
     }
     renderSuggestSheet();
   });
@@ -5795,6 +5851,14 @@ function _suggPool() {
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
     : items.filter(i => itemStatus(i) === "Available");
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
+  // Activity/gear filtering lives HERE so swap/+Layer/ban candidates see the
+  // same pool as the engine (which re-applies the same rules — harmless).
+  if (_sugg.activity === "workout") pool = pool.filter(isWorkoutGear);
+  else {
+    pool = pool.filter(i => i.category !== "Workout");
+    const wx = _suggWx();
+    if (!(wx && wmoIsWet(wx.code))) pool = pool.filter(i => !isRainGear(i));
+  }
   return pool;
 }
 
@@ -5830,6 +5894,10 @@ function suggestStarvationNote() {
   }
   if (_sugg.banned && _sugg.banned.size) bits.push(`${_sugg.banned.size} set aside`);
   if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
+  if (_sugg.activity === "workout") {
+    const gear = eligible.filter(isWorkoutGear).length;
+    bits.push(`${gear} piece${gear === 1 ? "" : "s"} tagged as workout gear`);
+  }
   if (!bits.length) return "";
   return `<div class="center muted" style="font-size:12px;padding:4px 12px 0">Pool is tight — ${esc(bits.join(" · "))}</div>`;
 }
@@ -5851,6 +5919,76 @@ function suggestLevelDoorHtml() {
       <button class="cap-chip" data-sgdoor-add="${esc(i.id)}" style="width:100%;font-size:11px;justify-content:center;margin-top:2px">＋ Add</button>
     </div>`).join("")}</div>
   </div>`;
+}
+
+// Zero-state door for activity mode (Round A): an untagged closet isn't a dead
+// end — offer the one-time gear-tagging pass right where the emptiness shows.
+function suggestGearDoorHtml() {
+  if (_sugg.activity !== "workout" || (_sugg.results && _sugg.results.length)) return "";
+  return `<div class="center" style="padding:8px 0">
+    <div class="center muted" style="font-size:12.5px;margin-bottom:8px">Workout outfits come from pieces tagged as gear.</div>
+    <button class="btn btn-sec" data-sggear>🏋️ Tag your workout gear</button>
+  </div>`;
+}
+
+// Gear-only = formality becomes Utility-only ([1]) so the existing isolation
+// rule keeps the item off normal days. Toggling off clears to null (imputed).
+async function setGearOnlyFormality(id, on) {
+  const i = itemById.get(id); if (!i) return;
+  i.formality = on ? [1] : null;  // optimistic
+  outfits.forEach(o => { o._bucket = null; });  // looks re-derive their bucket
+  try {
+    await rest(`/items?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ formality: i.formality }) });
+  } catch (e) { toast(e.message); }
+}
+const isGearOnly = i => !!i && Array.isArray(i.formality) && i.formality.length === 1 && i.formality[0] === 1;
+
+// One-time(ish) gear-tagging pass, rendered into the open suggestion sheet.
+// Candidates: the whole Workout category + the subcats gear hides in, plus
+// anything already tagged (so un-tagging is always possible here too).
+const GEAR_CAND_SUBCATS = new Set(["Sneakers", "Boots", "Jackets", "Coats", "Leggings/Joggers", "Sweatshirts"]);
+function openGearTagSheet() {
+  const cands = items.filter(i => itemStatus(i) === "Available" &&
+      (i.category === "Workout" || GEAR_CAND_SUBCATS.has(i.subcategory) || isWorkoutGear(i) || isRainGear(i)))
+    .sort((a, b) => `${a.category}|${a.subcategory}|${a.name || ""}`.localeCompare(`${b.category}|${b.subcategory}|${b.name || ""}`));
+  const rows = cands.map(i => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)">
+      <div style="width:44px;height:44px;flex:none">${thumbHtml(i.image_path)}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(i.name || "Untitled")}</div>
+        <div style="font-size:11px;color:var(--muted)">${esc(i.subcategory || i.category)}</div>
+      </div>
+      <button class="cap-chip${isWorkoutGear(i) ? " on" : ""}" data-gw="${esc(i.id)}" style="font-size:12px" title="Workout gear">🏋️</button>
+      <button class="cap-chip${isRainGear(i) ? " on" : ""}" data-gr="${esc(i.id)}" style="font-size:12px" title="Rain gear">🌧</button>
+      <button class="cap-chip${isGearOnly(i) ? " on" : ""}" data-go="${esc(i.id)}" style="font-size:11px" title="Sets formality to Utility-only — never suggested for normal days">Gear-only</button>
+    </div>`).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="gearDone">Done</button>
+      <h2>Tag your gear</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div style="padding:0 16px 8px;font-size:12px;color:var(--muted);line-height:1.5">🏋️ suggests it for workouts · 🌧 only on wet days · <b>Gear-only</b> keeps it OFF normal days (formality → Utility)</div>
+    <div style="padding:0 16px 16px;max-height:60vh;overflow-y:auto">${rows || `<div class="center muted" style="padding:24px 0">Nothing to tag</div>`}</div>`;
+  hydratePhotos($("#logInner"));
+  $("#gearDone").onclick = () => {
+    _sugg.idx = 0;
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
+    renderSuggestSheet();
+  };
+  const flip = (b, on) => b.classList.toggle("on", on);
+  $("#logInner").querySelectorAll("[data-gw]").forEach(b => b.onclick = () => {
+    const i = itemById.get(b.dataset.gw); const next = !isWorkoutGear(i);
+    flip(b, next); setWorkoutGear(i.id, next);
+  });
+  $("#logInner").querySelectorAll("[data-gr]").forEach(b => b.onclick = () => {
+    const i = itemById.get(b.dataset.gr); const next = !isRainGear(i);
+    flip(b, next); setRainGear(i.id, next);
+  });
+  $("#logInner").querySelectorAll("[data-go]").forEach(b => b.onclick = () => {
+    const i = itemById.get(b.dataset.go); const next = !isGearOnly(i);
+    flip(b, next); setGearOnlyFormality(i.id, next);
+  });
 }
 
 // Friendly slot name for the swap chips.
@@ -5888,7 +6026,7 @@ function swapSuggestionPiece(pieceId) {
     // hard, matching the engine (2026-07-19) — no silent level fallback
     cands = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
   }
-  cands = cands.filter(i => {
+  if (!_sugg.activity) cands = cands.filter(i => {  // activity mode: tag = cohesion
     const test = [...others, i];
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
@@ -5939,7 +6077,7 @@ function banSuggestionPiece(pieceId) {
       return renderSuggestSheet();
     }
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
     renderSuggestSheet();
   }
 }
@@ -5961,7 +6099,7 @@ function addSuggestionLayer() {
     // hard, matching the engine (2026-07-19) — no silent level fallback
     cands = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
   }
-  cands = cands.filter(i => {
+  if (!_sugg.activity) cands = cands.filter(i => {  // activity mode: tag = cohesion
     const test = [...combo.pieces, i];
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
@@ -6028,9 +6166,11 @@ function renderSuggestSheet() {
   const total = res.length;
 
   const levelChips = OCCASION_LADDER.map((lbl, i) => {
-    const lvl = i + 1, on = _sugg.targetLevel === lvl;
+    const lvl = i + 1, on = !_sugg.activity && _sugg.targetLevel === lvl;
     return `<button class="cap-chip${on ? " on" : ""}" data-slvl="${lvl}" style="font-size:13px;text-align:left">${lvl}. ${esc(lbl)}</button>`;
-  }).join("");
+  }).join("")
+    // Activity mode (Round A): gear-pool outfits, orthogonal to formality.
+    + `<button class="cap-chip${_sugg.activity === "workout" ? " on" : ""}" data-sact="workout" style="font-size:13px" title="Runs, lifts, hikes — tagged gear only">🏋️ Workout</button>`;
 
   let preview = "";
   if (combo) {
@@ -6118,6 +6258,7 @@ function renderSuggestSheet() {
       ${nav}
       ${suggestStarvationNote()}
       ${suggestLevelDoorHtml()}
+      ${suggestGearDoorHtml()}
     </div>
     ${combo ? `
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
@@ -6132,7 +6273,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
     renderSuggestSheet();
   };
 
@@ -6141,6 +6282,19 @@ function renderSuggestSheet() {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
       _sugg.activeContext = null; // manual formality pick supersedes a context chip
+      _sugg.activity = null;      // …and exits activity mode
+      regen();
+    };
+  });
+
+  // Activity chip: mutually exclusive with formality/context asks. Locks and
+  // bans don't survive the mode flip — the pools don't overlap.
+  $("#logInner").querySelectorAll("[data-sact]").forEach(b => {
+    b.onclick = () => {
+      _sugg.activity = _sugg.activity === b.dataset.sact ? null : b.dataset.sact;
+      _sugg.targetLevel = null;
+      _sugg.activeContext = null;
+      _sugg.locked = new Set();
       regen();
     };
   });
@@ -6154,6 +6308,7 @@ function renderSuggestSheet() {
         const lvl = contextFormalityLevel(c);
         if (lvl) _sugg.targetLevel = lvl;
       }
+      _sugg.activity = null;
       regen();
     };
   });
@@ -6170,6 +6325,9 @@ function renderSuggestSheet() {
 
   const cleanBtn = $("#logInner").querySelector("[data-sclean]");
   if (cleanBtn) cleanBtn.onclick = () => { _sugg.useClean = !_suggClean(); regen(); };
+
+  const gearBtn = $("#logInner").querySelector("[data-sggear]");
+  if (gearBtn) gearBtn.onclick = () => openGearTagSheet();
 
   $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
@@ -6328,7 +6486,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -6409,7 +6567,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean());
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
@@ -6930,6 +7088,7 @@ function openIncompleteLooksSheet() {
       <span style="width:54px"></span>
     </div>
     <div class="muted" style="font-size:12.5px;padding:4px 18px 8px">No dress and no top+bottom pair — probably import strays. Deconstructing keeps every wear as the individual pieces.</div>
+    ${list.length > 1 ? `<div style="padding:0 16px 8px"><button class="btn btn-sec" id="ilDeconAll" style="width:100%;color:var(--danger)">Deconstruct all ${list.length}</button></div>` : ""}
     ${rows || `<div class="center muted" style="padding:28px 16px">🎉 None left.</div>`}
     <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
   showSheet("logSheet");
@@ -6951,6 +7110,22 @@ function openIncompleteLooksSheet() {
       catch (e) { toast(e.message); b.disabled = false; }
     };
   });
+
+  // Bulk escape hatch (user request 2026-07-20): clear the whole list at once.
+  const allBtn = $("#ilDeconAll");
+  if (allBtn) allBtn.onclick = async () => {
+    if (!confirm(`Deconstruct all ${list.length} incomplete looks? Every wear stays in your history as the individual pieces — only the groupings are removed.`)) return;
+    allBtn.disabled = true;
+    allBtn.textContent = "Deconstructing…";
+    let done = 0;
+    try {
+      for (const o of list) { await deconstructLookCore(o.id); done++; }
+      toast(`${done} look${done === 1 ? "" : "s"} deconstructed — wears kept`);
+    } catch (e) {
+      toast(`${e.message} — ${done} of ${list.length} done`);
+    }
+    openIncompleteLooksSheet();
+  };
 }
 
 // "Not really a look" escape hatch (2026-07-19, user request): every wear of

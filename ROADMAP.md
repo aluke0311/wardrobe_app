@@ -3,7 +3,102 @@
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
 > Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
 > Current version: **2026-07-19 r3** ("Loop Resilience + Payoff" round —
-> SHIPPED 2026-07-18→19). Nothing scheduled — see Back-burner.
+> SHIPPED 2026-07-18→19). ▶ NEXT UP: Round A "Tomorrow" (below).
+
+---
+
+## ▶ PLANNED BUILD — Round A "Tomorrow" (planning + prediction + activity gear)
+### Planned 2026-07-20 from the two-list feature brainstorm. Decisions LOCKED — do not re-litigate.
+
+**Thesis:** the app answers "what did I wear" and "what could I wear right now";
+this round makes it answer "what will I wear" — future-day contexts, per-day
+outfit plans, a Tomorrow card on Home, and an activity/gear rework so planned
+workout days can actually generate outfits.
+
+**Migration gate:** `migration/kv_store.sql` (new `kv` table: `user_id, key,
+value jsonb`, PK (user_id,key), RLS own_rows) must be CONFIRMED RUN (anon-key
+REST probe) before any UI that writes `kv` deploys. Steps ①② below don't touch
+`kv` and may build+deploy first.
+
+**Locked decisions (user, 2026-07-20):**
+- **One activity: Workout** (`gear:workout` in `items.tags`, sentinel-tag
+  pattern like `layer`). Run/lift/yoga/bike/hike all share it — no per-sport
+  tags (refine later only if real use demands). **No swim activity**: swimwear
+  is a grab, not an outfit; keep Swimwear gear-only so it never suggests.
+- **Sports bras + Swimwear are never suggested** (map to no slot).
+- **Rain is a condition, not an activity**: `gear:rain` items are eligible in
+  NORMAL suggestions only when the active weather is wet (`wmoIsWet`), boosted
+  when wet, absent when dry (locked/seeded exempt, as ever).
+- **Rename level 1 "Function" → "Utility"** everywhere user-visible
+  (`OCCASION_LADDER`, `OCCASION_HINTS`, any copy). Mechanics unchanged:
+  `[1]`-only formality still means gear-only isolation (`formalityOk`).
+- **Gear-leak guarantee comes from formality, not the tag**: bootstrap pass
+  marks true gear as formality `[1]`-only (existing isolation excludes it from
+  normal mode); `gear:workout` is the INCLUSION signal for activity mode.
+  Dual-use pieces (casual-wearable leggings) = tag + normal levels → both worlds.
+- **Day plan = ordered ENTRIES**: each `{contexts:[...], look}` where look is
+  an outfit id, a raw item-id combo, or null (contexts set, outfit TBD). One
+  outfit across contexts = one entry with several contexts; an outfit change =
+  several entries. Logging an entry stamps ALL its contexts on the wear rows
+  (`wears.context` is already text[] — no write-path change).
+- **Multi-context formality = intersection** of the contexts'
+  `contextFormalityLevel` ranges; if empty, planner shows a "these don't share
+  a formality level — split into two outfits?" note instead of generating.
+- **Activity contexts**: an entry whose context is the Workout-mapped context
+  runs the suggester in activity mode, not formality mode.
+- **Tomorrow card is visible ALL DAY** (her call — not a 5pm flip). Today's
+  planned entries surface in the existing log-cta slot with one-tap "Wear it".
+- Cluster-7 rejections recorded (no item notes surfacing, no persistent ban
+  log, no A/B) — out of scope forever unless she reopens.
+
+**Spec by piece:**
+1. **Gear tags + rename (no migration).** Constants `GEAR_WORKOUT_TAG`/
+   `GEAR_RAIN_TAG`; helpers `isWorkoutGear(i)`/`isRainGear(i)` via existing
+   tag machinery (`setItemTag`). Item-detail SUGGESTIONS card gains "Workout
+   gear" + "Rain gear" toggles (shown for all categories — gear crosses
+   categories); Add Item gets the same row for Workout/Shoes/Outerwear/
+   Leggings. Rename Function→Utility.
+2. **Suggester activity mode + rain gating.** `_sugg.activity` (null |
+   "workout"); a 🏋️ Workout chip beside the formality chips. Active: pool =
+   `gear:workout` items; slot map: Workout tops→Top, Active shorts→Bottom,
+   tagged Leggings/Joggers→Bottom, tagged Sneakers/Boots→Shoes, tagged
+   Sweatshirts/Jackets→optional layer; bras/swim → no slot; `formalityOk`
+   bypassed (tag = cohesion); weather scoring kept (cold → boost layer).
+   Normal mode: rain-gated `gear:rain` filter. Zero-state door when no gear
+   tagged → **bootstrap sheet**: review-deal-style pass over Workout category
+   ∪ Sneakers/Boots/Jackets/Coats/Leggings (toggles: Workout gear / Rain gear
+   / "Gear only — never normal days" which sets formality [1]). Also
+   reachable from Settings.
+3. **kv plumbing + day-plan model (AFTER migration confirmed).** `kvGet/kvSet`
+   over REST (upsert on conflict); `dayplan` key holds
+   `{ "<date>": [ {contexts:[...], outfit_id|items|null} ] }` pruned to
+   past 7d + future 30d on write. Loaded in `loadData`, cached like other
+   state, included in `saveDataSnapshot`.
+4. **Week planner screen** (Home tile "Plan ahead" area — placement judged in
+   build): next-7-days cards reusing trip-planner UI patterns; per entry: set
+   context(s) (context picker), attach look via Pick (saved-look picker) /
+   ✨ Suggest (suggester pre-scoped to entry contexts' intersected level or
+   activity mode) / ✎ Build; 🧺 laundry sentinel honored. Trip-mode days show
+   "planned in trip" and defer to `capsules.plan` — never double-plan.
+5. **Tomorrow card on Home** (all-day): tomorrow's entries; look-TBD entries
+   render a generated suggestion from tomorrow's forecast (extend
+   `loadHomeWeather` to read tomorrow from the SAME single Open-Meteo call) +
+   entry contexts + clean-only. Muted receipts line per generated outfit
+   ("72° · Campus · all clean"). Today's entries → log-cta slot: "Wear it"
+   creates wears (all contexts, derived formality, plan-sync semantics like
+   `planWoreIt`), Undo parity, post-log sheet pre-seeded.
+6. **Style twins row** on the Tomorrow card: most recent past day matching
+   temp band (±8°F, month-bucketed approximation where no cached wx) + any
+   shared context → mini collage, tap → that calendar day.
+7. **Selftest additions** (`migration/selftest.html`): gear pool
+   inclusion/exclusion, rain gating wet/dry, bras/swim never slotted,
+   formality-intersection (incl. empty), dayplan prune, Utility rename
+   lockstep. Run 38/38 (or current N) before every deploy.
+
+**Build+deploy order (fable-first, one deploy per step):** ① tags+rename →
+② activity mode+rain+bootstrap → [user runs kv migration] → ③ kv+model →
+④ planner screen → ⑤ Tomorrow card+today Wear-it → ⑥ style twins →
+⑦ selftest sweep + close-out.
 
 ---
 
