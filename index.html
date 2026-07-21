@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r4">
+<meta name="app-version" content="2026-07-21 r5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,13 +1185,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r4";
+const APP_VERSION = "2026-07-21 r5";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "\u2728 FORMULAS: a new Looks lens showing the outfit shapes you actually rebuild (\u201cSweaters + Jeans + Boots\u201d), found in your own wear history",
-  "Open a formula and tap \u2728 New outfit from this formula \u2014 the suggester fills that exact shape with different pieces",
-  "The Tomorrow card now works on trips too; layer-lock fixes",
+  "Tomorrow's suggested outfit now STAYS put \u2014 it survives refreshes until you tap \u21bb to re-roll it",
+  "Tap tomorrow's outfit to open and revise it (swap, lock, set aside) \u2014 your changes stick",
+  "Looks now show how many times you've worn them",
+  "New \u201cHome\u201d formality for looks with no shoes \u2014 it overrides the usual level",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2475,14 +2476,46 @@ function tripOfferHtml() {
 
 // One generated outfit per context-only entry, cached per render-day so
 // re-renders never re-roll it out from under her (predictability).
-let _tmCombo = { key: null, pieces: null };
-function tomorrowGenPieces(date, entry, pool = null) {
+// A generated pick is STICKY: once she's seen it, it survives refreshes,
+// re-renders and weather updates until she re-rolls it (2026-07-21 — "I saw
+// one I liked and now it's gone"). Stored in kv, today-and-future only.
+const TM_PICK_KEY = "tmpick";
+function tmPickAll() { const v = kvData.get(TM_PICK_KEY); return v && typeof v === "object" ? v : {}; }
+function tmPickGet(date, idx) {
+  const ids = (tmPickAll()[date] || {})[String(idx)];
+  if (!Array.isArray(ids)) return null;
+  const pieces = ids.map(id => itemById.get(id)).filter(Boolean);
+  return pieces.length >= 2 ? pieces : null;   // a deleted piece invalidates it
+}
+function tmPickSet(date, idx, pieces) {
+  const all = JSON.parse(JSON.stringify(tmPickAll()));
+  const today = todayStr();
+  for (const d of Object.keys(all)) if (d < today) delete all[d];
+  (all[date] = all[date] || {})[String(idx)] = pieces.map(p => p.id);
+  kvSet(TM_PICK_KEY, all);   // fire-and-forget; kvData updates synchronously
+}
+function tomorrowGenPieces(date, entry, pool = null, idx = 0, force = false) {
+  if (!force) { const saved = tmPickGet(date, idx); if (saved) return saved; }
   const act = entryActivity(entry.contexts);
-  const key = `${date}|${(entry.contexts || []).join(",")}|${_dpWx(date) ? "wx" : ""}|${act || ""}|${pool ? "cap" : ""}`;
-  if (_tmCombo.key === key) return _tmCombo.pieces;
   const res = suggestOutfits(act ? null : entrySuggestLevel(entry.contexts), null, pool, seasonOf(date), _dpWx(date), null, true, act);
-  _tmCombo = { key, pieces: res.length ? res[0].pieces : null };
-  return _tmCombo.pieces;
+  const pieces = res.length ? res[0].pieces : null;
+  if (pieces) tmPickSet(date, idx, pieces);
+  return pieces;
+}
+// Tap the pick to open it in the suggester with that exact combo in front —
+// swap/lock/ban it, and whatever it ends as is what the card keeps.
+function openTomorrowRevise(date, idx) {
+  const trip = _tmTripCtx(date);
+  const pieces = tmPickGet(date, idx);
+  if (trip) openSuggestSheet(null, trip.id, { capsuleId: trip.id, date });
+  else openSuggestSheet(null, null, _dpSuggestCtx(date, idx, (dayPlan(date)[idx] || {}).contexts));
+  _sugg.tmPick = { date, idx };
+  if (pieces) {
+    const k = comboKey(pieces);
+    _sugg.results = [{ pieces, score: 0 }, ..._sugg.results.filter(c => comboKey(c.pieces) !== k)];
+    _sugg.idx = 0;
+  }
+  renderSuggestSheet();
 }
 function _planThumbStrip(pieces) {
   return `<div style="display:flex;gap:6px;align-items:center">${pieces.map(p =>
@@ -2531,22 +2564,27 @@ function tomorrowCardHtml() {
           ${ctxs ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs)}</span>` : ""}
         </span>
       </button>`;
-      const pieces = tomorrowGenPieces(tm, e, pool);
+      const pieces = tomorrowGenPieces(tm, e, pool, idx);
       if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found${trip ? " in the suitcase" : ""}; tap ✨ to dig.</div>
         <div style="display:flex;gap:6px;padding:2px 0"><button class="cap-chip" data-tm-refine="${idx}">✨ Suggest</button></div>`;
       const why = [ctxs || (entrySuggestLevel(e.contexts) ? occLabel(entrySuggestLevel(e.contexts)) : ""),
                    trip ? "from the suitcase" : "clean picks"].filter(Boolean).join(" · ");
       return `<div style="padding:4px 0">
-        ${_planThumbStrip(pieces)}
-        <div style="display:flex;align-items:center;gap:8px;padding-top:4px">
+        <button data-tm-open="${idx}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>
+        <div style="display:flex;align-items:center;gap:8px;padding-top:6px">
           <span class="muted" style="font-size:12px;flex:1">${esc(why)}</span>
-          <button class="cap-chip" data-tm-keep="${idx}" style="font-size:12px" title="Save this as the plan">📌 Keep</button>
-          <button class="cap-chip" data-tm-refine="${idx}" style="font-size:12px">✨</button>
+          <button class="cap-chip" data-tm-keep="${idx}" style="font-size:12px" title="Save as a real look on the plan">📌 Keep</button>
+          <button class="cap-chip" data-tm-reroll="${idx}" style="font-size:12px" title="Try a different one">↻</button>
         </div>
       </div>`;
     }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
   }
-  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}</div>`;
+  // Plan-ahead lives INSIDE the card now — Home had too many stacked rows.
+  const foot = tripModeId ? "" :
+    `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
+      <button class="lnk" data-plan-ahead style="font-size:12.5px;color:var(--muted)">📅 Plan the week ›</button>
+    </div>`;
+  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}${foot}</div>`;
 }
 function todayPlanRowsHtml() {
   if (!dataReady || tripModeId) return "";
@@ -2561,13 +2599,6 @@ function todayPlanRowsHtml() {
       <span class="lr-plus">✓</span>
     </button>`;
   }).join("");
-}
-function planAheadRowHtml() {
-  if (!dataReady || tripModeId) return "";
-  const n = Object.entries(dayPlanAll()).filter(([d, v]) => d > todayStr() && (v || []).length).length;
-  return `<button class="logged-row" data-plan-ahead style="border:1px solid var(--line);background:var(--bg)">
-    <span class="lr-check">📅</span><span class="lr-text">Plan ahead${n ? ` · ${n} day${n === 1 ? "" : "s"} planned` : ""}</span><span class="lr-plus">＋</span>
-  </button>`;
 }
 function openWeekPlanSheet() {
   const today = todayStr();
@@ -2653,7 +2684,7 @@ function renderHome() {
       </button>`;
     }
   }
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${catchup}${laun}${bk}${planAheadRowHtml()}`;
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${catchup}${laun}${bk}`;
   hydratePhotos($("#homeBody"));
   // Round A planning wiring
   $("#homeBody").querySelectorAll("[data-tp-wear]").forEach(b => {
@@ -2677,11 +2708,22 @@ function renderHome() {
       openSuggestSheet(null, null, _dpSuggestCtx(tm, idx, (dayPlan(tm)[idx] || {}).contexts));
     };
   });
+  $("#homeBody").querySelectorAll("[data-tm-open]").forEach(b => {
+    b.onclick = () => openTomorrowRevise(shiftDate(todayStr(), 1), +b.dataset.tmOpen);
+  });
+  $("#homeBody").querySelectorAll("[data-tm-reroll]").forEach(b => {
+    b.onclick = () => {
+      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmReroll, trip = _tmTripCtx(tm);
+      const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
+      tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool, idx, true);  // force
+      renderHome();
+    };
+  });
   $("#homeBody").querySelectorAll("[data-tm-keep]").forEach(b => {
     b.onclick = async () => {
       const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmKeep, trip = _tmTripCtx(tm);
       const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
-      const pieces = tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool);
+      const pieces = tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool, idx);
       if (!pieces) return;
       b.disabled = true;
       try {
@@ -5231,6 +5273,10 @@ const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phon
 
 // Formality folders — one per level on the 1-8 scale.
 const FORMALITY_BUCKETS = [
+  // "home" is NOT a level on the 1-8 ladder — it's derived from the absence of
+  // shoes ("no shoes = worn at home", her rule) and supersedes the derived
+  // level. A manual formality_override still wins over it.
+  { key: "home",     label: "Home"                  },  // no shoes
   { key: "function", label: "Utility"              },  // 1 (stored key stays "function")
   { key: "vcasual",  label: "Very Casual"           },  // 2
   { key: "casual",   label: "Casual"                },  // 3
@@ -5243,6 +5289,7 @@ const FORMALITY_BUCKETS = [
 
 // Bucket key → target formality level.
 const BUCKET_RANGES = {
+  home: 2,  // at-home dressing behaves like Very Casual when a level is needed
   function: 1, vcasual: 2, casual: 3, pcasual: 4, smart: 5, dressy: 6, bizpro: 7, formal: 8,
 };
 
@@ -5554,6 +5601,8 @@ function outfitBucket(o) {
   if (o._bucket) return o._bucket;
   if (o.formality_override) { o._bucket = o.formality_override; return o._bucket; }
   const its = outfitItems(o);
+  // No shoes = worn at home (her rule) — supersedes the derived level.
+  if (its.length && !its.some(i => suggestSlot(i) === "Shoes")) { o._bucket = "home"; return "home"; }
   const KEYS = ["function","vcasual","casual","pcasual","smart","dressy","bizpro","formal"];
   const fs = i => itemFormalitySet(i) || [3];   // a piece's formality set (defaults to Casual)
   let level = 3;
@@ -5868,12 +5917,12 @@ function lensOutfitsSorted() {
 function outfitGridHtml(list) {
   if (!list.length) return emptyLooks();
   return `<div class="ogrid">${list.map(o => {
-    const n = outfitItems(o).length, lw = outfitLastWorn(o);
+    const n = outfitItems(o).length, lw = outfitLastWorn(o), w = outfitWornCount(o);
     return `<button class="otile" data-look="${esc(o.id)}">
       ${outfitCollageHtml(o, 4)}
       ${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}
       <div class="oname">${esc(outfitName(o))}</div>
-      <div class="ometa">${n} piece${n === 1 ? "" : "s"}${lw ? " · " + esc(relDate(lw)) : ""}</div>
+      <div class="ometa">${w ? `${w} wear${w === 1 ? "" : "s"}` : "never worn"} · ${n} piece${n === 1 ? "" : "s"}${lw ? " · " + esc(relDate(lw)) : ""}</div>
     </button>`;
   }).join("")}</div>`;
 }
@@ -6327,6 +6376,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.locked = new Set();
   _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
   _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
+  _sugg.tmPick = null;                // set only by openTomorrowRevise
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
@@ -6788,7 +6838,18 @@ function renderSuggestSheet() {
     </div>` : `
     <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>↻ Try again</button></div>`}`;
 
-  $("#sgClose").onclick = () => { hideSheet("logSheet"); };
+  $("#sgClose").onclick = () => {
+    // Opened from the Tomorrow card: whatever it ends as is what the card keeps.
+    if (_sugg.tmPick) {
+      const c = _sugg.results[_sugg.idx];
+      if (c) tmPickSet(_sugg.tmPick.date, _sugg.tmPick.idx, c.pieces);
+      _sugg.tmPick = null;
+      hideSheet("logSheet");
+      if (activeTabName() === "home") renderHome();
+      return;
+    }
+    hideSheet("logSheet");
+  };
 
   const regen = () => {
     _sugg.idx = 0;
