@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r5">
+<meta name="app-version" content="2026-07-21 r6">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,14 +1185,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r5";
+const APP_VERSION = "2026-07-21 r6";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Tomorrow's suggested outfit now STAYS put \u2014 it survives refreshes until you tap \u21bb to re-roll it",
-  "Tap tomorrow's outfit to open and revise it (swap, lock, set aside) \u2014 your changes stick",
-  "Looks now show how many times you've worn them",
-  "New \u201cHome\u201d formality for looks with no shoes \u2014 it overrides the usual level",
+  "New \ud83d\udc55 Worn tray next to the hamper \u2014 pieces worn since their last wash but not dirty yet (the pile on the chair)",
+  "Closet Review now asks for missing photos too",
+  "Tomorrow's pick stays put until you re-roll it; tap it to revise",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -1996,6 +1995,20 @@ function suggestibleClean(i, ls) {
 function hamperItems(ls) {
   ls = ls || laundryState();
   return items.filter(i => itemStatus(i) === "Available" && isDirty(i, ls));
+}
+// "Worn" tray (2026-07-21, her request): worn since the last wash but NOT yet
+// at tolerance — the pile on the chair, not the hamper. Same derivation as
+// isDirty, one step earlier. Untracked items (no last_washed) and
+// never-dirty categories (shoes/outerwear) stay out.
+function isWornNotDirty(i, ls) {
+  if (!i || isDirty(i, ls)) return false;
+  if (!i.last_washed) return false;
+  if (wearTolerance(i) === Infinity) return false;
+  return wearDatesSinceWash(i, ls).length > 0;
+}
+function wornItems(ls) {
+  ls = ls || laundryState();
+  return items.filter(i => itemStatus(i) === "Available" && isWornNotDirty(i, ls));
 }
 // Load a color family belongs to (null = unmapped).
 function laundryLoadOf(cf) {
@@ -2843,6 +2856,7 @@ let closetCat = null;     // null = root | category name | "Other"
 let closetSub = null;     // null = subcategory list | subcategory | "__other__"
 let searchResults = null; // null = not in search-results mode; else array of items
 let closetHamper = false; // true = full-page hamper contents (its own closet view, like a subcategory)
+let closetWorn = false;   // true = full-page "worn since washing, not yet dirty" tray
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
 let _detailEntryScroll = 0;  // grid scroll position when detail was entered (plain-back restore)
@@ -3270,8 +3284,10 @@ function renderClosetRoot() {
   // 2026-07-19: trip mode hid the hamper) — scoped to the capsule's members,
   // same as everything else under the banner.
   const launRow = LAUNDRY_READY() ? (() => {
-    const n = _scopedHamper().length;
-    return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`;
+    const ls = laundryState();
+    const n = _scopedHamper(ls).length, w = _scopedWorn(ls).length;
+    return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`
+      + (w ? `<button class="cl-capbtn" data-worn>👕 Worn · ${w} item${w === 1 ? "" : "s"}</button>` : "");
   })() : "";
   return clToolbar("Closet", false, true) + top + capFilter + launRow + `<div class="frows">${rows}</div>`;
 }
@@ -3414,6 +3430,14 @@ function _scopedHamper(ls) {
   }
   return list;
 }
+function _scopedWorn(ls) {
+  let list = wornItems(ls);
+  if (activeCapsuleId) {
+    const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
+    list = list.filter(i => set.has(i.id));
+  }
+  return list;
+}
 
 // Full-page hamper — its own closet view (like a subcategory grid), because the
 // closet row promises "Hamper · N" and a tap should SHOW them. The wash flow
@@ -3428,6 +3452,25 @@ function renderClosetHamper() {
         <div>Pieces land here once you've worn them enough times since their last wash — or when you tap "🧺 To hamper" on an item.</div></div>`;
   return clToolbar(`Hamper · ${list.length}`, true, false)
     + (list.length ? `<div style="padding:10px 14px 2px"><button class="cl-capbtn" data-laundry-wash style="margin:0">🧺 Did laundry — mark these washed</button></div>` : "")
+    + body
+    + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
+}
+
+// The "worn" tray: worn since its last wash, still under tolerance. Subtitle
+// shows how far along each piece is (2 of 5 wears).
+function renderClosetWorn() {
+  const ls = laundryState();
+  const list = _scopedWorn(ls);
+  const sub = (i) => {
+    const n = wearDatesSinceWash(i, ls).length, tol = wearTolerance(i);
+    return tol === Infinity ? `${n}` : `${n}/${tol}`;
+  };
+  const body = list.length
+    ? gridHtml(list, sub)
+    : `<div class="placeholder" style="padding:40px 32px"><b>Nothing worn yet</b>
+        <div>Pieces land here once you've worn them since their last wash but not enough times to be dirty.</div></div>`;
+  return clToolbar(`Worn · ${list.length}`, true, false)
+    + `<div class="snote" style="padding:8px 16px 2px">Worn since washing, not dirty yet — the pile on the chair. Open a piece to send it to the hamper.</div>`
     + body
     + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
 }
@@ -3518,6 +3561,8 @@ function renderCloset() {
   const body = $("#closetBody");
   if (closetHamper) {
     body.innerHTML = renderClosetHamper();
+  } else if (closetWorn) {
+    body.innerHTML = renderClosetWorn();
   } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
@@ -3550,7 +3595,7 @@ function renderCloset() {
   };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; renderCloset(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; closetWorn = false; renderCloset(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -3678,6 +3723,7 @@ function closetBack() {
     renderCloset(); restoreScroll(_detailEntryScroll); _detailEntryScroll = 0; return;
   }
   if (closetHamper) { closetHamper = false; }
+  if (closetWorn) { closetWorn = false; }
   else if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }
   renderCloset();
@@ -3709,6 +3755,7 @@ function siblingItems() {
   // Explicit list captured at tap time (capsule/trip grid) wins.
   if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
   if (closetHamper) return _scopedHamper();
+  if (closetWorn) return _scopedWorn();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -4140,6 +4187,7 @@ async function replaceItemPhoto(id, file) {
     signedUrlBatch([path]);                     // pre-sign so the new photo renders immediately
     toast(old ? "Photo replaced" : "Photo added");
     if (detailId === id && detailView === "details") openItemDetails(id);
+    else if (statsView === "review-deal" && reviewQueue[reviewIdx] === id) reviewAfterEdit();
   } catch (e) { toast(e.message); }
 }
 
@@ -9498,6 +9546,8 @@ function guessSeason(item) {
 }
 
 const REVIEW_FIELDS = [
+  { key: "image", label: "Photo", missing: i => !i.image_path,
+    edit: i => pickItemPhoto(i.id), value: i => i.image_path ? "Added" : null },
   { key: "category", label: "Category", missing: i => !i.category,
     edit: i => openReviewMove(i), value: i => i.category || null },
   { key: "subcategory", label: "Subcategory", missing: i => !!i.category && !i.subcategory,
@@ -13297,7 +13347,7 @@ const TAB_TITLES = {
 // not resume a deep subpage left over from last visit. (Programmatic switchTab
 // calls that pre-set folder state and then openItem() don't go through here.)
 function resetTabRoot(name) {
-  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; }
+  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; closetWorn = false; }
   else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; looksItemFilter = null; }
   else if (name === "calendar") { calendarDay = null; }
 }
@@ -13531,7 +13581,8 @@ function wireEvents() {
       // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
       return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
     }
-    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
+    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
+    if (e.target.closest("[data-worn]")) { closetWorn = true; closetHamper = false; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
