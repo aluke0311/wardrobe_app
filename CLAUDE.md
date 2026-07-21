@@ -28,6 +28,47 @@ library. If something seems to need a library, ask the user first.
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
+**EDITORIAL REDESIGN (2026-07-21 r13) — SHIPPED.** Implemented from a Claude
+Design handoff bundle (`claude.ai/design`, a reskin of r10). Presentation only —
+zero schema/logic change. ① **Palette**: white/periwinkle → warm paper
+(`--bg #f8f4ee`) + deep oxblood (`--accent #6b2737`). New tokens `--gold`/
+`--gold-soft`, `--panel`/`--panel2` (thumb wells / segmented headers),
+`--surface2` (sheet expands), `--grabber`, `--shadow-sm`/`-md`. **Every
+hardcoded `#fff`/`#f4f4f7`/`#faf9f8` is now a token** — that's what makes
+theming work, so never reintroduce a literal light color; reach for a token.
+② **`--serif`** = the display face for headings (login wordmark, `.bar h1`,
+`.fname.big`, `.cap-name`, `.ch-name`, `.sheet-hdr h2`, `.stats-sec-hdr .t`,
+placeholder/empty-state `b`). It is **`Georgia, 'Times New Roman', serif` —
+system fonts only**. The mock loaded Newsreader from Google Fonts; that was
+rejected as an external asset + third-party request per the single-file rule
+(user decision 2026-07-21). **Do not add a webfont link.**
+③ **`--on-accent`** = text/icon color for anything filled with `var(--accent)`.
+Exists because dark mode *lightens* the accent to `#c07f8c`, where cream text is
+~2.3:1. Light `#fffdfb`, dark `#1a1512` (~7:1). The mock tried this as a
+`@media dark { .btn { color: … } }` override and **lost the cascade** to the
+later base rules — a token is the only thing that works here. Anything NOT on
+the accent (heart stroke over photos, packed tick on green, `.cal-act` on fixed
+greys, the color-swatch check) deliberately keeps literal white.
+④ **DARK MODE via `prefers-color-scheme`** — reverses the 2026-07-17 "dark mode
+REJECTED" call (user re-approved 2026-07-21; that line in the polish entry below
+is superseded). Photos get `filter: brightness(.94)`.
+⑤ **Themes**: `currentTheme()`/`applyTheme(t)` write `html[data-theme]` +
+`store("wardrobe.theme")`; `applyTheme` runs FIRST in `init()`. Two themes —
+`editorial` (default, oxblood) and `sage` (green), each with its own dark block.
+Settings → Appearance picker. A third theme = add a `html[data-theme="x"]` block
++ its dark twin + a `.theme-opt` button; nothing else.
+⑥ Motion/polish: `:active` press-scale on primary buttons, `:focus-visible`
+rings, `.screen.active` fade-in, sheet transition on `cubic-bezier(.32,.72,0,1)`
++ backdrop blur, `.sk*` skeleton loaders (replaced the `.spin` on `retryLoad`),
+tabbar icon scale, thicker donut ring.
+⑦ `smoothScrollTop()` extracted from the header-tap handler (was inline) and
+reused by the tab bar: **re-tapping the ACTIVE tab scrolls to top**. Still
+hand-eased — body is the scroll container, `behavior:"smooth"` on it is
+unreliable and `scrollingElement.scrollTo` is a no-op (see Known gotchas).
+⑧ `haptic()` on primary taps — a **no-op on iOS Safari** (no Vibration API), so
+it does nothing on the user's actual device; the `:active` transforms carry the
+feedback. Kept for Android/desktop Chrome.
+
 **Batch of user asks (2026-07-21, r5→r7) — SHIPPED.**
 ① **Sticky Tomorrow pick**: the generated combo persists in `kvData("tmpick")`
 (`TM_PICK_KEY`, `{date:{idx:[itemIds]}}`, today+future only) instead of a
@@ -199,7 +240,8 @@ container**, not window — `window.scrollTo` is a no-op app-wide; the header
 tap animates `document.body.scrollTop` with a setTimeout loop because rAF
 stalls in hidden documents).
 **"Feels Professional" polish round (2026-07-17 r1) is FULLY SHIPPED** (decisions
-in ROADMAP.md's polish section; dark mode REJECTED — don't re-propose). All
+in ROADMAP.md's polish section; dark mode was REJECTED here but that is
+SUPERSEDED — it shipped in the 2026-07-21 r13 redesign above). All
 perceived-quality, no features/schema: ① **PWA install** — `manifest.json` +
 `icon-180/512.png` (repo-root files, the approved one-file exceptions),
 apple-touch-icon + standalone metas, SVG data-URI favicon. ② **Sheet motion** —
@@ -763,6 +805,20 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 
 ## Known gotchas
 
+- **No hardcoded colors in new UI** (2026-07-21 r13). The redesign routed every
+  literal through a token so the two themes × light/dark all work. A new
+  `background: #fff` or `color: #fff` looks fine while you're building and then
+  glows on a dark screen. Use `--surface`/`--panel`/`--panel2`/`--bg2` for
+  fills, and **`var(--on-accent)` for text or strokes sitting on
+  `var(--accent)`** — never literal white there, because the accent lightens in
+  dark mode. Headings use `var(--serif)`, which is **system fonts only**; adding
+  a webfont `<link>` breaks the single-file rule.
+- **A `@media (prefers-color-scheme: dark)` block near the TOP of the stylesheet
+  cannot override a later base rule at equal specificity** (2026-07-21 r13). The
+  design handoff's dark-mode text-color override sat at line ~75 and silently
+  lost to `.btn { color: … }` at line ~165. Theme-varying values belong in a
+  **custom property** on `:root` (which is why `--on-accent` exists), not in a
+  media-query rule that races the cascade.
 - **Bottom sheets open/close ONLY via `showSheet(id)`/`hideSheet(id)`** (2026-07-17)
   — never set a sheet wrapper's `.hidden` directly. `hideSheet` animates first and
   flips `hidden=true` ~240ms later, so code that *reads* `.hidden` right after a
@@ -786,10 +842,14 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   UI). Use `wearCountMapInRange()` — one pass, `Map(item_id → count)`. It
   mirrors the per-item function's asymmetry exactly: distinct wear DAYS when
   the range is "all", raw rows within a cutoff (pinned in selftest).
-- **Screen-top scrolling**: use `scrollToTop()` / `getScrollTop()` /
-  `restoreScroll(y)` — `window.scrollTo` is a no-op (body is the scroll container).
-  Back-nav scroll restore: `makeScreenReturn` thunks carry it; plain closet/look
-  back uses `_detailEntryScroll`/`_lookEntryScroll`.
+- **Screen-top scrolling**: use `scrollToTop()` (instant) / `smoothScrollTop()`
+  (animated, for deliberate "take me up" taps — header, re-tapping the active
+  tab) / `getScrollTop()` / `restoreScroll(y)`. `window.scrollTo` AND
+  `document.scrollingElement.scrollTo` are both no-ops (body is the scroll
+  container), and `behavior:"smooth"` on body is unreliable — that's why
+  `smoothScrollTop` hand-eases `scrollTop` on a setTimeout loop (rAF stalls in
+  hidden documents). Back-nav scroll restore: `makeScreenReturn` thunks carry
+  it; plain closet/look back uses `_detailEntryScroll`/`_lookEntryScroll`.
 - **`localStorage` in restricted contexts**: `data:` URL open throws "Storage is
   disabled". `store` wrapper handles it — never use `localStorage` directly.
 - **WebP encode**: `canvas.toBlob(..., 'image/webp')` silently returns PNG on some
