@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-20 r2">
+<meta name="app-version" content="2026-07-21 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,14 +1185,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-20 r2";
+const APP_VERSION = "2026-07-21 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "📅 Plan ahead: set contexts and outfits for future days (Home → Plan ahead, or 📅 on today's calendar) — multiple outfits per day, multiple contexts per outfit",
-  "Tomorrow card on Home: your planned looks, or a fresh clean-weather-context suggestion; planned-today rows log with one tap",
-  "🏋️ Workout mode in the suggester + gear tags (rain gear only on wet days); level 1 renamed Utility",
-  "Deconstruct-all for incomplete looks",
+  "Fixed: locking a layer 🔒 keeps it a layer (it used to turn into your top) and now sticks as you browse the other suggestions",
+  "Fixed: yesterday's \u201champer or keep?\u201d strip is back on Home \u2014 it was being hidden by the older \u201cdone laundry lately?\u201d prompt",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2604,16 +2602,18 @@ function renderHome() {
       <span class="lr-check">✓</span><span class="lr-text">Logged today · ${esc(detail)}</span><span class="lr-plus">＋</span>
     </button>`;
   }
-  // Laundry slot: stale-hamper prompt wins over the previous-day confirm strip.
+  // Laundry slot: yesterday's confirm strip WINS over the stale-hamper prompt
+  // (2026-07-21, user-reported "not seeing the hamper question from yesterday's
+  // wears") — the per-day question is precise and one tap; the stale prompt is
+  // the catch-all for when there's no recent day to review.
   let laun = "";
   if (dataReady && LAUNDRY_READY()) {
-    if (laundryStale() && !laundryPromptSnoozed()) {
+    laun = laundryStripHtml();
+    if (!laun && laundryStale() && !laundryPromptSnoozed()) {
       const n = hamperItems().length;
       laun = `<button class="logged-row" id="homeLaunPrompt">
         <span class="lr-check">🧺</span><span class="lr-text">Done laundry lately? · ${n} in the hamper</span><span class="lr-plus">＋</span>
       </button>`;
-    } else {
-      laun = laundryStripHtml();
     }
   }
   // Trip mode: the dashboard takes over the top of Home; the tile grid stays
@@ -5947,7 +5947,7 @@ function scoreCombo(its, target, season = null, wx = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null, lockedRoles = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   let avail = base.filter(i => i.image_path && !isNoSuggest(i));
   if (activity === "workout") {
@@ -5974,12 +5974,17 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   // V3 lock-a-piece: locked items pin their slot — every returned combo contains
   // every locked piece (mutually impossible locks, e.g. dress + top, yield none).
   const locked = lockedIds && lockedIds.size ? [...lockedIds].map(id => itemById.get(id)).filter(Boolean) : [];
+  // A locked piece remembers the ROLE it was playing when locked: a layerable
+  // top locked AS the layer must pin the Outerwear slot, not the Tops slot —
+  // otherwise re-rolling turns the locked layer into the base top
+  // (2026-07-21, user-reported).
+  const roleOf = i => (lockedRoles && lockedRoles.get(i.id)) || suggestSlot(i);
   const slot = (...cats) => {
     // Layerable tops (e.g. button-ups, flagged via isLayer) double as the outerwear
     // layer, so they're eligible for the Outerwear slot in addition to the Tops slot.
     const fits = i => cats.includes(suggestSlot(i)) ||
       (cats.includes("Outerwear") && isLayer(i) && i.category === "Tops");
-    const lockedHere = locked.filter(i => cats.includes(suggestSlot(i)));
+    const lockedHere = locked.filter(i => cats.includes(roleOf(i)));
     if (lockedHere.length) return lockedHere;  // slot is pinned
     let pool = avail.filter(fits);
     // Season filter (soft): keep only in-season pieces, but fall back to the full
@@ -6158,7 +6163,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), activity: null };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), activity: null };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
@@ -6201,6 +6206,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.season = planCtx ? seasonOf(planCtxSeasonDate(planCtx)) : currentSeason();
   _sugg.idx = 0;
   _sugg.locked = new Set();
+  _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
@@ -6357,7 +6363,7 @@ function openGearTagSheet() {
   hydratePhotos($("#logInner"));
   $("#gearDone").onclick = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
     renderSuggestSheet();
   };
   const flip = (b, on) => b.classList.toggle("on", on);
@@ -6461,7 +6467,7 @@ function banSuggestionPiece(pieceId) {
       return renderSuggestSheet();
     }
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
     renderSuggestSheet();
   }
 }
@@ -6657,7 +6663,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
     renderSuggestSheet();
   };
 
@@ -6743,7 +6749,24 @@ function renderSuggestSheet() {
     b.onclick = (e) => {
       e.stopPropagation();
       const id = b.dataset.slock;
-      if (_sugg.locked.has(id)) _sugg.locked.delete(id); else _sugg.locked.add(id);
+      const cur = _sugg.results[_sugg.idx];
+      if (_sugg.locked.has(id)) { _sugg.locked.delete(id); _sugg.lockedRoles.delete(id); }
+      else {
+        _sugg.locked.add(id);
+        // Remember the role: a layerable top locked while acting as THIS combo's
+        // layer must stay the layer when the batch re-rolls (2026-07-21).
+        const lp = cur ? comboLayerPiece(cur) : null;
+        if (lp && lp.id === id && lp.category === "Tops") _sugg.lockedRoles.set(id, "Outerwear");
+      }
+      // Locks must apply to the WHOLE batch, not just the combo on screen —
+      // browsing to the next outfit used to drop them (2026-07-21). Regenerate,
+      // then keep the current combo in front so the view doesn't jump.
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+      _sugg.idx = 0;
+      if (cur && [..._sugg.locked].every(lid => cur.pieces.some(p => p.id === lid))) {
+        const k = comboKey(cur.pieces);
+        _sugg.results = [cur, ..._sugg.results.filter(c => comboKey(c.pieces) !== k)];
+      }
       renderSuggestSheet();
     };
   });
@@ -6878,7 +6901,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -6959,7 +6982,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
