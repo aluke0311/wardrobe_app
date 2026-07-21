@@ -772,7 +772,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-17 r1`. ⚠️ Since 2026-07-17 the version lives in TWO
+  Currently `2026-07-21 r13`. ⚠️ Since 2026-07-17 the version lives in TWO
   places that must stay in lockstep: the `APP_VERSION` constant AND the
   `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
