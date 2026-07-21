@@ -60,6 +60,25 @@ subcategory's `SUBCAT_FORMALITY`/`WEAR_TOLERANCE` defaults to the new name.
 ⚠️ Renaming does NOT update `WORKOUT_SLOTS`/`LAUNDRY_LOADS`/`GEAR_CAND_SUBCATS`
 (still keyed on the shipped names) — revisit if she renames Workout subcats.
 
+**Partners / rhythm / rotation (2026-07-21 r10) — SHIPPED.** Three derived-only
+adds, harvested from external design docs (ChatGPT/Gemini specs the user
+brought — everything else in them was already shipped or blocked by the
+single-file/no-library constraints; the native-iOS half is permanently out of
+reach). ① `itemPartners(itemId, limit, wearRows?)` — top co-wear partners keyed
+on the shared **wear DAY**, not shared look membership (what left the closet
+together > what got saved); `PARTNER_MIN_DAYS`=2 so one memorable outfit isn't a
+habit. Rendered by `partnersRowHtml` as a "Usually worn with" thumb strip in the
+item-details top card; `[data-partner]` tiles `openItem` (already in closet, so
+no `_itemReturn` needed). ② `wearRhythm(itemId, wearRows?)` → `{avg, longest,
+wearDays}` over DISTINCT wear days, null under 3 (two wears = one gap = noise);
+shown as a `det-sub` under "Worn N days" via `humanGap`. ③ `buildRotationStats
+(days, pool?, wearRows?, today?)` + `rotationBlockHtml`/`wireRotationChips` —
+share of the Available closet worn in a trailing window, `ROTATION_WINDOWS`
+30/90/365 chips (session-only `statsRotationDays`), first block in Clothing
+Stats. ⚠️ Its denominator is the **full Available closet, NOT `statsPool()`** —
+deliberate, so an active stats filter can't flatter the number. All four
+functions take injectable args and are covered in selftest (44/44).
+
 **Round B "Formulas" (2026-07-21, r3→r4) — FIRST SLICE SHIPPED.** Discover the
 outfit SHAPES she rebuilds, then re-cook them. All derived, nothing stored.
 `formulaKeyFor(items)` = canonical `"Slot:Subcategory + …"` signature (sorted;
