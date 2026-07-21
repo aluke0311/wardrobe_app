@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r7">
+<meta name="app-version" content="2026-07-21 r8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -239,6 +239,10 @@
   .cthumb { width: 64px; height: 64px; flex: none; border-radius: 10px; background: #faf9f8 center/contain no-repeat; }
   .cthumb.empty { display: flex; align-items: center; justify-content: center; background-color: #f4f4f7; }
   .cthumb.empty svg { width: 30px; height: 30px; stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .tm-strip { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .tm-thumb { width: 48px; height: 48px; flex: none; border-radius: 8px; background: #faf9f8 center/contain no-repeat; }
+  .tm-thumb.empty { display: flex; align-items: center; justify-content: center; background-color: #f4f4f7; }
+  .tm-thumb.empty svg { width: 22px; height: 22px; stroke: var(--line); stroke-width: 1.5; fill: none; }
   .fmeta { flex: 1; min-width: 0; }
   .fname { font-size: 17px; font-weight: 600; }
   .fname.big { font-size: 20px; }
@@ -516,6 +520,7 @@
   .gb-right { display: flex; align-items: center; gap: 14px; position: relative; }
   #gbGrid svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   #gbSelect { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px; }
+  #gbAll { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px 8px 4px 4px; }
   #gridPickerPop { position: absolute; bottom: calc(100% + 6px); right: 0;
     background: #fff; border: 1px solid var(--line); border-radius: 12px;
     box-shadow: 0 6px 24px rgba(0,0,0,.13); overflow: hidden; z-index: 200; min-width: 160px; }
@@ -1055,6 +1060,7 @@
         <button data-cols="4">4 per row</button>
         <button data-cols="5">5 per row</button>
       </div>
+      <button id="gbAll" hidden>All</button>
       <button id="gbSelect">Select</button>
     </div>
   </div>
@@ -1185,13 +1191,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r7";
+const APP_VERSION = "2026-07-21 r8";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "\u2699\ufe0f You can now edit your categories and types \u2014 Settings \u2192 Edit categories & types. Renaming moves every item over for you",
-  "New \ud83d\udc55 Worn tray beside the hamper; Closet Review now asks for missing photos",
-  "Tomorrow's pick stays put until you re-roll it \u2014 tap it to revise",
+  "Select mode has an All button \u2014 select everything in the current grid (tap again for None)",
+  "Bulk edit now ADDS to multi-value fields: adding Summer to a Fall item gives Fall + Summer. Switch to Replace in the sheet if you want the old behaviour",
+  "Fixed the overlapping thumbnails and caption on tomorrow's outfit",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2558,8 +2564,9 @@ function openTomorrowRevise(date, idx) {
   renderSuggestSheet();
 }
 function _planThumbStrip(pieces) {
-  return `<div style="display:flex;gap:6px;align-items:center">${pieces.map(p =>
-    `<div style="width:44px;height:44px;flex:none">${thumbHtml(p.image_path)}</div>`).join("")}</div>`;
+  // .cthumb is a fixed 64px — wrapping it in a smaller box made the thumbs
+  // overlap each other and the caption below (2026-07-21). Own class instead.
+  return `<div class="tm-strip">${pieces.map(p => thumbHtml(p.image_path, "tm-thumb")).join("")}</div>`;
 }
 // Trip mode (2026-07-21, user request): the Tomorrow card works during a trip
 // too, but for dates INSIDE the trip it reads/writes the TRIP's own day plan
@@ -2612,7 +2619,7 @@ function tomorrowCardHtml() {
       return `<div style="padding:4px 0">
         <button data-tm-open="${idx}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>
         <div style="display:flex;align-items:center;gap:8px;padding-top:6px">
-          <span class="muted" style="font-size:12px;flex:1">${esc(why)}</span>
+          <span class="muted" style="font-size:12px;flex:1;min-width:0;line-height:1.35">${esc(why)}</span>
           <button class="cap-chip" data-tm-keep="${idx}" style="font-size:12px" title="Save as a real look on the plan">📌 Keep</button>
           <button class="cap-chip" data-tm-reroll="${idx}" style="font-size:12px" title="Try a different one">↻</button>
         </div>
@@ -8043,6 +8050,26 @@ function updateGridBar() {
   ["#gbMove", "#gbEdit", "#gbDelete", "#gbCapsule"].forEach(id => $(id).classList.toggle("active", has));
   $("#gbCount").textContent = n ? `${n} selected` : "";
   $("#gbSelect").textContent = selectMode ? "Done" : "Select";
+  const all = $("#gbAll");
+  const vis = selectMode ? $$(".grid [data-item]").map(t => t.dataset.item) : [];
+  all.hidden = !selectMode;
+  all.textContent = vis.length && vis.every(id => selectedIds.has(id)) ? "None" : "All";
+}
+
+// Select every tile in the current grid (or clear when they're all already
+// selected). DOM surgery like toggleSelect — a re-render would flicker photos.
+function selectAllVisible() {
+  const tiles = $$(".grid [data-item]");
+  const ids = tiles.map(t => t.dataset.item);
+  const allOn = ids.length && ids.every(id => selectedIds.has(id));
+  for (const t of tiles) {
+    const id = t.dataset.item;
+    if (allOn) selectedIds.delete(id); else selectedIds.add(id);
+    t.classList.toggle("selected", !allOn);
+    const dot = t.querySelector(".sel-dot");
+    if (dot) dot.classList.toggle("on", !allOn);
+  }
+  updateGridBar();
 }
 
 function toggleSelectMode() {
@@ -8122,6 +8149,11 @@ async function deleteSelected() {
 }
 
 // ---- bulk edit sheet ----
+// Multi-value fields merge with what an item already has by default — adding
+// Summer to a Fall item gives Fall+Summer (2026-07-21, her request). The sheet
+// exposes a Replace toggle for when she really does mean "set exactly this".
+const BULK_MULTI_KEYS = new Set(["fabric", "season", "formality"]);
+let bulkAdditive = true;
 const BULK_FIELDS = [
   { key: "color_family", label: "Color",     type: "single",    opts: COLOR_FAMILIES.map(c => c[0]) },
   { key: "fabric",       label: "Fabric",    type: "multi",     opts: ["Cotton","Linen","Wool","Cashmere","Silk","Denim","Polyester","Spandex","Nylon","Fleece","Leather","Velvet"] },
@@ -8136,6 +8168,7 @@ function openBulkEdit() {
   if (!selectedIds.size) return;
   bulkPending = {};
   bulkOpenField = null;
+  bulkAdditive = true;
   renderBulkSheet();
   showSheet("bulkSheet");
 }
@@ -8192,8 +8225,15 @@ function renderBulkSheet() {
       <button class="lnk" id="bulkSave" style="font-weight:700">Save</button>
     </div>
     ${rows}
+    ${Object.keys(bulkPending).some(k => BULK_MULTI_KEYS.has(k) && Array.isArray(bulkPending[k]) && bulkPending[k].length)
+      ? `<button class="sheet-row" id="bulkMode">
+           <span>Multi-value fields</span>
+           <span class="rt" style="color:var(--accent)">${bulkAdditive ? "Add to existing" : "Replace"}</span>
+         </button>` : ""}
     <div class="sheet-note">Changes apply to ${n} selected item${n === 1 ? "" : "s"}.</div>`;
   $("#bulkCancel").onclick = closeBulkEdit;
+  const bmode = $("#bulkMode");
+  if (bmode) bmode.onclick = () => { bulkAdditive = !bulkAdditive; renderBulkSheet(); };
   $("#bulkSave").onclick = saveBulkEdit;
   // field row toggle
   $("#bulkInner").querySelectorAll("[data-bf]").forEach(btn => {
@@ -8238,17 +8278,37 @@ function saveBulkTextField() {
 
 async function saveBulkEdit() {
   saveBulkTextField();
-  const patch = {};
+  const shared = {}, merge = {};
   for (const [k, v] of Object.entries(bulkPending)) {
-    if (v !== undefined && v !== "") patch[k] = v;
+    if (v === undefined || v === "") continue;
+    if (bulkAdditive && BULK_MULTI_KEYS.has(k) && Array.isArray(v)) merge[k] = v;
+    else shared[k] = v;
   }
-  if (!Object.keys(patch).length) { closeBulkEdit(); return; }
+  if (!Object.keys(shared).length && !Object.keys(merge).length) { closeBulkEdit(); return; }
   const ids = [...selectedIds];
-  const inList = `(${ids.map(id => `"${id}"`).join(",")})`;
+  // In merge mode each item's result depends on what it already had, so group
+  // items by their resulting patch — usually a handful of PATCHes, not N.
+  const groups = new Map();
+  for (const id of ids) {
+    const it = itemById.get(id);
+    if (!it) continue;
+    const p = { ...shared };
+    for (const [k, v] of Object.entries(merge)) {
+      const cur = Array.isArray(it[k]) ? it[k] : (it[k] != null && it[k] !== "" ? [it[k]] : []);
+      const out = [...new Set([...cur, ...v])];
+      p[k] = k === "formality" ? out.map(Number).sort((a, b) => a - b) : out;
+    }
+    const key = JSON.stringify(p);
+    let g = groups.get(key);
+    if (!g) groups.set(key, g = { patch: p, ids: [] });
+    g.ids.push(id);
+  }
   try {
-    await rest(`/items?id=in.${inList}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-    // update local state
-    items.forEach(i => { if (ids.includes(i.id)) Object.assign(i, patch); });
+    for (const g of groups.values()) {
+      const inList = `(${g.ids.map(id => `"${id}"`).join(",")})`;
+      await rest(`/items?id=in.${inList}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(g.patch) });
+      for (const id of g.ids) { const it = itemById.get(id); if (it) Object.assign(it, g.patch); }
+    }
     closeBulkEdit();
     exitSelectMode();
     renderCloset();
@@ -13962,6 +14022,7 @@ function wireEvents() {
 
   // grid action bar
   $("#gbSelect").addEventListener("click", toggleSelectMode);
+  $("#gbAll").addEventListener("click", selectAllVisible);
   $("#gbGrid").addEventListener("click", openGridPicker);
   $("#gbEdit").addEventListener("click", () => { if (selectedIds.size) openBulkEdit(); });
   $("#gbDelete").addEventListener("click", () => { if (selectedIds.size) deleteSelected(); });
