@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r11">
+<meta name="app-version" content="2026-07-21 r12">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -168,7 +168,10 @@
     max-width: 90vw;
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  .toast-chip { display:inline-block; margin-left:10px; padding:3px 9px; background:rgba(255,255,255,.22); border-radius:999px; font-size:12.5px; font-weight:600; }
+  /* Only the chips are ever tappable. The pill itself must stay transparent to
+     taps — it overlays bottom-fixed controls (the stats Most/Least toggle sits
+     in the same band) and a dead tap there reads as a broken button. */
+  .toast-chip { display:inline-block; margin-left:10px; padding:3px 9px; background:rgba(255,255,255,.22); border-radius:999px; font-size:12.5px; font-weight:600; pointer-events: auto; }
   .log-cta { display:block; margin:12px 16px 0; padding:14px; background:var(--accent); color:#fff; border-radius:14px; font-size:16px; font-weight:600; text-align:center; }
   /* Home laundry row: previous-day confirm strip / "done laundry?" prompt */
   .laun-row { margin: 12px 16px 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; text-align: left; }
@@ -1207,12 +1210,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r11";
+const APP_VERSION = "2026-07-21 r12";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Fixed the Most/Least Worn toggle on Worn History \u2014 it was locking up for about a second on every tap, so it felt dead",
-  "Stats lists (Worn History, Cost per Wear, Never Worn) now build about 100\u00d7 faster",
+  "Fixed the Most/Least Worn toggle on Worn History \u2014 a toast sitting on top of it was eating the taps",
+  "Toasts no longer swallow taps meant for what's underneath them \u2014 only their buttons are tappable now",
+  "Stats lists (Worn History, Cost per Wear, Never Worn) build about 100\u00d7 faster",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2121,14 +2125,27 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 })();
 
 let toastTimer;
+// The stats Most/Least toggle floats in the same band as the toast, and the
+// toast wins on z-index — a toast chip parked over that control made it look
+// broken (tap → "What's new" opened, or nothing happened). Lift the toast clear
+// whenever that control is on screen. Queried live from both sides (toast shown
+// on this page / navigated onto this page with a toast up), so it self-corrects
+// and needs no cleanup.
+function positionToast() {
+  const t = $("#toast");
+  t.style.bottom = document.querySelector(".stats-toggle-float")
+    ? "calc(var(--nav-h) + var(--safe-b) + 80px)" : "";
+}
+
 // action = one {label,fn} chip, an array of them, or omitted. Each chip is its
 // own click target so multiple actions (e.g. Undo + Add context) don't collide.
 function toast(msg, action) {
   const t = $("#toast");
   const actions = action ? (Array.isArray(action) ? action : [action]) : [];
+  positionToast();
   if (actions.length) {
     t.innerHTML = esc(msg) + actions.map((a, i) => `<span class="toast-chip" data-tchip="${i}">${esc(a.label)}</span>`).join("");
-    t.style.pointerEvents = "auto";
+    // pointer-events stays `none` on the pill; only .toast-chip opts back in.
     t.onclick = (e) => {
       const chip = e.target.closest("[data-tchip]");
       if (!chip) return;
@@ -10481,6 +10498,7 @@ function renderStatsGridPage() {
     body.insertAdjacentHTML("beforeend", `<div class="stats-toggle-float"><div class="stats-seg">
       ${tg.keys.map((k, i) => `<button class="${statsListKey === k ? "on" : ""}" data-stoggle="${k}">${esc(tg.labels[i])}</button>`).join("")}
     </div></div>`);
+    positionToast();   // a toast already up would otherwise sit on the toggle
   }
   wireStatsToolbar();
   body.querySelectorAll("[data-stoggle]").forEach(btn => {
