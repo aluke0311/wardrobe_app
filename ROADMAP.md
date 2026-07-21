@@ -7,6 +7,33 @@
 
 ---
 
+## ▶ IN PROGRESS — Round B "Formulas" (2026-07-21, r3→r4 shipped)
+
+**Thesis:** the app knows what she owns and what she wore; formulas tell her
+what her style IS — the shapes she rebuilds without noticing — and then let
+her re-cook them.
+
+**Shipped (r3 + r4):** detection engine (`formulaKeyFor`/`formulaLabel`/
+`buildFormulas`/`formulaShapeMap`, pure, nothing stored) · **Formulas Looks
+lens** (first tab, folders = shapes, most-worn first, wear counts) · **"✨ New
+outfit from this formula"** wiring `shapeKey` through `suggestOutfits` as a hard
+per-slot subcategory filter + shape-respecting piece swaps. Selftest: 4 cases
+added (not browser-run, per her no-browser-testing rule).
+
+**Not yet built (next session):**
+- **Name + keep a formula** — promote a discovered shape to a named template in
+  `kv` ("Sunday uniform"), so the label is hers, not the taxonomy's.
+- **Builder slot-seeding** — open the canvas with one placeholder per shape
+  slot; tapping a placeholder opens the rail pre-filtered to that subcategory.
+- **Formula chip inside the suggester** (pick a formula without going to Looks).
+- **Tuning:** thresholds are guesses (2 looks / 6 wears). If the lens looks
+  thin or noisy on her real data, tune `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS`
+  before adding features. Colour is deliberately NOT part of the signature yet
+  (subcategory-only keeps clusters interpretable) — revisit if shapes feel too
+  coarse.
+
+---
+
 ## ✅ SHIPPED BUILD — Round A "Tomorrow" (planning + prediction + activity gear)
 ### Planned + BUILT 2026-07-20 from the two-list feature brainstorm. Decisions LOCKED — do not re-litigate.
 ### Steps ①② deployed r1; steps ③–⑦ deployed r2 (kv migration confirmed run same day).

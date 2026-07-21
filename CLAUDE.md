@@ -28,6 +28,24 @@ library. If something seems to need a library, ask the user first.
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
+**Round B "Formulas" (2026-07-21, r3→r4) — FIRST SLICE SHIPPED.** Discover the
+outfit SHAPES she rebuilds, then re-cook them. All derived, nothing stored.
+`formulaKeyFor(items)` = canonical `"Slot:Subcategory + …"` signature (sorted;
+null unless there's a dress OR a top+bottom; null-slot pieces — bras/swim —
+never count); `formulaLabel(key)` renders it in dressing order (`FORMULA_SLOT_ORDER`);
+`buildFormulas(pool)` groups WORN looks by key, keeping shapes with
+`FORMULA_MIN_LOOKS`=2+ distinct looks and `FORMULA_MIN_WEARS`=6+ wears (a single
+much-worn look is just that look). Surfaced as the **"Formulas" Looks lens**
+(first tab) through the existing folder machinery — `folderRowsHtml`/
+`folderOutfits`/`folderLabel` all have a Formulas branch, folder key = the raw
+signature. Payoff: a formula's folder page has **"✨ New outfit from this
+formula"** → `openSuggestSheet(null,null,null,shapeKey)`; `suggestOutfits`'
+10th arg `shapeKey` hard-filters each slot's pool to `formulaShapeMap(key)`
+(slots the shape doesn't name go EMPTY so the silhouette holds; a two-top shape
+may fill the layer slot from its own tops), and `swapSuggestionPiece` stays
+inside the shape. ⚠️ Still TODO for Round B: naming/saving formulas to `kv`,
+builder slot-seeding, formula chip in the suggester itself.
+
 **Round A "Tomorrow" (2026-07-20, r1→r2) is FULLY SHIPPED** (decisions in
 ROADMAP.md's Round A section — do not re-litigate). Three parts:
 ① **Activity/gear rework** (r1, no migration): `GEAR_WORKOUT_TAG`/`GEAR_RAIN_TAG`

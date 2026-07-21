@@ -379,6 +379,60 @@ function run() {
               [5, null, "workout", null]);
   });
 
+  // ---- Round B: formulas (2026-07-21) ----
+  t("formulaKeyFor: canonical shape, needs a real base, ignores bras/swim", () => {
+    const top = { category: "Tops", subcategory: "Sweaters" };
+    const bot = { category: "Bottoms", subcategory: "Jeans" };
+    const shoe = { category: "Shoes", subcategory: "Boots" };
+    const bra = { category: "Workout", subcategory: "Sports bras" };
+    const dress = { category: "Dresses", subcategory: "Short" };
+    return eq([
+      W.formulaKeyFor([top, bot, shoe]),
+      W.formulaKeyFor([shoe, bot, top]),            // order-independent
+      W.formulaKeyFor([top, shoe]),                 // no bottom, no dress
+      W.formulaKeyFor([dress, shoe, bra]),          // bra ignored, dress is a base
+    ], [
+      "Bottoms:Jeans + Shoes:Boots + Tops:Sweaters",
+      "Bottoms:Jeans + Shoes:Boots + Tops:Sweaters",
+      null,
+      "Dresses:Short + Shoes:Boots",
+    ]);
+  });
+  t("formulaLabel reads in dressing order", () => {
+    return eq(W.formulaLabel("Bottoms:Jeans + Shoes:Boots + Tops:Sweaters"),
+              "Sweaters + Jeans + Boots");
+  });
+  t("buildFormulas: groups by shape, needs 2+ looks and 6+ wears", () => {
+    const mk = (id, cat, sub) => ({ id, category: cat, subcategory: sub });
+    W.items = [
+      mk("s1", "Tops", "Sweaters"), mk("s2", "Tops", "Sweaters"),
+      mk("j1", "Bottoms", "Jeans"), mk("b1", "Shoes", "Boots"),
+      mk("t1", "Tops", "Tee shirts"),
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    // A + B share a shape (8 wears total) → a formula. C's tee shape appears in
+    // only one look with one wear → below both thresholds, so it's dropped.
+    const looks = [{ id: "A" }, { id: "B" }, { id: "C" }];
+    W.outfitItemMap = new Map([
+      ["A", ["s1", "j1", "b1"]],
+      ["B", ["s2", "j1", "b1"]],
+      ["C", ["t1", "j1", "b1"]],
+    ]);
+    W.outfitWearMap = new Map([
+      ["A", new (W.Set)(["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"])],
+      ["B", new (W.Set)(["2026-02-01", "2026-02-02", "2026-02-03", "2026-02-04"])],
+      ["C", new (W.Set)(["2026-03-01"])],
+    ]);
+    const fs = W.buildFormulas(looks);
+    return eq([fs.length, fs[0].label, fs[0].wears, fs[0].looks.length],
+              [1, "Sweaters + Jeans + Boots", 8, 2]);
+  });
+  t("formulaShapeMap: slot -> allowed subcategories", () => {
+    const m = W.formulaShapeMap("Bottoms:Jeans + Tops:Sweaters + Tops:Cardigans");
+    return eq([[...(m.get("Tops") || [])].sort(), [...(m.get("Bottoms") || [])], m.has("Shoes")],
+              [["Cardigans", "Sweaters"], ["Jeans"], false]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
