@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r9">
+<meta name="app-version" content="2026-07-21 r10">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -675,6 +675,22 @@
   .det-card { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-bottom: 14px; }
   .det-row { width: 100%; display: flex; align-items: center; padding: 14px 16px; text-align: left; gap: 8px; }
   .det-piece-thumb { width: 42px; height: 50px; flex: none; border-radius: 8px; background: #f4f4f7 center/contain no-repeat; }
+  .rot-block { padding: 12px 16px 14px; border-bottom: 1px solid var(--line); }
+  .rot-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .rot-lbl { font-size: 13px; font-weight: 600; }
+  .rot-chips { display: flex; gap: 4px; }
+  .rot-chip { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
+    background: none; color: var(--muted); cursor: pointer; }
+  .rot-chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .rot-bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .rot-bar span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .rot-sub { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .prt-strip { display: flex; gap: 10px; width: 100%; }
+  .prt-tile { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
+  .prt-tile .det-piece-thumb { width: 100%; height: 62px; }
+  .prt-name { font-size: 11.5px; line-height: 1.25; text-align: center; max-width: 100%;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .prt-n { font-size: 11px; color: var(--muted); }
   button.det-row:active { background: var(--accent-soft); }
   .det-lbl { font-size: 15px; color: var(--muted); min-width: 70px; flex-shrink: 0; }
   .det-val { flex: 1; font-size: 15px; color: var(--ink); display: flex; align-items: center; gap: 6px; }
@@ -1191,13 +1207,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r9";
+const APP_VERSION = "2026-07-21 r10";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New \u201cWorn for\u201d filter on both Closet and Looks \u2014 narrow to things you've actually worn for Church, Work, Travel\u2026",
-  "Looks formality filter now includes Home (the no-shoes bucket)",
-  "Filter sheets can be swiped down to close, like the other sheets",
+  "Item details now show \u201cUsually worn with\u201d \u2014 the pieces you actually wear alongside it, tap through to any of them",
+  "Each item also shows its rhythm: how often it comes back around, and the longest it ever sat unworn",
+  "New Rotation number in Style Stats \u2014 how much of your closet actually came out in the last 30 days, 90 days, or year",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -3977,9 +3993,14 @@ function openItemDetails(id) {
           <div style="flex:1;min-width:0">
             <div>Worn ${n} day${n === 1 ? "" : "s"}</div>
             <div class="det-sub">Last: ${lastWornText}</div>
+            ${(() => {
+              const r = wearRhythm(i.id);
+              return r ? `<div class="det-sub">Every ~${humanGap(r.avg)} · longest gap ${humanGap(r.longest)}</div>` : "";
+            })()}
           </div>
           ${n ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
         </button>
+        ${partnersRowHtml(i.id)}
         ${(() => {
           const ctx = itemContexts(i.id);
           if (!ctx.length) return "";
@@ -4123,6 +4144,10 @@ function openItemDetails(id) {
 
   const wearsBtn = $("#detWears");
   if (wearsBtn && n) wearsBtn.onclick = () => openItemWears(i.id);
+
+  body.querySelectorAll("[data-partner]").forEach(el => {
+    el.onclick = () => openItem(el.dataset.partner);
+  });
 
   $("#detCapsules").onclick = () => {
     openCapsuleAssign(capsulesForItem(i.id), async (ids) => {
@@ -4523,6 +4548,64 @@ function itemContexts(itemId) {
   }
   return [...counts.entries()].map(([ctx, count]) => ({ ctx, count }))
     .sort((a, b) => b.count - a.count);
+}
+
+const dayDiff = (a, b) =>
+  Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+
+/* ---- Item rhythm + partners (2026-07-21) ----
+   Both derived, nothing stored. The signal is same-DAY co-wear, not shared look
+   membership: what actually left the closet together beats what got saved. */
+
+// "Usually worn with" — top partners by distinct days worn alongside this item.
+// PARTNER_MIN_DAYS keeps a single memorable outfit from reading as a habit.
+const PARTNER_MIN_DAYS = 2;
+function itemPartners(itemId, limit = 3, wearRows = null) {
+  const ws = wearRows || wears;
+  const days = new Set();
+  for (const w of ws) if (w.item_id === itemId && w.worn_on) days.add(w.worn_on);
+  if (!days.size) return [];
+  const seen = new Set(), counts = new Map();
+  for (const w of ws) {
+    if (w.item_id === itemId || !w.worn_on || !days.has(w.worn_on)) continue;
+    const k = w.item_id + "|" + w.worn_on;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    counts.set(w.item_id, (counts.get(w.item_id) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n >= PARTNER_MIN_DAYS)
+    .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+    .slice(0, limit)
+    .map(([id, days]) => ({ id, days }));
+}
+
+// Wear cadence: how often a piece actually comes back around, and the longest
+// it ever sat. Needs 3+ wear days — two wears give one gap, which is noise.
+function wearRhythm(itemId, wearRows = null) {
+  const ws = wearRows || wears;
+  const ds = [...new Set(ws.filter(w => w.item_id === itemId && w.worn_on).map(w => w.worn_on))].sort();
+  if (ds.length < 3) return null;
+  const gaps = [];
+  for (let k = 1; k < ds.length; k++) gaps.push(dayDiff(ds[k - 1], ds[k]));
+  const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+  return { avg: Math.round(avg), longest: Math.max(...gaps), wearDays: ds.length };
+}
+
+// Rotation: the share of the wearable closet that actually came out in a
+// trailing window. One number for "am I wearing what I own".
+const ROTATION_WINDOWS = [30, 90, 365];
+function buildRotationStats(days = 90, pool = null, wearRows = null, today = null) {
+  const t = today || todayStr();
+  const cutoff = localISO(new Date(new Date(t + "T00:00:00").getTime() - days * 86400000));
+  const active = (pool || items).filter(i => itemStatus(i) === "Available");
+  const ids = new Set(active.map(i => i.id));
+  const worn = new Set();
+  for (const w of (wearRows || wears)) {
+    if (w.worn_on && w.worn_on > cutoff && w.worn_on <= t && ids.has(w.item_id)) worn.add(w.item_id);
+  }
+  return { days, total: active.length, worn: worn.size,
+           pct: active.length ? Math.round(worn.size / active.length * 100) : 0 };
 }
 
 // V3: her weekly rhythm predicts the context ("Sundays are usually Church").
@@ -5768,6 +5851,27 @@ function workhorseBadgeHtml(i) {
   const p = buildItemPerf(items).get(i.id);
   if (!p || p.count < 5 || p.idx == null || p.idx < 1.5) return "";
   return `<div class="item-stat-strip" style="color:var(--accent);font-weight:600">★ Workhorse · worn ${p.idx.toFixed(1)}× as much as similar pieces</div>`;
+}
+
+// Compact duration for wear gaps — days up to ~6 weeks, then months, then years.
+const humanGap = (d) => d < 45 ? `${d}d` : d < 365 ? `${Math.round(d / 30)}mo` : `${(d / 365).toFixed(1)}y`;
+
+// "Usually worn with" row for the item details page: top same-day partners,
+// each tappable through to that item.
+function partnersRowHtml(itemId) {
+  const ps = itemPartners(itemId).map(p => ({ ...p, item: itemById.get(p.id) })).filter(p => p.item);
+  if (!ps.length) return "";
+  const tiles = ps.map(p => `
+    <span class="prt-tile" data-partner="${esc(p.id)}">
+      <span class="det-piece-thumb${p.item.image_path ? "" : " empty"}" data-photo="${esc(p.item.image_path || "")}"></span>
+      <span class="prt-name">${esc(p.item.name || "Untitled")}</span>
+      <span class="prt-n">${p.days}×</span>
+    </span>`).join("");
+  return `<div class="det-divider"></div>
+    <div class="det-row" style="align-items:flex-start;flex-direction:column;gap:8px">
+      <span class="det-lbl">Usually worn with</span>
+      <span class="prt-strip">${tiles}</span>
+    </div>`;
 }
 
 // Laundry status + one-time-override actions on the item photo view. Hidden for
@@ -10048,6 +10152,40 @@ function closetVsLifeHtml() {
   </div>`;
 }
 
+/* Rotation: one number for "am I actually wearing my closet". Uses the full
+   Available closet, NOT statsPool() — the whole point is the denominator being
+   everything wearable, so a filter can't flatter it. Window is session-only. */
+let statsRotationDays = 90;
+function rotationBlockHtml() {
+  const r = buildRotationStats(statsRotationDays);
+  const chips = ROTATION_WINDOWS.map(d =>
+    `<button class="rot-chip${d === statsRotationDays ? " on" : ""}" data-rot="${d}">${d === 365 ? "1y" : d + "d"}</button>`
+  ).join("");
+  const label = statsRotationDays === 365 ? "the past year" : `the past ${statsRotationDays} days`;
+  return `<div class="rot-block">
+    <div class="rot-top">
+      <span class="rot-lbl">Rotation</span>
+      <span class="rot-chips">${chips}</span>
+    </div>
+    <div class="rot-bar"><span style="width:${r.pct}%"></span></div>
+    <div class="rot-sub"><strong>${r.pct}%</strong> of your closet worn in ${label} · ${r.worn} of ${r.total} items</div>
+  </div>`;
+}
+
+// Window chips swap the block in place — no full stats re-render (and no photo
+// flicker) just to change a denominator.
+function wireRotationChips() {
+  $("#statsBody").querySelectorAll("[data-rot]").forEach(el => {
+    el.addEventListener("click", () => {
+      statsRotationDays = Number(el.dataset.rot);
+      const blk = $("#statsBody").querySelector(".rot-block");
+      if (!blk) return;
+      blk.outerHTML = rotationBlockHtml();
+      wireRotationChips();
+    });
+  });
+}
+
 function renderStatsMain() {
   const avail = statsPool();
   const totalVal = avail.reduce((s, i) => s + (parseFloat(i.price) || 0), 0);
@@ -10090,6 +10228,7 @@ function renderStatsMain() {
             <div class="kpi-cell"><div class="kpi-val">${avail.length}</div><div class="kpi-lbl">Item Count</div></div>
             <div class="kpi-cell"><div class="kpi-val">${money(totalVal)}</div><div class="kpi-lbl">Total Closet Value</div></div>
           </div>
+          ${rotationBlockHtml()}
           <button class="frow" data-sa="field:color_family">
             <div style="flex:1"><div class="fld" style="margin-bottom:6px">Color</div>
               <div style="height:12px;border-radius:6px;overflow:hidden;display:flex">${colorBar}</div>
@@ -10168,6 +10307,7 @@ function renderStatsMain() {
     </div>`;
 
   wireStatsToolbar();
+  wireRotationChips();
   const reviewCta = $("#statsReviewCta");
   if (reviewCta) reviewCta.addEventListener("click", () => { statsView = "review"; renderStats(); });
   $("#statsBody").querySelectorAll("[data-sa]").forEach(el => {

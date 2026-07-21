@@ -433,6 +433,34 @@ function run() {
               [["Cardigans", "Sweaters"], ["Jeans"], false]);
   });
 
+  // ---- item rhythm + partners + rotation (2026-07-21) ----
+  t("wearRhythm: average cadence and longest gap over distinct wear days", () => {
+    const ws = [{ item_id: "a", worn_on: "2026-01-01" }, { item_id: "a", worn_on: "2026-01-11" },
+                { item_id: "a", worn_on: "2026-01-11" },   // same day twice = one wear day
+                { item_id: "a", worn_on: "2026-02-10" }];
+    const r = W.wearRhythm("a", ws);
+    return eq([r.wearDays, r.avg, r.longest], [3, 20, 30]);
+  });
+  t("wearRhythm: under 3 wear days is noise, not a rhythm", () =>
+    eq(W.wearRhythm("a", [{ item_id: "a", worn_on: "2026-01-01" }, { item_id: "a", worn_on: "2026-01-05" }]), null));
+  t("itemPartners: distinct same-day co-wears, 2+ days to count", () => {
+    const ws = [
+      { item_id: "a", worn_on: "d1" }, { item_id: "b", worn_on: "d1" }, { item_id: "c", worn_on: "d1" },
+      { item_id: "a", worn_on: "d2" }, { item_id: "b", worn_on: "d2" }, { item_id: "b", worn_on: "d2" },
+      { item_id: "b", worn_on: "d3" },   // a wasn't worn that day — doesn't count
+    ];
+    return eq(W.itemPartners("a", 3, ws), [{ id: "b", days: 2 }]);
+  });
+  t("buildRotationStats: share of the Available closet worn in the window", () => {
+    const pool = [{ id: "a", status: "Available" }, { id: "b", status: "Available" },
+                  { id: "c", status: "Available" }, { id: "d", status: "Archive" }];
+    const ws = [{ item_id: "a", worn_on: D(-5) }, { item_id: "a", worn_on: D(-6) },
+                { item_id: "b", worn_on: D(-200) },   // outside the 90d window
+                { item_id: "d", worn_on: D(-2) }];    // archived — not in the denominator
+    const r = W.buildRotationStats(90, pool, ws, today);
+    return eq([r.total, r.worn, r.pct], [3, 1, 33]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
