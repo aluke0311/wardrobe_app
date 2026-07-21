@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r8">
+<meta name="app-version" content="2026-07-21 r9">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1191,13 +1191,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r8";
+const APP_VERSION = "2026-07-21 r9";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Select mode has an All button \u2014 select everything in the current grid (tap again for None)",
-  "Bulk edit now ADDS to multi-value fields: adding Summer to a Fall item gives Fall + Summer. Switch to Replace in the sheet if you want the old behaviour",
-  "Fixed the overlapping thumbnails and caption on tomorrow's outfit",
+  "New \u201cWorn for\u201d filter on both Closet and Looks \u2014 narrow to things you've actually worn for Church, Work, Travel\u2026",
+  "Looks formality filter now includes Home (the no-shoes bucket)",
+  "Filter sheets can be swiped down to close, like the other sheets",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -1877,6 +1877,7 @@ function buildOutfitIndexes() {
   buildOutfitWearMap();
 }
 function buildOutfitWearMap() {
+  invalidateContextCache();
   outfitWearMap = new Map();
   for (const w of wears) {
     if (!w.outfit_id) continue;
@@ -4773,6 +4774,7 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
             })
           ));
           patchable.forEach(r => { r.context = ctx; });
+          invalidateContextCache();
         } catch (_) { /* wear already logged — context is best-effort */ }
       }
     }
@@ -4841,6 +4843,7 @@ const FILTERS = [
   ["retailer",   "Retailer",    () => distinctScalar("retailer")],
   ["acquisition","Acquisition", () => ["New","Secondhand","Gift"]],
   ["capsule",    "Capsule",     () => capsules.map(c => c.name).sort()],
+  ["context",    "Worn for",    () => contextOptions()],
 ];
 // Per-surface filter dims: closet uses lens for status + folders for category/subcategory (not in funnel).
 // Stats includes category (useful: filter to Tops only), but not subcategory (too granular).
@@ -4850,7 +4853,12 @@ const STATS_FILTER_DIMS  = FILTERS.filter(([k]) => k !== "subcategory"); // keep
 // L4: "Liked" is outfit-only (o.rating) — appended only here, not to the shared
 // FILTERS array, so itemMatchesFilter (which destructures specific keys) simply
 // never sees it and other surfaces stay unaffected.
-const LOOKS_FILTER_DIMS  = [...FILTERS.filter(([k]) => !["category","subcategory"].includes(k)), ["liked", "Liked", () => ["Liked"]]];
+const LOOKS_FILTER_DIMS  = [
+  ...FILTERS.filter(([k]) => !["category","subcategory"].includes(k))
+    // Looks add the derived "Home" bucket (no shoes) alongside the 1-8 levels.
+    .map(d => d[0] === "formality" ? ["formality", "Formality", () => ["Home", ...FILTER_FORMALITY_OPTS]] : d),
+  ["liked", "Liked", () => ["Liked"]],
+];
 // Builder picker already has its own category/subcategory folder nav + a single-select
 // capsule scope chip bar — the funnel only needs attribute dims layered on top.
 const BUILDER_FILTER_DIMS = FILTERS.filter(([k]) => !["category","subcategory","capsule"].includes(k));
@@ -4865,19 +4873,19 @@ function newFilterState(overrides) {
   const s = { q: "", color: new Set(), fabric: new Set(), size: new Set(),
     season: new Set(), brand: new Set(), status: new Set(), category: new Set(),
     subcategory: new Set(), formality: new Set(), retailer: new Set(),
-    acquisition: new Set(), capsule: new Set(), liked: new Set() };
+    acquisition: new Set(), capsule: new Set(), liked: new Set(), context: new Set() };
   if (overrides) Object.assign(s, overrides);
   return s;
 }
 function hasActiveFilter(f) {
   if (f.q) return true;
   return ["color","fabric","size","season","brand","status","category","subcategory",
-          "formality","retailer","acquisition","capsule","liked"].some(k => f[k] instanceof Set && f[k].size > 0);
+          "formality","retailer","acquisition","capsule","liked","context"].some(k => f[k] instanceof Set && f[k].size > 0);
 }
 function filterActiveCount(f) {
   let n = f.q ? 1 : 0;
   for (const k of ["color","fabric","size","season","brand","status","category","subcategory",
-                   "formality","retailer","acquisition","capsule","liked"]) if (f[k]?.size) n++;
+                   "formality","retailer","acquisition","capsule","liked","context"]) if (f[k]?.size) n++;
   return n;
 }
 let closetFilter = newFilterState();
@@ -4947,7 +4955,7 @@ function openFilterSheet(state, { onApply = () => {}, title = "Filter", dims, so
       const opts = optsF();
       const chips = open
         ? `<div class="schips">${opts.map(opt => {
-            const chipLabel = key === "formality" ? `${opt}. ${OCCASION_LADDER[+opt - 1]}` : opt;
+            const chipLabel = (key === "formality" && /^\d+$/.test(opt)) ? `${opt}. ${OCCASION_LADDER[+opt - 1]}` : opt;
             return `<button class="schip ${state[key]?.has(opt) ? "on" : ""}" data-chip="${key}|${esc(opt)}">${esc(chipLabel)}</button>`;
           }).join("") || `<span style="color:var(--muted);font-size:13px">None recorded yet</span>`}</div>`
         : "";
@@ -5505,6 +5513,26 @@ function outfitSeasons(o) { return [...new Set(effectiveWearDays(o).map(seasonOf
 // to call a per-outfit wears scan once per outfit PER FOLDER (O(contexts ×
 // outfits × wears) ≈ 95M iterations at current data size — seconds of jank);
 // build this map once per render instead and read from it.
+// item_id → Set(contexts it's been worn in). Cached: the filter predicate is
+// called once per item, and rebuilding a 4k-wear pass each time would crawl.
+// Invalidated by buildOutfitWearMap (every wear insert/delete) and by the
+// context-save paths.
+let _itemCtxMap = null;
+function invalidateContextCache() { _itemCtxMap = null; }
+function itemContextMap() {
+  if (_itemCtxMap) return _itemCtxMap;
+  const m = new Map();
+  for (const w of wears) {
+    if (!w.item_id) continue;
+    const cs = ctxArr(w);
+    if (!cs.length) continue;
+    let s = m.get(w.item_id);
+    if (!s) { s = new Set(); m.set(w.item_id, s); }
+    for (const c of cs) s.add(c);
+  }
+  _itemCtxMap = m;
+  return m;
+}
 function outfitContextMap() {
   const m = new Map();
   for (const w of wears) {
@@ -5627,7 +5655,7 @@ function matchesSeason(i, season) { const s = itemSeasonSet(i); return !!s && s.
 // funnel brings Storage/Archive back.
 function itemMatchesFilter(i, state, opts) {
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule } = state;
+          formality, retailer, acquisition, capsule, context } = state;
   const st = itemStatus(i);
   if (status?.size) { if (!status.has(st)) return false; }
   else if (!opts?.noStatusDefault) { if (st !== "Available") return false; }
@@ -5645,7 +5673,15 @@ function itemMatchesFilter(i, state, opts) {
   if (fabric?.size   && !(i.fabric || []).some(f => fabric.has(f))) return false;
   if (season?.size   && ![...season].some(s => matchesSeason(i, s))) return false;
   if (capsule?.size  && ![...capsule].some(c => capsuleNamesForItem(i.id).includes(c))) return false;
-  if (formality?.size && ![...formality].some(v => matchesFormality(i, +v))) return false;
+  if (context?.size) {
+    const cs = itemContextMap().get(i.id);
+    if (!cs || ![...context].some(c => cs.has(c))) return false;
+  }
+  // "Home" is a look-level bucket, not an item level — ignore it here.
+  if (formality?.size) {
+    const lv = [...formality].filter(v => v !== "Home");
+    if (lv.length && !lv.some(v => matchesFormality(i, +v))) return false;
+  }
   return true;
 }
 // Outfit filter for the Looks surface.
@@ -5655,16 +5691,28 @@ function itemMatchesFilter(i, state, opts) {
 function outfitMatchesFilter(o, state) {
   if (!hasActiveFilter(state)) return true;
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule, liked } = state;
+          formality, retailer, acquisition, capsule, liked, context } = state;
   if (q) {
     const hay = [o.name, o.notes].filter(Boolean).join(" ").toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
   }
   if (liked?.size && o.rating !== 1) return false;
+  if (context?.size) {
+    const cs = outfitContextMap().get(o.id);
+    if (!cs || ![...context].some(c => cs.has(c))) return false;
+  }
+  // Formality: "Home" matches the derived no-shoes bucket; numeric levels keep
+  // ALL-pieces semantics. Either satisfies the filter.
+  if (formality?.size) {
+    const lv = [...formality].filter(v => v !== "Home").map(Number);
+    const its0 = outfitItems(o);
+    const okHome = formality.has("Home") && outfitBucket(o) === "home";
+    const okLvl = lv.length && its0.length && its0.every(i => lv.some(v => matchesFormality(i, v)));
+    if (!okHome && !okLvl) return false;
+  }
   const its = outfitItems(o);
   if (its.length) {
     if (status?.size  && !its.every(i => status.has(itemStatus(i)))) return false;
-    if (formality?.size && !its.every(i => [...formality].some(v => matchesFormality(i, +v)))) return false;
     if (capsule?.size && !its.every(i => [...capsule].some(c => capsuleNamesForItem(i.id).includes(c)))) return false;
     if (color?.size   && !its.some(i => color.has(i.color_family))) return false;
     if (season?.size  && !its.some(i => [...season].some(s => matchesSeason(i, s)))) return false;
@@ -14090,7 +14138,7 @@ function wireEvents() {
   // click handler does the real cleanup — we just trigger it past a drag threshold)
   [["bulkInner","bulkBg"],["moveInner","moveBg"],["fieldInner","fieldBg"],
    ["logInner","logBg"],["statsFilterInner","statsFilterBg"],["statsRangeInner","statsRangeBg"],
-   ["qaSheetInner","qaSheetBg"]]
+   ["qaSheetInner","qaSheetBg"],["filterSheetInner","filterSheetBg"]]
     .forEach(([s, b]) => wireSheetSwipe(s, b));
 
   // Global left-edge swipe (< 24px) → back, mirrors the on-screen back button
