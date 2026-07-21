@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r6">
+<meta name="app-version" content="2026-07-21 r7">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,17 +1185,20 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r6";
+const APP_VERSION = "2026-07-21 r7";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New \ud83d\udc55 Worn tray next to the hamper \u2014 pieces worn since their last wash but not dirty yet (the pile on the chair)",
-  "Closet Review now asks for missing photos too",
-  "Tomorrow's pick stays put until you re-roll it; tap it to revise",
+  "\u2699\ufe0f You can now edit your categories and types \u2014 Settings \u2192 Edit categories & types. Renaming moves every item over for you",
+  "New \ud83d\udc55 Worn tray beside the hamper; Closet Review now asks for missing photos",
+  "Tomorrow's pick stays put until you re-roll it \u2014 tap it to revise",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
-const TAXONOMY = {
+// Editable in-app since 2026-07-21: this is the DEFAULT shape; a saved
+// override in kv ("taxonomy") replaces it at load via applyTaxonomyOverride().
+// Both are `let` + rebuilt in place so the ~11 read sites need no changes.
+const TAXONOMY_DEFAULT = {
   "Tops": ["Tee shirts", "Graphic tees", "Long-sleeve tees", "Sleeveless", "Blouses", "Sweaters", "Cardigans", "Sweatshirts"],
   "Bottoms": ["Jeans", "Pants", "Shorts", "Skirts", "Leggings/Joggers", "Tights"],
   "Dresses": ["Short", "Long", "Cocktail"],
@@ -1203,7 +1206,8 @@ const TAXONOMY = {
   "Shoes": ["Boots", "Sandals", "Flats", "Heels", "Sneakers"],
   "Workout": ["Workout tops", "Active shorts", "Sports bras", "Swimwear"],
 };
-const CATEGORIES = Object.keys(TAXONOMY);
+let TAXONOMY = JSON.parse(JSON.stringify(TAXONOMY_DEFAULT));
+let CATEGORIES = Object.keys(TAXONOMY);
 
 // Single color family per item: label + swatch. Keep in sync with import.py.
 const COLOR_FAMILIES = [
@@ -1571,6 +1575,7 @@ async function loadData() {
   capsuleLinks = ci || [];
   exclusions = ex || [];
   kvData = new Map((kv || []).map(r => [r.key, r.value]));
+  applyTaxonomyOverride();
   buildOutfitIndexes();
   buildCapsuleIndexes();
   buildExcludeSet();
@@ -1599,6 +1604,28 @@ async function kvSet(key, value) {
     });
     saveDataSnapshot();
   } catch (e) { toast(e.message); }
+}
+
+/* ---- editable taxonomy (2026-07-21) ----
+   kvData("taxonomy") = { cats: {Category: [subs]}, meta: {sub: {formality, tolerance}} }.
+   `meta` carries the built-in defaults of a RENAMED subcategory across its new
+   name, so renaming "Cocktail" → "Evening" doesn't silently drop that type's
+   formality seed / laundry tolerance. */
+const TAXONOMY_KEY = "taxonomy";
+function applyTaxonomyOverride() {
+  const v = kvData.get(TAXONOMY_KEY);
+  const cats = v && v.cats && typeof v.cats === "object" ? v.cats : null;
+  TAXONOMY = cats ? JSON.parse(JSON.stringify(cats)) : JSON.parse(JSON.stringify(TAXONOMY_DEFAULT));
+  CATEGORIES = Object.keys(TAXONOMY);
+  for (const [sub, m] of Object.entries((v && v.meta) || {})) {
+    if (m && m.formality && !(sub in SUBCAT_FORMALITY)) SUBCAT_FORMALITY[sub] = m.formality;
+    if (m && m.tolerance != null && !(sub in WEAR_TOLERANCE)) WEAR_TOLERANCE[sub] = m.tolerance;
+  }
+}
+async function saveTaxonomy(cats, meta) {
+  const prev = kvData.get(TAXONOMY_KEY) || {};
+  await kvSet(TAXONOMY_KEY, { cats, meta: { ...(prev.meta || {}), ...(meta || {}) } });
+  applyTaxonomyOverride();
 }
 
 /* Day plans: kvData("dayplan") = { "<YYYY-MM-DD>": [entry, ...] } where an
@@ -13406,11 +13433,171 @@ function renderSettings() {
         <button class="btn btn-sec" id="setHealth">Run data health check</button>
         <div id="setHealthOut"></div>
       </div>
+      <div class="card stack">
+        <div><div class="fld">Categories</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">Rename, add or remove your categories and the types inside them. Renaming moves every item over.</div></div>
+        <button class="btn btn-sec" id="setTaxonomy">Edit categories &amp; types</button>
+      </div>
       <div class="center muted" style="font-size:12px"><span class="appver">${esc(APP_VERSION)}</span></div>
     </div>`;
   $("#signOutBtn").onclick = () => handleSignedOut();
   $("#setBackup").onclick = downloadBackup;
   $("#setHealth").onclick = () => runDataHealthCheck();
+  $("#setTaxonomy").onclick = () => openTaxonomySheet();
+}
+
+/* ---- category / subcategory editor (2026-07-21, her request) --------------
+   Renames rewrite every affected item (bulk PATCH by column filter, not by id
+   list), so the closet never ends up with orphaned values. Deleting is only
+   offered when nothing uses the name — safer than silently reassigning items. */
+function _taxCounts() {
+  const cat = new Map(), sub = new Map();
+  for (const i of items) {
+    if (i.category) cat.set(i.category, (cat.get(i.category) || 0) + 1);
+    if (i.category && i.subcategory) {
+      const k = `${i.category}|${i.subcategory}`;
+      sub.set(k, (sub.get(k) || 0) + 1);
+    }
+  }
+  return { cat, sub };
+}
+function openTaxonomySheet() {
+  const { cat: catN, sub: subN } = _taxCounts();
+  const secs = CATEGORIES.map(c => {
+    const subs = TAXONOMY[c] || [];
+    const rows = subs.map(sname => {
+      const n = subN.get(`${c}|${sname}`) || 0;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0 5px 12px;border-bottom:1px solid var(--line)">
+        <span style="flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sname)}</span>
+        <span class="muted" style="font-size:11.5px;flex:none">${n}</span>
+        <button class="cap-chip" data-tax-subren="${esc(c)}|${esc(sname)}" style="font-size:12px;flex:none">✎</button>
+        <button class="cap-chip" data-tax-subdel="${esc(c)}|${esc(sname)}" style="font-size:12px;flex:none;color:${n ? "var(--muted)" : "var(--danger)"}">✕</button>
+      </div>`;
+    }).join("");
+    return `<div style="padding:10px 16px 4px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1;min-width:0;font-size:14px;font-weight:700">${esc(c)}</span>
+        <span class="muted" style="font-size:11.5px">${catN.get(c) || 0} items</span>
+        <button class="cap-chip" data-tax-catren="${esc(c)}" style="font-size:12px">✎</button>
+        <button class="cap-chip" data-tax-catdel="${esc(c)}" style="font-size:12px;color:${(catN.get(c) || 0) ? "var(--muted)" : "var(--danger)"}">✕</button>
+      </div>
+      ${rows}
+      <button class="lnk" data-tax-subadd="${esc(c)}" style="font-size:12.5px;padding:6px 0 0 12px">＋ Add a type</button>
+    </div>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="taxClose">Done</button>
+      <h2>Categories &amp; types</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div class="muted" style="font-size:12px;padding:0 16px 6px;line-height:1.5">Renaming moves every item using that name. You can only delete one nothing is using. The number is how many items use it.</div>
+    <div style="max-height:60vh;overflow-y:auto">${secs}</div>
+    <div style="padding:10px 16px 16px;display:flex;gap:8px">
+      <button class="btn btn-sec" id="taxAddCat" style="flex:1">＋ Add category</button>
+      <button class="lnk" id="taxReset" style="flex:none;color:var(--muted);font-size:12.5px">Reset to default</button>
+    </div>
+    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
+  showSheet("logSheet");
+  $("#taxClose").onclick = () => {
+    hideSheet("logSheet");
+    if (activeTabName() === "settings") renderSettings();
+    else if (activeTabName() === "closet") renderCloset();
+  };
+
+  const cats = () => JSON.parse(JSON.stringify(TAXONOMY));
+  const clean = (v) => (v || "").trim();
+
+  $("#logInner").querySelectorAll("[data-tax-subren]").forEach(b => b.onclick = async () => {
+    const [c, ...rest_] = b.dataset.taxSubren.split("|"); const old = rest_.join("|");
+    const next = clean(prompt(`Rename “${old}” to:`, old));
+    if (!next || next === old) return;
+    const t = cats();
+    if ((t[c] || []).includes(next)) return toast("That type already exists here");
+    t[c] = (t[c] || []).map(x => (x === old ? next : x));
+    const meta = {};
+    if (SUBCAT_FORMALITY[old]) meta[next] = { formality: SUBCAT_FORMALITY[old], tolerance: WEAR_TOLERANCE[old] };
+    await saveTaxonomy(t, meta);
+    await retagItems({ category: c, subcategory: old }, { subcategory: next });
+    openTaxonomySheet();
+  });
+
+  $("#logInner").querySelectorAll("[data-tax-subdel]").forEach(b => b.onclick = async () => {
+    const [c, ...rest_] = b.dataset.taxSubdel.split("|"); const name = rest_.join("|");
+    const n = _taxCounts().sub.get(`${c}|${name}`) || 0;
+    if (n) return toast(`${n} item${n === 1 ? "" : "s"} still use “${name}” — rename it instead`);
+    if (!confirm(`Remove the type “${name}” from ${c}?`)) return;
+    const t = cats();
+    t[c] = (t[c] || []).filter(x => x !== name);
+    await saveTaxonomy(t);
+    openTaxonomySheet();
+  });
+
+  $("#logInner").querySelectorAll("[data-tax-subadd]").forEach(b => b.onclick = async () => {
+    const c = b.dataset.taxSubadd;
+    const name = clean(prompt(`New type in ${c}:`, ""));
+    if (!name) return;
+    const t = cats();
+    if ((t[c] || []).includes(name)) return toast("That type already exists here");
+    t[c] = [...(t[c] || []), name];
+    await saveTaxonomy(t);
+    openTaxonomySheet();
+  });
+
+  $("#logInner").querySelectorAll("[data-tax-catren]").forEach(b => b.onclick = async () => {
+    const old = b.dataset.taxCatren;
+    const next = clean(prompt(`Rename category “${old}” to:`, old));
+    if (!next || next === old) return;
+    if (TAXONOMY[next]) return toast("That category already exists");
+    const t = {};
+    for (const k of Object.keys(TAXONOMY)) t[k === old ? next : k] = TAXONOMY[k].slice();  // keep order
+    await saveTaxonomy(t);
+    await retagItems({ category: old }, { category: next });
+    openTaxonomySheet();
+  });
+
+  $("#logInner").querySelectorAll("[data-tax-catdel]").forEach(b => b.onclick = async () => {
+    const c = b.dataset.taxCatdel;
+    const n = _taxCounts().cat.get(c) || 0;
+    if (n) return toast(`${n} item${n === 1 ? "" : "s"} are still in ${c} — move them first`);
+    if (!confirm(`Remove the category “${c}”?`)) return;
+    const t = cats(); delete t[c];
+    await saveTaxonomy(t);
+    openTaxonomySheet();
+  });
+
+  $("#taxAddCat").onclick = async () => {
+    const name = clean(prompt("New category name:", ""));
+    if (!name) return;
+    if (TAXONOMY[name]) return toast("That category already exists");
+    const t = cats(); t[name] = [];
+    await saveTaxonomy(t);
+    openTaxonomySheet();
+  };
+
+  $("#taxReset").onclick = async () => {
+    if (!confirm("Reset categories and types to the app defaults? Your items keep whatever they're labelled — this only changes the lists.")) return;
+    await saveTaxonomy(JSON.parse(JSON.stringify(TAXONOMY_DEFAULT)));
+    openTaxonomySheet();
+  };
+}
+
+// Bulk-rewrite a column value across every matching item (PostgREST column
+// filters, so no id list). Updates the in-memory rows to match.
+async function retagItems(match, patch) {
+  const q = Object.entries(match).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join("&");
+  const hit = items.filter(i => Object.entries(match).every(([k, v]) => i[k] === v));
+  if (!hit.length) return;
+  try {
+    await rest(`/items?${q}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify(patch),
+    });
+    for (const i of hit) Object.assign(i, patch);
+    toast(`Moved ${hit.length} item${hit.length === 1 ? "" : "s"}`);
+    saveDataSnapshot();
+  } catch (e) { toast(e.message); }
 }
 
 // ---- Data safety (2026-07-18) ----
@@ -13952,6 +14139,7 @@ async function loadDataSnapshot() {
     outfitLinks = d.outfitLinks || []; capsules = d.capsules || [];
     capsuleLinks = d.capsuleLinks || []; exclusions = d.exclusions || [];
     kvData = new Map(d.kv || []);
+    applyTaxonomyOverride();
     buildOutfitIndexes(); buildCapsuleIndexes(); buildExcludeSet(); buildSuggestIndexes();
     dataReady = true;
     return true;
