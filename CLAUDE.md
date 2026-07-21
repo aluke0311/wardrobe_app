@@ -768,6 +768,24 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   flips `hidden=true` ~240ms later, so code that *reads* `.hidden` right after a
   close sees `false`; the wrapper ids list in `uiCanRefetch()` must gain any NEW
   sheet wrapper added later.
+- **`#toast` overlays bottom-fixed controls and must stay tap-transparent**
+  (2026-07-21 r12). It's `position:fixed` at `bottom: nav-h + safe-b + 18px`,
+  **z-index 50** — the same band as `.stats-toggle-float` (z-index 18) and close
+  to `#itemBar`/`.lk-actbar` (25). It used to set `pointer-events:auto` on the
+  whole pill when it had action chips, and its handler returns early on a
+  non-chip tap — so a lingering toast made the Most/Least Worn toggle look
+  broken (tap the chip → that action fired; tap elsewhere → nothing). Rule:
+  **`pointer-events` stays `none` on the pill; only `.toast-chip` opts back
+  in.** `positionToast()` additionally lifts the toast clear of
+  `.stats-toggle-float`; it's called from `toast()` AND from
+  `renderStatsGridPage` so it self-corrects from both directions. Any NEW
+  bottom-fixed control in that band needs the same consideration.
+- **Never call `wearCountInRange` inside a sort comparator** (2026-07-21 r11) —
+  it filters the whole `wears` array per call, so a comparator makes it
+  items × wears × log(items) (~34M row reads on the real closet, ~1s of frozen
+  UI). Use `wearCountMapInRange()` — one pass, `Map(item_id → count)`. It
+  mirrors the per-item function's asymmetry exactly: distinct wear DAYS when
+  the range is "all", raw rows within a cutoff (pinned in selftest).
 - **Screen-top scrolling**: use `scrollToTop()` / `getScrollTop()` /
   `restoreScroll(y)` — `window.scrollTo` is a no-op (body is the scroll container).
   Back-nav scroll restore: `makeScreenReturn` thunks carry it; plain closet/look
