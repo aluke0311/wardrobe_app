@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r10">
+<meta name="app-version" content="2026-07-21 r11">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1207,13 +1207,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r10";
+const APP_VERSION = "2026-07-21 r11";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Item details now show \u201cUsually worn with\u201d \u2014 the pieces you actually wear alongside it, tap through to any of them",
-  "Each item also shows its rhythm: how often it comes back around, and the longest it ever sat unworn",
-  "New Rotation number in Style Stats \u2014 how much of your closet actually came out in the last 30 days, 90 days, or year",
+  "Fixed the Most/Least Worn toggle on Worn History \u2014 it was locking up for about a second on every tap, so it felt dead",
+  "Stats lists (Worn History, Cost per Wear, Never Worn) now build about 100\u00d7 faster",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -9648,6 +9647,31 @@ function wearCountInRange(itemId) {
   return wears.filter(w => w.item_id === itemId && w.worn_on >= cutoff).length;
 }
 
+// Same numbers as wearCountInRange, but ONE pass over wears for the whole
+// closet. The smart-list sorts call the per-item version inside a comparator,
+// which is items × wears × log(items) work — ~34M row reads on a real closet,
+// enough to freeze the tap for about a second. Build this once, look up from it.
+// Mirrors wearCountInRange's semantics exactly: distinct wear DAYS when the
+// range is "all", raw rows within a cutoff.
+function wearCountMapInRange() {
+  const cutoff = rangeStart();
+  const m = new Map();
+  if (cutoff) {
+    for (const w of wears) {
+      if (w.worn_on >= cutoff) m.set(w.item_id, (m.get(w.item_id) || 0) + 1);
+    }
+  } else {
+    const seen = new Set();
+    for (const w of wears) {
+      const k = w.item_id + "|" + w.worn_on;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      m.set(w.item_id, (m.get(w.item_id) || 0) + 1);
+    }
+  }
+  return m;
+}
+
 function acqRangeStart() {
   if (statsAcqRange === "all") return null;
   const older = statsAcqRange.startsWith("o");
@@ -9837,22 +9861,24 @@ function dateRangeHuman() {
 
 function buildSmartList(key) {
   const av = statsPool();
-  const wornSub = item => { const n = wearCountInRange(item.id); return n === 0 ? "0 wears" : `${n} wear${n === 1 ? "" : "s"}`; };
+  const wcMap = wearCountMapInRange();
+  const wc = id => wcMap.get(id) || 0;
+  const wornSub = item => { const n = wc(item.id); return n === 0 ? "0 wears" : `${n} wear${n === 1 ? "" : "s"}`; };
   if (key === "never-worn") {
     const title = statsDateRange === "all" ? "Never Worn" : `Not Worn · past ${dateRangeHuman()}`;
-    return { list: av.filter(i => wearCountInRange(i.id) === 0), title };
+    return { list: av.filter(i => wc(i.id) === 0), title };
   }
   if (key === "most-worn")
-    return { list: [...av].sort((a, b) => wearCountInRange(b.id) - wearCountInRange(a.id)).slice(0, 100),
+    return { list: [...av].sort((a, b) => wc(b.id) - wc(a.id)).slice(0, 100),
       title: "Worn History", subtitleFn: wornSub };
   if (key === "least-worn")
-    return { list: [...av].sort((a, b) => wearCountInRange(a.id) - wearCountInRange(b.id)).slice(0, 100),
+    return { list: [...av].sort((a, b) => wc(a.id) - wc(b.id)).slice(0, 100),
       title: "Worn History", subtitleFn: wornSub };
   if (key === "best-cpw" || key === "worst-cpw") {
     // range-aware CPW: price / wears within the active range
-    const cpwR = item => { const n = wearCountInRange(item.id); return n ? parseFloat(item.price) / n : null; };
+    const cpwR = item => { const n = wc(item.id); return n ? parseFloat(item.price) / n : null; };
     const cpwSub = item => { const c = cpwR(item); return c != null ? money(c) : ""; };
-    const withWears = av.filter(i => i.price && wearCountInRange(i.id) > 0);
+    const withWears = av.filter(i => i.price && wc(i.id) > 0);
     const sorted = key === "best-cpw"
       ? withWears.sort((a, b) => (cpwR(a) || Infinity) - (cpwR(b) || Infinity))
       : withWears.sort((a, b) => (cpwR(b) || 0) - (cpwR(a) || 0));
@@ -10199,7 +10225,8 @@ function renderStatsMain() {
       `<span style="flex:${(n/tot*100).toFixed(1)};background:${colorHex(name)};display:inline-block;height:100%"></span>`
     ).join("");
   })();
-  const neverWorn = avail.filter(i => wearCountInRange(i.id) === 0).length;
+  const neverWornMap = wearCountMapInRange();
+  const neverWorn = avail.filter(i => !neverWornMap.get(i.id)).length;
   const declutterCount = (buildSmartList("declutter") || { list: [] }).list.length;
   const rangeTag = statsDateRange === "all" ? "" : ` · past ${dateRangeHuman()}`;
   const notLoggedLabel = statsDateRange === "all" ? "Never Worn" : `Not Worn${rangeTag}`;

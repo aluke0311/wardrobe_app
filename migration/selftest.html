@@ -461,6 +461,28 @@ function run() {
     return eq([r.total, r.worn, r.pct], [3, 1, 33]);
   });
 
+  // ---- wear-count map (perf fix for the smart-list sorts, 2026-07-21) ----
+  // The map replaced per-item wearCountInRange calls inside sort comparators.
+  // It must agree with that function exactly, in BOTH range modes — note the
+  // pre-existing asymmetry it preserves: distinct DAYS on "all", raw rows in range.
+  t("wearCountMapInRange matches wearCountInRange (all + ranged)", () => {
+    const savedItems = W.items, savedWears = W.wears, savedRange = W.statsDateRange;
+    W.items = [{ id: "x", status: "Available" }, { id: "y", status: "Available" }, { id: "z", status: "Available" }];
+    W.wears = [{ item_id: "x", worn_on: D(-1) }, { item_id: "x", worn_on: D(-1) },  // same day twice
+               { item_id: "x", worn_on: D(-200) }, { item_id: "y", worn_on: D(-200) }];
+    const out = [];
+    for (const r of ["all", "90d"]) {
+      W.statsDateRange = r;
+      const m = W.wearCountMapInRange();
+      out.push(W.items.map(i => [(m.get(i.id) || 0), W.wearCountInRange(i.id)]));
+    }
+    W.items = savedItems; W.wears = savedWears; W.statsDateRange = savedRange;
+    // all: x = 2 distinct DAYS, y = 1, z = 0
+    // 90d: only x's recent day is in range, but ranged counting is RAW ROWS,
+    // so the doubled log reads 2 — the asymmetry both functions must share.
+    return eq(out, [[[2, 2], [1, 1], [0, 0]], [[2, 2], [0, 0], [0, 0]]]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
