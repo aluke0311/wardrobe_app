@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r1">
+<meta name="app-version" content="2026-07-21 r2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,12 +1185,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r1";
+const APP_VERSION = "2026-07-21 r2";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Fixed: locking a layer 🔒 keeps it a layer (it used to turn into your top) and now sticks as you browse the other suggestions",
-  "Fixed: yesterday's \u201champer or keep?\u201d strip is back on Home \u2014 it was being hidden by the older \u201cdone laundry lately?\u201d prompt",
+  "The Tomorrow card now works on trips too \u2014 it reads your trip's day plan and suggests from the suitcase",
+  "Fixed: locking a layer \ud83d\udd12 keeps it a layer (it used to turn into your top) and now sticks as you browse",
+  "Fixed: yesterday's \u201champer or keep?\u201d strip is back on Home",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2475,11 +2476,11 @@ function tripOfferHtml() {
 // One generated outfit per context-only entry, cached per render-day so
 // re-renders never re-roll it out from under her (predictability).
 let _tmCombo = { key: null, pieces: null };
-function tomorrowGenPieces(date, entry) {
+function tomorrowGenPieces(date, entry, pool = null) {
   const act = entryActivity(entry.contexts);
-  const key = `${date}|${(entry.contexts || []).join(",")}|${_dpWx(date) ? "wx" : ""}|${act || ""}`;
+  const key = `${date}|${(entry.contexts || []).join(",")}|${_dpWx(date) ? "wx" : ""}|${act || ""}|${pool ? "cap" : ""}`;
   if (_tmCombo.key === key) return _tmCombo.pieces;
-  const res = suggestOutfits(act ? null : entrySuggestLevel(entry.contexts), null, null, seasonOf(date), _dpWx(date), null, true, act);
+  const res = suggestOutfits(act ? null : entrySuggestLevel(entry.contexts), null, pool, seasonOf(date), _dpWx(date), null, true, act);
   _tmCombo = { key, pieces: res.length ? res[0].pieces : null };
   return _tmCombo.pieces;
 }
@@ -2487,21 +2488,40 @@ function _planThumbStrip(pieces) {
   return `<div style="display:flex;gap:6px;align-items:center">${pieces.map(p =>
     `<div style="width:44px;height:44px;flex:none">${thumbHtml(p.image_path)}</div>`).join("")}</div>`;
 }
+// Trip mode (2026-07-21, user request): the Tomorrow card works during a trip
+// too, but for dates INSIDE the trip it reads/writes the TRIP's own day plan
+// (capsules.plan) — never a second source of truth. Returns null when the kv
+// day plan is the right backing store.
+function _tmTripCtx(date) {
+  if (!tripModeId) return null;
+  const c = capsuleById.get(tripModeId);
+  if (!c || !isDatedTrip(c)) return null;
+  if (date < c.start_date || date > c.end_date) return null;
+  return c;
+}
 function tomorrowCardHtml() {
-  if (!dataReady || tripModeId) return "";
+  if (!dataReady) return "";
   const tm = shiftDate(todayStr(), 1);
-  const entries = dayPlan(tm);
+  const trip = _tmTripCtx(tm);
+  // Trip days synthesize entries from the trip plan; ordinary days use kv.
+  const entries = trip
+    ? planActiveLooks(trip, tm).map(oid => ({ contexts: [], outfit: oid }))
+    : dayPlan(tm);
+  // A trip day with nothing planned still gets one generated suggestion —
+  // scoped to the suitcase, like every other trip-mode suggestion.
+  const genEntries = entries.length ? entries : (trip ? [{ contexts: [], outfit: null }] : []);
+  const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
   const wx = _dpWx(tm);
   const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
   const hdr = `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 2px 8px">
-    <div style="font-size:13px;font-weight:600;color:var(--muted)">Tomorrow · ${esc(planDayLabel(tm))}${wxBit}</div>
+    <div style="font-size:13px;font-weight:600;color:var(--muted)">Tomorrow · ${esc(planDayLabel(tm))}${wxBit}${trip ? " · ✈️" : ""}</div>
     <button class="lnk" data-tm-edit style="font-size:12.5px">${entries.length ? "✎ Edit" : "＋ Plan"}</button>
   </div>`;
   let body = "";
-  if (!entries.length) {
+  if (!genEntries.length) {
     body = `<button data-tm-edit style="width:100%;text-align:left;font-size:13.5px;color:var(--muted);padding:2px">Nothing planned — tap to set tomorrow's context or outfit.</button>`;
   } else {
-    body = entries.map((e, idx) => {
+    body = genEntries.map((e, idx) => {
       const ctxs = (e.contexts || []).join(", ");
       const o = e.outfit ? outfitById.get(e.outfit) : null;
       if (o) return `<button data-tm-look="${esc(o.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:4px 0">
@@ -2511,10 +2531,11 @@ function tomorrowCardHtml() {
           ${ctxs ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs)}</span>` : ""}
         </span>
       </button>`;
-      const pieces = tomorrowGenPieces(tm, e);
-      if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found; tap ✨ to dig.</div>
+      const pieces = tomorrowGenPieces(tm, e, pool);
+      if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found${trip ? " in the suitcase" : ""}; tap ✨ to dig.</div>
         <div style="display:flex;gap:6px;padding:2px 0"><button class="cap-chip" data-tm-refine="${idx}">✨ Suggest</button></div>`;
-      const why = [ctxs || (entrySuggestLevel(e.contexts) ? occLabel(entrySuggestLevel(e.contexts)) : ""), "clean picks"].filter(Boolean).join(" · ");
+      const why = [ctxs || (entrySuggestLevel(e.contexts) ? occLabel(entrySuggestLevel(e.contexts)) : ""),
+                   trip ? "from the suitcase" : "clean picks"].filter(Boolean).join(" · ");
       return `<div style="padding:4px 0">
         ${_planThumbStrip(pieces)}
         <div style="display:flex;align-items:center;gap:8px;padding-top:4px">
@@ -2639,26 +2660,34 @@ function renderHome() {
     b.onclick = () => wearPlannedEntry(todayStr(), +b.dataset.tpWear);
   });
   $("#homeBody").querySelectorAll("[data-tm-edit]").forEach(b => {
-    b.onclick = () => openDayPlanSheet(shiftDate(todayStr(), 1));
+    b.onclick = () => {
+      const tm = shiftDate(todayStr(), 1), trip = _tmTripCtx(tm);
+      // Trip days are planned in the trip's own by-day planner.
+      if (trip) { switchTab("capsules"); return openTripPlan(trip.id); }
+      openDayPlanSheet(tm);
+    };
   });
   $("#homeBody").querySelectorAll("[data-tm-look]").forEach(b => {
     b.onclick = () => openLookFrom(b.dataset.tmLook);
   });
   $("#homeBody").querySelectorAll("[data-tm-refine]").forEach(b => {
     b.onclick = () => {
-      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmRefine;
+      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmRefine, trip = _tmTripCtx(tm);
+      if (trip) return openSuggestSheet(null, trip.id, { capsuleId: trip.id, date: tm });
       openSuggestSheet(null, null, _dpSuggestCtx(tm, idx, (dayPlan(tm)[idx] || {}).contexts));
     };
   });
   $("#homeBody").querySelectorAll("[data-tm-keep]").forEach(b => {
     b.onclick = async () => {
-      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmKeep;
-      const pieces = tomorrowGenPieces(tm, dayPlan(tm)[idx] || {});
+      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmKeep, trip = _tmTripCtx(tm);
+      const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
+      const pieces = tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool);
       if (!pieces) return;
       b.disabled = true;
       try {
         const oid = await saveComboAsOutfit(pieces);
-        await addKvPlanLook(tm, oid, idx);
+        if (trip) await addPlanLook(trip.id, tm, oid);
+        else await addKvPlanLook(tm, oid, idx);
         toast("Planned for tomorrow");
         renderHome();
       } catch (e) { toast(e.message); b.disabled = false; }
