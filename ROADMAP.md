@@ -7,6 +7,27 @@
 
 ---
 
+## ✅ SHIPPED — user ask batch (2026-07-21, r5→r7)
+
+Six requests in one message, all shipped same day (details + gotchas in
+CLAUDE.md's 2026-07-21 entry):
+1. **Editable categories/subcategories** — Settings → "Edit categories & types".
+   kv-backed override of TAXONOMY; renames rewrite every affected item.
+2. **"Home" formality** for looks with no shoes (supersedes the derived level).
+3. **Closet Review asks for missing photos.**
+4. **Wear counts on Looks tiles.**
+5. **Tomorrow's pick is sticky** (kv, survives refresh) + tap to revise + ↻
+   re-roll; Home decrowded (Plan-ahead folded into the card).
+6. **"Worn" tray** — worn since washing, not yet dirty.
+
+**Known follow-ups:** renaming a subcategory doesn't update the
+subcategory-keyed constants `WORKOUT_SLOTS` / `LAUNDRY_LOADS` /
+`GEAR_CAND_SUBCATS` (formality + laundry tolerance DO carry over via the
+override's meta). Home is less crowded but still stacks several rows — the
+parked "attention-slot hierarchy" idea is the real fix if it bothers her again.
+
+---
+
 ## ▶ IN PROGRESS — Round B "Formulas" (2026-07-21, r3→r4 shipped)
 
 **Thesis:** the app knows what she owns and what she wore; formulas tell her

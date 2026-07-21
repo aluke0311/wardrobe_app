@@ -28,6 +28,38 @@ library. If something seems to need a library, ask the user first.
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
+**Batch of user asks (2026-07-21, r5→r7) — SHIPPED.**
+① **Sticky Tomorrow pick**: the generated combo persists in `kvData("tmpick")`
+(`TM_PICK_KEY`, `{date:{idx:[itemIds]}}`, today+future only) instead of a
+volatile in-memory cache — a refresh no longer loses a pick she liked. `↻`
+re-rolls (`tomorrowGenPieces(..., force)`); tapping the strip calls
+`openTomorrowRevise` (opens the suggester with that combo in front, and
+`#sgClose` writes the revised combo back via `_sugg.tmPick`).
+② **"home" formality bucket**: `outfitBucket` returns `"home"` when a look has
+NO shoes ("no shoes = worn at home"), superseding the derived level; a manual
+`formality_override` still wins. It's a bucket, NOT a 9th ladder level —
+`BUCKET_RANGES.home = 2` for the places that need a number. Adds a Home folder
+to the Formality lens.
+③ Looks grid tiles lead with wear count.
+④ **"Worn" tray**: `isWornNotDirty`/`wornItems`/`_scopedWorn` = worn since
+`last_washed` but under tolerance (the pile on the chair). Closet-root
+`👕 Worn · N` row → `closetWorn` full-page view (`renderClosetWorn`, subtitle
+`wears/tolerance`), wired into `closetBack`/`siblingItems`/`switchTab` exactly
+like `closetHamper`.
+⑤ Closet Review gained an `image` field (first in `REVIEW_FIELDS`) so photoless
+items surface; `replaceItemPhoto` advances the deal when it fires from review.
+⑥ **EDITABLE TAXONOMY** — `TAXONOMY` is no longer a const: `TAXONOMY_DEFAULT`
+holds the shipped shape, `let TAXONOMY`/`let CATEGORIES` are rebuilt by
+`applyTaxonomyOverride()` from `kvData("taxonomy")` = `{cats, meta}` (called at
+the end of `loadData` AND after snapshot hydration — both, or the boot render
+uses stale lists). Settings → "Edit categories & types" → `openTaxonomySheet`:
+rename/add/remove categories + subcategories with live item counts; renames
+bulk-PATCH items via `retagItems(match, patch)` (PostgREST column filter, no id
+list); delete only offered at zero usage. `meta` carries a renamed
+subcategory's `SUBCAT_FORMALITY`/`WEAR_TOLERANCE` defaults to the new name.
+⚠️ Renaming does NOT update `WORKOUT_SLOTS`/`LAUNDRY_LOADS`/`GEAR_CAND_SUBCATS`
+(still keyed on the shipped names) — revisit if she renames Workout subcats.
+
 **Round B "Formulas" (2026-07-21, r3→r4) — FIRST SLICE SHIPPED.** Discover the
 outfit SHAPES she rebuilds, then re-cook them. All derived, nothing stored.
 `formulaKeyFor(items)` = canonical `"Slot:Subcategory + …"` signature (sorted;
