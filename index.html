@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r3">
+<meta name="app-version" content="2026-07-21 r4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,13 +1185,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r3";
+const APP_VERSION = "2026-07-21 r4";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "\u2728 New Looks lens: FORMULAS \u2014 the outfit shapes you actually rebuild (\u201cSweaters + Jeans + Boots\u201d), found in your own wear history and ranked by how much you wear them",
-  "The Tomorrow card now works on trips too \u2014 reads your trip plan, suggests from the suitcase",
-  "Fixed: locking a layer keeps it a layer, and the lock sticks as you browse",
+  "\u2728 FORMULAS: a new Looks lens showing the outfit shapes you actually rebuild (\u201cSweaters + Jeans + Boots\u201d), found in your own wear history",
+  "Open a formula and tap \u2728 New outfit from this formula \u2014 the suggester fills that exact shape with different pieces",
+  "The Tomorrow card now works on trips too; layer-lock fixes",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -5744,6 +5744,17 @@ function formulaLabel(key) {
     .map(p => p.slice(p.indexOf(":") + 1))
     .join(" + ");
 }
+// slot → Set(subcategories) the shape allows, for the suggester's pool filter.
+function formulaShapeMap(key) {
+  const m = new Map();
+  for (const p of String(key).split(" + ")) {
+    const c = p.indexOf(":");
+    const slot = p.slice(0, c), sub = p.slice(c + 1);
+    let s = m.get(slot); if (!s) { s = new Set(); m.set(slot, s); }
+    s.add(sub);
+  }
+  return m;
+}
 // Recurring formulas, most-worn first. Pure (takes its pool) for the selftest.
 function buildFormulas(pool, { minWears = FORMULA_MIN_WEARS, minLooks = FORMULA_MIN_LOOKS } = {}) {
   const map = new Map();
@@ -6042,7 +6053,7 @@ function scoreCombo(its, target, season = null, wx = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null, lockedRoles = null) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null, lockedRoles = null, shapeKey = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   let avail = base.filter(i => i.image_path && !isNoSuggest(i));
   if (activity === "workout") {
@@ -6074,6 +6085,9 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   // otherwise re-rolling turns the locked layer into the base top
   // (2026-07-21, user-reported).
   const roleOf = i => (lockedRoles && lockedRoles.get(i.id)) || suggestSlot(i);
+  // Formula mode (Round B): restrict each slot to the shape's subcategories,
+  // so "Sweaters + Jeans + Boots" re-fills with DIFFERENT sweaters/jeans/boots.
+  const shape = shapeKey ? formulaShapeMap(shapeKey) : null;
   const slot = (...cats) => {
     // Layerable tops (e.g. button-ups, flagged via isLayer) double as the outerwear
     // layer, so they're eligible for the Outerwear slot in addition to the Tops slot.
@@ -6095,6 +6109,16 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       // note beat wrong-level outfits. (Seed/locked stay exempt by
       // construction; the season filter above keeps its soft fallback.)
       pool = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
+    }
+    if (shape) {
+      // HARD, like targetLevel: a formula is a shape request. Slots the shape
+      // doesn't name (e.g. no layer in "Sweaters + Jeans + Boots") go empty so
+      // the generated outfit keeps the shape.
+      let subs = cats.map(c => shape.get(c)).find(Boolean);
+      // A two-top shape (base + layer) has no Outerwear entry — let the layer
+      // slot draw from the shape's tops instead of going empty.
+      if (!subs && cats.includes("Outerwear") && (shape.get("Tops") || new Set()).size > 1) subs = shape.get("Tops");
+      pool = subs ? pool.filter(i => subs.has(i.subcategory)) : [];
     }
     // Random sample (Fisher–Yates) — no unworn/last-worn bias. A larger sample than
     // before so a single batch mixes more distinct pieces (less "same item every time").
@@ -6258,7 +6282,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), activity: null };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), activity: null, shapeKey: null };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
@@ -6287,7 +6311,7 @@ function contextFormalityLevel(context) {
   return CONTEXT_FORMALITY_SEED[context] || null;
 }
 
-function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
+function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, shapeKey = null) {
   // Trip/capsule mode: every suggest entry point defaults to the suitcase pool
   // unless the caller scoped it explicitly.
   if (!capsuleId && tripModeId && capsuleById.get(tripModeId)) capsuleId = tripModeId;
@@ -6302,6 +6326,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.idx = 0;
   _sugg.locked = new Set();
   _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
+  _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
@@ -6313,7 +6338,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
   _sugg.wx = planCtx
     ? (_planWx[planCtx.date] || null)
     : (_homeWx.date === todayStr() ? _homeWx.wx : null);
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity);
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity, null, _sugg.shapeKey);
   renderSuggestSheet();
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -6322,7 +6347,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null) {
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity, null, _sugg.shapeKey);
     }
     renderSuggestSheet();
   });
@@ -6458,7 +6483,7 @@ function openGearTagSheet() {
   hydratePhotos($("#logInner"));
   $("#gearDone").onclick = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   };
   const flip = (b, on) => b.classList.toggle("on", on);
@@ -6511,6 +6536,12 @@ function swapSuggestionPiece(pieceId) {
     // hard, matching the engine (2026-07-19) — no silent level fallback
     cands = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
   }
+  if (_sugg.shapeKey) {
+    // Formula mode: a swap stays inside the shape (a different sweater, not a tee).
+    const shape = formulaShapeMap(_sugg.shapeKey);
+    const subs = shape.get(slot) || (slot === "Outerwear" ? shape.get("Tops") : null);
+    if (subs) cands = cands.filter(i => subs.has(i.subcategory));
+  }
   if (!_sugg.activity) cands = cands.filter(i => {  // activity mode: tag = cohesion
     const test = [...others, i];
     const hasFunc = test.some(isPureFunc);
@@ -6562,7 +6593,7 @@ function banSuggestionPiece(pieceId) {
       return renderSuggestSheet();
     }
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   }
 }
@@ -6681,6 +6712,8 @@ function renderSuggestSheet() {
     </button>
   </div>` : "";
 
+  const shapeLabel = _sugg.shapeKey
+    ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">Formula: ${esc(formulaLabel(_sugg.shapeKey))}</div>` : "";
   const capLabel = _sugg.capsuleId ? (() => {
     const c = capsuleById.get(_sugg.capsuleId);
     return c ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">From: ${esc(c.name)}</div>` : "";
@@ -6701,6 +6734,7 @@ function renderSuggestSheet() {
       <h2>Outfit suggestion</h2>
       <div style="width:48px"></div>
     </div>
+    ${shapeLabel}
     ${capLabel}
     ${contextChipsHtml}
     <div style="padding:12px 16px 4px">
@@ -6758,7 +6792,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   };
 
@@ -6856,7 +6890,7 @@ function renderSuggestSheet() {
       // Locks must apply to the WHOLE batch, not just the combo on screen —
       // browsing to the next outfit used to drop them (2026-07-21). Regenerate,
       // then keep the current combo in front so the view doesn't jump.
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
       _sugg.idx = 0;
       if (cur && [..._sugg.locked].every(lid => cur.pieces.some(p => p.id === lid))) {
         const k = comboKey(cur.pieces);
@@ -6996,7 +7030,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -7077,7 +7111,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
@@ -7177,7 +7211,12 @@ function renderLooks() {
     body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml() + empty + more;
   } else if (looksFolder) {
     const list = folderOutfits(looksLens, looksFolder);
-    body.innerHTML = looksToolbar(`${folderLabel(looksLens, looksFolder)} · ${list.length}`, true, true) + banner + outfitGridHtml(list);
+    // Round B: a formula is a recipe, so offer to cook a NEW one from it.
+    const fresh = looksLens === "Formulas"
+      ? `<div style="padding:10px 16px 0"><button class="btn btn-sec" id="formulaNew" style="width:100%">✨ New outfit from this formula</button></div>` : "";
+    body.innerHTML = looksToolbar(`${folderLabel(looksLens, looksFolder)} · ${list.length}`, true, true) + banner + fresh + outfitGridHtml(list);
+    const fnBtn = $("#formulaNew");
+    if (fnBtn) fnBtn.onclick = () => openSuggestSheet(null, null, null, looksFolder);
   } else {
     body.innerHTML = looksToolbar("Looks", false, true) + banner + looksLensHtml() + folderRowsHtml(looksLens);
   }
