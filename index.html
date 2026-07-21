@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<meta name="app-version" content="2026-07-21 r2">
+<meta name="app-version" content="2026-07-21 r3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1185,13 +1185,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r2";
+const APP_VERSION = "2026-07-21 r3";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "The Tomorrow card now works on trips too \u2014 it reads your trip's day plan and suggests from the suitcase",
-  "Fixed: locking a layer \ud83d\udd12 keeps it a layer (it used to turn into your top) and now sticks as you browse",
-  "Fixed: yesterday's \u201champer or keep?\u201d strip is back on Home",
+  "\u2728 New Looks lens: FORMULAS \u2014 the outfit shapes you actually rebuild (\u201cSweaters + Jeans + Boots\u201d), found in your own wear history and ranked by how much you wear them",
+  "The Tomorrow card now works on trips too \u2014 reads your trip plan, suggests from the suitcase",
+  "Fixed: locking a layer keeps it a layer, and the lock sticks as you browse",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -5225,7 +5225,7 @@ async function saveNewItem() {
    The user can browse by Formality / Season / Recent / All. Most looks were
    worn once, so this reads as a library where it's useful and a log otherwise. */
 
-const LOOK_LENSES = ["Formality", "Season", "Context", "Capsule", "Liked", "Recent", "All", "Archived"];
+const LOOK_LENSES = ["Formulas", "Formality", "Season", "Context", "Capsule", "Liked", "Recent", "All", "Archived"];
 const NO_CONTEXT_FOLDER = "__no_context__"; // L8 trailing folder so context-less looks don't disappear
 const LOOKS_FLAT_CAP = 400;   // cap for the flat Recent/All grids (perf on phone)
 
@@ -5711,6 +5711,57 @@ function looksFolderRow(label, count, rep, attrs) {
 const repByRecency = (list) =>
   list.slice().sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")))[0];
 
+/* ---- FORMULAS (Round B, 2026-07-21) ---------------------------------------
+   Your recurring outfit SHAPES, discovered rather than declared. Two looks
+   share a formula when their pieces fill the same slots with the same
+   subcategories — "Sweaters + Jeans + Boots" — whichever specific sweater.
+   Pure derivation over WORN looks; nothing stored. The point is the shape you
+   keep rebuilding, so a formula must recur across DIFFERENT looks (a single
+   much-worn look is just that look, already visible in Most Worn). */
+const FORMULA_SLOT_ORDER = ["Dresses", "Tops", "Outerwear", "Bottoms", "Shoes"];
+const FORMULA_MIN_WEARS = 6;
+const FORMULA_MIN_LOOKS = 2;
+
+// Canonical shape key for a set of items — null when it isn't a real outfit.
+function formulaKeyFor(its) {
+  const parts = [];
+  for (const i of its) {
+    const slot = suggestSlot(i);
+    if (!slot) continue;                  // bras/swim never define a shape
+    parts.push(`${slot}:${i.subcategory || "?"}`);
+  }
+  if (parts.length < 2) return null;
+  const slots = new Set(parts.map(p => p.slice(0, p.indexOf(":"))));
+  // Needs a real base: a dress, or a top AND a bottom (same rule as outfitIncomplete).
+  if (!slots.has("Dresses") && !(slots.has("Tops") && slots.has("Bottoms"))) return null;
+  return parts.sort().join(" + ");
+}
+// "Tops:Sweaters + Bottoms:Jeans" → "Sweaters + Jeans" (in dressing order).
+function formulaLabel(key) {
+  return String(key).split(" + ")
+    .sort((a, b) => FORMULA_SLOT_ORDER.indexOf(a.slice(0, a.indexOf(":")))
+                  - FORMULA_SLOT_ORDER.indexOf(b.slice(0, b.indexOf(":"))))
+    .map(p => p.slice(p.indexOf(":") + 1))
+    .join(" + ");
+}
+// Recurring formulas, most-worn first. Pure (takes its pool) for the selftest.
+function buildFormulas(pool, { minWears = FORMULA_MIN_WEARS, minLooks = FORMULA_MIN_LOOKS } = {}) {
+  const map = new Map();
+  for (const o of (pool || [])) {
+    const n = outfitWornCount(o);
+    if (!n) continue;                     // never worn = not a habit
+    const key = formulaKeyFor(outfitItems(o));
+    if (!key) continue;
+    let e = map.get(key);
+    if (!e) { e = { key, label: formulaLabel(key), wears: 0, looks: [] }; map.set(key, e); }
+    e.wears += n;
+    e.looks.push(o);
+  }
+  return [...map.values()]
+    .filter(e => e.wears >= minWears && e.looks.length >= minLooks)
+    .sort((a, b) => b.wears - a.wears || b.looks.length - a.looks.length);
+}
+
 // A look "belongs to" a capsule when every one of its pieces is a capsule member.
 function outfitFullyInCapsule(o, cid) {
   const members = new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
@@ -5721,6 +5772,18 @@ function outfitFullyInCapsule(o, cid) {
 function folderRowsHtml(lens) {
   const all = looksScopedOutfits();
   let rows = "";
+  if (lens === "Formulas") {
+    const fs = buildFormulas(all);
+    if (!fs.length) {
+      return `<div class="placeholder"><b>No formulas yet</b><div>A formula is a shape you rebuild — same slots, same kinds of pieces, different items. They appear once ${FORMULA_MIN_LOOKS}+ of your looks share one and you've worn it ${FORMULA_MIN_WEARS}+ times.</div></div>`;
+    }
+    rows += `<div class="snote" style="padding:8px 16px 2px">The shapes you actually rebuild — ${fs.length} of them, most-worn first.</div>`;
+    for (const f of fs) {
+      rows += looksFolderRow(`${f.label} · ${f.wears} wears`, f.looks.length,
+        repByRecency(f.looks), `data-lfolder="${esc(f.key)}"`);
+    }
+    return rows;
+  }
   if (lens === "Formality") {
     for (const b of FORMALITY_BUCKETS) {
       const list = all.filter(o => outfitBucket(o) === b.key);
@@ -5759,7 +5822,9 @@ function folderRowsHtml(lens) {
 }
 function folderOutfits(lens, folder) {
   const all = looksScopedOutfits();
-  const list = lens === "Formality"
+  const list = lens === "Formulas"
+    ? all.filter(o => formulaKeyFor(outfitItems(o)) === folder)
+    : lens === "Formality"
     ? all.filter(o => outfitBucket(o) === folder)
     : lens === "Capsule"
     ? all.filter(o => outfitFullyInCapsule(o, folder))
@@ -5774,6 +5839,7 @@ function folderOutfits(lens, folder) {
   return list.sort((a, b) => String(outfitLastWorn(b) || "").localeCompare(String(outfitLastWorn(a) || "")));
 }
 function folderLabel(lens, folder) {
+  if (lens === "Formulas") return formulaLabel(folder);
   if (lens === "Formality") return FORMALITY_BUCKETS.find(b => b.key === folder)?.label || folder;
   if (lens === "Capsule") return capsuleById.get(folder)?.name || folder;
   if (lens === "Context") return folder === NO_CONTEXT_FOLDER ? "No context" : folder;
