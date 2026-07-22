@@ -7,6 +7,151 @@
 
 ---
 
+## ▶ PLANNED — "Laundry Control" round (planned 2026-07-22 by Fable; build with Sonnet/Opus)
+
+Seven user asks from one message (2 bugs, 3 features, 1 nav fix, 1 brainstorm).
+All decisions below are LOCKED except the two flagged **[ASK ALINA]** — settle
+those at build time, don't re-litigate the rest. No schema migration needed
+anywhere in this round (one new sentinel tag, see D3). Build in the order given:
+A is the bug fix, C is the big rework, the tail (E/F/G) is mechanical.
+
+### A. BUG — trip day card says "2nd wear since laundry" after a real wash
+
+**Root cause (confirmed in code):** `planRewearFlags(c, dates)` (~line 12159)
+counts each piece's planned wear-days from the TRIP START, resetting only on a
+planned 🧺 laundry-day sentinel (`planLaundryDay`). It never reads
+`items.last_washed` — so a real wash stamped via the laundry sheet / bulk
+"Mark washed" changes nothing, and the day card keeps flagging "2nd wear
+since laundry" on a freshly washed piece.
+
+**Fix:** inside the per-day loop, when counting an item, skip planned days on
+or before that item's real wash: `if (it.last_washed && date <= it.last_washed)
+continue;` (matches `wearDatesSinceWash`'s strict `d > since` — the wash day
+itself doesn't count). The count naturally restarts on days after the stamp.
+Keep the `planLaundryDay` reset as-is (it covers "will do laundry mid-trip",
+which has no stamp yet).
+
+**Selftest:** add a case to `migration/selftest.html` — item with tolerance 2,
+planned 3 consecutive days, `last_washed` = day 2 → only a fresh count on day 3,
+no flag; with `last_washed` null → day 3 flags "3rd wear". (planRewearFlags
+reads module state via `outfitById`/`outfitItems`, so build the fixture the way
+the existing laundry tests do.)
+
+### B. NAV — trip dash "N of M pieces in the hamper" opens the hamper, not the wash sheet
+
+Change the `[data-td-laundry]` handler (~line 3040) from
+`openLaundrySheet({pool})` to opening the **scoped hamper page**:
+`switchTab("closet")` first, THEN set `closetHamper = true; closetWorn = false;
+closetCat = closetSub = searchResults = null;` and `renderCloset()` — order
+matters, `switchTab` resets those flags (line ~13905); copy the working pattern
+from the `[data-laundry]` handler at ~line 14325. Trip mode sets
+`activeCapsuleId`, so `_scopedHamper()` already filters to the suitcase, and the
+hamper page's existing "🧺 Did laundry — mark these washed" button already
+re-opens the wash sheet with the capsule pool (~line 14323). Nothing else to
+build — this is a handler swap.
+
+### C. FEATURE — see (and edit) what's actually in a wash load
+
+Her words: "I need to see what is in the load — not just check whatever happens
+to be in those colors." Rework `renderLaundrySheet()` (~line 3536):
+
+1. **Load chips become pre-selectors, not the selection.** Selection state
+   moves from `_lnSel` (Set of load names) to a Set of ITEM ids. Tapping a load
+   chip adds/removes that load's item ids (chip shows "on" when all its items
+   are selected); "All together" selects the whole hamper as today.
+2. **Below the chips, render the selected wash as a thumbnail grid** (reuse the
+   Home `.laun-row` confirm-strip tile style: thumb + 🧺 tick overlay). EVERY
+   hamper item in the selected loads appears; tapping a tile toggles it out/in.
+   The "Mark washed · N items" button count comes from the id set.
+3. **"Also worn, not dirty yet" section** — worn-tray items
+   (`isWornNotDirty`, honoring `_lnPool`) whose `color_family` falls in the
+   selected loads, shown as the same tappable tiles. **[ASK ALINA]** default
+   pre-selected ON (recommended — this is exactly the bug she hit: a worn-once
+   shirt went into the real wash but never got stamped, so its old
+   `last_washed` kept accruing wears; pre-on matches "everything of that color
+   went in") or OFF (conservative). Either way they're visible and one tap
+   flips them.
+4. `stampWash` already takes explicit ids — no change below the sheet. The
+   bootstrap (`#lnStart`), date row, trip pool, and "Not yet" snooze all stay.
+
+### D. FEATURE — per-item laundry control (item photo view, `laundryLineHtml` ~line 6039)
+
+Derive-first: the wear count stays DERIVED from the wear log; what she gets to
+edit is the wash date (source of truth) plus the existing one-shot overrides.
+Do NOT build an arbitrary "set wear count to N" editor — editing `last_washed`
++ "One more wear" covers every real case without a second bookkeeping system.
+
+1. **Editable wash date.** "Washed 3d ago" becomes tappable → date input
+   (max today), PATCHes `last_washed` and clears `laundry_state` (a re-dated
+   wash retires any override, same as `stampWash`). Also offered on DIRTY
+   items as a "Washed on…" action beside "✓ Washed" (today) — that's the
+   back-date she asked for. Reuse the `#lnDate` pattern or a `FIELD_CONFIGS`
+   date sheet, whichever is less code.
+2. **Show the derived count.** Add "worn N× since · M/T wears" to the line
+   (T = `wearTolerance`), so the state she's overriding is visible. Worn-tray
+   subtitle format `n/tol` already exists (~line 3674) — reuse.
+3. **Per-item tolerance override** — the real "more control" lever: a
+   `tol:<n>` sentinel tag (same pattern as `layer`/`no-suggest`, no
+   migration). `wearTolerance(i)` checks the tag before the subcat/category
+   tables. UI: "Wears per wash: 4 ✎" on the item's laundry line → small
+   stepper/picker sheet (1–10 + "never dirty" = Infinity ~ maybe just omit
+   Infinity, shoes/outerwear already are). Selftest: tag beats subcat default.
+
+**Brainstormed and deliberately NOT in this round** (park in Back-burner):
+wash-history log in `kv` (avg days between loads, hamper-size-over-time stat),
+delicates/hang-dry flag, laundry-day forecast ("hamper will hit 20 by Friday").
+All derivable later; none unblock her today.
+
+### E. BUG — dark mode shows a light bar at the top (standalone PWA)
+
+The page metas are already dark-aware (`theme-color` ×2, line 6–7), but:
+- `apple-mobile-web-app-status-bar-style` is `default` (line 10) → iOS paints
+  an opaque light status bar in the installed app. Change to
+  **`black-translucent`** — the header already pads
+  `env(safe-area-inset-top)` (lines 43/183), so content sits correctly and the
+  oxblood/dark header paints under the clock.
+- `manifest.json` still has `"background_color": "#ffffff", "theme_color":
+  "#ffffff"` (pre-redesign) → update both to `#f8f4ee` (manifest can't
+  media-query; this is the splash/Android chrome color, paper is the right
+  single value).
+- ⚠️ iOS caches the installed shell — verify on her phone after deploy; a
+  delete + re-add of the home-screen app may be needed (same as F, do together).
+
+### F. CHORE — app icons still pre-redesign
+
+`icon-180.png`/`icon-512.png` date from 2026-07-17 (old identity). Regenerate
+both to match the inline SVG favicon (line 14: oxblood `#6b2737` rounded
+square, white hanger glyph) at 180/512. Method: write the master SVG at each
+size into `migration/` (throwaway dir, fine), rasterize with whatever's on the
+Mac — `qlmanage -t -s 512`, `rsvg-convert`, or render via the preview browser
+canvas → `toDataURL` — output must be real PNGs at the SAME repo-root
+filenames. Add `?v=2` to the `apple-touch-icon` href and the manifest icon
+`src`s (GH Pages caches hard). ⚠️ iOS bakes the icon at install time — the
+home-screen icon only updates when she deletes + re-adds the app; tell her.
+
+### G. FEATURE — Build a look from the trip dash, alongside Suggest
+
+The trip dash chips (~line 2644) have ✨ Suggest / 🗓 Trip plan / 🧳 Packing
+list. Add **`✎ Build`** after Suggest → handler in `wireTripDash`:
+`openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET })`. That scopes
+the picker to the suitcase AND lands the saved look in the trip's outfit
+bucket ("Planned outfits") via the existing `finishBuilder` planCtx routing —
+same plumbing as the plan view's Build button, zero new paths. (A bare
+`openBuilder()` would also scope via `tripModeId` but the save would vanish
+into the Looks list; bucket is the useful landing spot.)
+
+### Close-out for the enacting model
+
+- Selftest additions: A (rewear reset on `last_washed`) and D3 (tolerance tag).
+  Run `migration/selftest.html` before deploy.
+- `APP_VERSION` + `<meta name="app-version">` bump in lockstep (deploy skill).
+- Update CLAUDE.md's current-state entry + this section's marker to SHIPPED.
+- E and F need on-device verification (her phone) after deploy — flag in the
+  What's New / handoff message that the icon + status bar need a re-install of
+  the home-screen app to show.
+
+---
+
 ## ✅ SHIPPED — user ask batch (2026-07-21, r5→r7)
 
 Six requests in one message, all shipped same day (details + gotchas in
