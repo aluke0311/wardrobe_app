@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-22 r3">
+<meta name="app-version" content="2026-07-22 r4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1354,7 +1354,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-22 r3";
+const APP_VERSION = "2026-07-22 r4";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
@@ -1362,6 +1362,7 @@ const WHATS_NEW = [
   "Laundry sheet now shows exactly what's in each wash — tap to add or drop a piece",
   "Wash date and wears-per-wash are now editable right on the item",
   "Trip dash: added ✎ Build alongside ✨ Suggest",
+  "Settings → Viewport diagnostics: temporary readout for the tab-bar gap — screenshot it, it comes out with the fix",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -14099,13 +14100,76 @@ function renderSettings() {
           <div class="muted" style="font-size:13px;line-height:1.5">Rename, add or remove your categories and the types inside them. Renaming moves every item over.</div></div>
         <button class="btn btn-sec" id="setTaxonomy">Edit categories &amp; types</button>
       </div>
+      <div class="card stack">
+        <div><div class="fld">Viewport diagnostics</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">Temporary — measuring the iOS 26 standalone
+            bottom-gap bug. Screenshot this and send it over; it comes out once the tab bar is fixed.</div></div>
+        <pre id="setVpDiag" style="font:11px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;
+          margin:0;padding:10px;background:var(--panel);border-radius:10px;color:var(--ink)"></pre>
+        <button class="btn btn-sec" id="setVpCopy">Copy diagnostics</button>
+      </div>
       <div class="center muted" style="font-size:12px"><span class="appver">${esc(APP_VERSION)}</span></div>
     </div>`;
+  renderVpDiag();
+  $("#setVpCopy").onclick = () => {
+    navigator.clipboard?.writeText($("#setVpDiag").textContent)
+      .then(() => toast("Diagnostics copied")).catch(() => toast("Couldn't copy — screenshot it instead"));
+  };
   $("#signOutBtn").onclick = () => handleSignedOut();
   $("#settingsBody").querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { applyTheme(b.dataset.themeSet); renderSettings(); });
   $("#setBackup").onclick = downloadBackup;
   $("#setHealth").onclick = () => runDataHealthCheck();
   $("#setTaxonomy").onclick = () => openTaxonomySheet();
+}
+
+/* ---- viewport diagnostics (TEMPORARY, 2026-07-22) -------------------------
+   The bottom tab bar renders ~34pt above the physical screen edge in the
+   installed iOS app, with the page canvas still painting the strip below it.
+   Suspected cause: the iOS 26 standalone bug where the layout viewport is
+   computed short at the bottom, so `bottom: 0` never reaches the real edge.
+   This readout is here to confirm or kill that theory with real numbers off
+   the device instead of more guessing. REMOVE once the tab bar is fixed. */
+function _envInset(side) {
+  // env() can't be read off :root — probe it through a real element's padding.
+  const p = document.createElement("div");
+  p.style.cssText = `position:absolute;visibility:hidden;padding-${side}:env(safe-area-inset-${side},0px)`;
+  document.body.appendChild(p);
+  const v = parseFloat(getComputedStyle(p)[`padding${side[0].toUpperCase()}${side.slice(1)}`]) || 0;
+  p.remove();
+  return v;
+}
+function renderVpDiag() {
+  const el = $("#setVpDiag");
+  if (!el) return;
+  const vv = window.visualViewport;
+  const de = document.documentElement;
+  const bar = $(".tabbar");
+  const r = bar ? bar.getBoundingClientRect() : null;
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  const rows = [
+    ["standalone", standalone],
+    ["screen.height", screen.height],
+    ["window.innerHeight", innerHeight],
+    ["doc.clientHeight", de.clientHeight],
+    ["visualViewport.h", vv ? Math.round(vv.height * 100) / 100 : "n/a"],
+    ["vv.offsetTop", vv ? vv.offsetTop : "n/a"],
+    ["safe-inset-top", _envInset("top")],
+    ["safe-inset-bottom", _envInset("bottom")],
+    ["tabbar rect.top", r ? Math.round(r.top * 100) / 100 : "n/a"],
+    ["tabbar rect.bottom", r ? Math.round(r.bottom * 100) / 100 : "n/a"],
+    ["tabbar height", r ? Math.round(r.height * 100) / 100 : "n/a"],
+    ["devicePixelRatio", devicePixelRatio],
+    ["orientation", innerWidth > innerHeight ? "landscape" : "portrait"],
+  ];
+  // The number that decides it: how far the tab bar's bottom edge sits above
+  // the physical screen bottom. 0 = flush (no bug). ~34 = the gap she sees.
+  const gapVsScreen = r ? Math.round((screen.height - r.bottom) * 100) / 100 : "n/a";
+  const gapVsInner  = r ? Math.round((innerHeight - r.bottom) * 100) / 100 : "n/a";
+  rows.push(["→ screen.h − bar.bottom", gapVsScreen]);
+  rows.push(["→ innerH − bar.bottom", gapVsInner]);
+  const w = Math.max(...rows.map(([k]) => k.length));
+  el.textContent = rows.map(([k, v]) => `${k.padEnd(w)}  ${v}`).join("\n")
+    + `\n${APP_VERSION}`;
 }
 
 /* ---- category / subcategory editor (2026-07-21, her request) --------------
