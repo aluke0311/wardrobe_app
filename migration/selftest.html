@@ -145,6 +145,33 @@ function run() {
     W.wears = Array.from({ length: 40 }, (_, k) => ({ item_id: "s1", worn_on: D(-k - 1) }));
     return eq(W.isDirty(W.items[0]), false);
   });
+  // Laundry Control round (2026-07-22): D3 — per-item tolerance override tag.
+  t("wearTolerance: tol:<n> tag beats subcat/category defaults", () => {
+    const withTag = { category: "Bottoms", subcategory: "Jeans", tags: ["tol:2"] };
+    const withoutTag = { category: "Bottoms", subcategory: "Jeans", tags: [] };
+    return eq([W.wearTolerance(withTag), W.wearTolerance(withoutTag)], [2, 5]);
+  });
+  t("tolTagValue: absent/invalid tag = null (falls back to derived)", () => {
+    return eq([W.tolTagValue({ tags: [] }), W.tolTagValue({ tags: ["tol:0"] }), W.tolTagValue({ tags: ["tol:3"] })],
+              [null, null, 3]);
+  });
+  // A — planRewearFlags must reset its running count on a REAL wash stamp
+  // (items.last_washed), not just the planned-laundry-day sentinel.
+  t("planRewearFlags: real last_washed resets the trip rewear count", () => {
+    const item = { id: "p1", name: "Shorts", category: "Bottoms", subcategory: "Shorts", tags: [] };
+    W.items = [item];
+    W.itemById = new Map([["p1", item]]);
+    W.outfits = [{ id: "o1", name: "L" }];
+    W.outfitById = new Map([["o1", W.outfits[0]]]);
+    W.outfitItemMap = new Map([["o1", ["p1"]]]);
+    const dates = [D(0), D(1), D(2)];
+    const c = { id: "c1", plan: { [dates[0]]: ["o1"], [dates[1]]: ["o1"], [dates[2]]: ["o1"] } };
+    item.last_washed = null;
+    const noWashFlagged = !!W.planRewearFlags(c, dates).get(dates[2]);
+    item.last_washed = dates[1];  // washed partway through the trip
+    const washedFlagged = !!W.planRewearFlags(c, dates).get(dates[2]);
+    return eq([noWashFlagged, washedFlagged], [true, false]);
+  });
 
   // ---- formality ----
   t("matchesFormality reads the explicit level set", () => {

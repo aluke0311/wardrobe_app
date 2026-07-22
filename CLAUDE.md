@@ -2,6 +2,38 @@
 
 Guidance for working in this repo. Read alongside `README.md`.
 
+**"Laundry Control" round (2026-07-22 r1) — SHIPPED.** Seven asks from one
+message (planned by Fable, built by Sonnet same day). ① Fixed `planRewearFlags`
+ignoring a real wash: it now skips planned days on/before `items.last_washed`,
+not just the `PLAN_LAUNDRY` sentinel. ② Trip dash "N of M pieces in the hamper"
+now opens the scoped hamper page (`closetHamper=true`) instead of jumping
+straight to the wash sheet. ③ **Wash-load sheet reworked**: selection moved
+from load-name Set (`_lnSel`) to an item-id Set (`_lnSelIds`); load chips
+(`_lnActiveLoads`) are pre-selectors that reveal a tappable `itemGridView`
+thumbnail grid of every hamper item in that load — "I need to see what is in
+the load," not just trust the color mapping. A parallel "Also worn, not dirty
+yet" section (`_lnWornPool`, honors `_lnPool`) offers worn-tray pieces of the
+same color families, **pre-selected ON by default** (user decision — matches
+"everything of that color went in"). ④ **Per-item tolerance override**: `tol:
+<n>` sentinel tag (same pattern as `layer`/`no-suggest`), `tolTagValue()`/
+`setWearToleranceOverride()`, checked first in `wearTolerance()`. Item photo
+view: wash date is now tappable → `openFieldEdit(id, "last_washed")` (added
+as a real `FIELD_CONFIGS` entry; `saveField` clears `laundry_state` on a
+re-date, same as `stampWash`); dirty items get an explicit "Washed on…"
+action; a `N/T wears since wash` line shows the count being overridden;
+"Wears per wash: N ✎" opens `openTolEdit()` (routes the tag through the field
+sheet via a custom `_fieldOnSave`, same trick as the Add form's
+`openAddFieldEdit`). ⑤ Dark-mode PWA status bar fixed
+(`apple-mobile-web-app-status-bar-style` → `black-translucent`) + manifest
+`background_color`/`theme_color` → paper `#f8f4ee` (were still pre-redesign
+white). ⑥ App icons regenerated from the inline SVG favicon (oxblood + hanger)
+via `rsvg-convert`, `?v=2` cache-bust on both the apple-touch-icon link and
+the manifest icon `src`s — **iOS bakes the icon at install time, tell her to
+delete + re-add the home-screen app**. ⑦ Trip dash gained a **"✎ Build"** chip
+beside "✨ Suggest" (`openBuilder(null, null, {capsuleId, date: PLAN_BUCKET})`
+— same plumbing as the plan view's Build button). Selftest 48/48 (3 new: tag
+override, tag edge cases, rewear-reset fixture).
+
 ## What this is
 
 A personal, single-user wardrobe tracker. **The entire app is one file:

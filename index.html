@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-21 r14">
+<meta name="app-version" content="2026-07-22 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
 <link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="apple-touch-icon" href="icon-180.png?v=2">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236b2737'/%3E%3Cg transform='translate(16 16.4) scale(0.62) translate(-12 -12)'%3E%3Cpath d='M8.2 2.4 3 5.6l2 4.4 2.2-1v12h9.6V9l2.2 1 2-4.4-5.2-3.2a3.3 3.3 0 0 1-7.6 0z' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/g%3E%3C/svg%3E">
 <title>Wardrobe</title>
 <style>
@@ -1339,12 +1339,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r14";
+const APP_VERSION = "2026-07-22 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Worn tray: select several pieces at once and send them straight to the hamper",
-  "Hamper: select the ones you actually washed and mark them clean in one tap",
+  "Laundry sheet now shows exactly what's in each wash — tap to add or drop a piece",
+  "Wash date and wears-per-wash are now editable right on the item",
+  "Trip rewear warnings respect a real wash, not just a planned laundry day",
+  "Trip dash: added ✎ Build alongside ✨ Suggest",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2123,8 +2125,29 @@ function laundryPromptSnoozed() {
 // column reads as null last_washed, i.e. everything clean.
 const LAUNDRY_READY = () => items.length > 0 && "last_washed" in items[0];
 
+// Per-item tolerance override — same sentinel-tag pattern as `layer`/
+// `no-suggest` (see item.tags helpers below), just carrying a value: "tol:4".
+// Beats the subcat/category defaults; cleared = back to derived.
+const TOL_TAG_PREFIX = "tol:";
+function tolTagValue(i) {
+  const t = (i && i.tags || []).find(t => t.startsWith(TOL_TAG_PREFIX));
+  if (!t) return null;
+  const n = +t.slice(TOL_TAG_PREFIX.length);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+async function setWearToleranceOverride(id, n) {
+  const i = itemById.get(id); if (!i) return;
+  const tags = (i.tags || []).filter(t => !t.startsWith(TOL_TAG_PREFIX));
+  if (n != null) tags.push(TOL_TAG_PREFIX + n);
+  i.tags = tags;  // optimistic
+  try {
+    await rest(`/items?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags }) });
+  } catch (e) { toast(e.message); }
+}
 function wearTolerance(i) {
   if (!i) return Infinity;
+  const override = tolTagValue(i);
+  if (override != null) return override;
   if (i.subcategory != null && i.subcategory in WEAR_TOLERANCE) return WEAR_TOLERANCE[i.subcategory];
   return WEAR_TOLERANCE_CAT[i.category] ?? Infinity;
 }
@@ -2643,6 +2666,7 @@ function tripDashHtml(c) {
 
   const chips = [
     `<button class="cap-chip" data-td-suggest>✨ Suggest</button>`,
+    `<button class="cap-chip" data-td-build>✎ Build</button>`,
     dated ? `<button class="cap-chip" data-td-plans>🗓 Trip plan</button>`
           : `<button class="cap-chip" data-td-plans>Planned outfits</button>`,
     `<button class="cap-chip" data-td-cap>🧳 ${dated ? "Packing list" : "Capsule"}</button>`,
@@ -3037,7 +3061,12 @@ function wireTripDash(tc) {
   on("[data-td-exit]", () => exitTripMode());
   on("[data-td-unpack]", () => openTripRecap(tc.id, { unpack: true }));
   on("[data-td-suggest]", () => openSuggestSheet(null, tc.id));
-  on("[data-td-laundry]", () => openLaundrySheet({ pool: capsuleItems(tc.id) }));
+  on("[data-td-build]", () => openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET }));
+  on("[data-td-laundry]", () => {
+    switchTab("closet");
+    closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null;
+    renderCloset();
+  });
   on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });
   on("[data-td-cap]", () => { switchTab("capsules"); capsuleId = tc.id; capsuleView = "detail"; renderCapsules(); });
   body.querySelectorAll("[data-td-plandate]").forEach(el => {
@@ -3504,24 +3533,27 @@ function renderClosetRoot() {
 
 // ---- laundry sheet ----
 // "I did laundry": pick the load(s) you ran (her real sorting — whites / cools /
-// warms, sometimes all together), optionally back-date, and stamp the matching
-// hamper items washed. Only DIRTY items get stamped — an under-tolerance jean
-// hanging in the closet wasn't in the physical hamper, so its count keeps running.
-let _lnSel = new Set();
+// warms, sometimes all together), see + edit exactly what's in it, optionally
+// back-date, and stamp the chosen items washed. Selection lives at the ITEM
+// level (`_lnSelIds`) — load chips are pre-selectors that add/remove a whole
+// load's ids at once, not the selection itself ("I need to see what is in the
+// load — not just check whatever happens to be in those colors").
+const LAUNDRY_REAL_LOADS = ["Whites", "Cools", "Warms"];
+let _lnSelIds = new Set();     // item ids that will be stamped washed
+let _lnActiveLoads = new Set(); // which load chips are "on" (controls grid visibility)
 let _lnPool = null;  // Set of item ids scoping the laundry sheet (trip mode), or null
 let _lnFromPrompt = false;
-function _lnLoadItems(load, hamper) {
-  if (load === "All") return hamper;
-  return hamper.filter(i => laundryLoadOf(i.color_family) === load);
+// Generic color-family filter — works over the hamper OR the worn-tray pool.
+function _lnLoadItems(load, list) {
+  if (load === "All") return list;
+  return list.filter(i => laundryLoadOf(i.color_family) === load);
 }
-function _lnSelectedIds(hamper) {
-  if (_lnSel.has("All")) return hamper.map(i => i.id);
-  const ids = new Set();
-  for (const load of _lnSel) for (const i of _lnLoadItems(load, hamper)) ids.add(i.id);
-  return [...ids];
+function _lnLoadIds(load, hamper, worn) {
+  return [..._lnLoadItems(load, hamper), ..._lnLoadItems(load, worn)].map(i => i.id);
 }
 function openLaundrySheet({ fromPrompt = false, pool = null } = {}) {
-  _lnSel = new Set();
+  _lnSelIds = new Set();
+  _lnActiveLoads = new Set();
   _lnFromPrompt = fromPrompt;
   // Trip mode: wash the suitcase, not the closet — pool limits the hamper to
   // the passed items (capsule members). Null = whole closet, as ever.
@@ -3533,16 +3565,27 @@ function _lnHamper(ls) {
   const h = hamperItems(ls);
   return _lnPool ? h.filter(i => _lnPool.has(i.id)) : h;
 }
+// "Also worn, not dirty yet" — the pile on the chair, offered alongside the
+// hamper so a worn-once piece can go in the same real-world wash load.
+function _lnWornPool(ls) {
+  const w = wornItems(ls);
+  return _lnPool ? w.filter(i => _lnPool.has(i.id)) : w;
+}
 function renderLaundrySheet() {
   const ls = laundryState();
   const hamper = _lnHamper(ls);
+  const worn = _lnWornPool(ls);
   const date = $("#lnDate")?.value || todayStr();  // survives chip-toggle re-renders
-  const chips = ["Whites", "Cools", "Warms", "All"].map(l => {
-    const n = _lnLoadItems(l, hamper).length;
-    const lbl = l === "All" ? `All together (${hamper.length})` : `${l} (${n})`;
-    return `<button class="cap-chip${_lnSel.has(l) ? " on" : ""}" data-lnload="${l}" ${n ? "" : "disabled"} style="font-size:14px">${lbl}</button>`;
+  const chips = [...LAUNDRY_REAL_LOADS, "All"].map(l => {
+    const n = _lnLoadItems(l, hamper).length + _lnLoadItems(l, worn).length;
+    const lbl = l === "All" ? `All together (${hamper.length + worn.length})` : `${l} (${n})`;
+    const on = l === "All" ? LAUNDRY_REAL_LOADS.every(x => _lnActiveLoads.has(x)) && hamper.length + worn.length > 0
+      : _lnActiveLoads.has(l);
+    return `<button class="cap-chip${on ? " on" : ""}" data-lnload="${l}" ${n ? "" : "disabled"} style="font-size:14px">${lbl}</button>`;
   }).join("");
-  const selN = _lnSelectedIds(hamper).length;
+  const visHamper = hamper.filter(i => _lnActiveLoads.has(laundryLoadOf(i.color_family)));
+  const visWorn = worn.filter(i => _lnActiveLoads.has(laundryLoadOf(i.color_family)));
+  const selN = _lnSelIds.size;
   // Tracking is opt-in per item: it starts the first time an item is stamped
   // washed. Until ANY item has, offer the whole-closet bootstrap — including
   // when the hamper already holds manual overrides, which used to hide it.
@@ -3565,6 +3608,16 @@ function renderLaundrySheet() {
       <div class="cap-catbar" style="flex-wrap:wrap;gap:8px">${chips}</div>
     </div>` : tracking ? `
     <div class="center muted" style="padding:24px 24px 4px">Nothing in the hamper 🎉</div>` : ""}
+    ${visHamper.length ? `
+    <div style="padding:10px 16px 0">
+      <div class="section-label">In this wash · ${visHamper.length}</div>
+      ${itemGridView(visHamper, { select: true, selSet: _lnSelIds, onTap: "lnitem", cols: 4 })}
+    </div>` : ""}
+    ${visWorn.length ? `
+    <div style="padding:14px 16px 0">
+      <div class="section-label">Also worn, not dirty yet</div>
+      ${itemGridView(visWorn, { select: true, selSet: _lnSelIds, onTap: "lnitem", cols: 4 })}
+    </div>` : ""}
     ${(hamper.length || !tracking) ? dateRow : ""}
     ${hamper.length ? `
     <div style="padding:16px 16px 0;display:flex;flex-direction:column;gap:10px">
@@ -3585,19 +3638,30 @@ function renderLaundrySheet() {
   $("#logInner").querySelectorAll("[data-lnload]").forEach(b => {
     b.onclick = () => {
       const l = b.dataset.lnload;
-      if (_lnSel.has(l)) _lnSel.delete(l);
-      else {
-        // "All together" supersedes individual loads (and vice versa)
-        if (l === "All") _lnSel.clear();
-        else _lnSel.delete("All");
-        _lnSel.add(l);
+      const loads = l === "All" ? LAUNDRY_REAL_LOADS : [l];
+      const turningOn = l === "All"
+        ? !LAUNDRY_REAL_LOADS.every(x => _lnActiveLoads.has(x))
+        : !_lnActiveLoads.has(l);
+      for (const ll of loads) {
+        if (_lnActiveLoads.has(ll) === turningOn) continue;  // already at target state
+        if (turningOn) _lnActiveLoads.add(ll); else _lnActiveLoads.delete(ll);
+        for (const id of _lnLoadIds(ll, hamper, worn)) {
+          if (turningOn) _lnSelIds.add(id); else _lnSelIds.delete(id);
+        }
       }
+      renderLaundrySheet();
+    };
+  });
+  $("#logInner").querySelectorAll("[data-lnitem]").forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.lnitem;
+      if (_lnSelIds.has(id)) _lnSelIds.delete(id); else _lnSelIds.add(id);
       renderLaundrySheet();
     };
   });
   const save = $("#lnSave");
   if (save) save.onclick = async () => {
-    const ids = _lnSelectedIds(_lnHamper());
+    const ids = [..._lnSelIds];
     const day = $("#lnDate")?.value || todayStr();
     hideSheet("logSheet");
     try {
@@ -3959,7 +4023,27 @@ const FIELD_CONFIGS = {
   url:          { label: "URL",       type: "text" },
   retailer:     { label: "Retailer",  type: "typeahead" },
   acquisition:  { label: "Acquired",  type: "single",    opts: ["New","Secondhand","Gift"] },
+  last_washed:  { label: "Washed",    type: "date" },
+  wear_tolerance: { label: "Wears per wash", type: "single", opts: ["1","2","3","4","5","6","7","8","9","10"] },
 };
+
+// Tolerance override isn't a DB column, it's the tol:<n> tag (see
+// setWearToleranceOverride) — routed through the field sheet via a custom
+// _fieldOnSave, same pattern as the Add form's openAddFieldEdit.
+function openTolEdit(id) {
+  const cfg = FIELD_CONFIGS.wear_tolerance;
+  const i = itemById.get(id); if (!i) return;
+  _fieldEditId = null;
+  _fieldEditKey = "wear_tolerance";
+  _fieldPending = String(wearTolerance(i));
+  _fieldEditItem = { wear_tolerance: _fieldPending };
+  _fieldOnSave = async (val) => {
+    await setWearToleranceOverride(id, val ? +val : null);
+    if (detailId === id) openItem(id);
+  };
+  renderFieldSheet(_fieldEditItem, "wear_tolerance", cfg);
+  showSheet("fieldSheet");
+}
 
 // Items visible in the current subcategory/grid context (for prev/next navigation).
 function siblingItems() {
@@ -4058,6 +4142,10 @@ function openItem(id) {
       openItem(i.id);  // refresh the status line
     };
   });
+  const dateEdit = body.querySelector("[data-laun-date-edit]");
+  if (dateEdit) dateEdit.onclick = () => openFieldEdit(i.id, "last_washed");
+  const tolEdit = body.querySelector("[data-laun-tol-edit]");
+  if (tolEdit) tolEdit.onclick = () => openTolEdit(i.id);
 
   const goSib = (dir) => {
     const s = siblingItems(); const idx = s.findIndex(x => x.id === id);
@@ -4439,6 +4527,8 @@ async function saveField(id, field, value) {
   const patch = { [field]: value };
   // An explicitly-entered purchase date is no longer a guess.
   if (field === "purchase_date") { i.date_is_guess = false; patch.date_is_guess = false; }
+  // A re-dated wash retires any one-shot override, same as stampWash.
+  if (field === "last_washed") { i.laundry_state = null; patch.laundry_state = null; }
   // Changing a piece's formality re-categorizes every look it's in (unless the
   // look has a manual override) — drop their cached buckets so they re-derive.
   if (field === "formality") {
@@ -4450,8 +4540,9 @@ async function saveField(id, field, value) {
       headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify(patch),
     });
-    // refresh details if still in details view for this item
+    // refresh details/photo view if still open for this item
     if (detailId === id && detailView === "details") openItemDetails(id);
+    else if (detailId === id && detailView === null) openItem(id);
   } catch (e) {
     i[field] = prev;
     toast(e.message);
@@ -6038,17 +6129,29 @@ function partnersRowHtml(itemId) {
 // never-dirty categories (shoes/outerwear) and non-Available items.
 function laundryLineHtml(i) {
   if (!LAUNDRY_READY() || itemStatus(i) !== "Available" || wearTolerance(i) === Infinity) return "";
-  const dirty = isDirty(i);
+  const ls = laundryState();
+  const dirty = isDirty(i, ls);
   const dd = dirty ? dirtyDays(i) : null;
   const status = dirty
     ? `🧺 In the hamper${dd >= 1 ? ` · ${dd} day${dd === 1 ? "" : "s"}` : ""}`
     : (i.last_washed ? `Washed ${relDate(i.last_washed)}` : "");
   const acts = dirty
     ? `<button class="lnk" data-laun-act="extra" style="font-size:13px">↩︎ One more wear</button>
-       <button class="lnk" data-laun-act="washed" style="font-size:13px">✓ Washed</button>`
+       <button class="lnk" data-laun-act="washed" style="font-size:13px">✓ Washed</button>
+       <button class="lnk" data-laun-date-edit style="font-size:13px">Washed on…</button>`
     : `<button class="lnk" data-laun-act="hamper" style="font-size:13px">🧺 To hamper</button>`;
-  return `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:14px">
-    ${status ? `<span>${status}</span>` : ""}${acts}
+  // The count she's overriding, visible so the wash-date/tolerance edits below
+  // make sense: how many wears since the last wash, out of her tolerance.
+  const n = wearDatesSinceWash(i, ls).length, tol = wearTolerance(i);
+  const countLine = i.last_washed
+    ? `<div style="font-size:12px;color:var(--muted)">${n}/${tol} wears since wash</div>` : "";
+  return `<div class="item-stat-strip" style="display:flex;flex-direction:column;align-items:center;gap:5px">
+    <div style="display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap">
+      ${status ? (dirty ? `<span>${status}</span>`
+        : `<button class="lnk" data-laun-date-edit style="font-size:inherit;color:inherit;font-weight:inherit">${status}</button>`) : ""}${acts}
+    </div>
+    ${countLine}
+    <div style="font-size:12px;color:var(--muted)">Wears per wash: ${tol} <button class="lnk" data-laun-tol-edit style="font-size:12px">✎</button></div>
   </div>`;
 }
 
@@ -12169,6 +12272,7 @@ function planRewearFlags(c, dates) {
     for (const it of dayItems) {
       const tol = wearTolerance(it);
       if (tol === Infinity) continue;
+      if (it.last_washed && date <= it.last_washed) continue;
       const n = (counts.get(it.id) || 0) + 1;
       counts.set(it.id, n);
       if (n > tol) {

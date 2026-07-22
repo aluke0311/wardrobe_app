@@ -1,13 +1,13 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-17 r1** ("Feels Professional" polish round — SHIPPED).
-> Current version: **2026-07-19 r3** ("Loop Resilience + Payoff" round —
-> SHIPPED 2026-07-18→19). ▶ NEXT UP: Round A "Tomorrow" (below).
+> Current version: **2026-07-22 r1** ("Laundry Control" round — SHIPPED, same day
+> planned by Fable / built by Sonnet). ▶ NEXT UP: nothing scheduled — ask the
+> user before starting new work.
 
 ---
 
-## ▶ PLANNED — "Laundry Control" round (planned 2026-07-22 by Fable; build with Sonnet/Opus)
+## ✅ SHIPPED — "Laundry Control" round (planned 2026-07-22 by Fable; built same day by Sonnet)
 
 Seven user asks from one message (2 bugs, 3 features, 1 nav fix, 1 brainstorm).
 All decisions below are LOCKED except the two flagged **[ASK ALINA]** — settle
@@ -140,15 +140,17 @@ same plumbing as the plan view's Build button, zero new paths. (A bare
 `openBuilder()` would also scope via `tripModeId` but the save would vanish
 into the Looks list; bucket is the useful landing spot.)
 
-### Close-out for the enacting model
+### Close-out — DONE 2026-07-22 r1
 
-- Selftest additions: A (rewear reset on `last_washed`) and D3 (tolerance tag).
-  Run `migration/selftest.html` before deploy.
-- `APP_VERSION` + `<meta name="app-version">` bump in lockstep (deploy skill).
-- Update CLAUDE.md's current-state entry + this section's marker to SHIPPED.
-- E and F need on-device verification (her phone) after deploy — flag in the
-  What's New / handoff message that the icon + status bar need a re-install of
-  the home-screen app to show.
+- ASK ALINA (C.3) settled: worn-not-dirty items pre-selected ON by default.
+- Selftest additions shipped: A (rewear reset on real `last_washed`) and D3
+  (`tol:<n>` tag beats subcat/category defaults + edge cases). 48/48 passing.
+- `APP_VERSION` + `<meta name="app-version">` bumped in lockstep; `WHATS_NEW`
+  refreshed.
+- CLAUDE.md's current-state entry updated with full details.
+- **E and F still need on-device verification** (her phone) — the status bar
+  fix and new icons only show after she deletes + re-adds the home-screen app
+  (iOS bakes both at install time). Not toast-worthy; tell her directly.
 
 ---
 
