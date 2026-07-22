@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-22 r4">
+<meta name="app-version" content="2026-07-22 r5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -51,12 +51,22 @@
     --danger: #a13d2b;
     --radius: 14px;
     --nav-h: 64px;
-    /* Deliberately 0, not env(safe-area-inset-bottom) (2026-07-22): going
-       edge-to-edge for the dark status bar (E) also activates the bottom
-       inset for the first time, floating the tab bar above the true screen
-       edge to clear the home-indicator gesture zone. Her call: flush beats
-       HIG clearance — keep the tab bar pinned to the physical bottom. */
+    /* Deliberately 0, not env(safe-area-inset-bottom). Originally (2026-07-22 r2)
+       justified as "the bottom inset floats the tab bar off the edge" — that
+       reasoning was wrong; on-device numbers later showed the bottom inset was
+       never what lifted the bar (see --vp-short). 0 is still what we want:
+       her call is flush, no home-indicator clearance. */
     --safe-b: 0px;
+    /* How far the layout viewport falls short of the physical screen at the
+       bottom. Set from JS (trackViewportShortfall); 0 unless the iOS 26
+       standalone viewport bug is active. Everything anchored to the bottom
+       edge reads it through --above-nav or offsets by it directly. */
+    --vp-short: 0px;
+    /* Distance from the viewport bottom to the TOP of the tab bar — i.e. where
+       anything stacking on the tab bar belongs. Collapses to --nav-h when
+       --vp-short is 0, so non-buggy platforms are untouched. max() keeps it
+       sane if the shortfall ever exceeds the bar height. */
+    --above-nav: max(0px, calc(var(--nav-h) + var(--safe-b) - var(--vp-short)));
     /* type scale — use these for new UI instead of ad-hoc px sizes */
     --fs-xs: 12px;   /* captions, chip text, sub-labels */
     --fs-sm: 13px;   /* secondary text, counts */
@@ -207,7 +217,7 @@
   }
   .ver { position: absolute; left: 12px; top: calc(50% + env(safe-area-inset-top) / 2); transform: translateY(-50%); font-size: 10px; color: var(--muted); }
 
-  .tabbody { padding-bottom: calc(var(--nav-h) + var(--safe-b)); }
+  .tabbody { padding-bottom: var(--above-nav); }
   .screen { display: none; }
   .screen.active { display: block; animation: screenIn .18s ease; }
   @keyframes screenIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
@@ -247,7 +257,10 @@
 
   /* ---------- bottom nav ---------- */
   .tabbar {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+    position: fixed; left: 0; right: 0; z-index: 20;
+    /* Not bottom:0 — that is the LAYOUT viewport bottom, which iOS 26 puts
+       --vp-short above the physical screen edge in standalone. 0 elsewhere. */
+    bottom: calc(-1 * var(--vp-short));
     display: grid; grid-template-columns: repeat(6, 1fr);
     height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b);
     background: rgba(var(--chrome-rgb),.94); backdrop-filter: blur(8px);
@@ -286,7 +299,7 @@
   .rv-set:active, .rv-skip:active, .rv-edit:active, .sheet-action-btn:active,
   .cal-make-look-btn:active, .review-cta:active { transform: scale(.98); filter: brightness(.97); }
   #toast {
-    position: fixed; left: 50%; bottom: calc(var(--nav-h) + 18px + var(--safe-b));
+    position: fixed; left: 50%; bottom: calc(var(--above-nav) + 18px);
     transform: translateX(-50%) translateY(20px);
     background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px;
     font-size: 13.5px; opacity: 0; pointer-events: none; transition: all .2s ease; z-index: 50;
@@ -424,7 +437,7 @@
   /* number-only metric tile */
   .gtile-metric { font-size: 17px; font-weight: 600; color: var(--text); text-align: center; margin-top: 5px; }
   /* floating segmented toggle (worn history / cpw / price) */
-  .stats-toggle-float { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + var(--safe-b) + 14px); z-index: 18; }
+  .stats-toggle-float { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--above-nav) + 14px); z-index: 18; }
   .stats-seg { display: inline-flex; background: var(--panel2); border-radius: 999px; padding: 3px; box-shadow: 0 4px 16px rgba(0,0,0,.14); }
   .stats-seg button { padding: 8px 22px; border-radius: 999px; font-size: 14px; font-weight: 600; color: var(--muted); background: transparent; white-space: nowrap; }
   .stats-seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
@@ -639,11 +652,11 @@
   .gtile.selected .gphoto { outline: 2.5px solid var(--accent); border-color: var(--accent); }
 
   /* ---------- grid action bar ---------- */
-  #gridBar { position: fixed; left: 0; right: 0; bottom: calc(var(--nav-h) + var(--safe-b)); z-index: 15;
+  #gridBar { position: fixed; left: 0; right: 0; bottom: var(--above-nav); z-index: 15;
     display: flex; align-items: center; justify-content: space-between;
     padding: 9px clamp(12px, 4vw, 20px); background: var(--surface); border-top: 1px solid var(--line); }
   /* extra bottom padding when grid bar is visible so content isn't hidden behind it */
-  .has-gridbar .tabbody { padding-bottom: calc(var(--nav-h) + var(--safe-b) + 58px); }
+  .has-gridbar .tabbody { padding-bottom: calc(var(--above-nav) + 58px); }
   /* action icons: hidden until select mode is active */
   /* The whole row (actions + count + All/Done) is tight on a 375px phone — it
      overflowed and pushed "Done" off-screen even before the Worn/Hamper views
@@ -931,7 +944,7 @@
     background: var(--panel); border-radius: 12px; }
   /* Stylebook-style look view: clean canvas + bottom action toolbar */
   .lk-canvas-wrap { padding: 6px 0 96px; min-height: 50vh; }
-  .lk-actbar { position: fixed; left: 0; right: 0; bottom: calc(var(--nav-h) + var(--safe-b));
+  .lk-actbar { position: fixed; left: 0; right: 0; bottom: var(--above-nav);
     display: flex; justify-content: space-around; align-items: flex-start;
     background: rgba(var(--chrome-rgb),.97); backdrop-filter: blur(8px);
     border-top: 1px solid var(--line); padding: 8px 4px; z-index: 20; }
@@ -1068,7 +1081,7 @@
   .cal-act-split { background: #4a6d7c; }
   .cal-act-del   { background: var(--danger); }
   .cal-act svg { width: 18px; height: 18px; stroke: #fffdfb; stroke-width: 2; fill: none; }
-  .cal-day-foot { position: sticky; bottom: calc(var(--nav-h) + var(--safe-b)); background: var(--bg); border-top: 1px solid var(--line); padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
+  .cal-day-foot { position: sticky; bottom: var(--above-nav); background: var(--bg); border-top: 1px solid var(--line); padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
   .cal-day-foot-ico svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.6; fill: none; }
   .cal-day-foot-add { display: flex; gap: 6px; margin-left: auto; align-items: center; }
   .cal-day-foot-add span { color: var(--muted); font-size: 13px; }
@@ -1354,7 +1367,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-22 r4";
+const APP_VERSION = "2026-07-22 r5";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
@@ -1362,7 +1375,8 @@ const WHATS_NEW = [
   "Laundry sheet now shows exactly what's in each wash — tap to add or drop a piece",
   "Wash date and wears-per-wash are now editable right on the item",
   "Trip dash: added ✎ Build alongside ✨ Suggest",
-  "Settings → Viewport diagnostics: temporary readout for the tab-bar gap — screenshot it, it comes out with the fix",
+  "Tab bar sits flush on the screen edge again — the gap was an iOS 26 bug, not the app",
+  "Settings → Viewport diagnostics stays one more release so we can confirm the fix landed",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2292,6 +2306,44 @@ async function flipLaundry(id, wantDirty, ls) {
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
+// iOS 26 standalone viewport bug. Measured on device 2026-07-22 (iPhone 14 Pro,
+// installed app): screen.height 852, innerHeight 793 — short by exactly 59, the
+// TOP inset. iOS deducts the status-bar inset from the viewport HEIGHT as if the
+// web view sat below the Dynamic Island, while also placing it at y=0 and
+// reporting safe-area-inset-top: 59. Counted twice, and the bottom pays: anything
+// at `bottom: 0` lands 59pt up, with the page canvas still painting the strip
+// below it — which is why the gap always matched the body colour, never the bar's.
+// The bottom inset (34) was never involved; see --safe-b.
+//
+// Reads 0 in a browser tab, on desktop, and on any iOS that fixes this
+// (reportedly Safari 26.1), so --above-nav collapses to --nav-h and the tab bar
+// back to bottom:0 on their own — no cleanup commit needed later.
+(function trackViewportShortfall() {
+  const standalone = matchMedia("(display-mode: standalone)").matches
+    || navigator.standalone === true;
+  const update = () => {
+    let short = 0;
+    if (standalone) {
+      // screen.width/height do NOT swap with orientation on iOS — pick by hand
+      // rather than trusting screen.height to mean "height right now".
+      const portrait = innerWidth <= innerHeight;
+      const screenH = portrait ? Math.max(screen.width, screen.height)
+                               : Math.min(screen.width, screen.height);
+      const d = screenH - innerHeight;
+      // Only ever corrects a safe-area-sized discrepancy. Anything larger is
+      // something unaccounted for (split view, unexpected chrome) — leave the
+      // layout alone rather than shoving the tab bar somewhere absurd.
+      if (d > 0 && d <= 80) short = d;
+    }
+    document.documentElement.style.setProperty("--vp-short", short + "px");
+  };
+  update();
+  // Deliberately not visualViewport: that tracks the keyboard, which must not
+  // move the tab bar. innerHeight is unchanged by the keyboard on iOS.
+  addEventListener("resize", update);
+  addEventListener("orientationchange", update);
+})();
+
 // Track the on-screen keyboard height into --kb so bottom sheets sit above it
 // (iOS anchors fixed bottom:0 to the layout viewport, so the keyboard covers them).
 (function trackKeyboardInset() {
@@ -2316,7 +2368,7 @@ let toastTimer;
 function positionToast() {
   const t = $("#toast");
   t.style.bottom = document.querySelector(".stats-toggle-float")
-    ? "calc(var(--nav-h) + var(--safe-b) + 80px)" : "";
+    ? "calc(var(--above-nav) + 80px)" : "";
 }
 
 // action = one {label,fn} chip, an array of them, or omitted. Each chip is its
@@ -14160,6 +14212,8 @@ function renderVpDiag() {
     ["tabbar height", r ? Math.round(r.height * 100) / 100 : "n/a"],
     ["devicePixelRatio", devicePixelRatio],
     ["orientation", innerWidth > innerHeight ? "landscape" : "portrait"],
+    ["--vp-short", getComputedStyle(de).getPropertyValue("--vp-short").trim() || "(unset)"],
+    ["--above-nav", bar ? getComputedStyle(bar).getPropertyValue("--above-nav").trim() : "n/a"],
   ];
   // The number that decides it: how far the tab bar's bottom edge sits above
   // the physical screen bottom. 0 = flush (no bug). ~34 = the gap she sees.
