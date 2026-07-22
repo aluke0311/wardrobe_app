@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-21 r13">
+<meta name="app-version" content="2026-07-21 r14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -626,17 +626,22 @@
   /* ---------- grid action bar ---------- */
   #gridBar { position: fixed; left: 0; right: 0; bottom: calc(var(--nav-h) + var(--safe-b)); z-index: 15;
     display: flex; align-items: center; justify-content: space-between;
-    padding: 9px 20px 9px; background: var(--surface); border-top: 1px solid var(--line); }
+    padding: 9px clamp(12px, 4vw, 20px); background: var(--surface); border-top: 1px solid var(--line); }
   /* extra bottom padding when grid bar is visible so content isn't hidden behind it */
   .has-gridbar .tabbody { padding-bottom: calc(var(--nav-h) + var(--safe-b) + 58px); }
   /* action icons: hidden until select mode is active */
-  .gb-acts { display: none; gap: 24px; align-items: center; }
+  /* The whole row (actions + count + All/Done) is tight on a 375px phone — it
+     overflowed and pushed "Done" off-screen even before the Worn/Hamper views
+     added a 5th action. So: gaps clamp with viewport, the count shrinks first,
+     and .gb-right never shrinks (losing Done is the worst outcome). */
+  .gb-acts { display: none; gap: clamp(12px, 3.2vw, 24px); align-items: center; min-width: 0; }
   #gridBar.selecting .gb-acts { display: flex; }
-  .gb-acts button { padding: 6px; display: flex; align-items: center; }
+  .gb-acts button { padding: 6px; display: flex; align-items: center; flex: none; }
   .gb-acts button svg { width: 22px; height: 22px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   .gb-acts button.active svg { stroke: var(--accent); }
-  .gb-count { font-size: 13px; color: var(--muted); padding-left: 4px; }
-  .gb-right { display: flex; align-items: center; gap: 14px; position: relative; }
+  .gb-count { font-size: 13px; color: var(--muted); padding-left: 4px; white-space: nowrap;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .gb-right { display: flex; align-items: center; gap: clamp(8px, 2.6vw, 14px); position: relative; flex: none; }
   #gbGrid svg { width: 20px; height: 20px; stroke: var(--muted); stroke-width: 1.8; fill: none; }
   #gbSelect { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px; }
   #gbAll { color: var(--accent); font-weight: 600; font-size: 16px; padding: 4px 8px 4px 4px; }
@@ -1182,6 +1187,12 @@
       <button id="gbCapsule" title="Add to capsule">
         <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/><path d="M12 11v6M9 14h6"/></svg>
       </button>
+      <!-- Contextual laundry action — only in the Worn tray (→ hamper) and the
+           Hamper (→ washed). updateGridBar swaps its icon/title per view. -->
+      <button id="gbLaundry" hidden>
+        <svg id="gbLaundryToHamper" viewBox="0 0 24 24"><path d="M4 8h16l-1.6 12H5.6z"/><path d="M9 8V5.5a3 3 0 0 1 6 0V8"/><path d="M9.5 12v4M14.5 12v4"/></svg>
+        <svg id="gbLaundryWashed" viewBox="0 0 24 24" hidden><circle cx="12" cy="12" r="9"/><path d="M8 12.2l2.7 2.8L16 9"/></svg>
+      </button>
       <span id="gbCount" class="gb-count"></span>
     </div>
     <div class="gb-right" style="margin-left:auto">
@@ -1328,14 +1339,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-21 r13";
+const APP_VERSION = "2026-07-21 r14";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "A whole new look \u2014 warm paper background, deep oxblood accent, and serif headings throughout",
-  "Dark mode: the app now follows your phone's light/dark setting automatically",
-  "Prefer green? Settings \u2192 Appearance has a Sage theme",
-  "Buttons and rows now respond to a press, and re-tapping the tab you're on scrolls back to the top",
+  "Worn tray: select several pieces at once and send them straight to the hamper",
+  "Hamper: select the ones you actually washed and mark them clean in one tap",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -3652,7 +3661,8 @@ function renderClosetHamper() {
     : `<div class="placeholder" style="padding:40px 32px"><b>Nothing in the hamper 🎉</b>
         <div>Pieces land here once you've worn them enough times since their last wash — or when you tap "🧺 To hamper" on an item.</div></div>`;
   return clToolbar(`Hamper · ${list.length}`, true, false)
-    + (list.length ? `<div style="padding:10px 14px 2px"><button class="cl-capbtn" data-laundry-wash style="margin:0">🧺 Did laundry — mark these washed</button></div>` : "")
+    + (list.length ? `<div style="padding:10px 14px 2px"><button class="cl-capbtn" data-laundry-wash style="margin:0">🧺 Did laundry — mark these washed</button></div>
+       <div class="snote" style="padding:2px 16px 0">Ran only part of the pile? Tap <b>Select</b>, pick the ones you washed, then the ✓.</div>` : "")
     + body
     + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
 }
@@ -3671,7 +3681,7 @@ function renderClosetWorn() {
     : `<div class="placeholder" style="padding:40px 32px"><b>Nothing worn yet</b>
         <div>Pieces land here once you've worn them since their last wash but not enough times to be dirty.</div></div>`;
   return clToolbar(`Worn · ${list.length}`, true, false)
-    + `<div class="snote" style="padding:8px 16px 2px">Worn since washing, not dirty yet — the pile on the chair. Open a piece to send it to the hamper.</div>`
+    + `<div class="snote" style="padding:8px 16px 2px">Worn since washing, not dirty yet — the pile on the chair. Tap <b>Select</b> to send several to the hamper at once, or open one piece to do it individually.</div>`
     + body
     + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
 }
@@ -8345,12 +8355,44 @@ function openOccasionEdit(itemId, onSaved) {
 /* ===================================================================
    GRID BAR  (density picker + select mode + bulk actions)
    =================================================================== */
+// Which laundry bulk action the current closet view offers, if any. The Worn
+// tray sends pieces onward to the hamper; the hamper sends them to washed.
+function laundryBulkMode() {
+  if (!LAUNDRY_READY()) return null;
+  if (closetWorn) return "hamper";
+  if (closetHamper) return "washed";
+  return null;
+}
+
 function updateGridBar() {
   const n = selectedIds.size;
   const has = selectMode && n > 0;
   $("#gridBar").classList.toggle("selecting", selectMode);
-  ["#gbMove", "#gbEdit", "#gbDelete", "#gbCapsule"].forEach(id => $(id).classList.toggle("active", has));
-  $("#gbCount").textContent = n ? `${n} selected` : "";
+  ["#gbMove", "#gbEdit", "#gbDelete", "#gbCapsule", "#gbLaundry"].forEach(id => $(id).classList.toggle("active", has));
+  const lmode = laundryBulkMode();
+  const lbtn = $("#gbLaundry");
+  lbtn.hidden = !lmode;
+  if (lmode) {
+    lbtn.title = lmode === "hamper" ? "Move to hamper" : "Mark washed";
+    // NOT `.hidden = bool` — on an <svg> element that sets a same-named JS
+    // expando that reads back correctly but never touches the DOM attribute,
+    // so the `[hidden]{display:none!important}` rule never fires and the icon
+    // silently never swaps. toggleAttribute is the one that actually works.
+    $("#gbLaundryToHamper").toggleAttribute("hidden", lmode !== "hamper");
+    $("#gbLaundryWashed").toggleAttribute("hidden", lmode !== "washed");
+  }
+  // Five actions + the count + All/Done overflows a 375px phone (the count wraps
+  // and All/Done get pushed off). The Worn/Hamper trays are transient laundry
+  // states, so re-foldering and capsule assignment step aside there — Edit and
+  // Delete stay, since a "this is worn out" moment happens with laundry in hand.
+  $("#gbMove").hidden = !!lmode;
+  $("#gbCapsule").hidden = !!lmode;
+  // Number only, not "N selected": the full label plus four action icons plus
+  // All/Done cannot fit 375px at any gap, and it was the label that lost — it
+  // truncated to an ellipsis, or shoved Done off the screen entirely.
+  const count = $("#gbCount");
+  count.textContent = n ? String(n) : "";
+  count.title = n ? `${n} selected` : "";
   $("#gbSelect").textContent = selectMode ? "Done" : "Select";
   const all = $("#gbAll");
   const vis = selectMode ? $$(".grid [data-item]").map(t => t.dataset.item) : [];
@@ -8447,6 +8489,65 @@ async function deleteSelected() {
     exitSelectMode();
     renderCloset();
     toast(`${n} item${n === 1 ? "" : "s"} deleted`);
+  } catch (e) { toast(e.message); }
+}
+
+// ---- bulk laundry actions (Worn tray → hamper, Hamper → washed) ----
+// Both snapshot the two laundry columns per item first so Undo is exact: these
+// write to real rows, and "washed" in particular clears an override AND stamps a
+// date, which no single flip can put back.
+function _laundrySnapshot(ids) {
+  return ids.map(id => {
+    const it = itemById.get(id);
+    return it && { id, last_washed: it.last_washed ?? null, laundry_state: it.laundry_state ?? null };
+  }).filter(Boolean);
+}
+async function _restoreLaundry(snap) {
+  try {
+    for (const s of snap) {
+      const it = itemById.get(s.id);
+      if (it) { it.last_washed = s.last_washed; it.laundry_state = s.laundry_state; }
+      await rest(`/items?id=eq.${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ last_washed: s.last_washed, laundry_state: s.laundry_state }) });
+    }
+    renderCloset();
+    toast("Undone");
+  } catch (e) { toast(e.message); }
+}
+
+async function bulkToHamper() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  const snap = _laundrySnapshot(ids);
+  try {
+    // Straight to the 'hamper' override in one PATCH. Not a flipLaundry loop:
+    // that's a request per item, and it swallows its own errors, so a failed
+    // write would still land a success toast. Everything in the Worn tray is
+    // under tolerance by construction, so the override is always the right move.
+    for (const id of ids) { const it = itemById.get(id); if (it) it.laundry_state = "hamper"; }
+    for (let k = 0; k < ids.length; k += 40) {
+      const chunk = ids.slice(k, k + 40).map(id => `"${id}"`).join(",");
+      await rest(`/items?id=in.(${chunk})`, { method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ laundry_state: "hamper" }) });
+    }
+    exitSelectMode();
+    renderCloset();
+    toast(`${ids.length} in the hamper`, { label: "Undo", fn: () => _restoreLaundry(snap) });
+  } catch (e) { toast(e.message); }
+}
+
+async function bulkMarkWashed() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  const snap = _laundrySnapshot(ids);
+  try {
+    // The laundry SHEET filters to dirty items before stamping; here the user
+    // picked these out of the hamper by hand, so stamp exactly what she chose.
+    // stampWash clears laundry_state itself, which retires any 'hamper' override.
+    await stampWash(ids, todayStr());
+    exitSelectMode();
+    renderCloset();
+    toast(`${ids.length} marked washed`, { label: "Undo", fn: () => _restoreLaundry(snap) });
   } catch (e) { toast(e.message); }
 }
 
@@ -14421,6 +14522,12 @@ function wireEvents() {
   $("#gbDelete").addEventListener("click", () => { if (selectedIds.size) deleteSelected(); });
   $("#gbMove").addEventListener("click", () => { if (selectedIds.size) openMoveSheet(); });
   $("#gbCapsule").addEventListener("click", () => { if (selectedIds.size) openCapsuleSheet(); });
+  $("#gbLaundry").addEventListener("click", () => {
+    if (!selectedIds.size) return;
+    const m = laundryBulkMode();
+    if (m === "hamper") bulkToHamper();
+    else if (m === "washed") bulkMarkWashed();
+  });
   $("#gridPickerPop").addEventListener("click", (e) => {
     const b = e.target.closest("[data-cols]");
     if (b) setGridCols(+b.dataset.cols);
