@@ -914,6 +914,29 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 - **`loadPhotoNode` sets `backgroundColor = "transparent"`** — lets white/transparent
   garment PNGs show cleanly on tile backgrounds.
 - **GitHub Pages caches hard** — hard-refresh (`Cmd+Shift+R`) after deploy.
+- **⚠️ The tab-bar gap is an iOS 26 bug. Do not try to fix it in CSS.** In the
+  installed (standalone) app on iOS 26, the layout viewport is short at the bottom
+  by exactly the *top* safe-area inset: iOS deducts the status-bar inset from the
+  viewport height as if the web view sat below the Dynamic Island, while also
+  placing it at y=0 and reporting `safe-area-inset-top` normally. Counted twice.
+  Measured 2026-07-22, iPhone 14 Pro: `screen.height` 852, `innerHeight` 793,
+  inset-top 59, inset-bottom 34. So anything at `bottom: 0` renders 59pt above the
+  physical edge, and the page canvas keeps painting that strip — which is why the
+  gap always matches the *body* background, never the bar's.
+  - `env(safe-area-inset-bottom)` is **not** the cause. `--safe-b` is 0 and that is
+    correct; zeroing it changes nothing about the gap.
+  - **Fixed elements are clipped to the layout viewport, even though the canvas
+    paints past it.** Tried and reverted in r5: `.tabbar { bottom: calc(-1 * 59px) }`
+    positioned the bar perfectly (`rect.bottom` 852 = the physical edge) and then
+    rendered *nothing at all* — the bar vanished. A `::after` shim extending the
+    background downward fails identically. There is no CSS route into that strip.
+  - Remaining options if it's ever worth revisiting: revert
+    `apple-mobile-web-app-status-bar-style` to `default` (system lays the web view
+    out inside the safe area and paints the bands itself — costs the edge-to-edge
+    dark status bar), or wait for the WebKit fix (reportedly Safari 26.1).
+  - Her standing call: live with the gap. Don't re-litigate it without new evidence.
+  - A temporary on-device diagnostics readout lived in Settings for r4/r5 —
+    `git show 5b11943` if numbers are ever needed again.
 - **Status is a lens, not a category** — always change status on the item detail move bar.
 - **`closetBack()` priority stack**: `detailView==="details"` → photo view; `_reviewMode`
   → review deal card; `_fromBuilder` → restore builder; `_itemReturn` → origin screen
