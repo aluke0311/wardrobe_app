@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-22 r2">
+<meta name="app-version" content="2026-07-22 r3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -17,6 +17,13 @@
   /* ---------- design tokens ---------- */
   :root {
     --bg: #f8f4ee;
+    /* --bg as a bare RGB triplet, for the translucent fixed/sticky chrome
+       (header, tab bar, sheets, action bars) which needs var(--bg)'s colour at
+       its own per-element alpha. These were hardcoded rgba(248,244,238,.xx)
+       literals until 2026-07-22 — light-mode --bg spelled out — so the chrome
+       stayed beige in dark mode while --ink flipped to cream, leaving cream
+       text on a beige header. Keep this in sync with --bg in every theme. */
+    --chrome-rgb: 248,244,238;
     --surface: #fffdfb;
     --ink: #211d1a;
     --text: #211d1a;            /* alias of --ink; older styles reference --text */
@@ -63,6 +70,7 @@
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #16130f;
+      --chrome-rgb: 22,19,15;
       --surface: #211c16;
       --ink: #ece4d8;
       --text: #ece4d8;
@@ -85,6 +93,7 @@
   /* ---------- sage theme (user-selectable) ---------- */
   html[data-theme="sage"] {
     --bg: #f3f5ee;
+    --chrome-rgb: 243,245,238;
     --surface: #fdfefb;
     --ink: #232a20;
     --text: #232a20;
@@ -104,6 +113,7 @@
   @media (prefers-color-scheme: dark) {
     html[data-theme="sage"] {
       --bg: #12150f;
+      --chrome-rgb: 18,21,15;
       --surface: #1c2016;
       --ink: #e6ebdb;
       --text: #e6ebdb;
@@ -186,7 +196,7 @@
     position: sticky; top: 0; z-index: 10;
     display: flex; align-items: center; justify-content: center;
     height: var(--hdr-h); padding: env(safe-area-inset-top) 14px 0;
-    background: rgba(248,244,238,.92); backdrop-filter: blur(8px);
+    background: rgba(var(--chrome-rgb),.92); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
   }
   .bar h1 { font: italic 500 19px/1 var(--serif); letter-spacing: .01em; }
@@ -240,7 +250,7 @@
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
     display: grid; grid-template-columns: repeat(6, 1fr);
     height: calc(var(--nav-h) + var(--safe-b)); padding-bottom: var(--safe-b);
-    background: rgba(248,244,238,.94); backdrop-filter: blur(8px);
+    background: rgba(var(--chrome-rgb),.94); backdrop-filter: blur(8px);
     border-top: 1px solid var(--line);
   }
   .tabbar button {
@@ -338,7 +348,7 @@
   /* ---------- closet toolbar + lens ---------- */
   .cltoolbar { display: flex; align-items: center; gap: 8px; padding: 12px 14px 6px;
     position: sticky; top: var(--hdr-h); z-index: 9;
-    background: rgba(248,244,238,.92); backdrop-filter: blur(8px); }
+    background: rgba(var(--chrome-rgb),.92); backdrop-filter: blur(8px); }
   .clback, .clsearch { width: 44px; height: 44px; margin: -5px 0; display: flex; align-items: center; justify-content: center; color: var(--ink); }
   .clback svg, .clsearch svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; fill: none; }
   .cltitle { flex: 1; font-size: 15px; font-weight: 600; }
@@ -560,7 +570,7 @@
   .cap-pack-fill { height: 100%; background: #2f9e5e; border-radius: 5px; transition: width .25s; }
   .cap-pack-lbl { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
   .gtile .pack-tick { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px;
-    border-radius: 50%; background: rgba(248,244,238,.92); border: 1.5px solid var(--line);
+    border-radius: 50%; background: rgba(var(--chrome-rgb),.92); border: 1.5px solid var(--line);
     display: flex; align-items: center; justify-content: center; z-index: 2; }
   .gtile .pack-tick svg { width: 14px; height: 14px; stroke: transparent; stroke-width: 3; fill: none; }
   .gtile.packed .pack-tick { background: #2f9e5e; border-color: #2f9e5e; }
@@ -777,7 +787,7 @@
   /* ---------- item action bar ---------- */
   #itemBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
     display: flex; align-items: center; justify-content: space-around;
-    padding: 10px 24px calc(10px + var(--safe-b)); background: rgba(248,244,238,.96);
+    padding: 10px 24px calc(10px + var(--safe-b)); background: rgba(var(--chrome-rgb),.96);
     backdrop-filter: blur(8px); border-top: 1px solid var(--line); }
   #itemBar button { display: flex; align-items: center; justify-content: center; padding: 6px; }
   #itemBar button svg { width: 25px; height: 25px; stroke: var(--ink); stroke-width: 1.7; fill: none; }
@@ -836,7 +846,7 @@
   .tgl.on .tgl-knob { left: 21px; }
   .det-divider { height: 1px; background: var(--line); margin: 0 16px; }
   .det-notes-val { font-size: 15px; color: var(--ink); line-height: 1.5; padding: 14px 16px; }
-  .det-footer { position: sticky; bottom: 0; background: rgba(248,244,238,.95);
+  .det-footer { position: sticky; bottom: 0; background: rgba(var(--chrome-rgb),.95);
     backdrop-filter: blur(8px); display: flex; justify-content: space-between;
     padding: 10px 24px calc(10px + var(--safe-b)); border-top: 1px solid var(--line); }
   .swatch { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); vertical-align: -1px; flex-shrink: 0; }
@@ -923,7 +933,7 @@
   .lk-canvas-wrap { padding: 6px 0 96px; min-height: 50vh; }
   .lk-actbar { position: fixed; left: 0; right: 0; bottom: calc(var(--nav-h) + var(--safe-b));
     display: flex; justify-content: space-around; align-items: flex-start;
-    background: rgba(248,244,238,.97); backdrop-filter: blur(8px);
+    background: rgba(var(--chrome-rgb),.97); backdrop-filter: blur(8px);
     border-top: 1px solid var(--line); padding: 8px 4px; z-index: 20; }
   .lk-act { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 1;
     background: none; border: none; color: var(--accent); font-size: 10.5px; cursor: pointer; padding: 3px 0; }
@@ -933,7 +943,7 @@
   /* builder "+ Clothing" item rail: bottom slider over a visible canvas (Stylebook) */
   .bld-pick-overlay { position: fixed; left: 0; right: 0; bottom: 0; top: 0; z-index: 30;
     display: flex; pointer-events: none; }
-  .bld-rail { pointer-events: auto; margin-top: auto; width: 100%; background: rgba(248,244,238,.98);
+  .bld-rail { pointer-events: auto; margin-top: auto; width: 100%; background: rgba(var(--chrome-rgb),.98);
     backdrop-filter: blur(8px); border-top: 1px solid var(--line); box-shadow: 0 -4px 18px rgba(0,0,0,.12);
     padding-bottom: var(--safe-b); }
   .bld-rail-hdr { display: flex; align-items: center; gap: 8px; padding: 9px 12px 4px; }
@@ -1031,7 +1041,7 @@
   /* day view */
   .cal-day-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line);
     position: sticky; top: var(--hdr-h); z-index: 9;
-    background: rgba(248,244,238,.92); backdrop-filter: blur(8px); }
+    background: rgba(var(--chrome-rgb),.92); backdrop-filter: blur(8px); }
   .cal-day-nav { display: flex; align-items: center; padding: 4px 6px; }
   .cal-day-nav-btn { color: var(--accent); padding: 8px 10px; }
   .cal-day-nav-btn svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 2; fill: none; }
@@ -1043,7 +1053,7 @@
   .cal-outfit-piece { background: var(--surface) center/contain no-repeat; }
   .cal-outfit-canvas { position: relative; width: 88px; height: 88px; border-radius: 10px; overflow: hidden; background: var(--surface); flex: none; }
   .cal-heart-btn { position: absolute; top: 2px; right: 2px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
-    background: rgba(248,244,238,.85); border-radius: 50%; color: var(--muted); }
+    background: rgba(var(--chrome-rgb),.85); border-radius: 50%; color: var(--muted); }
   .cal-heart-btn svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.8; fill: none; }
   .cal-heart-btn.on { color: #e0455b; }
   .cal-heart-btn.on svg { fill: currentColor; }
@@ -1344,11 +1354,11 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-22 r2";
+const APP_VERSION = "2026-07-22 r3";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Fixed the bottom tab bar floating above the screen edge (introduced by the dark status bar fix)",
+  "Dark mode: the header and tab bar are finally dark too (they'd been stuck light, hiding the title)",
   "Laundry sheet now shows exactly what's in each wash — tap to add or drop a piece",
   "Wash date and wears-per-wash are now editable right on the item",
   "Trip dash: added ✎ Build alongside ✨ Suggest",
