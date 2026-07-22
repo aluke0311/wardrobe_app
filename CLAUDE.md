@@ -805,6 +805,15 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 
 ## Known gotchas
 
+- **`svgElement.hidden = bool` does not reflect to the DOM attribute** in this
+  app's runtime (2026-07-21 r14) — unlike on a div/button, it silently sets a
+  same-named JS expando that reads back correctly (`el.hidden === true`) but
+  never touches `getAttribute("hidden")`, so the global
+  `[hidden]{display:none!important}` rule never fires and the element stays
+  visible regardless. Toggling an inline `<svg>` icon's visibility from JS
+  must use `svg.toggleAttribute("hidden", bool)` instead. Every OTHER
+  `.hidden =` in the codebase targets a div/button/span, where it works fine —
+  this only bites bare `<svg>` elements.
 - **No hardcoded colors in new UI** (2026-07-21 r13). The redesign routed every
   literal through a token so the two themes × light/dark all work. A new
   `background: #fff` or `color: #fff` looks fine while you're building and then
