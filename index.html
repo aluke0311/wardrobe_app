@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-22 r1">
+<meta name="app-version" content="2026-07-22 r2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -44,7 +44,12 @@
     --danger: #a13d2b;
     --radius: 14px;
     --nav-h: 64px;
-    --safe-b: env(safe-area-inset-bottom, 0px);
+    /* Deliberately 0, not env(safe-area-inset-bottom) (2026-07-22): going
+       edge-to-edge for the dark status bar (E) also activates the bottom
+       inset for the first time, floating the tab bar above the true screen
+       edge to clear the home-indicator gesture zone. Her call: flush beats
+       HIG clearance — keep the tab bar pinned to the physical bottom. */
+    --safe-b: 0px;
     /* type scale — use these for new UI instead of ad-hoc px sizes */
     --fs-xs: 12px;   /* captions, chip text, sub-labels */
     --fs-sm: 13px;   /* secondary text, counts */
@@ -1339,13 +1344,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-22 r1";
+const APP_VERSION = "2026-07-22 r2";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
+  "Fixed the bottom tab bar floating above the screen edge (introduced by the dark status bar fix)",
   "Laundry sheet now shows exactly what's in each wash — tap to add or drop a piece",
   "Wash date and wears-per-wash are now editable right on the item",
-  "Trip rewear warnings respect a real wash, not just a planned laundry day",
   "Trip dash: added ✎ Build alongside ✨ Suggest",
 ];
 
