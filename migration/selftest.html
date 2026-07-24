@@ -489,10 +489,11 @@ function run() {
   });
 
   // ---- wear-count map (perf fix for the smart-list sorts, 2026-07-21) ----
-  // The map replaced per-item wearCountInRange calls inside sort comparators.
-  // It must agree with that function exactly, in BOTH range modes — note the
-  // pre-existing asymmetry it preserves: distinct DAYS on "all", raw rows in range.
-  t("wearCountMapInRange matches wearCountInRange (all + ranged)", () => {
+  // The map replaced per-item wearCountInRange calls inside sort comparators, so
+  // it must agree with that function exactly in BOTH range modes. Both count
+  // distinct wear DAYS — the ranged branch used to count raw rows, which read a
+  // piece logged twice in one day as two wears (fixed 2026-07-24).
+  t("wearCountMapInRange matches wearCountInRange, by DAY (all + ranged)", () => {
     const savedItems = W.items, savedWears = W.wears, savedRange = W.statsDateRange;
     W.items = [{ id: "x", status: "Available" }, { id: "y", status: "Available" }, { id: "z", status: "Available" }];
     W.wears = [{ item_id: "x", worn_on: D(-1) }, { item_id: "x", worn_on: D(-1) },  // same day twice
@@ -505,9 +506,55 @@ function run() {
     }
     W.items = savedItems; W.wears = savedWears; W.statsDateRange = savedRange;
     // all: x = 2 distinct DAYS, y = 1, z = 0
-    // 90d: only x's recent day is in range, but ranged counting is RAW ROWS,
-    // so the doubled log reads 2 — the asymmetry both functions must share.
-    return eq(out, [[[2, 2], [1, 1], [0, 0]], [[2, 2], [0, 0], [0, 0]]]);
+    // 90d: only x's recent day is in range, and the doubled log on that day is
+    // ONE wear — not two.
+    return eq(out, [[[2, 2], [1, 1], [0, 0]], [[1, 1], [0, 0], [0, 0]]]);
+  });
+
+  // ---- "a wear is a DAY" (2026-07-24) ----
+  // One outfit logged on one day writes one wear row PER PIECE. Anything that
+  // tallies rows therefore reads a 5-piece look as 5 wears — and the context
+  // stamped on it as 5 outings. countByDay is the shared guard against that.
+  t("countByDay counts each key once per day, not once per row", () => {
+    const ws = [
+      { item_id: "a", worn_on: "2026-07-01", context: ["Church"] },   // 3-piece look,
+      { item_id: "b", worn_on: "2026-07-01", context: ["Church"] },   // one day,
+      { item_id: "c", worn_on: "2026-07-01", context: ["Church"] },   // one outing
+      { item_id: "a", worn_on: "2026-07-08", context: ["Church"] },
+      { item_id: "a", worn_on: "2026-07-09", context: [] },           // no context
+      { worn_on: null, item_id: "a", context: ["Church"] },           // undated: skipped
+    ];
+    const byCtx = W.countByDay(ws, W.ctxArr);
+    const byItem = W.countByDay(ws, w => w.item_id ? [w.item_id] : []);
+    return eq([byCtx.get("Church"), byItem.get("a"), byItem.get("b")], [2, 3, 1]);
+  });
+  t("countByDay separator can't be forged by a context name", () => {
+    // Keys are user-typed text; a context ending in something date-shaped must
+    // not collide with another context's day key.
+    const ws = [{ item_id: "a", worn_on: "2026-07-01", context: ["Gala"] },
+                { item_id: "b", worn_on: "2026-07-01", context: ["Gala 2026-07-01"] }];
+    const c = W.countByDay(ws, W.ctxArr);
+    return eq([c.get("Gala"), c.get("Gala 2026-07-01"), c.size], [1, 1, 2]);
+  });
+  t("contextWearCounts: a multi-piece look is ONE outing for its context", () => {
+    const savedWears = W.wears, savedRange = W.statsDateRange;
+    W.statsDateRange = "all";
+    W.wears = [{ item_id: "a", worn_on: D(-3), context: ["Church"] },
+               { item_id: "b", worn_on: D(-3), context: ["Church"] },
+               { item_id: "c", worn_on: D(-3), context: ["Church"] },
+               { item_id: "a", worn_on: D(-10), context: ["Errands"] }];
+    const c = W.contextWearCounts();
+    const out = [c.get("Church"), c.get("Errands")];
+    W.wears = savedWears; W.statsDateRange = savedRange;
+    return eq(out, [1, 1]);
+  });
+  t("buildRotationStats: per-item wear DAYS ride along for the drill-in", () => {
+    const pool = [{ id: "a", status: "Available" }, { id: "b", status: "Available" }];
+    const ws = [{ item_id: "a", worn_on: D(-5) }, { item_id: "a", worn_on: D(-5) },  // same day twice
+                { item_id: "a", worn_on: D(-6) }];
+    const r = W.buildRotationStats(90, pool, ws, today);
+    return eq([r.counts.get("a"), r.wornIds.has("a"), r.wornIds.has("b"), r.pool.length],
+              [2, true, false, 2]);
   });
 
   // ---- render summary ----

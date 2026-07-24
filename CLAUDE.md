@@ -2,6 +2,31 @@
 
 Guidance for working in this repo. Read alongside `README.md`.
 
+**"Rotation drill-in + wears-by-day" (2026-07-24 r1) — SHIPPED.** Two asks.
+① **`countByDay(rows, keyFn)`** (beside `ctxArr`) + an app-wide audit enforcing
+**a wear is a DAY, never a row** — see the Known gotchas entry, which is the
+rule to read before adding any "N wears" number. Fixed: `wearCountInRange` /
+`wearCountMapInRange` (the ranged branch counted raw rows, so the stats
+Most/Least Worn and CPW lists double-counted inside any date range),
+`contextWearCounts` / `contextTopItems` / `contextTopLooks` / `topContextsByWearCount`
+/ `contextOptions` / `itemContexts` (**the worst of them — a 5-piece look stamped
+"Church" counted as 5 outings**, so the Contexts page and every context-ordered
+picker were inflated by pieces-per-outfit), `buildGapStats`, `buildWrappedStats`'
+context shares, and `calMostWorn` (printed "N days" over a row count).
+`contextFormalityStats` now averages one level per DAY (mean of that day's
+pieces) so a 6-piece day can't outvote a 2-piece day. `buildWrappedStats`'
+`totalWears` → `pieceDays` (it was item-days, not wears; unused in the UI).
+Settings' data card says "N wear records" — a table size, deliberately not a
+wear count. ② **Rotation drill-in**: the Stats "Rotation" bar is now tappable
+(`.rot-open` → `statsView = "rotation"`, `renderStatsRotationPage`) — same 30d/90d/1y
+window chips, plus a **Worn / Not worn** segmented toggle over the two sides of
+the same number, each a real item grid (worn = freshest first with in-window
+wear-days; not worn = coldest first, never-worn leading). `buildRotationStats`
+now also returns `pool` / `wornIds` / `counts` so the page can't drift from the
+headline. The page passes `statsToolbar(..., hideFilter=true)` — its denominator
+is deliberately the **full Available closet, not `statsPool()`**, so a funnel
+that silently changed nothing would lie. Selftest 52/52 (4 new).
+
 **"Laundry Control" round (2026-07-22 r1) — SHIPPED.** Seven asks from one
 message (planned by Fable, built by Sonnet same day). ① Fixed `planRewearFlags`
 ignoring a real wash: it now skips planned days on/before `items.last_washed`,
@@ -568,7 +593,8 @@ Top-of-`<script>` config, then logically grouped sections:
   (v3, `.otd-row`) shows the most recent prior YEAR with wears on the same date
   (mini collage + contexts); tap navigates the day view to that date.
 - **STYLE STATS** — `renderStats()` dispatches main/field/grid/outfits/contexts/
-  context-detail/report/report-detail/review views. **Report Cards** (2026-07-10):
+  context-detail/gap/wrapped/**rotation**/report/report-detail/review views.
+  **Report Cards** (2026-07-10):
   main-page "Report Cards" section → `renderStatsReportPage()` over
   the 7 dimensions in `REPORT_DIMS` (brand, retailer, subcategory, price bracket,
   purchase year, color_family, acquisition). Engine: `buildItemPerf(pool)` computes
@@ -804,7 +830,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-22 r6`. ⚠️ Since 2026-07-17 the version lives in TWO
+  Currently `2026-07-24 r1`. ⚠️ Since 2026-07-17 the version lives in TWO
   places that must stay in lockstep: the `APP_VERSION` constant AND the
   `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
@@ -877,12 +903,21 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   `.stats-toggle-float`; it's called from `toast()` AND from
   `renderStatsGridPage` so it self-corrects from both directions. Any NEW
   bottom-fixed control in that band needs the same consideration.
+- **⚠️ A WEAR IS A DAY. Never count wear ROWS** (2026-07-24 r1). One outfit
+  logged on one day writes one `wears` row **per piece**, so `rows.length` reads
+  a 5-piece look as 5 wears — and the context stamped on it as 5 outings. Every
+  "N wears" number must dedupe on `worn_on`. Use **`countByDay(rows, keyFn)`**
+  (next to `ctxArr`): `keyFn` returns the keys a row contributes to, and each key
+  counts a given `worn_on` at most once. Already day-based and safe to copy:
+  `wearCount`, `outfitWornCount`, `buildItemPerf`'s `itemWearIndex`. The only
+  legitimate row count left is the Settings backup card ("N wear records" —
+  deliberately relabeled, it's a table size, not a wear count).
 - **Never call `wearCountInRange` inside a sort comparator** (2026-07-21 r11) —
   it filters the whole `wears` array per call, so a comparator makes it
   items × wears × log(items) (~34M row reads on the real closet, ~1s of frozen
-  UI). Use `wearCountMapInRange()` — one pass, `Map(item_id → count)`. It
-  mirrors the per-item function's asymmetry exactly: distinct wear DAYS when
-  the range is "all", raw rows within a cutoff (pinned in selftest).
+  UI). Use `wearCountMapInRange()` — one pass, `Map(item_id → count)`. Both count
+  distinct wear DAYS in every range mode (the ranged branch counted raw rows
+  until 2026-07-24 r1; the selftest pins the agreement).
 - **Screen-top scrolling**: use `scrollToTop()` (instant) / `smoothScrollTop()`
   (animated, for deliberate "take me up" taps — header, re-tapping the active
   tab) / `getScrollTop()` / `restoreScroll(y)`. `window.scrollTo` AND

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-22 r6">
+<meta name="app-version" content="2026-07-24 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -829,7 +829,9 @@
   .rot-chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .rot-bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .rot-bar span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
-  .rot-sub { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+  .rot-sub { font-size: 12.5px; color: var(--muted); margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+  .rot-open { display: block; width: 100%; text-align: left; background: none; padding: 0; }
+  .rot-open .chev { width: 15px; height: 15px; flex: none; margin-left: auto; }
   .prt-strip { display: flex; gap: 10px; width: 100%; }
   .prt-tile { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
   .prt-tile .det-piece-thumb { width: 100%; height: 62px; }
@@ -1358,14 +1360,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-22 r6";
+const APP_VERSION = "2026-07-24 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Dark mode: the header and tab bar are finally dark too (they'd been stuck light, hiding the title)",
-  "Laundry sheet now shows exactly what's in each wash — tap to add or drop a piece",
-  "Wash date and wears-per-wash are now editable right on the item",
-  "Trip dash: added ✎ Build alongside ✨ Suggest",
+  "Tap the Rotation bar in Stats to see the actual pieces — toggle between what you've worn and what you haven't",
+  "A wear now always means a DAY. Counts that were adding up wear records instead are fixed",
+  "Biggest fix: contexts. A 5-piece outfit tagged \"Church\" was counting as 5 wears — now it's 1",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -4801,21 +4802,37 @@ $("#qaCancel").addEventListener("click",  () => { hideSheet("quickActSheet"); })
 // pre-migration), or an array (post-migration).
 const ctxArr = (w) => !w || !w.context ? [] : (Array.isArray(w.context) ? w.context : [w.context]);
 
+// A WEAR IS A DAY, app-wide. One outfit logged on one day writes one wear row
+// per piece, so any count that tallies rows reads a 5-piece look as 5 wears —
+// and a context stamped on that look as 5 outings. Every "N wears" number goes
+// through here (or a Set of worn_on): keyFn returns the keys a row contributes
+// to, and each key counts a given worn_on at most once. Keys are user text
+// (context names), so the composite separator is a NUL — nothing typeable.
+function countByDay(rows, keyFn) {
+  const counts = new Map(), seen = new Set();
+  for (const w of rows) {
+    if (!w.worn_on) continue;
+    for (const k of keyFn(w)) {
+      const dk = k + "\u0000" + w.worn_on;
+      if (seen.has(dk)) continue;
+      seen.add(dk);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
 // Seed list + any custom contexts the user has already logged (derive-first).
 function contextOptions() {
   // Most-used first (never-used seeds trail, alphabetical among ties).
-  const counts = new Map(CONTEXT_SEED.map(c => [c, 0]));
-  for (const w of wears) for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
+  const counts = countByDay(wears, ctxArr);
+  for (const c of CONTEXT_SEED) if (!counts.has(c)) counts.set(c, 0);
   return [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || a.localeCompare(b));
 }
 
 // Distinct contexts an item has been worn for, with counts (most-worn first).
 function itemContexts(itemId) {
-  const counts = new Map();
-  for (const w of wears) {
-    if (w.item_id !== itemId) continue;
-    for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
-  }
+  const counts = countByDay(wears, w => w.item_id === itemId ? ctxArr(w) : []);
   return [...counts.entries()].map(([ctx, count]) => ({ ctx, count }))
     .sort((a, b) => b.count - a.count);
 }
@@ -4870,11 +4887,13 @@ function buildRotationStats(days = 90, pool = null, wearRows = null, today = nul
   const cutoff = localISO(new Date(new Date(t + "T00:00:00").getTime() - days * 86400000));
   const active = (pool || items).filter(i => itemStatus(i) === "Available");
   const ids = new Set(active.map(i => i.id));
-  const worn = new Set();
-  for (const w of (wearRows || wears)) {
-    if (w.worn_on && w.worn_on > cutoff && w.worn_on <= t && ids.has(w.item_id)) worn.add(w.item_id);
-  }
-  return { days, total: active.length, worn: worn.size,
+  // counts = wear DAYS per piece inside the window; its keys are the worn set.
+  const counts = countByDay(wearRows || wears, w =>
+    w.worn_on > cutoff && w.worn_on <= t && ids.has(w.item_id) ? [w.item_id] : []);
+  const worn = new Set(counts.keys());
+  // pool/wornIds/counts ride along so the drill-in page can show WHICH pieces
+  // without re-deriving the window (and drifting from the headline number).
+  return { days, total: active.length, worn: worn.size, pool: active, wornIds: worn, counts,
            pct: active.length ? Math.round(worn.size / active.length * 100) : 0 };
 }
 
@@ -6860,8 +6879,7 @@ const CONTEXT_FORMALITY_SEED = {
   "Travel": 3, "Workout": 1,
 };
 function topContextsByWearCount(limit = 6) {
-  const counts = new Map();
-  for (const w of wears) for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
+  const counts = countByDay(wears, ctxArr);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([c]) => c);
 }
 // Most common formality_for level among this context's wears (min 3 to trust);
@@ -8978,11 +8996,8 @@ function calOutfitCollageHtml(itemIds, outfit, tappable) {
 // Most-worn item in current calendar month
 function calMostWorn() {
   const prefix = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}`;
-  const counts = new Map();
-  for (const w of wears) {
-    if (!w.worn_on || !w.worn_on.startsWith(prefix)) continue;
-    counts.set(w.item_id, (counts.get(w.item_id) || 0) + 1);
-  }
+  const counts = countByDay(wears, w =>
+    w.worn_on.startsWith(prefix) && w.item_id ? [w.item_id] : []);
   if (!counts.size) return null;
   const [topId, topCount] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
   return { item: itemById.get(topId), count: topCount };
@@ -10018,30 +10033,24 @@ function rangeStart() {
 function wearCountInRange(itemId) {
   const cutoff = rangeStart();
   if (!cutoff) return wearCount(itemId);
-  return wears.filter(w => w.item_id === itemId && w.worn_on >= cutoff).length;
+  return new Set(wears.filter(w => w.item_id === itemId && w.worn_on >= cutoff)
+    .map(w => w.worn_on)).size;
 }
 
 // Same numbers as wearCountInRange, but ONE pass over wears for the whole
 // closet. The smart-list sorts call the per-item version inside a comparator,
 // which is items × wears × log(items) work — ~34M row reads on a real closet,
 // enough to freeze the tap for about a second. Build this once, look up from it.
-// Mirrors wearCountInRange's semantics exactly: distinct wear DAYS when the
-// range is "all", raw rows within a cutoff.
+// A wear is a DAY, in range or not (a piece worn twice in one day is one wear).
 function wearCountMapInRange() {
   const cutoff = rangeStart();
-  const m = new Map();
-  if (cutoff) {
-    for (const w of wears) {
-      if (w.worn_on >= cutoff) m.set(w.item_id, (m.get(w.item_id) || 0) + 1);
-    }
-  } else {
-    const seen = new Set();
-    for (const w of wears) {
-      const k = w.item_id + "|" + w.worn_on;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      m.set(w.item_id, (m.get(w.item_id) || 0) + 1);
-    }
+  const m = new Map(), seen = new Set();
+  for (const w of wears) {
+    if (cutoff && w.worn_on < cutoff) continue;
+    const k = w.item_id + "|" + w.worn_on;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    m.set(w.item_id, (m.get(w.item_id) || 0) + 1);
   }
   return m;
 }
@@ -10352,6 +10361,7 @@ function renderStats() {
   if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
   if (statsView === "contexts")    { renderStatsContextsPage(); return; }
   if (statsView === "gap")         { renderStatsGapPage();      return; }
+  if (statsView === "rotation")    { renderStatsRotationPage(); return; }
   if (statsView === "wrapped")     { renderStatsWrapped();      return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
@@ -10361,8 +10371,15 @@ function renderStats() {
   renderStatsMain();
 }
 
-function statsToolbar(title, showBack, showRange) {
-  const n = statsActiveFilterCount();
+// hideFilter: for pages whose pool is deliberately NOT statsPool() (Rotation),
+// where a funnel that silently changes nothing is worse than no funnel.
+function statsToolbar(title, showBack, showRange, hideFilter = false) {
+  const n = hideFilter ? 0 : statsActiveFilterCount();
+  if (hideFilter) return `<div class="cltoolbar">
+    ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
+    <div class="cltitle">${esc(title)}</div>
+    <span style="width:34px"></span>
+  </div>`;
   const rangeLbl = statsDateRange === "all" ? "Range" : dateRangeHuman();
   return `<div class="cltoolbar">
     ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
@@ -10567,13 +10584,16 @@ function rotationBlockHtml() {
       <span class="rot-lbl">Rotation</span>
       <span class="rot-chips">${chips}</span>
     </div>
-    <div class="rot-bar"><span style="width:${r.pct}%"></span></div>
-    <div class="rot-sub"><strong>${r.pct}%</strong> of your closet worn in ${label} · ${r.worn} of ${r.total} items</div>
+    <button class="rot-open" data-rot-open>
+      <div class="rot-bar"><span style="width:${r.pct}%"></span></div>
+      <div class="rot-sub"><strong>${r.pct}%</strong> of your closet worn in ${label} · ${r.worn} of ${r.total} items
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>
+    </button>
   </div>`;
 }
 
 // Window chips swap the block in place — no full stats re-render (and no photo
-// flicker) just to change a denominator.
+// flicker) just to change a denominator. The bar itself drills in.
 function wireRotationChips() {
   $("#statsBody").querySelectorAll("[data-rot]").forEach(el => {
     el.addEventListener("click", () => {
@@ -10584,6 +10604,69 @@ function wireRotationChips() {
       wireRotationChips();
     });
   });
+  const open = $("#statsBody").querySelector("[data-rot-open]");
+  if (open) open.addEventListener("click", () => { statsView = "rotation"; renderStats(); });
+}
+
+/* Rotation drill-in: same window as the block above, but showing WHICH pieces —
+   the ones that came out, or the ones that sat it out. Two sides of one number,
+   so it's a toggle, not two list pages. Pool stays the full Available closet
+   (see rotationBlockHtml) — hence no filter funnel on this page. */
+let statsRotationMode = "worn";   // "worn" | "unworn"
+
+function renderStatsRotationPage() {
+  const body = $("#statsBody");
+  const r = buildRotationStats(statsRotationDays);
+  const worn = [], unworn = [];
+  for (const i of r.pool) (r.wornIds.has(i.id) ? worn : unworn).push(i);
+  // Worn: freshest first. Not worn: coldest first, so never-worn leads.
+  const lw = id => lastWorn(id) || "";
+  worn.sort((a, b) => lw(b.id).localeCompare(lw(a.id)));
+  unworn.sort((a, b) => lw(a.id).localeCompare(lw(b.id)));
+
+  const showWorn = statsRotationMode === "worn";
+  const list = showWorn ? worn : unworn;
+  const pct = showWorn ? r.pct : 100 - r.pct;
+  const label = statsRotationDays === 365 ? "the past year" : `the past ${statsRotationDays} days`;
+  const chips = ROTATION_WINDOWS.map(d =>
+    `<button class="rot-chip${d === statsRotationDays ? " on" : ""}" data-rot="${d}">${d === 365 ? "1y" : d + "d"}</button>`
+  ).join("");
+
+  const sub = (i) => {
+    const last = lastWorn(i.id);
+    if (!last) return "never worn";
+    if (!showWorn) return `last worn ${relDate(last)}`;
+    const n = r.counts.get(i.id) || 0;
+    return `${n} day${n === 1 ? "" : "s"} · last ${relDate(last)}`;
+  };
+
+  body.innerHTML = statsToolbar("Rotation", true, false, true)
+    + `<div class="rot-block">
+        <div class="rot-top">
+          <span class="rot-lbl">${showWorn ? "Worn" : "Not worn"} in ${esc(label)}</span>
+          <span class="rot-chips">${chips}</span>
+        </div>
+        <div class="rot-bar"><span style="width:${pct}%"></span></div>
+        <div class="rot-sub"><strong>${pct}%</strong> of your closet · ${list.length} of ${r.total} items</div>
+      </div>`
+    + gridHtml(list, sub)
+    + `<div style="height:90px"></div>
+       <div class="stats-toggle-float"><div class="stats-seg">
+         <button class="${showWorn ? "on" : ""}" data-rotmode="worn">Worn ${worn.length}</button>
+         <button class="${showWorn ? "" : "on"}" data-rotmode="unworn">Not worn ${unworn.length}</button>
+       </div></div>`;
+  positionToast();   // a toast already up would otherwise sit on the toggle
+  wireStatsToolbar();
+  body.querySelectorAll("[data-rot]").forEach(el => el.addEventListener("click", () => {
+    statsRotationDays = Number(el.dataset.rot); renderStats();
+  }));
+  body.querySelectorAll("[data-rotmode]").forEach(el => el.addEventListener("click", () => {
+    statsRotationMode = el.dataset.rotmode; renderStats();
+  }));
+  body.querySelectorAll(".gtile").forEach(btn => {
+    btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
+  });
+  hydratePhotos(body);
 }
 
 function renderStatsMain() {
@@ -10923,12 +11006,7 @@ function renderStatsOutfitsPage() {
 // Wear count per context, respecting the stats date range.
 function contextWearCounts() {
   const cutoff = rangeStart();
-  const counts = new Map();
-  for (const w of wears) {
-    if (cutoff && w.worn_on < cutoff) continue;
-    for (const c of ctxArr(w)) counts.set(c, (counts.get(c) || 0) + 1);
-  }
-  return counts;
+  return countByDay(wears, w => (!cutoff || w.worn_on >= cutoff) ? ctxArr(w) : []);
 }
 // Effective formality of a wear for stats. The look's MANUAL override wins,
 // then the level captured at log time (formality_for), then a derive-now
@@ -10946,33 +11024,39 @@ function wearFormality(w) {
   return _soloFmlMemo.get(w.item_id);
 }
 // Formality demand for a context: avg + spread of effective wear formality, range-scoped.
+// One level per DAY, not per row — otherwise a day you wore six pieces pulls the
+// average six times as hard as a day you wore two. Each day contributes the mean
+// of its own pieces' levels.
 function contextFormalityStats(context) {
   const cutoff = rangeStart();
-  const levels = wears
-    .filter(w => (!cutoff || w.worn_on >= cutoff) && ctxArr(w).includes(context))
-    .map(wearFormality).filter(Boolean);
+  const byDay = new Map();
+  for (const w of wears) {
+    if (cutoff && w.worn_on < cutoff) continue;
+    if (!w.worn_on || !ctxArr(w).includes(context)) continue;
+    const l = wearFormality(w);
+    if (!l) continue;
+    let a = byDay.get(w.worn_on); if (!a) byDay.set(w.worn_on, a = []);
+    a.push(l);
+  }
+  const levels = [...byDay.values()].map(a => a.reduce((x, y) => x + y, 0) / a.length);
   if (!levels.length) return null;
-  return { avg: levels.reduce((a, b) => a + b, 0) / levels.length, min: Math.min(...levels), max: Math.max(...levels), n: levels.length };
+  // min/max round to whole levels — the day-means are fractional, but the ladder
+  // the label prints ("levels 3–5") is not.
+  return { avg: levels.reduce((a, b) => a + b, 0) / levels.length,
+           min: Math.round(Math.min(...levels)), max: Math.round(Math.max(...levels)),
+           n: levels.length };
 }
 function contextTopItems(context, limit = 12) {
   const cutoff = rangeStart();
-  const counts = new Map();
-  for (const w of wears) {
-    if (cutoff && w.worn_on < cutoff) continue;
-    if (!ctxArr(w).includes(context)) continue;
-    counts.set(w.item_id, (counts.get(w.item_id) || 0) + 1);
-  }
+  const counts = countByDay(wears, w =>
+    (!cutoff || w.worn_on >= cutoff) && w.item_id && ctxArr(w).includes(context) ? [w.item_id] : []);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit)
     .map(([id, n]) => ({ item: itemById.get(id), n })).filter(x => x.item);
 }
 function contextTopLooks(context, limit = 12) {
   const cutoff = rangeStart();
-  const counts = new Map();
-  for (const w of wears) {
-    if (cutoff && w.worn_on < cutoff) continue;
-    if (!w.outfit_id || !ctxArr(w).includes(context)) continue;
-    counts.set(w.outfit_id, (counts.get(w.outfit_id) || 0) + 1);
-  }
+  const counts = countByDay(wears, w =>
+    (!cutoff || w.worn_on >= cutoff) && w.outfit_id && ctxArr(w).includes(context) ? [w.outfit_id] : []);
   return [...counts.entries()].sort((a, b) => b[1] - a[1])
     .map(([id, n]) => ({ outfit: outfitById.get(id), n }))
     .filter(x => x.outfit && !effectiveArchived(x.outfit))  // archived looks live only in Archive + calendar
@@ -11011,12 +11095,9 @@ function renderStatsContextsPage() {
    overlap across contexts (one blouse can serve Campus AND Church): this is
    coverage, not a partition. */
 function buildGapStats() {
-  const ctxCounts = new Map();
+  const ctxCounts = countByDay(wears, ctxArr);
   let totalCtx = 0;
-  for (const w of wears) for (const c of ctxArr(w)) {
-    ctxCounts.set(c, (ctxCounts.get(c) || 0) + 1);
-    totalCtx++;
-  }
+  for (const n of ctxCounts.values()) totalCtx += n;
   const avail = items.filter(i => itemStatus(i) === "Available");
   const rows = [];
   for (const [ctx, n] of ctxCounts) {
@@ -11095,7 +11176,8 @@ function buildWrappedStats(year) {
   const elapsedEnd = today < end ? today : end;
   const elapsed = Math.max(1, Math.round((new Date(elapsedEnd) - new Date(start)) / 86400000) + 1);
 
-  const itemDays = new Map(), lookDays = new Map(), ctxCounts = new Map();
+  const itemDays = new Map(), lookDays = new Map();
+  const ctxCounts = countByDay(yearWears, ctxArr);
   for (const w of yearWears) {
     if (w.item_id && itemById.has(w.item_id)) {
       let s = itemDays.get(w.item_id); if (!s) itemDays.set(w.item_id, s = new Set()); s.add(w.worn_on);
@@ -11103,7 +11185,6 @@ function buildWrappedStats(year) {
     if (w.outfit_id && outfitById.has(w.outfit_id)) {
       let s = lookDays.get(w.outfit_id); if (!s) lookDays.set(w.outfit_id, s = new Set()); s.add(w.worn_on);
     }
-    for (const c of ctxArr(w)) ctxCounts.set(c, (ctxCounts.get(c) || 0) + 1);
   }
   const topItems = [...itemDays.entries()].map(([id, s]) => ({ item: itemById.get(id), n: s.size }))
     .sort((a, b) => b.n - a.n).slice(0, 5);
@@ -11132,7 +11213,9 @@ function buildWrappedStats(year) {
   const seasonCounts = new Map();
   for (const d of days) { const s = seasonOf(d); seasonCounts.set(s, (seasonCounts.get(s) || 0) + 1); }
 
-  return { year, totalWears: yearWears.length, daysLogged: days.size, elapsed,
+  // pieceDays = item-days (a 5-piece day is 5), NOT a wear count — daysLogged is
+  // the wear count for the year.
+  return { year, pieceDays: yearWears.length, daysLogged: days.size, elapsed,
            coverage: days.size / elapsed, streak: longestStreak(days),
            topItems, topLooks, topCtx, cpw,
            boughtN: bought.length, boughtWornN: boughtWorn.length,
@@ -14090,7 +14173,7 @@ function renderSettings() {
       </div>
       <div class="card stack">
         <div><div class="fld">Your data</div>
-          <div class="muted" style="font-size:13px;line-height:1.5">${items.length} items · ${wears.length} wears · ${outfits.length} looks.
+          <div class="muted" style="font-size:13px;line-height:1.5">${items.length} items · ${wears.length} wear records · ${outfits.length} looks.
           ${lastBk ? `Last backup ${esc(lastBk)}.` : "Never backed up."}</div></div>
         <button class="btn" id="setBackup">Download backup (JSON)</button>
         <div class="muted" style="font-size:12px;line-height:1.45">Photos aren't in the JSON — run
