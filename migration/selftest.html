@@ -557,6 +557,63 @@ function run() {
               [2, true, false, 2]);
   });
 
+  // ---- Round C: weather memory ----
+  const wxFix = () => {
+    // 3 past days: a near match, a far-too-cold day, and a wet day at the same temp.
+    const log = {};
+    log[D(-30)] = { maxT: 60, minT: 45, code: 0 };   // near match
+    log[D(-40)] = { maxT: 20, minT: 5,  code: 0 };   // way off → cut
+    log[D(-50)] = { maxT: 60, minT: 45, code: 61 };  // same temp, but raining
+    log[D(-3)]  = { maxT: 60, minT: 45, code: 0 };   // too recent → excluded
+    const dm = new Map([
+      [D(-30), [{ item_id: "a", outfit_id: "o1", context: ["Church"] }]],
+      [D(-40), [{ item_id: "b", outfit_id: "o2", context: [] }]],
+      [D(-50), [{ item_id: "c", outfit_id: "o3", context: [] }]],
+      [D(-3),  [{ item_id: "d", outfit_id: "o4", context: [] }]],
+    ]);
+    return { log, dayMap: dm, today, trips: [] };
+  };
+  t("similarDays: ranks the closest day first and drops the far one", () => {
+    const r = W.similarDays({ maxT: 62, minT: 47, code: 0 }, { ...wxFix() });
+    return eq(r.map(d => d.date), [D(-30), D(-50)]);   // -40 over the cut, -3 too recent
+  });
+  t("similarDays: a wet/dry mismatch is penalised, not ignored", () => {
+    const r = W.similarDays({ maxT: 60, minT: 45, code: 0 }, { ...wxFix() });
+    return eq([r[0].date, r[0].score, r[1].score], [D(-30), 0, W.WX_WET_PENALTY]);
+  });
+  t("similarDays: nothing similar returns nothing (no stretch match)", () =>
+    eq(W.similarDays({ maxT: 95, minT: 80, code: 0 }, { ...wxFix() }), []));
+  t("similarDays: trip days are excluded", () => {
+    const f = wxFix();
+    const r = W.similarDays({ maxT: 62, minT: 47, code: 0 }, { ...f, trips: [[D(-31), D(-29)]] });
+    return eq(r.map(d => d.date), [D(-50)]);
+  });
+  t("similarDays: contexts filter to matching days", () => {
+    const r = W.similarDays({ maxT: 60, minT: 45, code: 0 }, { ...wxFix(), contexts: ["Church"] });
+    return eq(r.map(d => d.date), [D(-30)]);
+  });
+  t("similarDays: one row per look (no four copies of the same outfit)", () => {
+    const f = wxFix();
+    f.dayMap.set(D(-31), [{ item_id: "a", outfit_id: "o1", context: [] }]);  // same look again
+    f.log[D(-31)] = { maxT: 61, minT: 46, code: 0 };
+    const r = W.similarDays({ maxT: 62, minT: 47, code: 0 }, f);
+    return eq(r.filter(d => d.outfitId === "o1").length, 1);
+  });
+  t("itemWxProfile: stays quiet under the minimum, then reports a band", () => {
+    const savedWears = W.wears;
+    const log = {};
+    const ds = [];
+    for (let k = 0; k < 6; k++) { const d = D(-10 - k); ds.push(d); log[d] = { maxT: 50 + k * 4, minT: 40, code: 0 }; }
+    W.wears = ds.map(d => ({ item_id: "x", worn_on: d }));
+    const enough = W.itemWxProfile("x", log);
+    W.wears = W.wears.slice(0, 3);
+    const notEnough = W.itemWxProfile("x", log);
+    W.wears = savedWears;
+    // 10th/90th percentile of [50,54,58,62,66,70] — a trimmed band, not min/max.
+    return eq([enough.n, enough.lo, enough.hi, notEnough], [6, 54, 70, null]);
+  });
+  t("wxlog window is wide enough to hold a backfill", () => W.WXLOG_DAYS >= 1000 || `${W.WXLOG_DAYS}`);
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

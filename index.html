@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-24 r1">
+<meta name="app-version" content="2026-07-25 r1">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1360,13 +1360,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-24 r1";
+const APP_VERSION = "2026-07-25 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Tap the Rotation bar in Stats to see the actual pieces — toggle between what you've worn and what you haven't",
-  "A wear now always means a DAY. Counts that were adding up wear records instead are fixed",
-  "Biggest fix: contexts. A 5-piece outfit tagged \"Church\" was counting as 5 wears — now it's 1",
+  "New: \u201cYou\u2019ve dressed for this before\u201d \u2014 the suggester and the Tomorrow card now show what you actually wore the last times the weather felt like this",
+  "Home offers a one-time look-up that fills in past weather for every day you\u2019ve logged, so the matching works right away instead of a year from now",
+  "Item pages show the temperature band a piece really lives in (\u201cusually worn 45\u00b0\u201362\u00b0\u201d)",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2469,17 +2469,161 @@ async function loadHomeWeather() {
     }
   } catch (e) { /* offline/denied — suggester degrades to season-only */ }
   _homeWx = { date: today, wx, wx2, loading: false };
-  // Quietly log today's weather (kv "wxlog", ≤1 write/day, ~400d window) —
-  // builds the history that will power "what did I wear last time it was
-  // like this" (style twins, deferred until this has some depth).
+  // Quietly log today's weather (kv "wxlog", ≤1 write/day) — the history behind
+  // "what did I wear last time it was like this" (see WEATHER MEMORY below).
   if (wx && session?.user && !(kvData.get("wxlog") || {})[today]) {
     const log = { ...(kvData.get("wxlog") || {}) };
     log[today] = { maxT: wx.maxT, minT: wx.minT, code: wx.code };
-    const cut = shiftDate(today, -400);
+    const cut = shiftDate(today, -WXLOG_DAYS);
     for (const d of Object.keys(log)) if (d < cut) delete log[d];
     kvSet("wxlog", log);  // fire-and-forget
   }
   return wx;
+}
+
+/* ---- WEATHER MEMORY (Round C, 2026-07-25) ---------------------------------
+   The wxlog above had been written every day since 2026-07-20 and read by
+   NOTHING. This reads it: given a forecast, find the past days that felt like
+   this and show what she actually wore. The suggester invents; this remembers,
+   and precedent is the more trustworthy of the two.
+
+   `backfillWxLog()` is what makes it useful today rather than in a year — one
+   `fetchWeatherRange` call reconstructs the weather for her whole wear history
+   out of the ERA5 archive she's already using for trips. */
+const WXLOG_DAYS = 1200;        // ~3.3 years — was 400 before backfill existed
+const WX_BACKFILL_KEY = "wxbackfill";
+const WX_SIM_CUT = 15;          // score above this isn't "similar"; show nothing
+const WX_WET_PENALTY = 8;       // a wet/dry mismatch, priced in degrees
+const WX_SNOOZE_KEY = "wardrobe.wxBackfillSnooze";
+
+const wxLog = () => kvData.get("wxlog") || {};
+
+// One-shot. Idempotent: re-running only fills gaps and upgrades forecasts.
+async function backfillWxLog() {
+  const days = [...new Set(wears.map(w => w.worn_on).filter(Boolean))].sort();
+  if (!days.length) throw new Error("No wears logged yet");
+  const today = todayStr();
+  const floor = shiftDate(today, -WXLOG_DAYS);
+  const start = days[0] > floor ? days[0] : floor;
+  const loc = await getHomeLocation();
+  if (!loc) throw new Error("Location is off — can't look up past weather");
+  const res = await fetchWeatherRange(loc.lat, loc.lon, start, today);
+  const log = { ...wxLog() };
+  // Anything logged live in the last 15 days came from a FORECAST; ERA5 is
+  // observed, so it wins on older days and leaves the recent ones alone.
+  const keep = shiftDate(today, -15);
+  let n = 0;
+  for (const [d, wx] of Object.entries(res || {})) {
+    if (d > today || wx.maxT == null) continue;
+    if (log[d] && d > keep) continue;
+    log[d] = { maxT: wx.maxT, minT: wx.minT, code: wx.code };
+    n++;
+  }
+  for (const d of Object.keys(log)) if (d < floor) delete log[d];
+  await kvSet("wxlog", log);
+  await kvSet(WX_BACKFILL_KEY, today);
+  return n;
+}
+
+// Past wear-days that felt like `wx`. Args are injectable so selftest can drive it.
+function similarDays(wx, { contexts = null, limit = 4, excludeDays = 14,
+                           log = null, dayMap = null, today = null, trips = null } = {}) {
+  if (!wx || wx.maxT == null) return [];
+  const L = log || wxLog();
+  const dm = dayMap || wearDayMap();
+  const t = today || todayStr();
+  const cutoff = shiftDate(t, -excludeDays);
+  const want = contexts && contexts.length ? new Set(contexts) : null;
+  const wet = wmoIsWet(wx.code);
+  // Trip days are excluded (locked decision): what she wore out of a suitcase
+  // in another climate is not precedent for a Tuesday at home.
+  const ranges = trips || capsules.filter(isDatedTrip).map(c => [c.start_date, c.end_date]);
+  const out = [];
+  for (const [date, rows] of dm) {
+    if (date > cutoff) continue;                 // too recent — she remembers it
+    const e = L[date];
+    if (!e || e.maxT == null) continue;
+    if (ranges.some(([s, f]) => date >= s && date <= f)) continue;
+    if (want && !rows.some(r => ctxArr(r).some(c => want.has(c)))) continue;
+    let score = Math.abs(e.maxT - wx.maxT);
+    if (e.minT != null && wx.minT != null) score += 0.5 * Math.abs(e.minT - wx.minT);
+    if (wmoIsWet(e.code) !== wet) score += WX_WET_PENALTY;
+    if (score > WX_SIM_CUT) continue;            // a bad match is worse than none
+    out.push({
+      date, score,
+      outfitId: (rows.find(r => r.outfit_id) || {}).outfit_id || null,
+      itemIds: [...new Set(rows.map(r => r.item_id))],
+      contexts: [...new Set(rows.flatMap(r => ctxArr(r)))],
+      maxT: e.maxT, minT: e.minT, code: e.code,
+    });
+  }
+  out.sort((a, b) => a.score - b.score || (a.date < b.date ? 1 : -1));
+  // One row per look, so the strip isn't four copies of the same outfit.
+  const seen = new Set(), picked = [];
+  for (const d of out) {
+    const k = d.outfitId || `__${d.itemIds.slice().sort().join(",")}`;
+    if (seen.has(k)) continue;
+    seen.add(k); picked.push(d);
+    if (picked.length >= limit) break;
+  }
+  return picked;
+}
+
+// The temperature band an item actually lives in. Needs ≥5 logged days with
+// weather, so it stays quiet until the backfill has run.
+const WX_PROFILE_MIN = 5;
+function itemWxProfile(itemId, log = null) {
+  const L = log || wxLog();
+  const temps = [...new Set(wears.filter(w => w.item_id === itemId).map(w => w.worn_on))]
+    .map(d => L[d]).filter(e => e && e.maxT != null).map(e => e.maxT).sort((a, b) => a - b);
+  if (temps.length < WX_PROFILE_MIN) return null;
+  const at = f => temps[Math.min(temps.length - 1, Math.max(0, Math.round(f * (temps.length - 1))))];
+  return { lo: at(0.1), hi: at(0.9), n: temps.length };
+}
+
+function _wxTileCollage(d) {
+  const o = d.outfitId ? outfitById.get(d.outfitId) : null;
+  if (o) return outfitCollageHtml(o, 4);
+  const pieces = d.itemIds.map(id => itemById.get(id)).filter(Boolean).slice(0, 4);
+  if (!pieces.length) return `<div class="ocollage empty"></div>`;
+  return `<div class="ocollage${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) =>
+    `<div class="opiece${pieces.length === 3 && idx === 2 ? " span2" : ""}" data-photo="${esc(p.image_path || "")}"></div>`).join("")}</div>`;
+}
+
+// The precedent strip. Renders nothing at all when there's no decent match —
+// silence is the correct output here, not a stretch.
+function wxMemoryRowHtml(wx, contexts, { compact = false } = {}) {
+  if (!dataReady || !wx || wx.maxT == null) return "";
+  const hits = similarDays(wx, { contexts });
+  if (!hits.length) return "";
+  const pad = compact ? "0 2px 6px" : "0 16px 6px";
+  const tiles = hits.map(d => {
+    const o = d.outfitId ? outfitById.get(d.outfitId) : null;
+    const when = new Date(d.date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return `<button class="wa-tile" data-wxmem="${esc(d.date)}"${o ? ` data-wxmem-look="${esc(o.id)}"` : ""}>
+      ${_wxTileCollage(d)}
+      <div class="wa-name">${esc(when)} · ${d.maxT}°/${d.minT}°</div>
+      ${d.contexts.length ? `<div style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.contexts.join(", "))}</div>` : ""}
+    </button>`;
+  }).join("");
+  return `<div style="padding:6px 0 2px${compact ? ";border-top:1px solid var(--line);margin-top:8px" : ""}">
+    <div style="font-size:12px;color:var(--muted);padding:${pad}">You've dressed for this before</div>
+    <div class="wa-strip"${compact ? ` style="padding-left:0;padding-right:0"` : ""}>${tiles}</div>
+  </div>`;
+}
+
+// Shared wiring for any surface that renders wxMemoryRowHtml.
+function wireWxMemory(root) {
+  root.querySelectorAll("[data-wxmem]").forEach(b => {
+    b.onclick = () => {
+      const look = b.dataset.wxmemLook, date = b.dataset.wxmem;
+      if (!$("#logSheet").hidden) hideSheet("logSheet");
+      if (look) return openLookFrom(look);
+      switchTab("calendar");
+      calendarDay = date;
+      renderCalendarDay($("#calendarBody"));
+    };
+  });
 }
 
 const HOME_TILES = [
@@ -2846,12 +2990,14 @@ function tomorrowCardHtml() {
       </div>`;
     }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
   }
+  // Precedent (Round C): what she actually wore the last times it felt like this.
+  const mem = trip ? "" : wxMemoryRowHtml(wx, [...new Set(genEntries.flatMap(e => e.contexts || []))], { compact: true });
   // Plan-ahead lives INSIDE the card now — Home had too many stacked rows.
   const foot = tripModeId ? "" :
     `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
       <button class="lnk" data-plan-ahead style="font-size:12.5px;color:var(--muted)">📅 Plan the week ›</button>
     </div>`;
-  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}${foot}</div>`;
+  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}${mem}${foot}</div>`;
 }
 function todayPlanRowsHtml() {
   if (!dataReady || tripModeId) return "";
@@ -2951,8 +3097,33 @@ function renderHome() {
       </button>`;
     }
   }
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${catchup}${laun}${bk}`;
+  // One-time weather backfill offer (Round C). This card is the real entry
+  // point — the Settings row exists only as a re-run hatch.
+  let wxb = "";
+  if (dataReady && !kvData.get(WX_BACKFILL_KEY) && wears.length > 100
+      && (store.getItem(WX_SNOOZE_KEY) || "") <= todayStr()) {
+    wxb = `<div class="det-card" style="margin:10px 16px 0;padding:12px">
+      <div style="font-size:13.5px;line-height:1.45">Match today's weather to what you actually wore — a one-time lookup of past weather for every day you've logged.</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn" id="homeWxFill" style="flex:1">Look it up</button>
+        <button class="btn btn-sec" id="homeWxNo" style="flex:none">Not now</button>
+      </div>
+    </div>`;
+  }
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${catchup}${laun}${bk}${wxb}`;
   hydratePhotos($("#homeBody"));
+  wireWxMemory($("#homeBody"));
+  const wxFill = $("#homeWxFill");
+  if (wxFill) wxFill.onclick = async () => {
+    wxFill.disabled = true; wxFill.textContent = "Looking up…";
+    try {
+      const n = await backfillWxLog();
+      toast(`Weather filled in for ${n} day${n === 1 ? "" : "s"}`);
+      renderHome();
+    } catch (e) { toast(e.message); wxFill.disabled = false; wxFill.textContent = "Look it up"; }
+  };
+  const wxNo = $("#homeWxNo");
+  if (wxNo) wxNo.onclick = () => { store.setItem(WX_SNOOZE_KEY, shiftDate(todayStr(), 14)); renderHome(); };
   // Round A planning wiring
   $("#homeBody").querySelectorAll("[data-tp-wear]").forEach(b => {
     b.onclick = () => wearPlannedEntry(todayStr(), +b.dataset.tpWear);
@@ -4264,6 +4435,10 @@ function openItemDetails(id) {
             ${(() => {
               const r = wearRhythm(i.id);
               return r ? `<div class="det-sub">Every ~${humanGap(r.avg)} · longest gap ${humanGap(r.longest)}</div>` : "";
+            })()}
+            ${(() => {
+              const p = itemWxProfile(i.id);
+              return p ? `<div class="det-sub">Usually worn ${p.lo}°–${p.hi}°</div>` : "";
             })()}
           </div>
           ${n ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
@@ -7334,6 +7509,7 @@ function renderSuggestSheet() {
         ${(() => { if (!LAUNDRY_READY()) return ""; const n = hamperItems().length; return n ? `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="Skip items in the hamper">🧺 Clean only</button>` : ""; })()}
       </div>
     </div>
+    ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}
     <div style="padding:12px 16px" id="sgPreview">
       <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
       ${combo ? `<div class="center" style="font-size:12px;color:var(--accent);padding:8px 0 0;font-weight:500">${esc(suggestionWhy(combo))}</div>` : ""}
@@ -7466,6 +7642,8 @@ function renderSuggestSheet() {
   $("#logInner").querySelectorAll("[data-sgdoor-open]").forEach(b => {
     b.onclick = () => { hideSheet("logSheet"); openItemFrom(b.dataset.sgdoorOpen); };
   });
+
+  wireWxMemory($("#logInner"));
 
   // V3 lock-a-piece: locking doesn't reshuffle — it marks the piece so the NEXT
   // regenerate (chips or "New suggestions") keeps it. Current combo re-renders only.
@@ -14182,6 +14360,15 @@ function renderSettings() {
         <div id="setHealthOut"></div>
       </div>
       <div class="card stack">
+        <div><div class="fld">Weather history</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">${(() => {
+            const n = Object.keys(wxLog()).length;
+            const ran = kvData.get(WX_BACKFILL_KEY);
+            return `${n} day${n === 1 ? "" : "s"} of weather on record${ran ? `, last filled in ${esc(ran)}` : ""}. This is what powers “you've dressed for this before”.`;
+          })()}</div></div>
+        <button class="btn btn-sec" id="setWxFill">Look up past weather</button>
+      </div>
+      <div class="card stack">
         <div><div class="fld">Categories</div>
           <div class="muted" style="font-size:13px;line-height:1.5">Rename, add or remove your categories and the types inside them. Renaming moves every item over.</div></div>
         <button class="btn btn-sec" id="setTaxonomy">Edit categories &amp; types</button>
@@ -14193,6 +14380,15 @@ function renderSettings() {
   $("#setBackup").onclick = downloadBackup;
   $("#setHealth").onclick = () => runDataHealthCheck();
   $("#setTaxonomy").onclick = () => openTaxonomySheet();
+  $("#setWxFill").onclick = async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true; b.textContent = "Looking up…";
+    try {
+      const n = await backfillWxLog();
+      toast(`Weather filled in for ${n} day${n === 1 ? "" : "s"}`);
+      renderSettings();
+    } catch (err) { toast(err.message); b.disabled = false; b.textContent = "Look up past weather"; }
+  };
 }
 
 /* ---- category / subcategory editor (2026-07-21, her request) --------------
