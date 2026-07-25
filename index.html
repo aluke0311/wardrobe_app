@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r4">
+<meta name="app-version" content="2026-07-25 r5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1360,12 +1360,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r4";
+const APP_VERSION = "2026-07-25 r5";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Home is calmer: only one thing asks for your attention at a time \u2014 the rest fold into a quiet \u201c2 more things\u201d line you can open",
-  "Your logging shortcut and the Tomorrow card aren\u2019t affected; they\u2019re the daily loop, not interruptions",
+  "The closet has a search box again \u2014 tap the magnifier and type a name, brand, colour, type, size, note or tag",
+  "Several words narrow it down (\u201cblue linen\u201d), and it always searches the whole lens, not just the folder you\u2019re standing in",
+  "The pickers\u2019 search box now works the same way",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -3287,7 +3288,7 @@ function wireTripDash(tc) {
   on("[data-td-build]", () => openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET }));
   on("[data-td-laundry]", () => {
     switchTab("closet");
-    closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null;
+    closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
     renderCloset();
   });
   on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });
@@ -3317,6 +3318,25 @@ let closetLens = "Available";
 let closetCat = null;     // null = root | category name | "Other"
 let closetSub = null;     // null = subcategory list | subcategory | "__other__"
 let searchResults = null; // null = not in search-results mode; else array of items
+
+/* ---- Closet keyword search (Round C, 2026-07-25) --------------------------
+   The standalone Search screen was retired in the filter unification and its
+   keyword box went with it — `openSearch()` became a one-line alias for the
+   filter sheet, leaving 476 items reachable only by drilling or faceting.
+   "The navy linen shirt" is a name lookup, not a filter query.
+   Scope is deliberately the whole lens, never the folder you happen to be
+   standing in: search means search my closet. The funnel is for narrowing. */
+let closetSearchQ = null;   // null = not searching | string (may be empty)
+const CLOSET_SEARCH_FIELDS = ["name", "brand", "retailer", "category", "subcategory", "color_family", "size", "notes"];
+function itemMatchesText(i, q) {
+  const needles = String(q || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!needles.length) return true;
+  const hay = (CLOSET_SEARCH_FIELDS.map(f => i[f] || "").join(" ") + " " + (i.tags || []).join(" ")).toLowerCase();
+  return needles.every(n => hay.includes(n));   // all terms must match, in any field
+}
+function closetSearchMatches(q) {
+  return sortItems(lensItems().filter(i => itemMatchesText(i, q)));
+}
 let closetHamper = false; // true = full-page hamper contents (its own closet view, like a subcategory)
 let closetWorn = false;   // true = full-page "worn since washing, not yet dirty" tray
 let detailId = null;      // item id currently shown in detail (null = none)
@@ -3449,7 +3469,7 @@ function enterTripMode(cid) {
   tripModeId = cid;
   store.setItem(TRIP_MODE_KEY, cid);
   activeCapsuleId = cid;
-  closetCat = null; closetSub = null; searchResults = null;
+  closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
   switchTab("home");
   toast(isDatedTrip(c) ? `✈️ Trip mode · ${c.name}` : `Capsule mode · ${c.name}`);
 }
@@ -3699,6 +3719,7 @@ function clToolbar(title, showBack, showPlus) {
   const filterN = filterActiveCount(closetFilter);
   _funnelClearFns.clSearch = { state: closetFilter, onClear: () => renderCloset() };
   const right = `<div style="display:flex;align-items:center;gap:2px">
+    ${closetSearchQ === null ? `<button class="clsearch" id="clKeyword" title="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg></button>` : ""}
     <div style="position:relative">
       <button class="clsearch" id="clSearch"><svg viewBox="0 0 24 24"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/></svg></button>
       ${filterN ? `<span class="filter-badge">${filterN}</span>` : ""}
@@ -4057,6 +4078,28 @@ function renderCloset() {
   $("#itemBar").hidden = true;
   $("#app").classList.remove("detail-photo");
   const body = $("#closetBody");
+  if (closetSearchQ !== null) {
+    searchResults = closetSearchMatches(closetSearchQ);
+    body.innerHTML = clToolbar("Search closet", true, false) + `
+      <div style="padding:10px 14px 0"><input class="inp" id="clSearchInp" placeholder="Name, brand, colour, type…" value="${esc(closetSearchQ)}" autocapitalize="off" autocorrect="off"></div>
+      <div id="clSearchCount" style="padding:6px 14px 2px;font-size:13px;color:var(--muted)">${closetSearchQ ? `${searchResults.length} item${searchResults.length === 1 ? "" : "s"}` : "Start typing"}</div>
+      <div id="clSearchResults">${closetSearchQ ? gridHtml(searchResults) : ""}</div>`;
+    hydratePhotos(body);
+    if (searchResults.length && closetSearchQ) showGridBar("closet"); else hideGridBar();
+    const inp = $("#clSearchInp");
+    if (inp) {
+      inp.oninput = () => {
+        closetSearchQ = inp.value;
+        searchResults = closetSearchMatches(closetSearchQ);
+        const wrap = $("#clSearchResults");
+        if (wrap) { wrap.innerHTML = closetSearchQ ? gridHtml(searchResults) : ""; hydratePhotos(body); }
+        const cnt = $("#clSearchCount");
+        if (cnt) cnt.textContent = closetSearchQ ? `${searchResults.length} item${searchResults.length === 1 ? "" : "s"}` : "Start typing";
+      };
+      setTimeout(() => inp.focus(), 80);
+    }
+    return;   // #clBack is handled by the global delegation in wireEvents
+  }
   if (closetHamper) {
     body.innerHTML = renderClosetHamper();
   } else if (closetWorn) {
@@ -4093,7 +4136,7 @@ function renderCloset() {
   };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; closetWorn = false; renderCloset(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; renderCloset(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -4220,6 +4263,9 @@ function closetBack() {
     $("#app").classList.remove("detail-photo");
     renderCloset(); restoreScroll(_detailEntryScroll); _detailEntryScroll = 0; return;
   }
+  // Back out of a keyword search before unwinding the folder stack — the search
+  // is what she can see, so it's what back should close.
+  if (closetSearchQ !== null) { closetSearchQ = null; searchResults = null; renderCloset(); return; }
   if (closetHamper) { closetHamper = false; }
   if (closetWorn) { closetWorn = false; }
   else if (closetSub) { closetSub = null; }
@@ -4272,6 +4318,7 @@ function openTolEdit(id) {
 function siblingItems() {
   // Explicit list captured at tap time (capsule/trip grid) wins.
   if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
+  if (closetSearchQ !== null && searchResults) return searchResults;
   if (closetHamper) return _scopedHamper();
   if (closetWorn) return _scopedWorn();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
@@ -13134,7 +13181,7 @@ async function duplicateCapsule(id) {
 
 function planFromCapsule(id) {
   activeCapsuleId = id;
-  closetCat = null; closetSub = null; searchResults = null;
+  closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
   switchTab("closet");
   const c = capsuleById.get(id);
   toast(c ? `Planning from ${c.name}` : "Capsule active");
@@ -13233,12 +13280,10 @@ function pickerPoolBase() {
     const set = new Set((capsuleLinkMap.get(tripModeId) || []).map(l => l.item_id));
     pool = pool.filter(i => set.has(i.id));
   }
-  const q = _capPickFilter.trim().toLowerCase();
-  if (q) pool = pool.filter(i =>
-    (i.name || "").toLowerCase().includes(q) ||
-    (i.brand || "").toLowerCase().includes(q) ||
-    (i.category || "").toLowerCase().includes(q) ||
-    (i.subcategory || "").toLowerCase().includes(q));
+  // Shares the closet's matcher (Round C) so one box behaves the same
+  // everywhere — multi-term AND, and colour/retailer/size/notes/tags too.
+  const q = _capPickFilter.trim();
+  if (q) pool = pool.filter(i => itemMatchesText(i, q));
   if (hasActiveFilter(pickerFilter)) pool = pool.filter(i => itemMatchesFilter(i, pickerFilter, { noStatusDefault: true }));
   return pool;
 }
@@ -14479,7 +14524,7 @@ const TAB_TITLES = {
 // not resume a deep subpage left over from last visit. (Programmatic switchTab
 // calls that pre-set folder state and then openItem() don't go through here.)
 function resetTabRoot(name) {
-  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetHamper = false; closetWorn = false; }
+  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; }
   else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; looksItemFilter = null; }
   else if (name === "calendar") { calendarDay = null; }
 }
@@ -14911,16 +14956,17 @@ function wireEvents() {
       if (tripModeId && tripModeId === activeCapsuleId) return exitTripMode();
       activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset();
     }
+    if (e.target.closest("#clKeyword")) { closetSearchQ = ""; searchResults = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
     if (e.target.closest("[data-laundry-wash]")) {
       // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
       return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
     }
-    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
-    if (e.target.closest("[data-worn]")) { closetWorn = true; closetHamper = false; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
+    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-worn]")) { closetWorn = true; closetHamper = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
-    if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; return renderCloset(); }
+    if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
     if (cat) { closetCat = cat.dataset.cat; closetSub = null; searchResults = null; return renderCloset(); }
     const sub = e.target.closest("[data-sub]");

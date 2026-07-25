@@ -713,6 +713,21 @@ function run() {
     return eq([W.rhythmFor("2026-08-02", r).contexts, W.rhythmFor("2026-08-04", r)], [["Church"], null]);
   });
 
+  // ---- Round C: closet keyword search ----
+  const si = { id: "s1", name: "Linen Shirt", brand: "Everlane", retailer: "Nordstrom",
+               category: "Tops", subcategory: "Blouses", color_family: "Blue",
+               size: "M", notes: "gift from mum", tags: ["layer"] };
+  t("itemMatchesText: matches across every searched field", () =>
+    eq(["linen", "everlane", "nordstrom", "blouses", "blue", "mum", "layer"].map(q => W.itemMatchesText(si, q)),
+       [true, true, true, true, true, true, true]));
+  t("itemMatchesText: all terms must match, in any field", () =>
+    eq([W.itemMatchesText(si, "blue linen"), W.itemMatchesText(si, "blue jeans")], [true, false]));
+  t("itemMatchesText: case and whitespace insensitive; empty matches all", () =>
+    eq([W.itemMatchesText(si, "  LINEN   sHiRt "), W.itemMatchesText(si, ""), W.itemMatchesText(si, "   ")],
+       [true, true, true]));
+  t("itemMatchesText: survives missing fields", () =>
+    eq([W.itemMatchesText({ id: "x" }, "linen"), W.itemMatchesText({ id: "x" }, "")], [false, true]));
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
