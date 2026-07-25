@@ -155,8 +155,11 @@ rename/add/remove categories + subcategories with live item counts; renames
 bulk-PATCH items via `retagItems(match, patch)` (PostgREST column filter, no id
 list); delete only offered at zero usage. `meta` carries a renamed
 subcategory's `SUBCAT_FORMALITY`/`WEAR_TOLERANCE` defaults to the new name.
-⚠️ Renaming does NOT update `WORKOUT_SLOTS`/`LAUNDRY_LOADS`/`GEAR_CAND_SUBCATS`
-(still keyed on the shipped names) — revisit if she renames Workout subcats.
+⚠️ Renaming does NOT update `WORKOUT_SLOTS`/`GEAR_CAND_SUBCATS` (still keyed on
+the shipped names) — renaming a Workout subcat silently breaks workout mode.
+Round C Step 9 adds a warn-on-rename guard. **`LAUNDRY_LOADS` is NOT affected** —
+it's keyed on `color_family`, not subcategory (corrected 2026-07-25; the taxonomy
+editor never touches color families).
 
 **Partners / rhythm / rotation (2026-07-21 r10) — SHIPPED.** Three derived-only
 adds, harvested from external design docs (ChatGPT/Gemini specs the user
@@ -442,9 +445,16 @@ items closed (`openItemFrom(id, browseCtx)` snapshot/restore). No schema changes
 
 **"Hearts + Filters Everywhere" v2 is FULLY SHIPPED, all 8 waves (W0–W7), through
 `2026-07-06 r7`.** The 2026-06 "Unified Experience" build (W0–W5) and filter
-unification Phases 2+3 are also fully shipped. **▶ NEXT UP:** nothing scheduled —
-see `ROADMAP.md`'s "Back-burner" section for what's next; ask the user before
-starting new work.
+unification Phases 2+3 are also fully shipped. **▶ NEXT UP: Round C "Memory +
+Payback"** — planned 2026-07-25 from a product review, decisions LOCKED, **nothing
+built yet**. Spec + build order + line refs: `ROADMAP.md`'s Round C section (start
+at Step 1). Headline: spend the two idle assets — the `wxlog` weather history
+(written daily since 2026-07-20, **read by nothing**) becomes a "you've dressed for
+this before" precedent engine seeded by a one-shot ERA5 backfill; and the log moment
+starts paying her back via milestone toasts. Then weekly-rhythm planner pre-fill,
+Home attention hierarchy, and a mechanical tail (free-text closet search — it does
+not exist today — mending tag, year-in-pixels, On-this-day, taxonomy-rename guard).
+No schema changes; new `kv` keys only.
 
 Top-of-`<script>` config, then logically grouped sections:
 

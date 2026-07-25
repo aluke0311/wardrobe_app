@@ -1,9 +1,264 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-22 r1** ("Laundry Control" round — SHIPPED, same day
-> planned by Fable / built by Sonnet). ▶ NEXT UP: nothing scheduled — ask the
-> user before starting new work.
+> Current version: **2026-07-24 r1** ("Rotation drill-in + wears-by-day" — SHIPPED).
+> ▶ NEXT UP: **Round C "Memory + Payback"** — planned 2026-07-25, decisions LOCKED
+> below, nothing built yet. Start at Step 1.
+
+---
+
+## ▶ PLANNED — Round C "Memory + Payback" (product review 2026-07-25, answered "defaults")
+
+**Thesis:** the app knows what she owns and what she wore. Two assets are sitting
+unspent — **the weather log it writes every day and never reads**, and **the log
+moment itself**, which is the only second in the app that can pay her back for the
+habit everything else depends on. This round spends both, then clears the small
+stuff that a 476-item closet has outgrown.
+
+**No schema changes.** Everything rides the live `kv` table (migration confirmed run
+2026-07-20). New `kv` keys: `wxbackfill`, `milestones`, `beststreak`. Existing
+`wxlog` window widens 400d → 1200d.
+
+### Locked decisions (do not re-litigate)
+
+- Round shape = **one deep thing (weather memory)** plus a mechanical tail, not a broad batch.
+- **ERA5 backfill: YES**, one-shot, offered as a Home card **once** (plus a permanent Settings row).
+- Precedent surfaces = **suggester + Tomorrow card**. Not its own stats page.
+- **Trip days are excluded** from precedent matching.
+- **`itemWxProfile` ships** ("usually worn 45°–62°" on the item photo view).
+- Milestone toasts: **yes, all six rungs**, **max one per log, each key once ever**.
+- Week planner: **pre-filled with muted weekday guesses, tap to accept, NEVER auto-saved.**
+- **"Your week" rhythm strip** added to Stats.
+- Free-text closet search: **yes — closet root AND the flat pickers.**
+- **"Ask my closet" NL parser: later, not this round.**
+- Also in: **mending tag · year-in-pixels · "On this day" on Home · Home attention
+  hierarchy · taxonomy-rename warning.**
+- **Next round (NOT now):** palette page (colors owned vs. worn), shopping gap +
+  replacement watch. **Deferred indefinitely:** lookbook export; offline write queue
+  (revisit only if she actually loses a log). **Formulas remainder: tune
+  `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against real data BEFORE building more.**
+
+### Build order — STRICT Fable-first (judgment 1–4, mechanical 5–9)
+
+Per [[fable-first-build-order]]: deploy after each step.
+
+---
+
+#### STEP 1 — Weather memory core (judgment-heavy, the round's centerpiece)
+
+**Why it exists:** `loadHomeWeather` writes `kvData("wxlog")` daily at
+`index.html:2472` and **nothing reads it** (grep: two writes, zero reads). It was
+groundwork for "style twins" and has been idle since 2026-07-20.
+
+**1a. Widen the window.** `index.html:2478` prunes at `shiftDate(today, -400)` →
+change to **-1200** so backfilled history survives. ~1200 entries × ~40B ≈ 50KB in
+one JSONB row; fine.
+
+**1b. `backfillWxLog()`** — one-shot, idempotent.
+- Location: beside `loadHomeWeather` (~`index.html:2456`).
+- Range = earliest `wears.worn_on` (clamped to `today-1200`) → today.
+- **One call to the existing `fetchWeatherRange(lat, lon, start, end)`
+  (`index.html:13821`)** — it already splits the forecast window (today−92 → today+15)
+  from the ERA5 archive (`archive-api.open-meteo.com`) and merges the result, and it
+  already stamps `hist`. Nothing new to write against Open-Meteo.
+- Location from `getHomeLocation()` (`index.html:2435`, cached in `HOME_LOC_KEY`).
+- **Merge rule: backfill OVERWRITES entries older than 15 days** (those were
+  *forecasts* when they were written; ERA5 is *observed*). Entries within 15 days
+  are left alone.
+- On success `kvSet("wxbackfill", todayStr())`.
+
+**1c. Entry points.**
+- Home card, shown only when `dataReady && !kvData.get("wxbackfill") && wears.length > 100`.
+  Copy: *"Match today's weather to what you actually wore — one-time lookup of past
+  weather."* → `[Do it]` / `[Not now]`. "Not now" snoozes 14d via `store`.
+  ⚠️ **She will never run this from Settings on her own** — the card is the real
+  entry point; the Settings row is the re-run escape hatch.
+- Permanent row in the Settings **Data** card.
+
+**1d. `similarDays(wx, { contexts = null, limit = 4, excludeDays = 14 })`** — pure,
+injectable, selftested.
+- Pool = wear days from `wearDayMap()` (`index.html:8946`) that have a `wxlog` entry.
+- Drop days within `excludeDays` of today (she remembers those).
+- **Drop days inside any dated trip capsule's range** (locked).
+- If `contexts` given, keep days whose wear rows share ≥1 context (`ctxArr`).
+- Score = `|ΔmaxT| + 0.5·|ΔminT| + (wmoIsWet(a) !== wmoIsWet(b) ? 8 : 0)` — wet
+  mismatch priced in degrees.
+- **Hard cut at score > 15**: nothing similar → return nothing. A bad match is worse
+  than an empty row.
+- **Dedupe by `outfit_id`** so the strip isn't four copies of one look.
+- Sort by score, tiebreak recency desc. Return `[{date, score, outfitId, itemIds, contexts}]`.
+
+**1e. Surfaces.**
+- **Suggester** (`openSuggestSheet`, `index.html:6897`): a row above the combo —
+  **"You've dressed for this before"** — up to 4 tiles (`outfitCollageHtml` + a
+  `Jan 12 · 47°/38°` label). Tap → `openLookFrom(outfitId)`, or the calendar day
+  when the day has no look. Render only when `_suggWx()` has a wx AND there's ≥1 hit.
+- **Tomorrow card** (`tomorrowCardHtml`, `index.html:2802`): same strip, fed by
+  `_dpWx(tm)` (`index.html:1848`) and the entry's contexts.
+
+**1f. `itemWxProfile(itemId)`** — wxlog entries across that item's wear days, **≥5
+required**, return `{lo, hi}` from the 10th/90th percentile of `maxT`. Renders as a
+`det-sub` on the item photo view next to the existing `wearRhythm` line
+(`itemPartners`/`wearRhythm` live at `index.html:4850`): *"Usually worn 45°–62°."*
+
+---
+
+#### STEP 2 — Milestone toasts (judgment: the ladder + the cap)
+
+**Why:** logging produces a flat "Wear logged" on the ~700th repetition. This is the
+only moment the app can repay the habit in the same second, and it currently doesn't.
+
+**`milestoneFor(itemIds, { outfitId, date })`** → `{key, text}` or `null`.
+First hit wins, evaluated in this order:
+
+1. `first:<itemId>` — item now has exactly 1 wear-day → *"First outing for the <name>."*
+2. `paidoff:<itemId>` — `costPerWear` (`index.html:2065`) crossed **below $1.00** with
+   this wear; requires `price` set and `acquisition !== "Gift"` → *"The <name> just
+   went under $1 a wear."*
+3. `rescued:<itemId>:<date>` — previous `lastWorn` (`index.html:2061`) was ≥180 days
+   before this date → *"Back after N months."*
+4. `round:<itemId>:<n>` — item hit exactly **10 / 25 / 50 / 100** wear-days
+   (`wearCount`, `index.html:2060` — already day-based) → *"That's the <name>'s 50th day out."*
+5. `completeset:<year>` — checked only when the wear includes Shoes: every Available
+   pair of Shoes worn ≥once this calendar year. (Trip-mode variant: every packed
+   capsule item now worn.) → *"You've worn every pair of shoes you own this year."*
+6. `streak:<n>` — `calStreak()` just exceeded the stored best in `kv` `"beststreak"`
+   → *"Longest logging streak yet — N days."*
+
+**Cap (locked):** one per log; **each key fires once ever**. Seen-set in
+`kvData("milestones")` = `{ "<key>": "<date>" }`. Build the cap in NOW — she'll want
+these rarer after ~3 months, and a cap retrofitted later is a rewrite.
+
+**Wiring:** a single `logCelebration(rows)` helper called at each wear-create site —
+`logWearToday` (`index.html:5018`), `logLookOnDay` (`index.html:9900`),
+`wearSuggestedCombo`, `wearPlannedEntry`, `saveCalClothingLog`. Where a post-log
+sheet opens anyway, **pass the text into `openPostLogSheet` (`index.html:5072`) so
+its close-toast carries it** — never stack a toast under an open sheet.
+
+---
+
+#### STEP 3 — Weekly rhythm (judgment: the confidence floor)
+
+**Why:** `weekdayTopContext` (`index.html:4903`) derives the modal context per
+weekday and is called **exactly once** — one chip in the post-log sheet
+(`index.html:5079`). Meanwhile `openWeekPlanSheet` (`index.html:2870`) renders seven
+rows that all say "—". **A blank-slate planner gets abandoned; a pre-guessed one gets used.**
+
+- **`weeklyRhythm()`** → `Map(0..6 → {contexts, n})`. Same logic as
+  `weekdayTopContext` but returns every context above the existing **≥3-distinct-days**
+  floor, frequency-ordered, capped at 2. Below the floor → empty (show nothing).
+- **Week planner:** days with no entries render the guess muted (`Chorus · usually`);
+  tapping opens `openDayPlanSheet(d)` with those contexts **pre-selected and unsaved**.
+  Needs a `presetContexts` arg on `openDayPlanSheet`.
+- **Day plan sheet:** opening an empty day pre-ticks the rhythm contexts. Nothing
+  writes until Save (locked: never auto-save).
+- **Stats:** a non-nagging **"Your week"** strip on the main stats page — Mon–Sun with
+  each day's modal context and its day count. Taps into the Contexts page.
+
+---
+
+#### STEP 4 — Home attention hierarchy (judgment: the priority call)
+
+`index.html:2954` can stack **eight** blocks: `dash + tiles + todayPlanRows + cta +
+tomorrow + catchup + laundry + backup`. (Parked since 2026-07-19; more true now.)
+
+- **One attention row above the fold**, priority **trip dash > catch-up > laundry > backup**.
+- The rest collapse to one quiet line — *"2 more things ›"* — expanding in place.
+  Session-only state, nothing persisted.
+- **The log CTA / logged row and the Tomorrow card are NOT attention rows** — they're
+  the daily loop. They stay where they are.
+
+---
+
+#### STEP 5 — Free-text closet search (mechanical)
+
+**Why:** `openSearch()` is now a one-line alias for the filter sheet
+(`index.html:5298`) — the keyword box died in the filter unification and never came
+back. Looks kept its text search (`looksSearchQ`, `index.html:7771`); the closet, with
+476 items, has none. **Prediction: she'll use this more than anything else this round
+and never mention it.**
+
+- New `closetSearchQ` state (null = not searching). Search input row under
+  `clToolbar` (`index.html:3495`) at root and at category/subcategory level.
+- Match case-insensitively over `name`, `brand`, `retailer`, `category`,
+  `subcategory`, `color_family`, `notes`, `tags` — **scoped to `lensItems()`** so lens
+  and capsule scope still apply.
+- Reuse the surviving `searchResults` plumbing: `renderCloset` (`index.html:3851`)
+  needs a branch; `siblingItems()` (`index.html:4069`) and `gridSortKey`/
+  `_gridSurface === "search"` (`index.html:8587`) already handle it. Cleared by
+  `switchTab("closet")` (`index.html:14111`).
+- Same input at the top of the flat pickers — mirror the existing scoped search in
+  `builderPickContent`.
+
+---
+
+#### STEP 6 — Mending tag (mechanical)
+
+`MEND_TAG = "mend"` + `isMending(i)`/`setMending(id, on)` via `setItemTag`
+(`index.html:6514`) — same sentinel pattern as `no-suggest` / `layer` / `tol:<n>`.
+- Toggle in the item photo view's SUGGESTIONS card.
+- Closet root row **`🪡 Mending · N`** beside Hamper/Worn (`renderClosetRoot`,
+  `index.html:3519`), with a `closetMend` view mirroring `closetWorn` **exactly** —
+  wire into `closetBack` / `siblingItems` / `switchTab` the same way (see the Worn
+  tray entry in CLAUDE.md; the delegation handlers are at `index.html:14531-14532`).
+- Excluded from `suggestOutfits` like `no-suggest`.
+
+⚠️ **Prediction: she will never tag retroactively** — only the moment the button pops
+off. The item photo view is the only entry point that matters; don't build a review queue.
+
+---
+
+#### STEP 7 — Year in pixels (mechanical)
+
+- New `statsView = "pixels"` + `renderStatsPixelsPage()` (dispatch at `index.html:10358`;
+  remember `statsNavBack`/`statsRebuild`), entry row in Clothing Stats.
+- 53×7 CSS grid, one cell per day, year chips like Wrapped.
+- Cell color = the day's derived formality bucket (`deriveWearFormality` over that
+  day's item ids) as an opacity ramp of `var(--accent)`; empty days `var(--panel)`.
+  **Tokens only — no literal colors** (CLAUDE.md gotcha).
+- Tap a cell → calendar day view. Legend row underneath.
+- Use `statsToolbar(..., hideFilter=true)` — this page is the whole year, not `statsPool()`.
+
+---
+
+#### STEP 8 — "On this day" on Home (mechanical)
+
+Reuse the calendar day view's existing prior-year finder (the `.otd-row` logic).
+Render **only when there's a hit**, and put it **below the Tomorrow card** — it's a
+delight row, not an attention row, so it must not compete with Step 4's slot.
+
+---
+
+#### STEP 9 — Taxonomy-rename warning (mechanical, closes a latent bug)
+
+The in-app taxonomy editor (`openTaxonomySheet`, `index.html:14213`) can rename a
+subcategory out from under constants that are keyed on the shipped names, silently
+breaking workout mode.
+
+- **At risk:** `WORKOUT_SLOTS` (`index.html:6532`) and `GEAR_CAND_SUBCATS`
+  (`index.html:7043`). `SUBCAT_FORMALITY`/`WEAR_TOLERANCE` are already carried through
+  `meta`.
+- ✅ **`LAUNDRY_LOADS` is NOT at risk** — it's keyed on **color_family**, not
+  subcategory (`index.html:2130`, used at `index.html:2254`). The CLAUDE.md gotcha
+  that lists it is wrong; **fix the doc as part of this step.**
+- Fix: `TAXONOMY_LOCKED_SUBCATS` = `Object.keys(WORKOUT_SLOTS) ∪ GEAR_CAND_SUBCATS`.
+  Renaming one shows an inline warning ("Workout mode is keyed on this name — renaming
+  will stop run/hike suggestions finding it") and requires a second tap. Delete stays
+  blocked at nonzero usage, as today.
+
+---
+
+### Selftest additions (`migration/selftest.html` — Claude runs it before every deploy)
+
+`similarDays` scoring + trip exclusion + outfit dedupe + the >15 hard cut ·
+`milestoneFor` ladder ordering + once-ever cap · `weeklyRhythm` ≥3-day floor ·
+closet search field matching · the 1200-day wxlog prune window.
+
+### Out of guardrails (asked and answered — don't re-propose)
+
+Reading her real calendar (needs a server/OAuth) · photo auto-tagging or semantic
+search (needs a model key in client code). Both genuinely useful, both correctly
+ruled out by the no-backend stance.
 
 ---
 
