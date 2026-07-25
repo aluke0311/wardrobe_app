@@ -4,10 +4,14 @@ A personal, single-user wardrobe tracker. Photograph clothing, track details,
 log every wear, build outfits, plan capsules, and see stats like cost-per-wear
 and formality coverage.
 
-**Status:** Live. 476 items + 4,000 historical wears. — _2026-06-25 r6_
+**Status:** Live. 476 items + ~4,000 wears. — _2026-07-25 r11_
 
 Live: https://aluke0311.github.io/wardrobe_app/  
 Repo: https://github.com/aluke0311/wardrobe_app
+
+**Want the whole picture?** [APP_DESCRIPTION.md](APP_DESCRIPTION.md) is a complete,
+self-contained account of what the app is, does and why — portable enough to paste
+into a fresh context.
 
 **New to the app?** See the [User Manual](USER_MANUAL.md) for a screen-by-screen walkthrough.
 
@@ -16,6 +20,8 @@ Repo: https://github.com/aluke0311/wardrobe_app
 ## Features
 
 **5 tabs:** Home · Closet · Looks · Calendar · Stats  
+_(For the current, complete feature list see [APP_DESCRIPTION.md](APP_DESCRIPTION.md) — the summary below predates the laundry, trip-mode, planning, formulas and weather-memory rounds.)_
+
 **Capsules** accessible from the Home tile grid.
 
 - **Closet** — status lens (Available/Storage/Archive/All) → category folders →
@@ -24,10 +30,11 @@ Repo: https://github.com/aluke0311/wardrobe_app
   6 filter rows.
 
 - **Add / Edit Item** — photo (camera or library, compressed to WebP), name,
-  category→subcategory, color family, formality (1–6: Function→Formal), brand,
+  category→subcategory, color family, formality (a set of 1–8: Utility→Formal), brand,
   retailer, price, season, fabric, size, acquisition, notes, status.
 
-- **Looks** — outfit library with lens switcher (Formality/Season/Recent/All).
+- **Looks** — outfit library with nine lenses (Formulas/Formality/Season/Context/
+  Capsule/Liked/Recent/All/Archived).
   Formality derived from piece heuristics; override per-look. Build-a-look canvas:
   drag and resize pieces, save arrangement. Active-capsule mode scopes to wearable
   looks from that set.
@@ -60,7 +67,7 @@ Repo: https://github.com/aluke0311/wardrobe_app
 
 ## Architecture
 
-**One file.** The entire app is `index.html` (~6,950 lines). HTML + CSS + JS inline.
+**One file.** The entire app is `index.html` (~15,900 lines). HTML + CSS + JS inline.
 No build step, no framework, no bundler, no CDN, no JS libraries. Plain `fetch` for
 all network calls.
 
@@ -78,15 +85,16 @@ signed URLs. Lazy-loaded in grids via IntersectionObserver.
 
 ## Data model
 
-Six tables, all RLS-scoped to `auth.uid()`. Full definition in `schema.sql`.
+Eight tables, all RLS-scoped to `auth.uid()`. Full definition in `schema.sql`.
 
 | Table | Key columns |
 |---|---|
-| `items` | name, category, subcategory, brand, retailer, color_family, price, purchase_date, formality (1–6), status, season[], fabric[], tags[], image_path |
-| `wears` | item_id, outfit_id (nullable), worn_on, context, formality_for |
+| `items` | name, category, subcategory, brand, retailer, color_family, price, purchase_date, **formality smallint[] (a SET of 1–8 levels)**, status, season[], fabric[], tags[], last_washed, laundry_state, image_path |
+| `wears` | item_id, outfit_id (nullable), worn_on, context text[], formality_for (derived at log time) |
 | `outfits` | name, context, notes, formality_override, layout (JSONB), rating; join: `outfit_items` |
-| `capsules` | name, kind, start_date, end_date, notes, locations (JSONB); join: `capsule_items(packed bool)` |
+| `capsules` | name, kind, start_date, end_date, notes, locations (JSONB), plan (JSONB); join: `capsule_items(packed bool)` |
 | `exclusions` | item_a, item_b, reason — pairs that shouldn't appear together in suggestions |
+| `kv` | small per-user app state as JSONB: day plans, weather log, milestones, taxonomy override |
 
 ---
 
