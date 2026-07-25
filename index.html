@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r11">
+<meta name="app-version" content="2026-07-25 r12">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1366,13 +1366,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r11";
+const APP_VERSION = "2026-07-25 r12";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Fixed: backing out of a color on the Palette page landed on the Stats home instead of back on Palette",
-  "Fixed: \u201cWhat\u2019s missing\u201d was silently narrowed by a filter it gave you no way to see. It now always uses your whole Available closet \u2014 and \u201cCloset vs Life\u201d no longer shows a funnel that never did anything",
-  "Palette now says plainly how it differs from the Colors report card, and links across to it",
+  "Fixed: tapping into a Stats page (or a closet folder, a calendar day, a capsule) could open it already scrolled halfway down",
+  "Going deeper now always starts at the top \u2014 and backing out puts you back where you were in the list, not at the top of it",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2113,6 +2112,29 @@ function smoothScrollTop() {
   step();
 }
 const getScrollTop = () => document.body.scrollTop || document.documentElement.scrollTop || 0;
+
+/* Drill-in / drill-out scroll, per surface (2026-07-25, user-reported "clicking
+   into stats starts in the middle of the page"). Body is ONE scroll container
+   shared by every screen, so navigating from a long list into a short child left
+   you wherever the parent had been. `switchTab` always reset it; nothing else
+   did — not closet folders, looks folders, calendar days or capsule details.
+   Going deeper parks the parent's position and starts the child at the top;
+   coming back puts you where you were. A small stack, because closet is three
+   levels deep. Stats does its own version inside renderStats(), which is the
+   only place that can distinguish navigating from re-rendering. */
+const _navScroll = { closet: [], looks: [], capsules: [], calendar: [] };
+function navDeeper(surface) {
+  (_navScroll[surface] || []).push(getScrollTop());
+  scrollToTop();
+}
+function navShallower(surface) {
+  const st = _navScroll[surface] || [];
+  const y = st.length ? st.pop() : 0;
+  // restoreScroll() early-returns on 0, which would strand you at the CHILD's
+  // offset when the parent had been at the top — the same bug one level up.
+  if (y) restoreScroll(y); else scrollToTop();
+}
+const navResetScroll = (surface) => { if (_navScroll[surface]) _navScroll[surface].length = 0; };
 // Put the scroll position back after a back-navigation re-render. Tiles are
 // fixed-height so restoring before photos lazy-load is safe; the extra rAF pass
 // covers layout that settles a frame later.
@@ -4180,7 +4202,7 @@ function renderCloset() {
   };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; renderCloset(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; navResetScroll("closet"); renderCloset(); scrollToTop(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -4309,13 +4331,14 @@ function closetBack() {
   }
   // Back out of a keyword search before unwinding the folder stack — the search
   // is what she can see, so it's what back should close.
-  if (closetSearchQ !== null) { closetSearchQ = null; searchResults = null; renderCloset(); return; }
+  if (closetSearchQ !== null) { closetSearchQ = null; searchResults = null; renderCloset(); navShallower("closet"); return; }
   if (closetHamper) { closetHamper = false; }
   if (closetMend) { closetMend = false; }
   if (closetWorn) { closetWorn = false; }
   else if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }
   renderCloset();
+  navShallower("closet");
 }
 
 /* ===================================================================
@@ -8298,7 +8321,7 @@ function looksBack() {
   if (looksSearchQ !== null) { looksSearchQ = null; return renderLooks(); }
   // From the item-scoped looks list, back returns to that item's detail.
   if (looksItemFilter) { const id = looksItemFilter; looksItemFilter = null; switchTab("closet"); return openItemDetails(id); }
-  if (looksFolder) { looksFolder = null; return renderLooks(); }
+  if (looksFolder) { looksFolder = null; renderLooks(); return navShallower("looks"); }
   renderLooks();
 }
 
@@ -9587,7 +9610,7 @@ function renderCalendarMonth(body) {
       renderCalendarMonth(body); return;
     }
     const btn = e.target.closest('[data-calday]');
-    if (btn) { openCalDaySheet(btn.dataset.calday, body); }
+    if (btn) { navDeeper('calendar'); openCalDaySheet(btn.dataset.calday, body); }
   };
 
   hydratePhotos(body);
@@ -9727,7 +9750,7 @@ function renderCalendarDay(body) {
   </div>`;
 
   body.onclick = null;  // clear any stale picker/month delegation
-  $('#calDayBack').onclick = () => { calendarDay = null; renderCalendarMonth(body); };
+  $('#calDayBack').onclick = () => { calendarDay = null; renderCalendarMonth(body); navShallower('calendar'); };
   $('#calDayPrev').onclick = () => { calendarDay = prevD; renderCalendarDay(body); };
   if (!isFuture) $('#calDayNext').onclick = () => { calendarDay = nextD; renderCalendarDay(body); };
   $('#calAddClothing').onclick = () => openCalAddClothing();
@@ -10829,7 +10852,26 @@ function likedLookItemIds() {
   return s;
 }
 
+/* Body is ONE scroll container shared by every screen (window.scrollTo is a
+   no-op here), so moving from a long page to a short one leaves you halfway
+   down it — Stats main is long and its rows sit near the bottom, so tapping one
+   opened the child page already scrolled. Fixed at the dispatcher because it's
+   the only place that can tell NAVIGATION (statsView changed → go to top) from
+   a RE-RENDER of the same view (filter chip, range change, toggle → stay put).
+   Backing out to main restores the row she left from. */
+let _statsLastView = null;
+let _statsEntryScroll = 0;
 function renderStats() {
+  const nav = _statsLastView !== statsView;
+  if (nav && _statsLastView === "main") _statsEntryScroll = getScrollTop();
+  _statsLastView = statsView;
+  _renderStatsView();
+  if (!nav) return;                                  // same view redrawing — leave scroll alone
+  if (statsView === "main" && _statsEntryScroll) { restoreScroll(_statsEntryScroll); _statsEntryScroll = 0; }
+  else scrollToTop();
+}
+
+function _renderStatsView() {
   if (statsView === "field")       { renderStatsFieldPage();   return; }
   if (statsView === "grid")        { renderStatsGridPage();    return; }
   if (statsView === "outfits")     { renderStatsOutfitsPage(); return; }
@@ -12954,6 +12996,7 @@ function syncCapForm() {
 
 // ---- detail ----
 function openCapsule(id) {
+  navDeeper("capsules");
   capsuleId = id;
   capsuleView = "detail";
   _capUnpackedOnly = false;
@@ -14576,10 +14619,10 @@ function finishBuilder(id, msg) {
 }
 
 function capsuleBack() {
-  if (capsuleView === "plan") { capsuleView = "detail"; return renderCapsules(); }
+  if (capsuleView === "plan") { capsuleView = "detail"; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pick") { capsuleView = "detail"; return renderCapsules(); }
   if (capsuleView === "form") { _capForm = null; _pendingAddIds = null; capsuleView = capsuleId ? "detail" : "list"; return renderCapsules(); }
-  if (capsuleView === "detail") { capsuleView = "list"; capsuleId = null; return renderCapsules(); }
+  if (capsuleView === "detail") { capsuleView = "list"; capsuleId = null; renderCapsules(); return navShallower("capsules"); }
   renderCapsules();
 }
 
@@ -14968,6 +15011,7 @@ function switchTab(name) {
     detailId = null; detailView = null; _fromBuilder = null; _itemReturn = null;
   }
 
+  navResetScroll("closet"); navResetScroll("looks"); navResetScroll("capsules"); navResetScroll("calendar");
   if (name !== "builder") { $("#app").classList.remove("builder-mode"); builder = null; }
   if (name !== "capsules") { clearInterval(_wxAutoTimer); _wxAutoTimer = null; }  // stop weather auto-refresh
 
@@ -14978,7 +15022,9 @@ function switchTab(name) {
   else if (name === "looks")    renderLooks();
   else if (name === "calendar") renderCalendar();
   else if (name === "capsules") { capsuleView = "list"; capsuleId = null; renderCapsules(); }
-  else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; renderStats(); }
+  // A real tab tap starts Stats fresh at the top — don't restore a stale
+  // entry-scroll captured before she left the tab.
+  else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; _statsLastView = null; _statsEntryScroll = 0; renderStats(); }
   else if (name === "settings") renderSettings();
 
   scrollToTop();
@@ -15388,22 +15434,22 @@ function wireEvents() {
       if (tripModeId && tripModeId === activeCapsuleId) return exitTripMode();
       activeCapsuleId = null; closetCat = null; closetSub = null; return renderCloset();
     }
-    if (e.target.closest("#clKeyword")) { closetSearchQ = ""; searchResults = null; return renderCloset(); }
+    if (e.target.closest("#clKeyword")) { navDeeper("closet"); closetSearchQ = ""; searchResults = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
     if (e.target.closest("[data-laundry-wash]")) {
       // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
       return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
     }
-    if (e.target.closest("[data-mend]")) { closetMend = true; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
-    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
-    if (e.target.closest("[data-worn]")) { closetWorn = true; closetHamper = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-mend]")) { navDeeper("closet"); closetMend = true; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-laundry]")) { navDeeper("closet"); closetHamper = true; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-worn]")) { navDeeper("closet"); closetWorn = true; closetHamper = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
-    if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; navResetScroll("closet"); scrollToTop(); return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
-    if (cat) { closetCat = cat.dataset.cat; closetSub = null; searchResults = null; return renderCloset(); }
+    if (cat) { navDeeper("closet"); closetCat = cat.dataset.cat; closetSub = null; searchResults = null; return renderCloset(); }
     const sub = e.target.closest("[data-sub]");
-    if (sub) { closetSub = sub.dataset.sub; return renderCloset(); }
+    if (sub) { navDeeper("closet"); closetSub = sub.dataset.sub; return renderCloset(); }
     const it = e.target.closest("[data-item]");
     if (it) {
       if (selectMode) { toggleSelect(it.dataset.item); return; }
@@ -15432,7 +15478,7 @@ function wireEvents() {
     const lens = e.target.closest("[data-llens]");
     if (lens) { looksLens = lens.dataset.llens; looksFolder = null; lookId = null; return renderLooks(); }
     const folder = e.target.closest("[data-lfolder]");
-    if (folder) { looksFolder = folder.dataset.lfolder; return renderLooks(); }
+    if (folder) { navDeeper("looks"); looksFolder = folder.dataset.lfolder; return renderLooks(); }
     const lkact = e.target.closest("[data-lkact]");
     if (lkact && lookId) {
       const a = lkact.dataset.lkact;
@@ -15672,7 +15718,7 @@ function wireEvents() {
     if (document.getElementById('clBack'))     closetBack();
     else if (document.getElementById('looksBack')) looksBack();
     else if (document.getElementById('stBack'))    statsNavBack();
-    else if (calendarDay) { calendarDay = null; renderCalendarMonth($("#calendarBody")); }
+    else if (calendarDay) { calendarDay = null; renderCalendarMonth($("#calendarBody")); navShallower("calendar"); }
   }, { passive: true });
 
   // Long-press on grid tile (500 ms) → quick-action sheet.
