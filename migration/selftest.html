@@ -854,6 +854,43 @@ function run() {
     return eq([r.length, r[0].item.id, r[0].days, r[0].cpw], [1, "hi", 40, 2.5]);
   });
 
+  // ---- stats back-nav + the "no lying funnel" rule ----
+  t("statsNavBack: a grid entered from Palette returns to Palette, not main", () => {
+    const sv = W.statsView, fp = W.statsFromPalette, ff = W.statsFromField, fr = W.statsFromReport;
+    W.statsView = "grid"; W.statsFromPalette = true; W.statsFromField = false; W.statsFromReport = false;
+    W.statsNavBack();
+    const landed = W.statsView, cleared = W.statsFromPalette;
+    W.statsView = sv; W.statsFromPalette = fp; W.statsFromField = ff; W.statsFromReport = fr;
+    return eq([landed, cleared], ["palette", false]);
+  });
+  t("statsNavBack: report and field drill-ins still win over the palette flag", () => {
+    const sv = W.statsView, fp = W.statsFromPalette, ff = W.statsFromField, fr = W.statsFromReport;
+    W.statsView = "grid"; W.statsFromReport = true; W.statsFromPalette = false; W.statsFromField = false;
+    W.statsNavBack();
+    const a = W.statsView;
+    W.statsView = "grid"; W.statsFromReport = false; W.statsFromPalette = false; W.statsFromField = true;
+    W.statsNavBack();
+    const b = W.statsView;
+    W.statsView = sv; W.statsFromPalette = fp; W.statsFromField = ff; W.statsFromReport = fr;
+    return eq([a, b], ["report-detail", "field"]);
+  });
+  t("buildThinSpots/buildMileage default to the full Available closet", () => {
+    // The page hides the funnel, so its numbers must not depend on statsFilter.
+    const savedItems = W.items, savedById = W.itemById, savedWears = W.wears;
+    W.items = [
+      { id: "a", category: "Shoes", formality: [6], status: "Available", tags: [] },
+      { id: "b", category: "Shoes", formality: [6], status: "Storage", tags: [] },
+      { id: "c", category: "Shoes", formality: [6], status: "Archive", tags: [] },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.wears = [];
+    const ws = [];
+    for (let k = 0; k < 6; k++) ws.push({ item_id: "a", worn_on: D(-k), context: ["Gala"], formality_for: 6 });
+    const g = W.buildThinSpots(null, ws).find(x => x.ctx === "Gala");
+    W.items = savedItems; W.itemById = savedById; W.wears = savedWears;
+    return g ? eq(g.slots.Shoes, 1) : "Gala row missing";   // Storage + Archive excluded
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

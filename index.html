@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r10">
+<meta name="app-version" content="2026-07-25 r11">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1366,13 +1366,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r10";
+const APP_VERSION = "2026-07-25 r11";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New in Style Stats: \u201cWhat\u2019s missing\u201d \u2014 thin spots where the closet can\u2019t quite dress a context you actually live in",
-  "It looks at the THINNEST slot, not the total: twelve tops don\u2019t help if one pair of shoes covers the occasion",
-  "Plus \u201cMileage\u201d \u2014 the pieces that have done the most work, with age and $/wear. No predictions, just the numbers",
+  "Fixed: backing out of a color on the Palette page landed on the Stats home instead of back on Palette",
+  "Fixed: \u201cWhat\u2019s missing\u201d was silently narrowed by a filter it gave you no way to see. It now always uses your whole Available closet \u2014 and \u201cCloset vs Life\u201d no longer shows a funnel that never did anything",
+  "Palette now says plainly how it differs from the Colors report card, and links across to it",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -4123,7 +4123,7 @@ function renderCloset() {
   if (closetSearchQ !== null) {
     searchResults = closetSearchMatches(closetSearchQ);
     body.innerHTML = clToolbar("Search closet", true, false) + `
-      <div style="padding:10px 14px 0"><input class="inp" id="clSearchInp" placeholder="Name, brand, colour, type…" value="${esc(closetSearchQ)}" autocapitalize="off" autocorrect="off"></div>
+      <div style="padding:10px 14px 0"><input class="inp" id="clSearchInp" placeholder="Name, brand, color, type…" value="${esc(closetSearchQ)}" autocapitalize="off" autocorrect="off"></div>
       <div id="clSearchCount" style="padding:6px 14px 2px;font-size:13px;color:var(--muted)">${closetSearchQ ? `${searchResults.length} item${searchResults.length === 1 ? "" : "s"}` : "Start typing"}</div>
       <div id="clSearchResults">${closetSearchQ ? gridHtml(searchResults) : ""}</div>`;
     hydratePhotos(body);
@@ -10450,6 +10450,7 @@ let statsReportField = null;  // "brand" | "retailer" — which report card is o
 let statsReportSel = null;    // selected brand/retailer label on the report detail page
 let statsReportSort = "best"; // "best" | "worst" — report list order
 let statsFromReport = false;  // grid page was entered from a report detail (back returns there)
+let statsFromPalette = false; // grid page was entered from the Palette page (back returns there)
 // closet review state
 let reviewField = null;      // current field key being dealt
 let reviewQueue = [];        // item ids queued for the current field
@@ -10883,11 +10884,14 @@ function statsNavBack() {
   if (statsView === "report") { statsView = "main"; statsReportField = null; renderStats(); return; }
   if (statsView === "grid" && statsFromReport) {
     statsView = "report-detail"; statsGridItems = []; statsGridTitle = ""; statsFromReport = false;
+  } else if (statsView === "grid" && statsFromPalette) {
+    statsView = "palette"; statsGridItems = []; statsGridTitle = ""; statsFromPalette = false;
   } else if (statsView === "grid" && statsFromField) {
     statsView = "field"; statsGridItems = []; statsGridTitle = "";
   } else {
     statsView = "main"; statsField = null;
-    statsGridItems = []; statsGridTitle = ""; statsFromField = false; statsFromReport = false;
+    statsGridItems = []; statsGridTitle = "";
+    statsFromField = false; statsFromReport = false; statsFromPalette = false;
   }
   renderStats();
 }
@@ -11242,7 +11246,7 @@ function renderStatsMain() {
           ${weekRhythmBlockHtml()}
           ${row("Contexts", contextsRowSub, "looks:contexts")}
           ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
-          ${row("Palette", "The colours you own vs the colours you wear", "palette")}
+          ${row("Palette", "Your closet's color mix vs the mix you actually wear", "palette")}
           ${row("What's missing", "Thin spots in the closet, and what's done the most work", "missing")}
         </div>
       </div>
@@ -11263,7 +11267,7 @@ function renderStatsMain() {
           ${row("Subcategories", "Best & worst pieces within each type", "report:subcategory")}
           ${row("Price Brackets", "Find your price sweet spot", "report:price")}
           ${row("Purchase Years", "Are you buying better over time?", "report:year")}
-          ${row("Colors", "Which colors actually get worn", "report:color_family")}
+          ${row("Colors", "Which colors earn their keep — wear rate and $/wear", "report:color_family")}
           ${row("Acquisition", "New vs. secondhand vs. gifts", "report:acquisition")}
         </div>
       </div>
@@ -11339,7 +11343,7 @@ function renderStatsMain() {
         const result = buildSmartList(key);
         if (result) {
           statsView = "grid"; statsGridItems = result.list; statsGridTitle = result.title;
-          statsFromField = false; statsFromReport = false; statsListKey = key; statsSubtitleFn = result.subtitleFn || null;
+          statsFromField = false; statsFromReport = false; statsFromPalette = false; statsListKey = key; statsSubtitleFn = result.subtitleFn || null;
           renderStats();
         }
       }
@@ -11432,7 +11436,7 @@ function renderStatsFieldPage() {
       if (val === "__novalue__") { list = noValue; title = `No ${STATS_FIELD_LABELS[statsField] || statsField}`; }
       else { const g = groups.find(g => g.label === val); list = g ? g.items : []; title = val; }
       statsView = "grid"; statsGridItems = list; statsGridTitle = title;
-      statsFromField = true; statsFromReport = false; statsListKey = null;
+      statsFromField = true; statsFromReport = false; statsFromPalette = false; statsListKey = null;
       renderStats();
     });
   });
@@ -11699,8 +11703,12 @@ function buildMileage(pool = null) {
 }
 
 function renderStatsMissingPage() {
-  const thin = buildThinSpots(statsPool());
-  const miles = buildMileage(statsPool());
+  // Denominator is the FULL Available closet, deliberately — not statsPool().
+  // This page hides the funnel (its numbers are about the whole wardrobe), and
+  // a hidden filter that still narrowed the pool would be the worse half of the
+  // bug the hideFilter flag exists to prevent: invisible AND lying.
+  const thin = buildThinSpots();
+  const miles = buildMileage();
   const pct = (x) => `${Math.round(x * 100)}%`;
 
   const thinRows = thin.filter(r => r.thinnest.n < GAP_SLOT_FLOOR * 2).slice(0, 6).map(r => {
@@ -11851,15 +11859,24 @@ function renderStatsPalettePage() {
     + (g.rows.length
       ? verdict + barRow("Your closet", "ownShare") + barRow("What you actually wear", "wearShare")
         + `<div style="padding-top:2px">${rowsHtml}</div>
-        <div class="stats-note">"What you wear" counts each piece once per day it went out, so it compares like with like against a closet counted in pieces. Both columns add to 100%. Pieces with no colour set are left out entirely.</div>`
-      : `<div class="placeholder"><b>No colours set yet</b><div>Give pieces a colour family and this page fills itself in.</div></div>`);
+        <div class="stats-note">"What you wear" counts each piece once per day it went out, so it compares like with like against a closet counted in pieces. Both columns add to 100%. Pieces with no color set are left out entirely.</div>
+        <div class="stats-note"><b>Palette vs. the Colors report card:</b> this page is about <b>proportion</b> — is the mix you own the mix you wear? The Colors report card is about <b>per-piece performance</b> — do your black items individually get worn as often as similar items, and at what $/wear. They can disagree, and both be right: forty lightly-worn black pieces can still dominate what leaves the closet.</div>
+        <div style="padding:2px 16px 0"><button class="lnk" id="palToReport" style="font-size:13px">Colors report card ›</button></div>`
+      : `<div class="placeholder"><b>No colors set yet</b><div>Give pieces a color family and this page fills itself in.</div></div>`);
   wireStatsToolbar();
+  const toReport = $("#palToReport");
+  if (toReport) toReport.onclick = () => {
+    statsView = "report"; statsReportField = "color_family";
+    statsReportSel = null; statsReportSort = "best";
+    renderStats();
+  };
   $("#statsBody").querySelectorAll("[data-pal]").forEach(el => {
     el.onclick = () => {
       const c = el.dataset.pal;
       statsGridItems = statsPool().filter(i => i.color_family === c);
       statsGridTitle = c;
-      statsFromField = false; statsFromReport = false; statsListKey = null; statsSubtitleFn = null;
+      statsFromField = false; statsFromReport = false; statsFromPalette = true;
+      statsListKey = null; statsSubtitleFn = null;
       statsView = "grid";
       renderStats();
     };
@@ -11896,7 +11913,10 @@ function renderStatsGapPage() {
       </div>
     </div>`;
   }).join("");
-  $("#statsBody").innerHTML = statsToolbar("Closet vs Life", true, false)
+  // hideFilter (2026-07-25): buildGapStats() has always used the whole Available
+  // closet and ignored statsFilter, so the funnel here was decorative — tapping
+  // it changed nothing. Same call as Rotation: no funnel beats a lying one.
+  $("#statsBody").innerHTML = statsToolbar("Closet vs Life", true, false, true)
     + (g.rows.length
       ? verdict + `<div style="padding-top:6px">${rowsHtml}</div>
         <div class="stats-note">"Of closet fits" = share of Available pieces whose formality covers that context's level — pieces can serve several contexts, so columns don't add to 100%. Contexts need 5+ tagged wears and a formality signal to appear.</div>`
@@ -12444,7 +12464,7 @@ function renderStatsReportDetailPage() {
     statsView = "grid";
     statsGridItems = scored.slice().sort((a, b) => b.p.count - a.p.count).map(x => x.i);
     statsGridTitle = r.label;
-    statsFromReport = true; statsFromField = false; statsListKey = null;
+    statsFromReport = true; statsFromField = false; statsFromPalette = false; statsListKey = null;
     statsSubtitleFn = (i) => { const n = counts.get(i.id) || 0; return `${n} wear${n === 1 ? "" : "s"}`; };
     renderStats();
   });
