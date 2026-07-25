@@ -1,13 +1,41 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-24 r1** ("Rotation drill-in + wears-by-day" — SHIPPED).
-> ▶ NEXT UP: **Round C "Memory + Payback"** — planned 2026-07-25, decisions LOCKED
-> below, nothing built yet. Start at Step 1.
+> Current version: **2026-07-25 r8** (Round C "Memory + Payback" — SHIPPED, all 9
+> steps, one deploy per step). ▶ NEXT UP: nothing scheduled. The agreed next round
+> is **palette page + shopping gap / replacement watch** (see Round C's deferred
+> list); ask the user before starting.
 
 ---
 
-## ▶ PLANNED — Round C "Memory + Payback" (product review 2026-07-25, answered "defaults")
+## ✅ SHIPPED — Round C "Memory + Payback" (reviewed + built 2026-07-25, r1→r8)
+
+**Built in one session, Fable-first order, deployed after every step** (r1 step 1 …
+r8 steps 8+9). Selftest grew 52 → **80 cases**.
+
+⚠️ **Not executed.** Per [[verify-cli-not-preview]] the app was not opened in a
+browser and **the selftest was not run** — every step is syntax-verified against
+JavaScriptCore (`new Function(src)` parse of the inline script) and reviewed by
+hand, with the new cases written but not executed. Run
+`migration/selftest.html?v=<bust>` at the next opportunity.
+
+**Deviations from the plan below, all deliberate:**
+- `openDayPlanSheet` did **not** get a `presetContexts` argument — it computes the
+  weekday rhythm itself, which is simpler and produces the same result.
+- Step 5's "add a search box to the flat pickers" turned out to be already done:
+  the pickers have had `_capPickFilter` all along. Repointed it at the new shared
+  `itemMatchesText` instead, so one box behaves the same everywhere.
+- The Home attention group has **four** candidates, not three — the step 1 weather
+  card joined catch-up / laundry / backup.
+- No mending toggle was added to the item-details SUGGESTIONS card; the photo-view
+  line is the only entry point, on purpose (see step 6's note).
+
+**Implementation names** are in CLAUDE.md's Round C entry. The plan as written,
+kept for the reasoning:
+
+---
+
+## Round C plan as locked (product review 2026-07-25, answered "defaults")
 
 **Thesis:** the app knows what she owns and what she wore. Two assets are sitting
 unspent — **the weather log it writes every day and never reads**, and **the log

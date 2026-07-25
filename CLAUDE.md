@@ -2,6 +2,88 @@
 
 Guidance for working in this repo. Read alongside `README.md`.
 
+**Round C "Memory + Payback" (2026-07-25, r1→r8) — SHIPPED, all 9 steps.**
+Reviewed and built the same day; one deploy per step. Selftest 52 → **80 cases,
+written but NOT RUN** (no browser this session — run `migration/selftest.html`).
+
+① **WEATHER MEMORY** — `kvData("wxlog")` had been written daily since 2026-07-20
+and **read by nothing**. Now: `backfillWxLog()` reconstructs weather for the whole
+wear history in ONE existing `fetchWeatherRange(lat,lon,start,end)` call (it already
+splits the forecast window from the ERA5 archive); idempotent, and ERA5 **overwrites
+entries older than 15 days** because those were forecasts when logged. Window
+`WXLOG_DAYS` 400 → **1200**. `similarDays(wx, {contexts,limit,excludeDays,log,dayMap,
+today,trips})` scores past wear-days `|Δmax| + 0.5|Δmin| + WX_WET_PENALTY(8)` on a
+wet/dry mismatch, **cuts anything over `WX_SIM_CUT`(15)** (a bad match is worse than
+none), drops the last 14 days and **all dated-trip days**, dedupes by look.
+`wxMemoryRowHtml(wx, contexts, {compact})` + `wireWxMemory(root)` render the
+"You've dressed for this before" strip in the **suggester** (above `#sgPreview`)
+and the **Tomorrow card** (`compact:true`). `itemWxProfile(id)` → 10th/90th
+percentile of maxT, needs `WX_PROFILE_MIN`(5) days, shows as "Usually worn 45°–62°"
+on the item photo view. Entry: a one-time Home card (`WX_BACKFILL_KEY`,
+`WX_SNOOZE_KEY`, gated on `wears.length > 100`) — **that card is the real entry
+point**; the Settings "Weather history" card is only the re-run hatch.
+
+② **MILESTONES** — `milestoneFor(rows)` returns at most one of six rungs, in order:
+`first` · `paidoff` (crossed under $1/wear; gifts excluded) · `rescued`
+(`MILESTONE_RESCUE_DAYS`=180) · `round` (`MILESTONE_ROUNDS` 10/25/50/100) ·
+`completeset` (every Available pair of Shoes worn this year, 3+ pairs) · `streak`
+(beats `kv "beststreak"`, min 5). **One per log, each key once ever** — seen-set in
+`kv "milestones"`; the cap is deliberate and was built in from the start.
+`logCelebration(rows, {defer})` computes + commits; `flushMilestone()` is drained by
+`openPostLogSheet`'s `close()` so a toast never lands under an open sheet (it
+replaces "Logged ✓" but **never** the Undo chip). `unmarkLastMilestone()` runs in
+`undoLoggedWears` so a mis-tap can't permanently spend "first outing". Wired at all
+five wear-create sites.
+
+③ **WEEKLY RHYTHM** — `weeklyRhythm(wearRows?)` → `Map(dow → {contexts, n})`, up to
+`RHYTHM_MAX_CTX`(2) above the existing `RHYTHM_MIN_DAYS`(3) floor; `rhythmFor(date,
+rhythm?)`. `weekdayTopContext` now just reads it, so there's **one** derivation.
+Week planner shows unplanned days' usual contexts muted+italic; `openDayPlanSheet`
+names them and seeds the FIRST entry with them — **the tap is the acceptance,
+nothing about the rhythm is ever auto-saved**. `weekRhythmBlockHtml()` = the "Your
+week" strip in Looks Stats (`data-sa="looks:contexts"`); renders "" when no weekday
+clears the floor. ⚠️ There is no `presetContexts` arg — the sheet derives it itself.
+
+④ **HOME ATTENTION HIERARCHY** (unparked from 2026-07-19) — catch-up / laundry /
+backup / weather-offer compete for **ONE** slot in that priority order; the rest
+fold into a "N more things ›" line (`_homeAttnOpen`, session-only). In trip mode the
+dash is the one thing, so all four fold. **The log CTA and the Tomorrow card are
+deliberately NOT in the group** — they're the daily loop, not interruptions.
+
+⑤ **CLOSET KEYWORD SEARCH** — it had been gone since the filter unification
+(`openSearch()` is still just the funnel). `closetSearchQ` (null = not searching) +
+`itemMatchesText(i, q)` (**multi-term AND** over `CLOSET_SEARCH_FIELDS` + tags) +
+`closetSearchMatches(q)`. Magnifier `#clKeyword` in `clToolbar`, beside the funnel;
+live results into `#clSearchResults`. **Scope is always the whole lens, never the
+folder you're standing in** — search means search my closet, the funnel narrows.
+Rides the surviving `searchResults` plumbing; `siblingItems()` walks the results and
+`closetBack()` closes the search before unwinding the folder stack. The pickers'
+`_capPickFilter` was repointed at the same matcher.
+
+⑥ **MENDING** — `MEND_TAG`/`isMending`/`setMending` (same sentinel pattern as
+`no-suggest`/`layer`/`tol:`). `mendLineHtml(i)` is one line on the item **photo
+view** — the only entry point, on purpose: the sole moment this gets tagged is when
+the button comes off, and she will never run a mending audit. `_scopedMending()` +
+`renderClosetMend()` + `closetMend` mirror the Worn tray exactly (back / siblings /
+switchTab / capsule scope); the closet-root row **hides at zero**. Excluded from
+`suggestOutfits`' pool, its starvation count, and `_suggPool()` swap candidates.
+
+⑦ **YEAR IN PIXELS** — `statsView "pixels"` / `renderStatsPixelsPage()` /
+`pixelDayLevels(year)` / `statsPixelsYear`. 53×7 `.pxgrid`, each day shaded by
+derived formality as a 0.22→1.0 opacity ramp of `var(--accent)`; empty on
+`var(--panel)`. Cells are a **fixed 11px** with sideways scroll — `1fr` columns
+would be circular against the cells' own width. Pool is the whole year, so it uses
+`statsToolbar(..., hideFilter=true)` like Rotation.
+
+⑧ **ON THIS DAY on Home** — `onThisDayHtml(dateStr)` extracted from the calendar day
+view and reused; renders "" without a prior year, and sits **below** the folding
+group (delight, not attention).
+
+⑨ **TAXONOMY RENAME GUARD** — `TAXONOMY_LOCKED_SUBCATS` =
+`keys(WORKOUT_SLOTS) ∪ GEAR_CAND_SUBCATS`; renaming one now needs an explicit
+confirm naming the consequence. **Doc correction: `LAUNDRY_LOADS` was never at
+risk** — it's keyed on `color_family`, which the taxonomy editor never touches.
+
 **"Rotation drill-in + wears-by-day" (2026-07-24 r1) — SHIPPED.** Two asks.
 ① **`countByDay(rows, keyFn)`** (beside `ctxArr`) + an app-wide audit enforcing
 **a wear is a DAY, never a row** — see the Known gotchas entry, which is the
@@ -445,16 +527,9 @@ items closed (`openItemFrom(id, browseCtx)` snapshot/restore). No schema changes
 
 **"Hearts + Filters Everywhere" v2 is FULLY SHIPPED, all 8 waves (W0–W7), through
 `2026-07-06 r7`.** The 2026-06 "Unified Experience" build (W0–W5) and filter
-unification Phases 2+3 are also fully shipped. **▶ NEXT UP: Round C "Memory +
-Payback"** — planned 2026-07-25 from a product review, decisions LOCKED, **nothing
-built yet**. Spec + build order + line refs: `ROADMAP.md`'s Round C section (start
-at Step 1). Headline: spend the two idle assets — the `wxlog` weather history
-(written daily since 2026-07-20, **read by nothing**) becomes a "you've dressed for
-this before" precedent engine seeded by a one-shot ERA5 backfill; and the log moment
-starts paying her back via milestone toasts. Then weekly-rhythm planner pre-fill,
-Home attention hierarchy, and a mechanical tail (free-text closet search — it does
-not exist today — mending tag, year-in-pixels, On-this-day, taxonomy-rename guard).
-No schema changes; new `kv` keys only.
+unification Phases 2+3 are also fully shipped. **▶ NEXT UP:** nothing scheduled —
+the agreed next round is the palette page + shopping gap / replacement watch (see
+ROADMAP.md's Round C deferred list); ask the user before starting new work.
 
 Top-of-`<script>` config, then logically grouped sections:
 
@@ -840,7 +915,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-24 r1`. ⚠️ Since 2026-07-17 the version lives in TWO
+  Currently `2026-07-25 r8`. ⚠️ Since 2026-07-17 the version lives in TWO
   places that must stay in lockstep: the `APP_VERSION` constant AND the
   `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
