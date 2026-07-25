@@ -746,6 +746,22 @@ function run() {
     return eq(pool.map(i => i.id), ["ok"]);
   });
 
+  // ---- Round C: year in pixels ----
+  t("pixelDayLevels: one entry per logged DAY of that year, not per wear row", () => {
+    const savedWears = W.wears, savedItems = W.items, savedById = W.itemById;
+    W.items = [{ id: "p1", category: "Tops", subcategory: "Tee shirts", formality: [3] },
+               { id: "p2", category: "Bottoms", subcategory: "Jeans", formality: [3] }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.wears = [
+      { item_id: "p1", worn_on: "2025-03-04" }, { item_id: "p2", worn_on: "2025-03-04" },
+      { item_id: "p1", worn_on: "2025-03-05" },
+      { item_id: "p1", worn_on: "2024-03-04" },   // different year
+    ];
+    const m = W.pixelDayLevels(2025);
+    W.wears = savedWears; W.items = savedItems; W.itemById = savedById;
+    return eq([m.size, m.has("2025-03-04"), m.has("2024-03-04")], [2, true, false]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

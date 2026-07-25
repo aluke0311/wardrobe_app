@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r6">
+<meta name="app-version" content="2026-07-25 r7">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -419,6 +419,12 @@
   .gtile-laun { position: absolute; top: 4px; left: 4px; font-size: 13px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0,0,0,.3)); pointer-events: none; z-index: 2; }
   /* stylebook-style section cards */
   .stats-sec { margin: 18px 14px 0; }
+  /* A year is 53 columns wide; on a phone that scrolls sideways rather than
+     shrinking cells below a tappable size. Fixed track sizes — 1fr columns
+     would be circular against the cells' own width. */
+  .pxgrid { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 11px); grid-auto-columns: 11px; gap: 3px; width: max-content; }
+  .pxgrid i { display: block; width: 11px; height: 11px; border-radius: 2px; }
+  .pxgrid i[data-px] { cursor: pointer; }
   .stats-sec-hdr { background: var(--panel2); border-radius: 14px 14px 0 0; padding: 13px 16px; display: flex; flex-direction: column; }
   .stats-sec-hdr .t { font: 600 19px/1.25 var(--serif); color: var(--text); }
   .stats-sec-hdr .s { font-size: 13px; color: var(--muted); margin-top: 1px; }
@@ -1360,13 +1366,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r6";
+const APP_VERSION = "2026-07-25 r7";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New \ud83e\udea1 Needs mending \u2014 tap it on any piece the moment a button goes, and it waits in a Mending tray instead of in your head",
-  "Pieces waiting on a repair stay out of outfit suggestions until you mark them mended",
-  "The Mending row only appears in the closet when something is actually waiting",
+  "New in Style Stats: \u201cYear in pixels\u201d \u2014 a whole year as one picture, a square per day, shaded by how dressed up you were",
+  "Tap any square to open that day; switch years with the chips at the top",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -10821,6 +10826,7 @@ function renderStats() {
   if (statsView === "gap")         { renderStatsGapPage();      return; }
   if (statsView === "rotation")    { renderStatsRotationPage(); return; }
   if (statsView === "wrapped")     { renderStatsWrapped();      return; }
+  if (statsView === "pixels")      { renderStatsPixelsPage();  return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -11231,6 +11237,7 @@ function renderStatsMain() {
         <div class="stats-sec-hdr"><div class="t">Year in Review</div><div class="s">Your closet, wrapped</div></div>
         <div class="stats-sec-body">
           ${row(String(new Date().getFullYear()), "The year so far — most worn, best $/wear, dead weight", "wrapped")}
+          ${row("Year in pixels", "Every day you logged, shaded by how dressed up it was", "pixels")}
         </div>
       </div>
 
@@ -11303,6 +11310,9 @@ function renderStatsMain() {
       }
       if (action === "wrapped") {
         statsView = "wrapped"; statsWrappedYear = null; renderStats(); return;
+      }
+      if (action === "pixels") {
+        statsView = "pixels"; statsPixelsYear = null; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -11638,6 +11648,71 @@ function renderStatsGapPage() {
    Spotify-Wrapped for the closet: pure derivation over one calendar year,
    viewable any time (current year = "so far"). No capture, no storage. */
 let statsWrappedYear = null;
+let statsPixelsYear = null;
+
+/* ---- Year in pixels (Round C, 2026-07-25) ---------------------------------
+   A year of logging as one picture: 53 columns of 7 days, shaded by how dressed
+   up that day was. Every other stats view is a list or a number; this is the
+   only one that shows the SHAPE of a year — the summer of tee shirts, the run
+   of concerts, the gaps where logging lapsed.
+   Deliberately not filtered by statsPool(): it's the whole year or nothing. */
+function pixelDayLevels(year) {
+  const out = new Map();   // date → 1..8 (derived formality of that day)
+  for (const [date, rows] of wearDayMap()) {
+    if (!date.startsWith(String(year))) continue;
+    const lvl = deriveWearFormality([...new Set(rows.map(r => r.item_id))]);
+    out.set(date, lvl || 3);
+  }
+  return out;
+}
+
+function renderStatsPixelsPage() {
+  const year = statsPixelsYear || +todayStr().slice(0, 4);
+  const years = [...new Set(wears.map(w => +String(w.worn_on).slice(0, 4)).filter(y => y > 2000))].sort((a, b) => b - a);
+  const levels = pixelDayLevels(year);
+  const jan1 = new Date(year, 0, 1);
+  const dec31 = new Date(year, 11, 31);
+  // Grid is column-per-week, row-per-weekday, so the first column is padded to
+  // the weekday Jan 1 actually fell on.
+  const cells = [];
+  for (let k = 0; k < jan1.getDay(); k++) cells.push(`<i style="background:transparent"></i>`);
+  for (let d = new Date(jan1); d <= dec31; d.setDate(d.getDate() + 1)) {
+    const ds = localISO(d);
+    const lvl = levels.get(ds);
+    // Level 1 (Utility) shouldn't vanish, level 8 shouldn't be pure accent —
+    // ramp 0.22 → 1.0 across the ladder.
+    const style = lvl
+      ? `background:var(--accent);opacity:${(0.22 + (lvl - 1) / 7 * 0.78).toFixed(2)}`
+      : `background:var(--panel)`;
+    cells.push(`<i data-px="${ds}" style="${style}" title="${ds}${lvl ? " · " + esc(occLabel(lvl)) : ""}"></i>`);
+  }
+  const logged = levels.size;
+  const inYear = Math.round((Math.min(dec31, new Date()) - jan1) / 86400000) + 1;
+  const legend = [1, 3, 5, 6, 8].map(l =>
+    `<span style="display:inline-flex;align-items:center;gap:4px"><i style="width:10px;height:10px;border-radius:2px;display:inline-block;background:var(--accent);opacity:${(0.22 + (l - 1) / 7 * 0.78).toFixed(2)}"></i><span>${esc(occLabel(l))}</span></span>`).join("");
+
+  $("#statsBody").innerHTML = `
+    ${statsToolbar("Year in pixels", true, false, true)}
+    <div style="padding-bottom:32px">
+      ${years.length > 1 ? `<div class="cap-catbar" style="padding:8px 14px 0">${years.map(y =>
+        `<button class="cap-chip${y === year ? " on" : ""}" data-px-year="${y}">${y}</button>`).join("")}</div>` : ""}
+      <div style="padding:12px 14px 0;overflow-x:auto">
+        <div class="pxgrid">${cells.join("")}</div>
+      </div>
+      <div style="padding:10px 16px 0;font-size:13px;color:var(--muted)">
+        <b style="color:var(--text)">${logged}</b> of ${inYear} days logged${logged ? ` · ${Math.round(logged / inYear * 100)}%` : ""}
+      </div>
+      <div style="padding:8px 16px 0;display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:var(--muted)">${legend}</div>
+      <div style="padding:10px 16px 0;font-size:12px;color:var(--muted)">Each square is a day, shaded by how dressed up it was. Tap one to open it.</div>
+    </div>`;
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-px-year]").forEach(b => {
+    b.onclick = () => { statsPixelsYear = +b.dataset.pxYear; renderStats(); };
+  });
+  $("#statsBody").querySelectorAll("[data-px]").forEach(el => {
+    el.onclick = () => { switchTab("calendar"); calendarDay = el.dataset.px; renderCalendarDay($("#calendarBody")); };
+  });
+}
 
 function longestStreak(dateSet) {
   const arr = [...dateSet].sort();
