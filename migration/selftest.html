@@ -776,6 +776,42 @@ function run() {
               [true, true, false]);
   });
 
+  // ---- Palette: colours owned vs colours worn ----
+  const palPool = [
+    { id: "b1", color_family: "Black", status: "Available" },
+    { id: "b2", color_family: "Black", status: "Available" },
+    { id: "g1", color_family: "Beige", status: "Available" },
+    { id: "g2", color_family: "Beige", status: "Available" },
+    { id: "n1", status: "Available" },                        // no colour set
+  ];
+  t("buildPaletteStats: counts PIECE-DAYS, not wear rows and not wear days", () => {
+    // one day, two black pieces → 2 black piece-days (a per-item closet share
+    // has to be compared against a per-item wear share)
+    const ws = [{ item_id: "b1", worn_on: "2026-06-01" }, { item_id: "b2", worn_on: "2026-06-01" },
+                { item_id: "b1", worn_on: "2026-06-01" }];   // duplicate row, must not double
+    const r = W.buildPaletteStats(palPool, ws);
+    const black = r.rows.find(x => x.color === "Black");
+    return eq([black.pieceDays, r.totalWorn], [2, 2]);
+  });
+  t("buildPaletteStats: colourless pieces are excluded from both sides", () => {
+    const r = W.buildPaletteStats(palPool, [{ item_id: "n1", worn_on: "2026-06-01" }]);
+    return eq([r.totalOwned, r.totalWorn, r.rows.length], [4, 0, 2]);
+  });
+  t("buildPaletteStats: own-heavy vs wear-heavy colours sort by the gap", () => {
+    const ws = [{ item_id: "b1", worn_on: "2026-06-01" }, { item_id: "b2", worn_on: "2026-06-02" },
+                { item_id: "b1", worn_on: "2026-06-03" }, { item_id: "g1", worn_on: "2026-06-04" }];
+    const r = W.buildPaletteStats(palPool, ws);
+    // Black: owns 50%, wears 75% → over. Beige: owns 50%, wears 25% → under.
+    return eq([r.rows[0].color, r.rows[0].delta > 0, r.rows[1].color, r.rows[1].delta < 0,
+               r.topOwned[0], r.topWorn[0]],
+              ["Black", true, "Beige", true, "Black", "Black"]);
+  });
+  t("buildPaletteStats: a never-worn colour still appears, at zero", () => {
+    const r = W.buildPaletteStats(palPool, [{ item_id: "b1", worn_on: "2026-06-01" }]);
+    const beige = r.rows.find(x => x.color === "Beige");
+    return eq([beige.pieceDays, beige.wearShare, beige.index], [0, 0, 0]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

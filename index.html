@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r8">
+<meta name="app-version" content="2026-07-25 r9">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1366,12 +1366,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r8";
+const APP_VERSION = "2026-07-25 r9";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "\u201cOn this day\u201d now appears on Home too, on the days you wore something a year or more ago",
-  "Renaming a type that workout or gear suggestions depend on now warns you first, instead of quietly breaking them",
+  "New in Style Stats: \u201cPalette\u201d \u2014 the colours you own, side by side with the colours you actually wear",
+  "Tells you which families punch above their weight and which just sit in the closet; tap any colour to see those pieces",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -10836,6 +10836,7 @@ function renderStats() {
   if (statsView === "rotation")    { renderStatsRotationPage(); return; }
   if (statsView === "wrapped")     { renderStatsWrapped();      return; }
   if (statsView === "pixels")      { renderStatsPixelsPage();  return; }
+  if (statsView === "palette")     { renderStatsPalettePage(); return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -11239,6 +11240,7 @@ function renderStatsMain() {
           ${weekRhythmBlockHtml()}
           ${row("Contexts", contextsRowSub, "looks:contexts")}
           ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
+          ${row("Palette", "The colours you own vs the colours you wear", "palette")}
         </div>
       </div>
 
@@ -11322,6 +11324,9 @@ function renderStatsMain() {
       }
       if (action === "pixels") {
         statsView = "pixels"; statsPixelsYear = null; renderStats(); return;
+      }
+      if (action === "palette") {
+        statsView = "palette"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -11613,6 +11618,119 @@ function buildGapStats() {
   }
   rows.sort((a, b) => b.delta - a.delta);
   return { rows, totalCtx, availN: avail.length };
+}
+
+/* ---- PALETTE (2026-07-25) -------------------------------------------------
+   Closet-vs-life, but for colour: the share of pieces you OWN in each family
+   against the share of pieces you actually WEAR. Most people own one palette
+   and wear another, and nothing in the app said so out loud.
+
+   Unit is **piece-days** — each piece counted once per day it went out — NOT
+   wear rows and NOT wear days. That's the only unit that compares like with
+   like against a per-item closet share (see the "a wear is a DAY" gotcha:
+   rows would double-count, and wear-days would flatter accent colours that
+   only ever show up one piece at a time). Same unit `buildWrappedStats` calls
+   `pieceDays`. The UI never calls this number "wears". */
+function buildPaletteStats(pool = null, wearRows = null) {
+  const avail = pool || items.filter(i => itemStatus(i) === "Available");
+  const byId = new Map(avail.map(i => [i.id, i]));
+  const owned = new Map(), worn = new Map();
+  for (const i of avail) {
+    const c = i.color_family || null;
+    if (!c) continue;
+    owned.set(c, (owned.get(c) || 0) + 1);
+  }
+  const seen = new Set();
+  for (const w of (wearRows || wears)) {
+    if (!w.worn_on) continue;
+    const i = byId.get(w.item_id);
+    if (!i || !i.color_family) continue;
+    const k = `${w.item_id}|${w.worn_on}`;      // one piece, one day, once
+    if (seen.has(k)) continue;
+    seen.add(k);
+    worn.set(i.color_family, (worn.get(i.color_family) || 0) + 1);
+  }
+  let totalOwned = 0, totalWorn = 0;
+  for (const n of owned.values()) totalOwned += n;
+  for (const n of worn.values()) totalWorn += n;
+  const rows = [...new Set([...owned.keys(), ...worn.keys()])].map(c => {
+    const o = owned.get(c) || 0, p = worn.get(c) || 0;
+    const ownShare = totalOwned ? o / totalOwned : 0;
+    const wearShare = totalWorn ? p / totalWorn : 0;
+    return { color: c, owned: o, pieceDays: p, ownShare, wearShare,
+             delta: wearShare - ownShare,
+             index: ownShare ? wearShare / ownShare : null };
+  }).sort((a, b) => b.delta - a.delta);
+  return { rows, totalOwned, totalWorn,
+           topOwned: [...owned.entries()].sort((a, b) => b[1] - a[1])[0] || null,
+           topWorn: [...worn.entries()].sort((a, b) => b[1] - a[1])[0] || null };
+}
+
+function renderStatsPalettePage() {
+  const g = buildPaletteStats(statsPool());
+  const pct = (x) => `${Math.round(x * 100)}%`;
+  const stack = (key) => {
+    const rows = [...g.rows].filter(r => r[key] > 0).sort((a, b) => b[key] - a[key]);
+    if (!rows.length) return `<div style="height:100%;background:var(--panel)"></div>`;
+    return rows.map(r => `<span title="${esc(r.color)}" style="flex:${(r[key] * 1000).toFixed(1)};background:${colorHex(r.color)};display:block;height:100%"></span>`).join("");
+  };
+  const barRow = (label, key) => `<div style="padding:0 18px 12px">
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:5px">${label}</div>
+    <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--line)">${stack(key)}</div>
+  </div>`;
+
+  const verdict = (g.topOwned && g.topWorn)
+    ? (g.topOwned[0] === g.topWorn[0]
+        ? `<div style="padding:14px 18px 10px;font-size:14px;line-height:1.5">You own the most <b>${esc(g.topOwned[0])}</b> — and you wear it the most too. The palette matches the life.</div>`
+        : `<div style="padding:14px 18px 10px;font-size:14px;line-height:1.5">You own the most <b>${esc(g.topOwned[0])}</b>, but you wear the most <b>${esc(g.topWorn[0])}</b>.</div>`)
+    : "";
+
+  const rowsHtml = g.rows.map(r => {
+    const chip = r.owned === 0
+      ? `<span style="font-size:11px;color:var(--muted)">none owned</span>`
+      : r.pieceDays === 0
+      ? `<span style="font-size:11px;font-weight:700;color:var(--danger)">never worn</span>`
+      : r.delta >= 0.03
+      ? `<span style="font-size:11px;font-weight:700;color:#2f9e5e">punches above its weight</span>`
+      : r.delta <= -0.03
+      ? `<span style="font-size:11px;font-weight:700;color:var(--danger)">sits in the closet</span>`
+      : `<span style="font-size:11px;font-weight:600;color:var(--muted)">even</span>`;
+    const bar = (share, color) => `<div style="height:7px;border-radius:4px;background:var(--line);overflow:hidden;flex:1">
+      <div style="height:100%;width:${Math.min(100, Math.round(share * 100))}%;background:${color}"></div></div>`;
+    return `<button data-pal="${esc(r.color)}" style="display:block;width:100%;text-align:left;padding:11px 18px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px">
+        <span class="swatch" style="background:${colorHex(r.color)};flex:none"></span>
+        <span style="font-size:14.5px;font-weight:600;flex:1">${esc(r.color)}</span>
+        ${chip}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        ${bar(r.ownShare, "var(--muted)")}
+        <span style="font-size:11.5px;color:var(--muted);width:118px;flex:none">${pct(r.ownShare)} of the closet</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${bar(r.wearShare, "var(--accent)")}
+        <span style="font-size:11.5px;color:var(--muted);width:118px;flex:none">${pct(r.wearShare)} of what you wear</span>
+      </div>
+    </button>`;
+  }).join("");
+
+  $("#statsBody").innerHTML = statsToolbar("Palette", true, false)
+    + (g.rows.length
+      ? verdict + barRow("Your closet", "ownShare") + barRow("What you actually wear", "wearShare")
+        + `<div style="padding-top:2px">${rowsHtml}</div>
+        <div class="stats-note">"What you wear" counts each piece once per day it went out, so it compares like with like against a closet counted in pieces. Both columns add to 100%. Pieces with no colour set are left out entirely.</div>`
+      : `<div class="placeholder"><b>No colours set yet</b><div>Give pieces a colour family and this page fills itself in.</div></div>`);
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-pal]").forEach(el => {
+    el.onclick = () => {
+      const c = el.dataset.pal;
+      statsGridItems = statsPool().filter(i => i.color_family === c);
+      statsGridTitle = c;
+      statsFromField = false; statsFromReport = false; statsListKey = null; statsSubtitleFn = null;
+      statsView = "grid";
+      renderStats();
+    };
+  });
 }
 
 function renderStatsGapPage() {
