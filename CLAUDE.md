@@ -11,7 +11,10 @@ by the gap, tapping into that colour's grid. ⚠️ **Unit is PIECE-DAYS** (each
 once per day it went out) — the only unit comparable to a per-item closet share;
 rows would double-count and wear-DAYS would flatter accent colours worn one piece
 at a time. **Never call it "wears" in the UI.** Colourless pieces excluded from
-both sides.
+both sides. Keeps its funnel (its pool IS `statsPool()`); links across to the
+Colors report card, which answers a different question — Palette is about
+**proportion** (is the mix you own the mix you wear), the report card is about
+**per-piece performance**. They can disagree and both be right.
 ② **WHAT'S MISSING** — `buildThinSpots(pool?, wearRows?)` / `buildMileage(pool?)` /
 `renderStatsMissingPage()` / `statsView "missing"`. **Thin spots:** per context over
 `GAP_MIN_CTX_DAYS`(5), count level-covering Available pieces PER SLOT and report the
@@ -19,8 +22,9 @@ thinnest (`GAP_SLOT_FLOOR`=3); a context is only as served as its binding slot, 
 dresses count toward Tops AND Bottoms. **Mileage:** `MILEAGE_MIN_DAYS`(25)+ wear-days
 desc with age + $/wear — **explicitly not a wear-out prediction** (no durability
 model exists; the note says so). Read-only: the before-you-buy manual-entry check
-stays rejected. `contextFormalityLevel` gained an optional `wearRows` arg so the new
-functions are genuinely injectable.
+stays rejected. Uses the **full Available closet, not `statsPool()`**, and hides the
+funnel to match (r11 fix). `contextFormalityLevel` gained an optional `wearRows` arg
+so the new functions are genuinely injectable.
 
 **Round C "Memory + Payback" (2026-07-25, r1→r8) — SHIPPED, all 9 steps.**
 Reviewed and built the same day; one deploy per step. Selftest 52 → **80 cases,
@@ -935,7 +939,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-25 r10`. ⚠️ Since 2026-07-17 the version lives in TWO
+  Currently `2026-07-25 r11`. ⚠️ Since 2026-07-17 the version lives in TWO
   places that must stay in lockstep: the `APP_VERSION` constant AND the
   `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
@@ -1017,6 +1021,21 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   `wearCount`, `outfitWornCount`, `buildItemPerf`'s `itemWearIndex`. The only
   legitimate row count left is the Settings backup card ("N wear records" —
   deliberately relabeled, it's a table size, not a wear count).
+- **A stats page's funnel must match its pool — both directions** (2026-07-25 r11,
+  user-reported). `statsToolbar(..., hideFilter)` and the pool argument are ONE
+  decision, and getting them out of step lies to her either way: "What's missing"
+  hid the funnel but still passed `statsPool()` (invisible filter silently
+  narrowing the page), and "Closet vs Life" showed a funnel while `buildGapStats()`
+  ignored `statsFilter` entirely (decorative funnel). Rule: **whole-wardrobe pages
+  pass no pool AND `hideFilter=true`** (Rotation, What's missing, Closet vs Life,
+  Year in pixels); **filtered pages pass `statsPool()` and show the funnel**
+  (Palette, field/report pages). Never mix.
+- **Every `statsView = "grid"` entry point owns ALL the back-nav flags** (2026-07-25
+  r11, user-reported "back goes too far"). `statsNavBack` picks the return target
+  from `statsFromReport` / `statsFromPalette` / `statsFromField`, falling through to
+  `main`. A new drill-in that sets only its own flag lands correctly but leaves the
+  others stale for the NEXT drill-in — so every grid entry must set its own flag
+  true and the rest false. There are four such sites; grep `statsView = "grid"`.
 - **Never call `wearCountInRange` inside a sort comparator** (2026-07-21 r11) —
   it filters the whole `wears` array per call, so a comparator makes it
   items × wears × log(items) (~34M row reads on the real closet, ~1s of frozen
