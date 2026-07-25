@@ -1,11 +1,240 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-25 r10**. Round C "Memory + Payback" SHIPPED (all 9
+> Current version: **2026-07-25 r13**. Round C "Memory + Payback" SHIPPED (all 9
 > steps, r1→r8), then its own deferred list SHIPPED too (r9 Palette, r10 What's
-> missing). ▶ NEXT UP: nothing scheduled — ask the user before starting new work.
-> The only carried-over item is the **Formulas remainder**, which is gated on
+> missing). ▶ NEXT UP: **Round D "Where You Were"** — planned by Fable 2026-07-25,
+> decisions locked, spec below; ready for Opus to build.
+> The only other carried-over item is the **Formulas remainder**, which is gated on
 > tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
+
+---
+
+## ▶ PLANNED — Round D "Where You Were" (season × weather truth)
+
+**Planned by Fable 2026-07-25 from her ask; decisions locked with the user —
+do not re-litigate. Written for Opus to execute mechanically: every judgment
+call is resolved in this spec.** Read CLAUDE.md's Round C entry first — this
+round builds directly on the WEATHER MEMORY machinery (`js/06-home.js`).
+
+### The ask, and the insight underneath it
+
+Her ask: *flag where an item's season and its "usually worn" weather contradict —
+might mean the season is wrong, might mean the weather is wrong (e.g. St Lucia at
+Christmastime) — and let me log locations & dates.*
+
+The insight that shapes the whole round: **`backfillWxLog()` reconstructs weather
+at her HOME location for every date.** A wear-day in St Lucia is recorded with
+home December weather. So the weather record is corrupted for away days, which
+means (a) `itemWxProfile` is polluted (a sundress worn on warm-winter trips gets
+cold temps in its band), (b) any season/weather contradiction detector built on
+the raw log would argue from bad evidence, and (c) the existing `similarDays`
+trip-exclusion was really a workaround for this corruption. Fix the record
+first, then detect contradictions, then spend the payoff.
+
+### Locked decisions (user, 2026-07-25)
+
+1. **Away wears DO count toward an item's temp profile** — with their true
+   local temps. "Usually worn 80°+" is about the item's temperature niche,
+   wherever that niche was visited.
+2. **Away wears DO count toward "you've dressed for this before"** — once their
+   weather is location-corrected, badged with the place name. This
+   deliberately supersedes Round C's blanket trip-exclusion in `similarDays`:
+   that exclusion existed because those days' recorded weather was home
+   weather; correction removes the reason. The only days still excluded are
+   away days the app CANNOT correct (a dated trip with no location).
+3. **Derived seasons go "fancy"**: an away wear-day maps to the home season its
+   *temperature* resembles (the St Lucia Christmas sundress derives as Summer,
+   not Winter). Calendar season is what the field *means*; temperature is what
+   it's *for*.
+4. **Layer 3 (temperature-eligible trip suggestions) is in scope this round**,
+   as the last step.
+5. She explicitly wants to **enter past travel dates** — most past trips do NOT
+   exist as dated capsules. The "Where you've been" editor (step 1) and the
+   audit's trip-guess cards (step 6) are both first-class entry points for
+   backfilling them, not afterthoughts.
+
+### Data model (no schema change — everything rides the existing `kv` table)
+
+- **`kvData("wherelog")`** = array of `{from, to, name, lat, lon}` — manually
+  entered away ranges. Dates ISO `YYYY-MM-DD`, inclusive. `name` is the display
+  string (fold geocode `admin1`/`country` in at save time, e.g. "Castries,
+  St Lucia"). Never pruned — history is the point.
+- **`wxlog` entries gain optional fields**: `{maxT, minT, code, away: 1,
+  loc: "St Lucia"}` on days corrected to an away location. Absence of `away`
+  = home weather, exactly today's shape — fully backward compatible.
+- **`kv "wxaudit_ok"`** = `{itemId: "<JSON of items.season at dismissal>"}` —
+  the "it's fine" seen-set. A flag is suppressed while the item's explicit
+  season is unchanged from the stored signature; editing the season re-arms it.
+
+- **`awayRanges()`** (new, `js/06-home.js` beside `wxLog`) — the single derived
+  reader every consumer uses: dated trips' locations ∪ wherelog, as
+  `[{from, to, name, lat, lon, src: "trip"|"log"}]`. For a capsule: each
+  location with its own `from`/`to` uses those (clamped to trip dates); a
+  single location without `from`/`to` covers the whole trip; **multiple
+  locations all missing `from`/`to` → contribute NO ranges** (ambiguous —
+  those days stay uncorrectable, and `similarDays` will exclude them).
+  Trips first, then wherelog, so a wherelog entry overwrites a trip's weather
+  where they overlap (applied in order during backfill).
+
+### Steps — one deploy each (deploy-wardrobe skill), dependency order
+
+**Step 1 — Wherelog + editor.** `WHERELOG_KEY = "wherelog"` (const beside the
+WX_ constants). `awayRanges()` as specced above. Settings gains a **"Where
+you've been"** card (below the Weather history card, `js/19-wiring.js`
+`renderSettings`): lists `awayRanges()` newest-first — trip-sourced rows
+labeled "· from trip" and not deletable there; wherelog rows get a ✕. "+ Add
+somewhere" opens **`#whereSheet`** (new sheet wrapper in `index.html`; ⚠️ add
+the id to `uiCanRefetch()`'s wrapper list; open/close ONLY via
+`showSheet`/`hideSheet`): text input → `geocodeLocation(q)` (exists,
+`js/18-weather.js`) result list → pick → from/to date inputs (validate
+`from <= to`, both required, and `to` not in the future) → Save appends to
+kv wherelog. Accept `{from, to}` prefill args — step 6's trip-guess cards use
+them. Overlapping ranges are allowed silently (later wherelog entries win by
+apply order). No weather fetch yet — that's step 2.
+
+**Step 2 — Location-true weather.** Extract the merge in `backfillWxLog` into a
+**pure `mergeWxDays(log, fetched, {today, keepAfter, away, loc, floor})`**
+(returns `{log, n}`, no globals — selftest-facing). Then: `backfillWxLog()`
+gains a second pass — for each `awayRanges()` range intersecting
+`[floor, today]`, `fetchWeatherRange(r.lat, r.lon, clampedFrom, clampedTo)` and
+merge with `{away: 1, loc: r.name}`, **unconditionally overwriting** those days
+(the 15-day forecast-protection guard applies only to home days; on an away day
+the home forecast is wrong by construction). New **`backfillAwayRange(r)`** =
+fetch + merge + `kvSet` for one range; call it fire-and-forget after every
+wherelog save in step 1's sheet (toast "Weather corrected for N days"). Also
+call the full `backfillWxLog()` on the existing Settings button as today —
+idempotency already holds. Daily live logging (`loadHomeWeather`) is untouched:
+if she's traveling *today*, trip mode + a dated trip will correct it on the
+next backfill; not worth live plumbing.
+
+**Step 3 — Season bands + fancy derivation.**
+- **`seasonBands(log?)`** (`js/06-home.js`): over non-away log days, per
+  calendar season: `{p10, p25, median, p75, p90, n}` of `maxT`. Memoize on the
+  wxlog object reference (`_seasonBands`, recompute when `wxLog()` identity
+  changes). A season with `n < 15` returns null and every consumer falls back
+  to calendar behavior for it.
+- **`effectiveSeasonOf(dateStr, log?, bands?)`**: if `log[date]?.away` and
+  bands are usable → the season minimizing `|maxT − bands[s].median|`; else
+  `seasonOf(dateStr)`.
+- **`itemSeasonSet(i, wearRows?, log?, bands?)`** (`js/12-looks.js`): same
+  optional-args pattern `contextFormalityLevel` got in Round C. Swap
+  `seasonOf(w.worn_on)` → `effectiveSeasonOf(w.worn_on, log, bands)`. Hot
+  filter path — the per-call cost is one object lookup + ≤4 compares; bands
+  are memoized, do NOT rebuild them per item. (12-looks loads after 06-home;
+  call-time use is fine per the load-order contract.)
+- `itemWxProfile` needs **no code change** — it reads temps from the log, which
+  step 2 made true. Note this in its comment.
+
+**Step 4 — `similarDays` inclusion rule.** Replace the blanket trip-range
+exclusion (`js/06-home.js:113-121`) with: build the away-range list from
+`awayRanges()` (keep the injectable `trips` arg working — rename it `ranges`,
+update the selftest fixture); **exclude a date only if it falls in a range AND
+`log[date]?.away` is not set** (i.e. known-away but uncorrected). Corrected
+away days flow through and carry `loc` into the result row;
+`wxMemoryRowHtml` appends ` · ${loc}` to the tile's date/temp line when
+present. Update the comment — the locked decision it cites is superseded by
+this round's decision 2.
+
+**Step 5 — The detector.** Pure, injectable, in `js/06-home.js` after
+`itemWxProfile`. Constants: `WXA_MIN_DAYS = 6` (min weather-matched wear-days
+to judge an item), `WXA_CAL_SHARE = 0.2`, `WXA_TEMP_MARGIN = 3` (°F),
+`WXA_GAP = 3` / `WXA_RUN_MIN = 2` (trip clustering).
+
+`buildSeasonWxFlags({pool?, wearRows?, log?, bands?, ranges?, dismissed?})` →
+`{flags, tripGuesses}`:
+- Per Available item with an **explicit** `season` and ≥ `WXA_MIN_DAYS`
+  distinct weather-matched wear-days (⚠️ a wear is a DAY — dedupe `worn_on`):
+  - **`calendar` flag**: share of wear-days whose `effectiveSeasonOf` lands in
+    the claimed set < `WXA_CAL_SHARE`. Evidence: "Marked Winter — but only 1 of
+    14 worn days felt like winter."
+  - **`temp` flag**: item's worn-temp p10 > (max over claimed seasons' band
+    p90) + `WXA_TEMP_MARGIN` → worn hotter; or item's p90 < (min claimed band
+    p10) − margin → worn colder. Evidence: "Marked Summer — usually worn
+    28°–49°; your summers run 68°–90°." Skip seasons whose band is null.
+  - An item gets at most ONE flag (`temp` wins over `calendar` — it's the
+    stronger evidence). Suppress if `dismissed[itemId] ===
+    JSON.stringify(i.season)`.
+  - Items with NO explicit season get no flag — decision 3 already self-heals
+    their derivation.
+- **`tripGuesses`**: pool every flagged item's *contradicting* days (the days
+  outside the claimed bands) that are NOT already inside `awayRanges()`; sort;
+  greedy-cluster with gaps ≤ `WXA_GAP` days; keep clusters with ≥
+  `WXA_RUN_MIN` distinct dates → `{from, to, dates, itemIds}`. This is the
+  "might mean the weather is wrong" branch made automatic: contradicting days
+  that cluster into one date window across items look like a trip, not thirteen
+  mislabeled garments.
+
+Session cache `wxAuditFlags()`: memoize on the stamp
+`` `${wears.length}:${Object.keys(wxLog()).length}:${items.length}` `` — cheap
+and safe; season edits bust it via the length-stable stamp? No — they don't, so
+ALSO null `_wxAudit` in `saveField` when `field === "season"` and in the two
+audit-resolution actions. That's 3 explicit sites; grep confirms.
+
+**Step 6 — Surfaces + resolutions.**
+- `runDataHealthCheck()` (`js/19-wiring.js:328`) gains a row: "Season vs
+  weather: N items look off" → **`openSeasonAuditSheet()`** (`#wxAuditSheet`,
+  same index.html + `uiCanRefetch` chores as step 1).
+- Sheet layout, top to bottom: **trip-guess cards first** ("Were you away
+  Dec 20–27, 2025? 4 items were worn in weather that doesn't match here." →
+  tap opens `#whereSheet` prefilled with that range; on save, the audit
+  recomputes and those flags dissolve on their own — that's the payoff moment).
+  Then per-item rows: thumb (`thumbHtml`), name, the evidence sentence, and
+  two actions: **"Edit season"** → `openFieldEdit(id, "season")`; **"It's
+  fine"** → write `wxaudit_ok[itemId] = JSON.stringify(i.season)`, re-render.
+- Item photo view (`js/09-item-detail.js:252-255`, beside the "Usually worn"
+  line): when `wxAuditFlags()` has this item, a warn line
+  ("⚠ Marked Winter, usually worn 70°+") that opens the audit sheet. Muted
+  styling, `var(--muted)` — this is an audit note, not an alarm; **no
+  hardcoded colors** (token rule).
+- No Home card, no nudge. This surfaces only where she goes looking.
+
+**Step 7 — Temperature-eligible suggestions (Layer 3).** The existing flaw: a
+December St Lucia trip's planner passes `season = seasonOf(tripDate)` =
+"Winter", and `inSeason` filters the sundress out of the pool before the wx
+override in `scoreCombo` ever sees the 84° forecast. Fix:
+**`inSeasonWx(i, season, wx)`** (`js/12-looks.js` beside `inSeason`) =
+`inSeason(i, season) || (wx?.maxT != null && p = itemWxProfile(i.id) && wx.maxT
+>= p.lo − WXA_RESCUE_MARGIN && wx.maxT <= p.hi + WXA_RESCUE_MARGIN)`;
+`WXA_RESCUE_MARGIN = 5`. **Rescue-only — it widens the pool, never narrows
+it**; items without a profile behave exactly as today. Use it in
+`suggestOutfits`' pool filter, `swapSuggestionPiece`, and `addSuggestionLayer`
+wherever both `season` and `wx` are in hand. No UI change.
+
+**Step 8 — Selftest + docs.** New cases (injectable args throughout; remember
+the iframe-realm `W.Set` gotcha and: **write the case AND RUN it in the same
+session** — the 89/90 lesson; if there is genuinely no browser this session,
+`jsc` parse-check per [[verify-cli-not-preview]] and say plainly shipped ≠
+tested):
+- `seasonBands` percentile math on a synthetic log; `n < 15` → null band.
+- `effectiveSeasonOf`: away 85° December day → Summer; same day non-away →
+  Winter; null bands → calendar fallback.
+- `itemSeasonSet` fancy path: 5 away winter wears at 85° derive Summer.
+- `mergeWxDays`: away overwrite beats the 15-day forecast guard; home merge
+  still respects it; floor pruning.
+- `similarDays`: corrected away day included with `loc`; uncorrected trip day
+  excluded; home behavior unchanged.
+- `buildSeasonWxFlags`: one fixture each for `calendar` flag, `temp` flag
+  (both directions), temp-beats-calendar precedence, dismissal suppression,
+  and a trip-guess cluster (3 items, one December week).
+- `inSeasonWx`: rescue inside margin, no rescue without profile, never
+  narrows.
+Then: CLAUDE.md Round D entry (implementation names + the superseded
+`similarDays` decision), flip this section to ✅ SHIPPED with deviations noted,
+memory update per [[close-out-routine]].
+
+### Gotchas that will bite this round specifically
+
+- Two new sheet wrappers → both ids into `uiCanRefetch()`, open/close only via
+  `showSheet`/`hideSheet`.
+- `?v=` cache-bust on all touched `js/` tags + the 3-way version lockstep —
+  the deploy skill does it; don't hand-roll.
+- `itemSeasonSet` is called inside `matchesSeason` inside filter loops — bands
+  must stay memoized; never rebuild per item.
+- `similarDays`' injectable `trips` arg is pinned by existing selftest cases —
+  update fixtures in the same commit as the rename.
+- Open-Meteo costs: one `fetchWeatherRange` per away range, once, ever
+  (idempotent). No new recurring fetches.
 
 ---
 
