@@ -1245,8 +1245,19 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed`. **Run it before every deploy; add a test whenever a session's ad-hoc
-console verification proves something worth keeping true.** Gotchas baked in:
-app globals are top-level const/let (invisible on `contentWindow` — the harness
-injects an eval-bridge Proxy), and Sets passed into app code must be created in
-the IFRAME's realm (`W.Set`) or `instanceof Set` fails.
+passed` — currently **90/90** (2026-07-25). **It is a deploy gate for logic
+changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
+parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
+skill. **Add a test whenever a session's ad-hoc console verification proves
+something worth keeping true.** Gotchas baked in: app globals are top-level
+const/let (invisible on `contentWindow` — the harness injects an eval-bridge
+Proxy), and Sets passed into app code must be created in the IFRAME's realm
+(`W.Set`) or `instanceof Set` fails. The iframe src is assigned from JS with a
+timestamp, never hardcoded — a fixed URL let the preview browser's cache score a
+green run against the PREVIOUS deploy's code (fixed 2026-07-25).
+
+⚠️ **A test that has never been executed is not a test.** The harness sat at
+89/90 for a full round of deploys because cases were being written and never
+run: the r11 `statsNavBack` case drove a real re-render with no data behind it,
+so a working nav path scored red. Write the case AND run it, in the same
+session.

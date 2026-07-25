@@ -10,6 +10,65 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
 
 ## Steps
 
+0. **Run the self-test — required for logic deploys, skipped for cosmetic ones.**
+   The user does not want a browser opened for every push (preference 2026-07-20,
+   narrowed 2026-07-25), so this is conditional. Decide it mechanically, not by
+   feel — read the actual diff (`git diff`, plus staged/unstaged):
+
+   **SKIP** only when every changed line is confined to:
+   - the `<style>` block (pure CSS), or
+   - `APP_VERSION` / `<meta name="app-version">` / `WHATS_NEW`, or
+   - static markup or user-facing copy with no JS behaviour attached, or
+   - files that aren't `index.html` (docs, skills, migrations).
+
+   **RUN** for anything else. In particular, always run when the diff touches
+   derivations or state: wear/day counting, laundry, formality, suggestions,
+   stats pools and funnels, plans, capsules/trips, back-nav flags, filters.
+   **Mixed diff = run.** When genuinely unsure, run it — 20 seconds beats a
+   silent wrong number in her stats.
+
+   The run itself, when required — nothing ships on a red or unknown result:
+
+   1. `preview_start` with `{name: "wardrobe"}` (never `Bash` — dev servers go
+      through the preview tools). Note the returned `tabId`.
+   2. `navigate` that tab to
+      `http://localhost:4173/migration/selftest.html?v=<something-fresh>`.
+      The query string matters: the preview browser caches hard. (The harness
+      cache-busts its own iframe, so the app under test is always current.)
+   3. Read the result:
+      ```
+      javascript_tool: JSON.stringify({
+        summary: document.getElementById('summary').textContent,
+        fails: Array.from(document.querySelectorAll('#results li'))
+          .filter(li => li.textContent.startsWith('✗')).map(li => li.textContent)
+      })
+      ```
+   4. **Require `N/N passed` with an empty `fails` array.** Anything else —
+      including "Loading app…" (the app script failed to parse) or a missing
+      summary — stops the deploy. Fix the cause, re-run, then continue.
+   5. `preview_stop` with the `serverId`.
+
+   If a failure turns out to be a bug in the *test* rather than the app, say so
+   explicitly and fix the test in the same deploy — don't wave it through. A
+   test nobody runs is just a comment (that's how the harness sat at 89/90 with
+   a broken case for a full round of deploys, 2026-07-25).
+
+   **When you skip it**, still parse-check the inline script — a stray brace in
+   a CSS-only deploy would white-screen the app. Extract the `<script>` blocks
+   and run them through `new Function(src)` (parses without executing) under
+   JavaScriptCore:
+   `/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc`
+   — there is no `node`/`deno`/`bun` on this machine. Drive it from a short
+   Python script into the scratchpad.
+
+   Add a case to `migration/selftest.html` whenever a deploy proves something
+   worth keeping true — including the deploys where the gate was skipped. The
+   suite is only worth running because it keeps growing.
+
+   **Say which one you did** in the summary. "Selftest 90/90" and
+   "parse-checked, selftest skipped (CSS-only)" are different claims — never let
+   "shipped" imply "tested".
+
 1. **Bump `APP_VERSION`** in `index.html` (a constant near the top of the
    `<script>`, shown in the UI). Format is **`YYYY-MM-DD rN`** (matches the
    convention in CLAUDE.md):
