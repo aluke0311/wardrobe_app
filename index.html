@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r5">
+<meta name="app-version" content="2026-07-25 r6">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1360,13 +1360,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r5";
+const APP_VERSION = "2026-07-25 r6";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "The closet has a search box again \u2014 tap the magnifier and type a name, brand, colour, type, size, note or tag",
-  "Several words narrow it down (\u201cblue linen\u201d), and it always searches the whole lens, not just the folder you\u2019re standing in",
-  "The pickers\u2019 search box now works the same way",
+  "New \ud83e\udea1 Needs mending \u2014 tap it on any piece the moment a button goes, and it waits in a Mending tray instead of in your head",
+  "Pieces waiting on a repair stay out of outfit suggestions until you mark them mended",
+  "The Mending row only appears in the closet when something is actually waiting",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -3288,7 +3288,7 @@ function wireTripDash(tc) {
   on("[data-td-build]", () => openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET }));
   on("[data-td-laundry]", () => {
     switchTab("closet");
-    closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
+    closetHamper = true; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
     renderCloset();
   });
   on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });
@@ -3339,6 +3339,7 @@ function closetSearchMatches(q) {
 }
 let closetHamper = false; // true = full-page hamper contents (its own closet view, like a subcategory)
 let closetWorn = false;   // true = full-page "worn since washing, not yet dirty" tray
+let closetMend = false;   // true = full-page "needs mending" tray (Round C)
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view
 let _detailEntryScroll = 0;  // grid scroll position when detail was entered (plain-back restore)
@@ -3772,7 +3773,13 @@ function renderClosetRoot() {
     return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`
       + (w ? `<button class="cl-capbtn" data-worn>👕 Worn · ${w} item${w === 1 ? "" : "s"}</button>` : "");
   })() : "";
-  return clToolbar("Closet", false, true) + top + capFilter + launRow + `<div class="frows">${rows}</div>`;
+  // Only shown when something is actually waiting — an always-visible empty
+  // repair pile is just a reproach.
+  const mendRow = (() => {
+    const m = _scopedMending().length;
+    return m ? `<button class="cl-capbtn" data-mend>🪡 Mending · ${m} item${m === 1 ? "" : "s"}</button>` : "";
+  })();
+  return clToolbar("Closet", false, true) + top + capFilter + launRow + mendRow + `<div class="frows">${rows}</div>`;
 }
 
 // ---- laundry sheet ----
@@ -3956,6 +3963,14 @@ function _scopedWorn(ls) {
   }
   return list;
 }
+function _scopedMending() {
+  let list = items.filter(i => isMending(i) && itemStatus(i) !== "Archive");
+  if (activeCapsuleId) {
+    const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
+    list = list.filter(i => set.has(i.id));
+  }
+  return sortItems(list);
+}
 
 // Full-page hamper — its own closet view (like a subcategory grid), because the
 // closet row promises "Hamper · N" and a tap should SHOW them. The wash flow
@@ -3990,6 +4005,20 @@ function renderClosetWorn() {
         <div>Pieces land here once you've worn them since their last wash but not enough times to be dirty.</div></div>`;
   return clToolbar(`Worn · ${list.length}`, true, false)
     + `<div class="snote" style="padding:8px 16px 2px">Worn since washing, not dirty yet — the pile on the chair. Tap <b>Select</b> to send several to the hamper at once, or open one piece to do it individually.</div>`
+    + body
+    + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
+}
+
+// The mending pile. Same shape as the Worn tray — the point is that a piece
+// waiting on a button stops being suggested and stops being forgotten.
+function renderClosetMend() {
+  const list = _scopedMending();
+  const body = list.length
+    ? gridHtml(list)
+    : `<div class="placeholder" style="padding:40px 32px"><b>Nothing needs mending</b>
+        <div>Tap 🪡 on a piece when a button goes or a hem drops. It'll wait here, and stay out of suggestions until you clear it.</div></div>`;
+  return clToolbar(`Mending · ${list.length}`, true, false)
+    + `<div class="snote" style="padding:8px 16px 2px">Waiting on a repair — kept out of suggestions. Open a piece and tap 🪡 again once it's fixed.</div>`
     + body
     + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
 }
@@ -4104,6 +4133,8 @@ function renderCloset() {
     body.innerHTML = renderClosetHamper();
   } else if (closetWorn) {
     body.innerHTML = renderClosetWorn();
+  } else if (closetMend) {
+    body.innerHTML = renderClosetMend();
   } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
@@ -4136,7 +4167,7 @@ function renderCloset() {
   };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; renderCloset(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; renderCloset(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -4267,6 +4298,7 @@ function closetBack() {
   // is what she can see, so it's what back should close.
   if (closetSearchQ !== null) { closetSearchQ = null; searchResults = null; renderCloset(); return; }
   if (closetHamper) { closetHamper = false; }
+  if (closetMend) { closetMend = false; }
   if (closetWorn) { closetWorn = false; }
   else if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }
@@ -4321,6 +4353,7 @@ function siblingItems() {
   if (closetSearchQ !== null && searchResults) return searchResults;
   if (closetHamper) return _scopedHamper();
   if (closetWorn) return _scopedWorn();
+  if (closetMend) return _scopedMending();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -4382,6 +4415,7 @@ function openItem(id) {
     <div class="item-stat-strip">${esc(itemStatLine(i))}</div>
     ${workhorseBadgeHtml(i)}
     ${laundryLineHtml(i)}
+    ${mendLineHtml(i)}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#c9beae;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -4412,6 +4446,13 @@ function openItem(id) {
       openItem(i.id);  // refresh the status line
     };
   });
+  const mendBtn = body.querySelector("[data-mend-toggle]");
+  if (mendBtn) mendBtn.onclick = async () => {
+    const on = mendBtn.dataset.mendToggle === "1";
+    await setMending(i.id, on);
+    toast(on ? "Set aside for mending" : "Back in rotation");
+    openItem(i.id);
+  };
   const dateEdit = body.querySelector("[data-laun-date-edit]");
   if (dateEdit) dateEdit.onclick = () => openFieldEdit(i.id, "last_washed");
   const tolEdit = body.querySelector("[data-laun-tol-edit]");
@@ -6580,6 +6621,21 @@ function laundryLineHtml(i) {
   </div>`;
 }
 
+// One quiet line on the photo view. It has to be reachable in a single tap from
+// the piece itself, because the only moment she'll ever tag this is the moment
+// the button comes off — there is no world in which she does a mending audit.
+function mendLineHtml(i) {
+  if (itemStatus(i) === "Archive") return "";
+  return isMending(i)
+    ? `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:14px;color:var(--accent)">
+        <span>🪡 Waiting on a repair</span>
+        <button class="lnk" data-mend-toggle="0" style="font-size:13px">✓ Mended</button>
+      </div>`
+    : `<div class="item-stat-strip" style="display:flex;justify-content:center">
+        <button class="lnk" data-mend-toggle="1" style="font-size:12px;color:var(--muted)">🪡 Needs mending</button>
+      </div>`;
+}
+
 function relDate(d) {
   const ds = daysSince(d);
   if (ds == null) return "";
@@ -6894,7 +6950,12 @@ const LAYER_TAG = "layer";  // a top that doubles as a layer (e.g. a button-up o
 // Exclusion from normal days comes from formality [1]-only, never from the tag.
 const GEAR_WORKOUT_TAG = "gear:workout";
 const GEAR_RAIN_TAG = "gear:rain";
+// Mending (Round C, 2026-07-25). A popped button is a real reason a piece isn't
+// wearable, and it used to live only in her head. Behaves like the hamper:
+// derived-adjacent state that pulls the piece out of suggestions until cleared.
+const MEND_TAG = "mend";
 function isNoSuggest(i) { return !!i && (i.tags || []).includes(NO_SUGGEST_TAG); }
+function isMending(i) { return !!i && (i.tags || []).includes(MEND_TAG); }
 function isLayer(i) { return !!i && (i.tags || []).includes(LAYER_TAG); }
 function isWorkoutGear(i) { return !!i && (i.tags || []).includes(GEAR_WORKOUT_TAG); }
 function isRainGear(i) { return !!i && (i.tags || []).includes(GEAR_RAIN_TAG); }
@@ -6908,6 +6969,7 @@ async function setItemTag(id, tag, on) {
   } catch (e) { toast(e.message); }
 }
 async function setNoSuggest(id, on) { return setItemTag(id, NO_SUGGEST_TAG, on); }
+async function setMending(id, on) { return setItemTag(id, MEND_TAG, on); }
 async function setLayer(id, on) { return setItemTag(id, LAYER_TAG, on); }
 async function setWorkoutGear(id, on) { return setItemTag(id, GEAR_WORKOUT_TAG, on); }
 async function setRainGear(id, on) { return setItemTag(id, GEAR_RAIN_TAG, on); }
@@ -7026,7 +7088,8 @@ function scoreCombo(its, target, season = null, wx = null) {
 
 function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null, lockedRoles = null, shapeKey = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
-  let avail = base.filter(i => i.image_path && !isNoSuggest(i));
+  // A piece waiting on a repair isn't wearable — same exclusion as no-suggest.
+  let avail = base.filter(i => i.image_path && !isNoSuggest(i) && !isMending(i));
   if (activity === "workout") {
     // Activity mode (Round A): pool = tagged gear only; formality is moot
     // (the tag IS the cohesion), so callers pass targetLevel null.
@@ -7332,6 +7395,7 @@ function _suggPool() {
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
     : items.filter(i => itemStatus(i) === "Available");
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
+  pool = pool.filter(i => !isMending(i));   // swap/+Layer candidates too
   // Activity/gear filtering lives HERE so swap/+Layer/ban candidates see the
   // same pool as the engine (which re-applies the same rules — harmless).
   if (_sugg.activity === "workout") pool = pool.filter(isWorkoutGear);
@@ -7362,7 +7426,7 @@ function suggestStarvationNote() {
   const base = _sugg.capsuleId
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
     : items.filter(i => itemStatus(i) === "Available");
-  const eligible = base.filter(i => i.image_path && !isNoSuggest(i));
+  const eligible = base.filter(i => i.image_path && !isNoSuggest(i) && !isMending(i));
   const bits = [];
   if (_suggClean() && LAUNDRY_READY()) {
     const ls = laundryState();
@@ -14524,7 +14588,7 @@ const TAB_TITLES = {
 // not resume a deep subpage left over from last visit. (Programmatic switchTab
 // calls that pre-set folder state and then openItem() don't go through here.)
 function resetTabRoot(name) {
-  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; }
+  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; }
   else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; looksItemFilter = null; }
   else if (name === "calendar") { calendarDay = null; }
 }
@@ -14963,8 +15027,9 @@ function wireEvents() {
       // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
       return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
     }
-    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
-    if (e.target.closest("[data-worn]")) { closetWorn = true; closetHamper = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-mend]")) { closetMend = true; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-laundry]")) { closetHamper = true; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-worn]")) { closetWorn = true; closetHamper = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const cat = e.target.closest("[data-cat]");
