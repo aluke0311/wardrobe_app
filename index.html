@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r3">
+<meta name="app-version" content="2026-07-25 r4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1360,13 +1360,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r3";
+const APP_VERSION = "2026-07-25 r4";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Plan the week no longer shows seven blank rows \u2014 days you haven\u2019t planned borrow that weekday\u2019s usual contexts, in italics, as a starting point",
-  "Opening an unplanned day offers its usual contexts too; one tap accepts them, and nothing is saved until you do",
-  "New \u201cYour week\u201d strip in Style Stats \u2014 the weekly shape your wear log already knew about",
+  "Home is calmer: only one thing asks for your attention at a time \u2014 the rest fold into a quiet \u201c2 more things\u201d line you can open",
+  "Your logging shortcut and the Tomorrow card aren\u2019t affected; they\u2019re the daily loop, not interruptions",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -3057,6 +3056,9 @@ function openWeekPlanSheet() {
   $("#logInner").querySelectorAll("[data-wk-day]").forEach(b => b.onclick = () => openDayPlanSheet(b.dataset.wkDay));
 }
 
+// Session-only: whether the folded Home attention rows are expanded. Not
+// persisted — a fresh open should be calm again.
+let _homeAttnOpen = false;
 function renderHome() {
   const tiles = HOME_TILES.map(t => `
     <button class="tile ${t.wide ? "wide" : ""}" data-go="${t.tab}">
@@ -3123,9 +3125,26 @@ function renderHome() {
       </div>
     </div>`;
   }
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${catchup}${laun}${bk}${wxb}`;
+  /* Attention hierarchy (Round C). Home could stack eight blocks: trip dash,
+     tiles, today's plan, the log CTA, Tomorrow, catch-up, laundry, backup, and
+     now the weather offer. Only ONE thing gets to ask for attention; the rest
+     fold into a single quiet line. The log CTA and the Tomorrow card are NOT in
+     here — they're the daily loop, not interruptions. In trip mode the dash IS
+     the one thing, so everything else folds. */
+  const attention = [catchup, laun, bk, wxb].filter(Boolean);
+  const shown = tc ? [] : attention.slice(0, 1);
+  const rest = attention.slice(shown.length);
+  const attnHtml = shown.join("") + (!rest.length ? "" : _homeAttnOpen
+    ? rest.join("") + `<div class="center" style="padding:2px 0 6px"><button class="lnk" id="homeAttnLess" style="font-size:12.5px;color:var(--muted)">Show less</button></div>`
+    : `<div class="center" style="padding:6px 0"><button class="lnk" id="homeAttnMore" style="font-size:12.5px;color:var(--muted)">${rest.length} more thing${rest.length === 1 ? "" : "s"} ›</button></div>`);
+
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${attnHtml}`;
   hydratePhotos($("#homeBody"));
   wireWxMemory($("#homeBody"));
+  const attnMore = $("#homeAttnMore");
+  if (attnMore) attnMore.onclick = () => { _homeAttnOpen = true; renderHome(); };
+  const attnLess = $("#homeAttnLess");
+  if (attnLess) attnLess.onclick = () => { _homeAttnOpen = false; renderHome(); };
   const wxFill = $("#homeWxFill");
   if (wxFill) wxFill.onclick = async () => {
     wxFill.disabled = true; wxFill.textContent = "Looking up…";
