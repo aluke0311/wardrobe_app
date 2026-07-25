@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r7">
+<meta name="app-version" content="2026-07-25 r8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1366,12 +1366,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r7";
+const APP_VERSION = "2026-07-25 r8";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New in Style Stats: \u201cYear in pixels\u201d \u2014 a whole year as one picture, a square per day, shaded by how dressed up you were",
-  "Tap any square to open that day; switch years with the chips at the top",
+  "\u201cOn this day\u201d now appears on Home too, on the days you wore something a year or more ago",
+  "Renaming a type that workout or gear suggestions depend on now warns you first, instead of quietly breaking them",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -3144,9 +3144,16 @@ function renderHome() {
     ? rest.join("") + `<div class="center" style="padding:2px 0 6px"><button class="lnk" id="homeAttnLess" style="font-size:12.5px;color:var(--muted)">Show less</button></div>`
     : `<div class="center" style="padding:6px 0"><button class="lnk" id="homeAttnMore" style="font-size:12.5px;color:var(--muted)">${rest.length} more thing${rest.length === 1 ? "" : "s"} ›</button></div>`);
 
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${attnHtml}`;
+  // Below everything, and only on the days it has something: a delight row, not
+  // an attention row, so it stays out of the folding group above.
+  const otd = (dataReady && !tripModeId) ? onThisDayHtml(today) : "";
+
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${attnHtml}${otd}`;
   hydratePhotos($("#homeBody"));
   wireWxMemory($("#homeBody"));
+  $("#homeBody").querySelectorAll("[data-otd]").forEach(b => {
+    b.onclick = () => { switchTab("calendar"); calendarDay = b.dataset.otd; renderCalendarDay($("#calendarBody")); };
+  });
   const attnMore = $("#homeAttnMore");
   if (attnMore) attnMore.onclick = () => { _homeAttnOpen = true; renderHome(); };
   const attnLess = $("#homeAttnLess");
@@ -9430,6 +9437,33 @@ function dayGroups(dateStr) {
 }
 
 // Mini calendar-cell collage (aspect-ratio 3/4, 2-col grid)
+// V3 "On this day": most recent prior year with wears on this same date —
+// quiet payoff for the years of history, and passive resurfacing. Extracted
+// from the calendar day view (Round C) so Home can show it too; renders "" when
+// there's no prior year, which is what keeps it from becoming noise.
+function onThisDayHtml(dateStr) {
+  const mmdd = dateStr.slice(4);
+  const priorDates = [...new Set(wears
+    .filter(w => w.worn_on && w.worn_on.slice(4) === mmdd && w.worn_on < dateStr)
+    .map(w => w.worn_on))].sort().reverse();
+  if (!priorDates.length) return '';
+  const pd = priorDates[0];
+  const pGroups = dayGroups(pd);
+  const g = pGroups[0];
+  const ctxs = [...new Set(pGroups.flatMap(gr => gr.context))];
+  const nItems = new Set(wears.filter(w => w.worn_on === pd).map(w => w.item_id)).size;
+  const detail = ctxs.length ? ctxs.join(', ') : `${nItems} item${nItems === 1 ? '' : 's'}`;
+  const collage = g ? calCellCollageHtml(g.itemIds, g.outfitId ? outfitById.get(g.outfitId) : null) : '';
+  return `<button class="otd-row" data-otd="${esc(pd)}">
+    <div class="otd-collage">${collage}</div>
+    <div class="otd-text">
+      <div class="otd-title">On this day in ${esc(pd.slice(0, 4))}</div>
+      <div class="otd-sub">${esc(detail)}</div>
+    </div>
+    <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex:none"><path d="M9 6l6 6-6 6"/></svg>
+  </button>`;
+}
+
 function calCellCollageHtml(itemIds, outfit) {
   const canvas = outfit && layoutCanvasHtml(outfit, "cal-ccanvas");
   if (canvas) return canvas;
@@ -9642,32 +9676,7 @@ function renderCalendarDay(body) {
   const prevD    = localISO(new Date(y, m - 1, d - 1));
   const nextD    = localISO(new Date(y, m - 1, d + 1));
 
-  // V3 "On this day": most recent prior year with wears on this same date —
-  // quiet payoff for the years of history, and passive resurfacing.
-  let onThisDay = '';
-  {
-    const mmdd = dateStr.slice(4);
-    const priorDates = [...new Set(wears
-      .filter(w => w.worn_on && w.worn_on.slice(4) === mmdd && w.worn_on < dateStr)
-      .map(w => w.worn_on))].sort().reverse();
-    if (priorDates.length) {
-      const pd = priorDates[0];
-      const pGroups = dayGroups(pd);
-      const g = pGroups[0];
-      const ctxs = [...new Set(pGroups.flatMap(gr => gr.context))];
-      const nItems = new Set(wears.filter(w => w.worn_on === pd).map(w => w.item_id)).size;
-      const detail = ctxs.length ? ctxs.join(', ') : `${nItems} item${nItems === 1 ? '' : 's'}`;
-      const collage = g ? calCellCollageHtml(g.itemIds, g.outfitId ? outfitById.get(g.outfitId) : null) : '';
-      onThisDay = `<button class="otd-row" data-otd="${esc(pd)}">
-        <div class="otd-collage">${collage}</div>
-        <div class="otd-text">
-          <div class="otd-title">On this day in ${esc(pd.slice(0, 4))}</div>
-          <div class="otd-sub">${esc(detail)}</div>
-        </div>
-        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex:none"><path d="M9 6l6 6-6 6"/></svg>
-      </button>`;
-    }
-  }
+  const onThisDay = onThisDayHtml(dateStr);
 
   body.innerHTML = `<div class="tabbody">
     <div class="cal-day-header">
@@ -14783,6 +14792,14 @@ function _taxCounts() {
   }
   return { cat, sub };
 }
+/* Subcategory names that other behaviour is hard-keyed on (Round C step 9).
+   WORKOUT_SLOTS maps Workout types to real outfit slots; GEAR_CAND_SUBCATS is
+   where the gear-tagging pass looks. Neither can ride the `meta` override the
+   way SUBCAT_FORMALITY / WEAR_TOLERANCE do, so a rename here needs a warning.
+   NOTE: LAUNDRY_LOADS is NOT in this set — it's keyed on color_family, which
+   the taxonomy editor never touches. (The old CLAUDE.md gotcha was wrong.) */
+const TAXONOMY_LOCKED_SUBCATS = new Set([...Object.keys(WORKOUT_SLOTS), ...GEAR_CAND_SUBCATS]);
+
 function openTaxonomySheet() {
   const { cat: catN, sub: subN } = _taxCounts();
   const secs = CATEGORIES.map(c => {
@@ -14834,6 +14851,11 @@ function openTaxonomySheet() {
     const [c, ...rest_] = b.dataset.taxSubren.split("|"); const old = rest_.join("|");
     const next = clean(prompt(`Rename “${old}” to:`, old));
     if (!next || next === old) return;
+    // Some behaviour is keyed on the SHIPPED subcategory names, and a rename
+    // would silently break it. `meta` carries formality/tolerance across a
+    // rename; these two maps can't be, so warn instead of failing quietly.
+    if (TAXONOMY_LOCKED_SUBCATS.has(old) &&
+        !confirm(`“${old}” is one of the names workout and gear suggestions are keyed on.\n\nRenaming it will stop run/hike outfits from finding these pieces until you re-tag them.\n\nRename anyway?`)) return;
     const t = cats();
     if ((t[c] || []).includes(next)) return toast("That type already exists here");
     t[c] = (t[c] || []).map(x => (x === old ? next : x));

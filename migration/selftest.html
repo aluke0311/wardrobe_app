@@ -762,6 +762,20 @@ function run() {
     return eq([m.size, m.has("2025-03-04"), m.has("2024-03-04")], [2, true, false]);
   });
 
+  // ---- Round C: taxonomy rename guard ----
+  t("TAXONOMY_LOCKED_SUBCATS covers exactly the hard-keyed names", () => {
+    const S = W.TAXONOMY_LOCKED_SUBCATS;
+    return eq([S.has("Workout tops"), S.has("Sports bras"), S.has("Sneakers"), S.has("Coats"),
+               S.has("Tee shirts"), S.has("Jeans")],
+              [true, true, true, true, false, false]);
+  });
+  t("LAUNDRY_LOADS is keyed on colour, so renames can't reach it", () => {
+    const fams = Object.values(W.LAUNDRY_LOADS).flat();
+    // every value is a colour family, never a subcategory
+    return eq([fams.includes("White"), fams.includes("Blue"), fams.includes("Jeans")],
+              [true, true, false]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
