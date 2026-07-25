@@ -678,6 +678,41 @@ function run() {
     return eq([beats && beats.key, under], ["streak:7", null]);
   });
 
+  // ---- Round C: weekly rhythm ----
+  // 2026-07-25 is a Saturday, so these dates are pinned, not relative.
+  const rhythmWears = [
+    { worn_on: "2026-06-07", context: ["Church"] },   // Sundays
+    { worn_on: "2026-06-14", context: ["Church"] },
+    { worn_on: "2026-06-21", context: ["Church"] },
+    { worn_on: "2026-06-28", context: ["Church", "Friends"] },
+    { worn_on: "2026-06-02", context: ["Chorus"] },   // Tuesdays — only 2, under the floor
+    { worn_on: "2026-06-09", context: ["Chorus"] },
+  ];
+  t("weeklyRhythm: a weekly habit surfaces, a twice-only one doesn't", () => {
+    const r = W.weeklyRhythm(rhythmWears);
+    return eq([r.get(0).contexts, r.get(0).n, r.has(2)], [["Church"], 4, false]);
+  });
+  t("weeklyRhythm: caps at two contexts per day, most frequent first", () => {
+    const sundays = ["2026-06-07", "2026-06-14", "2026-06-21", "2026-06-28"];
+    const ws = sundays.map(d => ({ worn_on: d, context: ["Church", "Brunch"] }));
+    ws.push({ worn_on: sundays[0], context: ["Errands"] });   // 1 day only — under the floor
+    ws.push({ worn_on: sundays[1], context: ["Errands"] });
+    ws.push({ worn_on: sundays[2], context: ["Errands"] });   // now 3 days, but third-ranked
+    const r = W.weeklyRhythm(ws);
+    return eq(r.get(0).contexts, ["Brunch", "Church"]);       // 4 days each, alphabetical tiebreak
+  });
+  t("weeklyRhythm: same day of week counted once per date, not per piece", () => {
+    const ws = [
+      { worn_on: "2026-06-07", context: ["Church"] }, { worn_on: "2026-06-07", context: ["Church"] },
+      { worn_on: "2026-06-14", context: ["Church"] }, { worn_on: "2026-06-21", context: ["Church"] },
+    ];
+    return eq(W.weeklyRhythm(ws).get(0).n, 3);   // 3 Sundays, not 4 rows
+  });
+  t("rhythmFor: picks the weekday of the given date", () => {
+    const r = W.weeklyRhythm(rhythmWears);
+    return eq([W.rhythmFor("2026-08-02", r).contexts, W.rhythmFor("2026-08-04", r)], [["Church"], null]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

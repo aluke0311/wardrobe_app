@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r2">
+<meta name="app-version" content="2026-07-25 r3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1360,13 +1360,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r2";
+const APP_VERSION = "2026-07-25 r3";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Logging a wear now occasionally tells you something back \u2014 a first outing, a piece that just went under $1 a wear, something back after months, a 25th day out, a new longest streak",
-  "You get at most one of these per log, and each one only ever happens once",
-  "Undo takes the milestone back too, so a mis-tap doesn\u2019t spend it",
+  "Plan the week no longer shows seven blank rows \u2014 days you haven\u2019t planned borrow that weekday\u2019s usual contexts, in italics, as a starting point",
+  "Opening an unplanned day offers its usual contexts too; one tap accepts them, and nothing is saved until you do",
+  "New \u201cYour week\u201d strip in Style Stats \u2014 the weekly shape your wear log already knew about",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -1860,6 +1860,7 @@ function _dpSuggestCtx(date, entryIdx, ctxs) {
 }
 function openDayPlanSheet(date) {
   const entries = dayPlan(date);
+  const rh = rhythmFor(date);
   const wx = _dpWx(date);
   const ctxOpts = contextOptions();
   const entryCard = (e, idx) => {
@@ -1902,8 +1903,10 @@ function openDayPlanSheet(date) {
       <div style="width:48px"></div>
     </div>
     ${wx && wx.maxT != null ? `<div class="center muted" style="font-size:12.5px;padding:0 16px 8px">${wmoEmoji(wx.code)} ${wx.maxT}° / ${wx.minT}°</div>` : ""}
-    ${entries.map(entryCard).join("") || `<div class="center muted" style="font-size:13px;padding:4px 16px 12px">Nothing planned yet — set the day's context now, pick the outfit whenever.</div>`}
-    <div style="padding:0 16px 16px"><button class="btn btn-sec" id="dpAdd" style="width:100%">＋ ${entries.length ? "Another outfit" : "Plan this day"}</button></div>
+    ${entries.map(entryCard).join("") || (rh
+      ? `<div class="center muted" style="font-size:13px;padding:4px 16px 12px;line-height:1.5">Usually <b style="color:var(--text)">${esc(rh.contexts.join(" · "))}</b> on ${esc(WEEKDAY_PLURAL[new Date(date + "T00:00:00").getDay()].toLowerCase())} — start there, or clear it once you're in.</div>`
+      : `<div class="center muted" style="font-size:13px;padding:4px 16px 12px">Nothing planned yet — set the day's context now, pick the outfit whenever.</div>`)}
+    <div style="padding:0 16px 16px"><button class="btn btn-sec" id="dpAdd" style="width:100%">＋ ${entries.length ? "Another outfit" : (rh ? `Plan this day · ${esc(rh.contexts.join(" · "))}` : "Plan this day")}</button></div>
     <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
   showSheet("logSheet");
   hydratePhotos($("#logInner"));
@@ -1914,7 +1917,10 @@ function openDayPlanSheet(date) {
     if (tab === "home") renderHome();
     else if (tab === "calendar") renderCalendar();
   };
-  $("#dpAdd").onclick = () => save([...JSON.parse(JSON.stringify(entries)), { contexts: [], outfit: null }]);
+  // The weekday guess seeds the FIRST entry only, and only because this tap is
+  // the acceptance — nothing about the rhythm is ever written on its own.
+  $("#dpAdd").onclick = () => save([...JSON.parse(JSON.stringify(entries)),
+    { contexts: (!entries.length && rh) ? [...rh.contexts] : [], outfit: null }]);
   $("#logInner").querySelectorAll("[data-dp-ctx]").forEach(b => b.onclick = () => {
     const [idx, ctx] = b.dataset.dpCtx.split("|");
     const next = JSON.parse(JSON.stringify(entries));
@@ -3017,19 +3023,24 @@ function todayPlanRowsHtml() {
 }
 function openWeekPlanSheet() {
   const today = todayStr();
+  // Seven blank rows is what an abandoned planner looks like. Days with nothing
+  // planned borrow the weekday's usual contexts, shown muted + italic so a
+  // guess never reads as a commitment.
+  const rhythm = weeklyRhythm();
   const rows = [...Array(7)].map((_, n) => {
     const d = shiftDate(today, n);
     const label = n === 0 ? "Today" : n === 1 ? "Tomorrow" : planDayLabel(d);
     const entries = dayPlan(d);
+    const rh = entries.length ? null : rhythmFor(d, rhythm);
     const sum = entries.length
       ? entries.map(e => {
           const o = e.outfit ? outfitById.get(e.outfit) : null;
           return o ? outfitName(o) : ((e.contexts || []).join("/") || "outfit TBD");
         }).join(" · ")
-      : "—";
+      : (rh ? `${rh.contexts.join(" · ")} · usually` : "—");
     return `<button data-wk-day="${d}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 16px;border-bottom:1px solid var(--line)">
       <span style="width:86px;flex:none;font-size:13.5px;font-weight:600">${esc(label)}</span>
-      <span style="flex:1;min-width:0;font-size:13px;color:${entries.length ? "var(--text)" : "var(--muted)"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sum)}</span>
+      <span style="flex:1;min-width:0;font-size:13px;color:${entries.length ? "var(--text)" : "var(--muted)"}${rh ? ";font-style:italic" : ""};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sum)}</span>
       <svg class="chev" viewBox="0 0 24 24" style="flex:none"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   }).join("");
@@ -5077,21 +5088,46 @@ function buildRotationStats(days = 90, pool = null, wearRows = null, today = nul
 // V3: her weekly rhythm predicts the context ("Sundays are usually Church").
 // Top context for the date's weekday, counted in distinct DAYS (so a 5-piece
 // look doesn't count 5×); needs ≥3 days to trust. Suggestion only — never saved.
-function weekdayTopContext(dateStr) {
-  const dow = new Date(dateStr + "T00:00:00").getDay();
-  const days = new Map();  // context → Set of dates
-  for (const w of wears) {
+/* ---- WEEKLY RHYTHM (Round C, 2026-07-25) ----------------------------------
+   She has a real weekly shape — chorus, church, campus — and the app could
+   already see it: `weekdayTopContext` derived exactly this and was used in
+   exactly ONE place, a single chip in the post-log sheet. Meanwhile the week
+   planner rendered seven blank rows, and blank-slate planners get abandoned.
+   Same ≥3-distinct-days floor as before: under it, show nothing rather than
+   noise. Nothing here ever writes — accepting a guess is always a tap. */
+const RHYTHM_MIN_DAYS = 3;
+const RHYTHM_MAX_CTX = 2;
+const WEEKDAY_PLURAL = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function weeklyRhythm(wearRows = null) {
+  const ws = wearRows || wears;
+  const byDow = [0, 1, 2, 3, 4, 5, 6].map(() => new Map());   // dow → ctx → Set(dates)
+  for (const w of ws) {
     if (!w.worn_on) continue;
     const cs = ctxArr(w);
     if (!cs.length) continue;
-    if (new Date(w.worn_on + "T00:00:00").getDay() !== dow) continue;
-    for (const c of cs) { if (!days.has(c)) days.set(c, new Set()); days.get(c).add(w.worn_on); }
+    const m = byDow[new Date(w.worn_on + "T00:00:00").getDay()];
+    for (const c of cs) { if (!m.has(c)) m.set(c, new Set()); m.get(c).add(w.worn_on); }
   }
-  let best = null, n = 0;
-  for (const [c, s] of days) if (s.size > n) { n = s.size; best = c; }
-  if (n < 3) return null;
-  const names = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
-  return { ctx: best, label: `usual for ${names[dow]}` };
+  const out = new Map();
+  byDow.forEach((m, dow) => {
+    const ranked = [...m.entries()].map(([ctx, s]) => ({ ctx, n: s.size }))
+      .filter(r => r.n >= RHYTHM_MIN_DAYS)
+      .sort((a, b) => b.n - a.n || a.ctx.localeCompare(b.ctx))
+      .slice(0, RHYTHM_MAX_CTX);
+    if (ranked.length) out.set(dow, { contexts: ranked.map(r => r.ctx), n: ranked[0].n });
+  });
+  return out;
+}
+function rhythmFor(dateStr, rhythm = null) {
+  return (rhythm || weeklyRhythm()).get(new Date(dateStr + "T00:00:00").getDay()) || null;
+}
+
+function weekdayTopContext(dateStr) {
+  const r = rhythmFor(dateStr);
+  if (!r) return null;
+  return { ctx: r.contexts[0], label: `usual for ${WEEKDAY_PLURAL[new Date(dateStr + "T00:00:00").getDay()]}` };
 }
 
 // Reusable multi-select context picker for log sheets. Reads/writes the module-global
@@ -10865,6 +10901,29 @@ function closetVsLifeHtml() {
    Available closet, NOT statsPool() — the whole point is the denominator being
    everything wearable, so a filter can't flatter it. Window is session-only. */
 let statsRotationDays = 90;
+// "Your week" — the shape the wear log already knows about, shown plainly.
+// Renders nothing when no weekday clears the ≥3-day floor (a new closet, or a
+// life without a routine, shouldn't get a fabricated one).
+function weekRhythmBlockHtml() {
+  const r = weeklyRhythm();
+  if (!r.size) return "";
+  const rows = [1, 2, 3, 4, 5, 6, 0].map(dow => {
+    const e = r.get(dow);
+    return `<div style="display:flex;align-items:baseline;gap:10px;padding:3px 0">
+      <span style="width:38px;flex:none;font-size:12.5px;font-weight:600;color:var(--muted)">${WEEKDAY_SHORT[dow]}</span>
+      <span style="flex:1;min-width:0;font-size:13.5px;${e ? "" : "color:var(--muted)"}">${e ? esc(e.contexts.join(" · ")) : "—"}</span>
+      ${e ? `<span style="flex:none;font-size:11.5px;color:var(--muted)">${e.n} day${e.n === 1 ? "" : "s"}</span>` : ""}
+    </div>`;
+  }).join("");
+  return `<button data-sa="looks:contexts" style="display:block;width:100%;text-align:left;padding:12px 16px;border-bottom:1px solid var(--line)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <span style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Your week</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </div>
+    ${rows}
+  </button>`;
+}
+
 function rotationBlockHtml() {
   const r = buildRotationStats(statsRotationDays);
   const chips = ROTATION_WINDOWS.map(d =>
@@ -11032,6 +11091,7 @@ function renderStatsMain() {
           </div>
           ${row("Most Worn Looks", topLookSub, "looks:most-worn")}
           ${row("Liked Looks", `${likedCount} look${likedCount === 1 ? "" : "s"}${neglectedCount ? ` · ${neglectedCount} neglected` : ""}`, "looks:liked-neglected")}
+          ${weekRhythmBlockHtml()}
           ${row("Contexts", contextsRowSub, "looks:contexts")}
           ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
         </div>
