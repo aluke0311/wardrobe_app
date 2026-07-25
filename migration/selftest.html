@@ -614,6 +614,70 @@ function run() {
   });
   t("wxlog window is wide enough to hold a backfill", () => W.WXLOG_DAYS >= 1000 || `${W.WXLOG_DAYS}`);
 
+  // ---- Round C: milestones ----
+  // milestoneFor reads app globals, so each case swaps them in and restores.
+  // `best` parks the streak rung out of the way unless a case is testing it —
+  // these fixtures use runs of consecutive days, which would otherwise trip it.
+  const withMs = (its, ws, seen, fn, best = 9999) => {
+    const sw = W.wears, si = W.items, sb = W.itemById,
+          sk = W.kvData.get("milestones"), sbs = W.kvData.get("beststreak");
+    W.items = its; W.itemById = new Map(its.map(i => [i.id, i])); W.wears = ws;
+    W.kvData.set("milestones", seen || {});
+    W.kvData.set("beststreak", best);
+    try { return fn(); }
+    finally {
+      W.wears = sw; W.items = si; W.itemById = sb;
+      W.kvData.set("milestones", sk || {}); W.kvData.set("beststreak", sbs || 0);
+    }
+  };
+  const mItem = (over) => Object.assign({ id: "m1", name: "Linen shirt", category: "Tops",
+    status: "Available", price: null, acquisition: "New" }, over || {});
+
+  t("milestoneFor: first outing fires, then never again", () => {
+    const rows = [{ item_id: "m1", worn_on: today }];
+    const a = withMs([mItem()], rows, {}, () => W.milestoneFor(rows));
+    const b = withMs([mItem()], rows, { "first:m1": today }, () => W.milestoneFor(rows));
+    return eq([a.key, /First outing/.test(a.text), b], ["first:m1", true, null]);
+  });
+  t("milestoneFor: paid off fires only on the wear that crosses $1", () => {
+    const ws = [];
+    for (let k = 0; k < 30; k++) ws.push({ item_id: "m1", worn_on: D(-k) });
+    const at30 = withMs([mItem({ price: 30 })], ws, {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]));
+    const at29 = withMs([mItem({ price: 30 })], ws.slice(1), {}, () => W.milestoneFor([{ item_id: "m1", worn_on: D(-1) }]));
+    return eq([at30 && at30.key, at29], ["paidoff:m1", null]);
+  });
+  t("milestoneFor: a gift never gets a money milestone", () => {
+    const ws = [];
+    for (let k = 0; k < 30; k++) ws.push({ item_id: "m1", worn_on: D(-k) });
+    const r = withMs([mItem({ price: 30, acquisition: "Gift" })], ws, {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]));
+    return eq(r, null);
+  });
+  t("milestoneFor: rescued after a long dormancy", () => {
+    const ws = [{ item_id: "m1", worn_on: D(-400) }, { item_id: "m1", worn_on: today }];
+    const r = withMs([mItem()], ws, {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]));
+    return eq([r && r.key.startsWith("rescued:m1:"), /back after/i.test(r.text)], [true, true]);
+  });
+  t("milestoneFor: round numbers land on 10 but not 11", () => {
+    const mk = n => { const a = []; for (let k = 0; k < n; k++) a.push({ item_id: "m1", worn_on: D(-k) }); return a; };
+    const at10 = withMs([mItem()], mk(10), {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]));
+    const at11 = withMs([mItem()], mk(11), {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]));
+    return eq([at10 && at10.key, at11], ["round:m1:10", null]);
+  });
+  t("milestoneFor: only one fires per log, highest rung wins", () => {
+    const ws = [{ item_id: "m1", worn_on: today }];
+    for (let k = 0; k < 10; k++) ws.push({ item_id: "m2", worn_on: D(-k) });
+    const r = withMs([mItem(), mItem({ id: "m2", name: "Jeans" })], ws, {},
+      () => W.milestoneFor([{ item_id: "m2", worn_on: today }, { item_id: "m1", worn_on: today }]));
+    return eq(r && r.key, "first:m1");   // first outing outranks m2's 10th day
+  });
+  t("milestoneFor: a new best streak is the last rung, and needs 5+ days", () => {
+    const mk = n => { const a = []; for (let k = 0; k < n; k++) a.push({ item_id: "m1", worn_on: D(-k) }); return a; };
+    // 7 consecutive days, nothing else eligible (price null, 7 isn't a round number)
+    const beats = withMs([mItem()], mk(7), {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]), 3);
+    const under = withMs([mItem()], mk(4), {}, () => W.milestoneFor([{ item_id: "m1", worn_on: today }]), 0);
+    return eq([beats && beats.key, under], ["streak:7", null]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

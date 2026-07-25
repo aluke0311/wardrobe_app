@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r1">
+<meta name="app-version" content="2026-07-25 r2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1360,13 +1360,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r1";
+const APP_VERSION = "2026-07-25 r2";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New: \u201cYou\u2019ve dressed for this before\u201d \u2014 the suggester and the Tomorrow card now show what you actually wore the last times the weather felt like this",
-  "Home offers a one-time look-up that fills in past weather for every day you\u2019ve logged, so the matching works right away instead of a year from now",
-  "Item pages show the temperature band a piece really lives in (\u201cusually worn 45\u00b0\u201362\u00b0\u201d)",
+  "Logging a wear now occasionally tells you something back \u2014 a first outing, a piece that just went under $1 a wear, something back after months, a 25th day out, a new longest streak",
+  "You get at most one of these per log, and each one only ever happens once",
+  "Undo takes the milestone back too, so a mis-tap doesn\u2019t spend it",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -2000,8 +2000,10 @@ async function wearPlannedEntry(date, entryIdx) {
     if (Array.isArray(rows)) wears.push(...rows); else payload.forEach(p => wears.push(p));
     buildOutfitWearMap();
     tripPlanSync(o.id, date);
-    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { presetCtx: entry.contexts || [], undoable: true });
-    else { toast("Logged as worn"); if (activeTabName() === "home") renderHome(); }
+    if (Array.isArray(rows) && rows.length && rows[0].id) {
+      logCelebration(rows, { defer: true });
+      openPostLogSheet(rows, { presetCtx: entry.contexts || [], undoable: true });
+    } else { toast(logCelebration(payload) || "Logged as worn"); if (activeTabName() === "home") renderHome(); }
   } catch (e) { toast(e.message); }
 }
 
@@ -5216,7 +5218,7 @@ async function logWearToday(id, { force = false } = {}) {
     if (miss) chips.push({ label: `＋ ${miss.c.name}`, fn: async () => { await addItemsToCapsule(miss.c.id, miss.missing); toast(`Added to ${miss.c.name}`); } });
     // E4: the photo view's stat strip (wear count / last worn) must not go stale
     if (detailId && detailView !== "details") openItem(detailId);
-    toast("Wear logged", chips);
+    toast(logCelebration([wear]) || "Wear logged", chips);
   } catch (e) { toast(e.message); }
 }
 
@@ -5228,12 +5230,116 @@ async function undoLoggedWears(rows) {
   try {
     if (ids.length) await rest(`wears?id=in.(${ids.map(id => `"${id}"`).join(",")})`, { method: "DELETE" });
     wears = wears.filter(w => !rows.includes(w));
+    unmarkLastMilestone();   // an undone log shouldn't spend a once-ever milestone
     toast("Undone");
     const activeScreen = $(".screen.active")?.id;
     if (activeScreen === "tab-calendar" && calendarDay) renderCalendarDay($("#calendarBody"));
     else if (activeScreen === "tab-home") renderHome();
     else if (detailId && detailView !== "details") openItem(detailId);
   } catch (e) { toast(e.message); }
+}
+
+/* ---- MILESTONES (Round C, 2026-07-25) -------------------------------------
+   Logging is the behaviour every stat in this app is downstream of, and the log
+   moment is the only second that can pay it back. It used to say "Wear logged"
+   on the seven-hundredth repetition. Now, occasionally, it says something true
+   and specific instead.
+
+   Deliberately capped from day one: ONE per log, and each key fires ONCE EVER
+   (seen-set in kv). Delight that repeats stops being delight, and a cap
+   retrofitted later would mean rewriting the keys. */
+const MILESTONE_ROUNDS = [10, 25, 50, 100];
+const MILESTONE_RESCUE_DAYS = 180;
+const MILESTONES_KEY = "milestones";
+const BEST_STREAK_KEY = "beststreak";
+let _pendingMilestone = null;
+
+const milestoneSeen = key => !!(kvData.get(MILESTONES_KEY) || {})[key];
+function markMilestone(key) {
+  const m = { ...(kvData.get(MILESTONES_KEY) || {}) };
+  m[key] = todayStr();
+  kvSet(MILESTONES_KEY, m);   // fire-and-forget
+}
+
+// Rows are already in `wears` by the time this runs (every call site pushes
+// first), so wearCount() includes the wear being celebrated.
+function milestoneFor(rows) {
+  if (!rows || !rows.length) return null;
+  const date = rows[0].worn_on || todayStr();
+  const its = [...new Set(rows.map(r => r.item_id))].map(id => itemById.get(id)).filter(Boolean);
+  const nm = i => i.name || "that piece";
+  const pick = (key, text) => milestoneSeen(key) ? null : { key, text };
+  let hit = null;
+
+  // 1. first time out
+  for (const i of its) {
+    if (wearCount(i.id) !== 1) continue;
+    hit = pick(`first:${i.id}`, `✨ First outing for the ${nm(i)}.`);
+    if (hit) return hit;
+  }
+  // 2. paid off — crossed under a dollar a wear with THIS wear
+  for (const i of its) {
+    if (i.price == null || i.acquisition === "Gift") continue;
+    const n = wearCount(i.id);
+    if (n < 2 || i.price / n > 1 || i.price / (n - 1) <= 1) continue;
+    hit = pick(`paidoff:${i.id}`, `💸 The ${nm(i)} just went under $1 a wear.`);
+    if (hit) return hit;
+  }
+  // 3. rescued from the back of the closet
+  for (const i of its) {
+    const prev = [...new Set(wears.filter(w => w.item_id === i.id && w.worn_on && w.worn_on < date).map(w => w.worn_on))].sort().pop();
+    if (!prev || dayDiff(prev, date) < MILESTONE_RESCUE_DAYS) continue;
+    hit = pick(`rescued:${i.id}:${date}`, `👋 The ${nm(i)}, back after ${humanGap(dayDiff(prev, date))}.`);
+    if (hit) return hit;
+  }
+  // 4. round numbers
+  for (const i of its) {
+    const n = wearCount(i.id);
+    if (!MILESTONE_ROUNDS.includes(n)) continue;
+    hit = pick(`round:${i.id}:${n}`, `🎉 That's the ${nm(i)}'s ${n}th day out.`);
+    if (hit) return hit;
+  }
+  // 5. the whole shoe rack, in one year
+  if (its.some(i => i.category === "Shoes")) {
+    const year = date.slice(0, 4);
+    const shoes = items.filter(i => i.category === "Shoes" && itemStatus(i) === "Available");
+    const wornThisYear = new Set(wears.filter(w => (w.worn_on || "").startsWith(year)).map(w => w.item_id));
+    if (shoes.length >= 3 && shoes.every(i => wornThisYear.has(i.id))) {
+      hit = pick(`completeset:shoes:${year}`, `👟 You've worn every pair of shoes you own this year.`);
+      if (hit) return hit;
+    }
+  }
+  // 6. a new personal best for logging
+  const streak = calStreak();
+  const best = kvData.get(BEST_STREAK_KEY) || 0;
+  if (streak > best && streak >= 5) {
+    kvSet(BEST_STREAK_KEY, streak);
+    hit = pick(`streak:${streak}`, `🔥 Longest logging streak yet — ${streak} days.`);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Compute + commit. Sites that raise their own toast use the return value;
+// sites that hand off to the post-log sheet pass `defer` and let close() flush,
+// so a toast never ends up underneath an open sheet.
+function logCelebration(rows, { defer = false } = {}) {
+  let m = null;
+  try { m = milestoneFor(rows); } catch (e) { return null; }   // never break a log
+  if (!m) return null;
+  markMilestone(m.key);
+  _lastMilestoneKey = m.key;   // so an Undo doesn't burn "first outing" forever
+  if (defer) { _pendingMilestone = m.text; return null; }
+  return m.text;
+}
+function flushMilestone() { const t = _pendingMilestone; _pendingMilestone = null; return t; }
+let _lastMilestoneKey = null;
+function unmarkLastMilestone() {
+  if (!_lastMilestoneKey) return;
+  const m = { ...(kvData.get(MILESTONES_KEY) || {}) };
+  delete m[_lastMilestoneKey];
+  _lastMilestoneKey = null;
+  kvSet(MILESTONES_KEY, m);
 }
 
 // ---- Post-log sheet: context capture (A2) ----
@@ -5304,7 +5410,11 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
     const scr = $(".screen.active")?.id;
     if (scr === "tab-calendar" && calendarDay) renderCalendarDay($("#calendarBody"));
     else if (scr === "tab-home") renderHome();
-    if (undoable) toast("Logged ✓", { label: "Undo", fn: () => undoLoggedWears(wearRows) });
+    // A milestone earned by this log rides out on the close toast — it replaces
+    // the flat "Logged ✓" but never the Undo chip.
+    const cel = flushMilestone();
+    if (undoable) toast(cel || "Logged ✓", { label: "Undo", fn: () => undoLoggedWears(wearRows) });
+    else if (cel) toast(cel);
   };
   $("#postLogCancel").onclick = close;
   $("#postLogSave").onclick = async () => {
@@ -7407,8 +7517,10 @@ async function wearSuggestedCombo(combo, { force = false } = {}) {
     buildOutfitWearMap();
     tripPlanSync(oid, today);  // trip mode: a worn look IS that day's plan
     // Route into the context capture sheet (shared with daily-loop logging)
-    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
-    else { hideSheet("logSheet"); toast("Logged!"); }
+    if (Array.isArray(rows) && rows.length && rows[0].id) {
+      logCelebration(rows, { defer: true });
+      openPostLogSheet(rows, { undoable: true });
+    } else { hideSheet("logSheet"); toast("Logged!"); }
   } catch (e) { toast(e.message); }
 }
 
@@ -9899,7 +10011,7 @@ async function saveCalClothingLog() {
     renderCalendarDay(body);
     // G1: single-ask — no auto-opened sheet for solo items (context stays reachable
     // via the toast chip and the day-card "Add context" button instead).
-    toast(`Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`, [
+    toast(logCelebration(pushed) || `Logged ${ids.length} item${ids.length === 1 ? '' : 's'} for ${date}`, [
       { label: "Undo", fn: () => undoLoggedWears(pushed) },
       { label: "Add context →", fn: () => openPostLogSheet(pushed) },
     ]);
@@ -10099,8 +10211,10 @@ async function logLookOnDay(id, { force = false } = {}) {
     buildOutfitWearMap();
     tripPlanSync(id, date);  // trip mode: a worn look IS that day's plan
     renderCalendarDay($('#calendarBody'));
-    if (Array.isArray(rows) && rows.length && rows[0].id) openPostLogSheet(rows, { undoable: true });
-    else toast(`Logged ${outfitName(o)} for ${date}`);
+    if (Array.isArray(rows) && rows.length && rows[0].id) {
+      logCelebration(rows, { defer: true });
+      openPostLogSheet(rows, { undoable: true });
+    } else toast(logCelebration(payload) || `Logged ${outfitName(o)} for ${date}`);
   } catch (e) { toast(e.message); }
 }
 
