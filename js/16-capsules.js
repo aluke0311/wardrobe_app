@@ -1,0 +1,1175 @@
+/* ===================================================================
+   CAPSULES + TRIPS  (named item sets; trips add dates + packing checklist)
+   =================================================================== */
+let capsuleId = null;            // detail / picker target
+let capsuleView = "list";        // "list" | "detail" | "form" | "pick"
+let _capForm = null;             // {name, kind, start_date, end_date, notes} during create
+let _capPick = new Set();        // selected item ids in the add-items picker
+let _capPickFilter = "";         // keyword filter in the picker
+let _capSheetMode = false;       // bulk "add to capsule" sheet open (reuses #moveSheet)
+let _pendingAddIds = null;       // items to fold into a capsule right after creation
+let _capNotesTimer = null;
+let _capSort = "category";       // detail grid grouping: "category" | "formality"
+let _capUnpackedOnly = false;    // trip detail: show only not-yet-packed items
+let _capPickCat = null;          // picker category filter (null = all)
+let _capPickSub = null;          // picker subcategory filter (null = all within cat)
+let _capPickStatus = "Available"; // picker status lens: "Available" | "Storage" | "All"
+
+// canonical category order for grouping (packing-friendly)
+const CAP_CAT_ORDER = ["Outerwear", "Tops", "Dresses", "Bottoms", "Shoes", "Workout"];
+const catRank = (c) => { const i = CAP_CAT_ORDER.indexOf(c); return i < 0 ? 99 : i; };
+// → [{key, items}] grouped by category in canonical order, items sorted by color (closet default)
+function groupByCategory(list) {
+  const map = new Map();
+  for (const i of list) { const c = i.category || "Other"; if (!map.has(c)) map.set(c, []); map.get(c).push(i); }
+  const keys = [...map.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
+  return keys.map(k => ({ key: k, items: sortItems(map.get(k), "color") }));
+}
+// → [{key, items}] grouped by formality levels (only non-empty). Items with multi-level sets
+// appear in the group for their minimum (most casual) level.
+function groupByFormality(list) {
+  const buckets = OCCASION_LADDER.map(lbl => ({ key: lbl, items: [] }));
+  for (const i of list) { const lv = Math.max(1, Math.min(8, itemFormality(i))); buckets[lv - 1].items.push(i); }
+  return buckets.filter(b => b.items.length)
+    .map(b => ({ key: b.key, items: sortItems(b.items, "color") }));
+}
+
+const isTrip = (c) => c && c.kind !== "capsule";
+const capModeLabel = (c) => isTrip(c) ? "Trip" : "Capsule";
+
+function capValue(cid) {
+  return capsuleItems(cid).reduce((s, i) => s + (Number(i.price) || 0), 0);
+}
+function fmtDate(d) {
+  if (!d) return "";
+  const dt = new Date(d + "T00:00:00");
+  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+function capDateLabel(c) {
+  if (!c.start_date && !c.end_date) return "";
+  if (c.start_date && c.end_date) return `${fmtDate(c.start_date)} – ${fmtDate(c.end_date)}`;
+  return fmtDate(c.start_date || c.end_date);
+}
+
+// small 2×2 collage thumbnail for a capsule card
+function capCollageHtml(cid) {
+  const paths = capsuleItems(cid).filter(i => i.image_path).slice(0, 4).map(i => i.image_path);
+  if (!paths.length) return `<div class="cap-collage empty"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg></div>`;
+  const cls = paths.length === 1 ? "cap-collage solo" : "cap-collage";
+  return `<div class="${cls}">${paths.map(p => `<div class="cc-cell" data-photo="${esc(p)}"></div>`).join("")}</div>`;
+}
+
+function renderCapsules() {
+  const body = $("#capsulesBody");
+  clearInterval(_wxAutoTimer); _wxAutoTimer = null;  // any prior trip-detail auto-refresh
+  if (capsuleView === "form")      body.innerHTML = renderCapsuleForm();
+  else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
+  else if (capsuleView === "plan" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePlan();
+  else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
+  else { capsuleView = "list"; body.innerHTML = renderCapsuleList(); }
+  hydratePhotos(body);
+  wireCapsules();
+  if (capsuleView === "plan") {
+    const c = capsuleById.get(capsuleId);
+    if (c && (c.locations || []).length && _planWxLoadedFor !== c.id) loadPlanWeather(c);
+  }
+  if (capsuleView === "detail") {
+    const c = capsuleById.get(capsuleId);
+    if (c && isTrip(c) && c.start_date && c.end_date && (c.locations || []).length) {
+      loadTripWeather(c);
+      // Auto-refresh the live strip while this trip detail stays open (cleared on any re-render / tab switch)
+      _wxAutoTimer = setInterval(() => {
+        delete _wxCache[c.id];
+        loadTripWeather(c);
+      }, WX_TTL);
+    }
+  }
+}
+
+function capToolbar(title, showBack, right = "") {
+  return `<div class="cltoolbar">
+    ${showBack
+      ? `<button class="clback" id="capBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
+      : `<span style="width:34px"></span>`}
+    <div class="cltitle">${esc(title)}</div>
+    ${right || `<span style="width:34px"></span>`}
+  </div>`;
+}
+
+function renderCapsuleList() {
+  if (!capsules.length) {
+    return capToolbar("Capsules", false) + `
+      <div class="cap-empty">
+        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg>
+        <b>No capsules yet</b>
+        <div>Build a style capsule or a packing list for a trip — a named set of pieces you can plan outfits from.</div>
+      </div>
+      <button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
+  }
+  const cards = capsules.map(c => {
+    const n = capsuleItemCount(c.id);
+    const dates = capDateLabel(c);
+    const bits = [`${n} item${n === 1 ? "" : "s"}`];
+    if (capValue(c.id)) bits.push(money(capValue(c.id)));
+    if (dates) bits.unshift(dates);
+    return `<button class="cap-card" data-cap="${esc(c.id)}">
+      ${capCollageHtml(c.id)}
+      <div class="cap-meta">
+        <div class="cap-badge${isTrip(c) ? " trip" : ""}">${capModeLabel(c)}</div>
+        <div class="cap-name">${esc(c.name)}</div>
+        <div class="cap-sub">${esc(bits.join(" · "))}</div>
+      </div>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join("");
+  return capToolbar("Capsules", false) +
+    `<div class="cap-list">${cards}</div>` +
+    `<button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
+}
+
+// ---- create form ----
+function openCapsuleNew() {
+  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "" };
+  capsuleView = "form";
+  renderCapsules();
+}
+
+function renderCapsuleForm() {
+  const f = _capForm;
+  const trip = f.kind !== "capsule";
+  return capToolbar("New capsule", true) + `
+    <div class="cap-form">
+      <div>
+        <label class="fld">Name</label>
+        <input class="inp" id="capName" placeholder="e.g. Spain trip, Fall capsule" value="${esc(f.name)}">
+      </div>
+      <div>
+        <label class="fld">Type</label>
+        <div class="cap-modebar">
+          <button data-capmode="capsule" class="${!trip ? "on" : ""}">Capsule</button>
+          <button data-capmode="packing" class="${trip ? "on" : ""}">Trip</button>
+        </div>
+      </div>
+      ${trip ? `<div class="cap-dates">
+        <div><label class="fld">Start</label><input class="inp" type="date" id="capStart" value="${esc(f.start_date)}"></div>
+        <div><label class="fld">End</label><input class="inp" type="date" id="capEnd" value="${esc(f.end_date)}"></div>
+      </div>` : ""}
+      <div>
+        <label class="fld">Notes (optional)</label>
+        <textarea class="inp" id="capNotes" rows="3" placeholder="Anything to remember…">${esc(f.notes)}</textarea>
+      </div>
+      <button class="btn" id="capCreate">Create capsule</button>
+    </div>`;
+}
+
+async function saveNewCapsule() {
+  syncCapForm();
+  const f = _capForm;
+  if (!f.name.trim()) { toast("Give it a name"); return; }
+  const payload = { name: f.name.trim(), kind: f.kind, notes: f.notes || null };
+  if (isTripKind(f.kind)) { payload.start_date = f.start_date || null; payload.end_date = f.end_date || null; }
+  try {
+    const rows = await rest("/capsules?select=*", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(payload),
+    });
+    const c = rows[0];
+    capsules.unshift(c);
+    buildCapsuleIndexes();
+    // fold in any items queued from a closet bulk "add to capsule"
+    if (_pendingAddIds && _pendingAddIds.length) {
+      await addItemsToCapsule(c.id, _pendingAddIds);
+      _pendingAddIds = null;
+    }
+    _capForm = null;
+    capsuleId = c.id;
+    capsuleView = "detail";
+    renderCapsules();
+    toast("Capsule created");
+  } catch (e) { toast(e.message); }
+}
+const isTripKind = (k) => k !== "capsule";
+
+function syncCapForm() {
+  if (!_capForm) return;
+  const name = $("#capName"); if (name) _capForm.name = name.value;
+  const notes = $("#capNotes"); if (notes) _capForm.notes = notes.value;
+  const s = $("#capStart"); if (s) _capForm.start_date = s.value;
+  const e = $("#capEnd"); if (e) _capForm.end_date = e.value;
+}
+
+// ---- detail ----
+function openCapsule(id) {
+  navDeeper("capsules");
+  capsuleId = id;
+  capsuleView = "detail";
+  _capUnpackedOnly = false;
+  renderCapsules();
+}
+
+
+
+// category- or formality-grouped grid with per-group counts (and packed counts for trips)
+function capGroupsHtml(list, trip, packedSet) {
+  if (!list.length) return `<div class="placeholder" style="padding:40px 32px"><b>No items yet</b><div>Add pieces to start planning.</div></div>`;
+  return itemGridView(list, {
+    group: _capSort,
+    onTap: "cap-item",
+    packedSet: trip ? packedSet : null,
+    trip,
+  });
+}
+
+function renderCapsuleDetail() {
+  const c = capsuleById.get(capsuleId);
+  const list = capsuleItems(capsuleId);
+  const trip = isTrip(c);
+  const dates = capDateLabel(c);
+  const sub = [capModeLabel(c)];
+  if (dates) sub.push(dates);
+
+  // formality coverage across all 8 levels
+  const covered = new Set();
+  for (const i of list) { for (const l of (itemFormalitySet(i) || [])) covered.add(l); }
+  const covChips = OCCASION_LADDER.map((lbl, idx) =>
+    `<span class="cap-cov-chip${covered.has(idx + 1) ? " on" : ""}" title="${esc(OCCASION_HINTS[idx])}">${idx + 1}. ${esc(lbl)}</span>`).join("");
+
+  // rough outfit-combination estimate
+  const byCat = (cat) => list.filter(i => i.category === cat).length;
+  const combos = (byCat("Tops") * byCat("Bottoms") + byCat("Dresses")) * Math.max(1, byCat("Shoes"));
+
+  let packHtml = "";
+  if (trip && list.length) {
+    const links = capsuleLinkMap.get(capsuleId) || [];
+    const packed = links.filter(l => l.packed).length;
+    const pct = Math.round((packed / list.length) * 100);
+    packHtml = `<div class="cap-pack">
+      <div class="cap-pack-bar"><div class="cap-pack-fill" style="width:${pct}%"></div></div>
+      <div class="cap-pack-lbl">${packed} of ${list.length} packed · tap the circle on a piece to check it off</div>
+    </div>`;
+  }
+
+  let wxHtml = "";
+  if (trip && c.start_date && c.end_date) {
+    const locs = c.locations || [];
+    const locRows = locs.map((l, i) => {
+      const range = (l.from || l.to) ? `${l.from ? fmtDate(l.from) : "start"} – ${l.to ? fmtDate(l.to) : "end"}` : "Whole trip";
+      return `<div class="loc-row">
+        <span class="loc-pin">📍</span>
+        <div class="loc-info">
+          <div class="loc-name">${esc(l.name)}</div>
+          <div class="loc-range">${esc(range)}</div>
+        </div>
+        <button class="loc-del" data-loc-del="${i}" aria-label="Remove location">×</button>
+      </div>`;
+    }).join("");
+    const wxContent = locs.length
+      ? `<div id="wxStrip"><div class="wx-loading muted">Loading weather…</div></div>`
+      : `<div id="wxStrip"></div>`;
+    wxHtml = `<div class="wx-section">
+      <div class="wx-sec-hdr">
+        <div class="wx-sec-title">Locations</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${locs.length ? `<button class="wx-add-btn" data-wx-refresh aria-label="Refresh weather"><svg viewBox="0 0 24 24" style="width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;vertical-align:-2px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg></button>` : ""}
+          <button class="wx-add-btn" data-loc-add>＋ Add</button>
+        </div>
+      </div>
+      ${locRows || `<div class="wx-no-locs">No locations yet — add one to see weather.</div>`}
+      ${wxContent}
+    </div>`;
+  }
+
+  const packedSet = new Set((capsuleLinkMap.get(capsuleId) || []).filter(l => l.packed).map(l => l.item_id));
+  let gridList = list;
+  if (trip && _capUnpackedOnly) gridList = list.filter(i => !packedSet.has(i.id));
+  let grid;
+  if (trip && _capUnpackedOnly && !gridList.length && list.length) {
+    grid = `<div class="placeholder" style="padding:40px 32px"><b>All packed 🎉</b><div>Every item is checked off.</div></div>`;
+  } else {
+    grid = capGroupsHtml(gridList, trip, packedSet);
+  }
+  const orgBar = list.length > 1 ? `<div class="cap-orgbar">
+    <div class="cap-seg">
+      <button data-capsort="category" class="${_capSort === "category" ? "on" : ""}">By category</button>
+      <button data-capsort="formality" class="${_capSort === "formality" ? "on" : ""}">By formality</button>
+    </div>
+    ${trip ? `<button class="cap-chip${_capUnpackedOnly ? " on" : ""}" data-cap-unpacked>Unpacked only</button>` : ""}
+  </div>` : "";
+
+  return capToolbar(c.name, true) + `
+    <div class="cap-hdr">
+      <div class="ch-name">${esc(c.name)}</div>
+      <div class="ch-sub">${esc(sub.join(" · "))}</div>
+    </div>
+    <div class="cap-insight">
+      <div class="kpi-row">
+        <div class="kpi-cell"><div class="kpi-val">${list.length}</div><div class="kpi-lbl">item${list.length === 1 ? "" : "s"}</div></div>
+        <div class="kpi-cell"><div class="kpi-val">${list.length ? money(capValue(capsuleId)) : "—"}</div><div class="kpi-lbl">total value</div></div>
+      </div>
+      ${combos > 1 ? `<div class="cap-cov-lbl" style="margin-top:12px">≈ ${combos} outfit${combos === 1 ? "" : "s"} possible from these pieces</div>` : ""}
+      <div class="cap-cov">
+        <div class="cap-cov-lbl">Formality covered</div>
+        <div class="cap-cov-chips">${covChips}</div>
+      </div>
+    </div>
+    ${(() => {
+      // Wash-before-you-pack: how much of this capsule/trip is sitting in the hamper.
+      if (!LAUNDRY_READY()) return "";
+      const _ls = laundryState();
+      const dirty = list.filter(i => itemStatus(i) === "Available" && isDirty(i, _ls));
+      return dirty.length ? `<div class="cap-launwarn">🧺 ${dirty.length} piece${dirty.length === 1 ? " is" : "s are"} in the hamper — wash before you pack</div>` : "";
+    })()}
+    ${packHtml}
+    ${wxHtml}
+    <button class="cap-plan" data-trip-toggle style="${tripModeId === c.id ? "background:var(--accent-soft);color:var(--accent)" : "background:var(--accent)"};margin-bottom:8px">
+      <svg viewBox="0 0 24 24"><path d="M2 16l20-6-3 8-4-1-3 3-2-4z"/><path d="M9 12L4 8l3-1 6 3"/></svg>
+      ${tripModeId === c.id ? (isDatedTrip(c) ? "End trip mode" : "Exit capsule mode")
+        : (isDatedTrip(c) ? "✈️ Start trip mode" : "Enter capsule mode")}
+    </button>
+    ${trip && c.start_date && c.end_date ? `<button class="cap-plan" data-cap-byday>
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+      Plan outfits by day
+    </button>` : `<button class="cap-plan" data-cap-byday>
+      <svg viewBox="0 0 24 24"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/></svg>
+      Planned outfits
+    </button>`}
+    <button class="cap-plan sec" data-cap-plan style="margin-top:8px">
+      <svg viewBox="0 0 24 24"><path d="M12 3l-1.5 3L4 9v11h16V9l-6.5-3z"/><path d="M12 6v14"/></svg>
+      Plan outfits from this
+    </button>
+    ${trip && c.start_date && c.end_date && c.end_date < todayStr() ? `<button class="cap-plan sec" data-cap-recap style="margin-top:8px">
+      <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-6 3 3 5-8"/></svg>
+      Trip recap
+    </button>` : ""}
+    <button class="cap-plan" data-cap-suggest style="background:var(--accent);margin-top:8px">
+      <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+      Suggest an outfit
+    </button>
+    <textarea class="inp" id="capDetNotes" rows="2" style="margin:16px 14px 0;width:calc(100% - 28px)" placeholder="Notes…">${esc(c.notes || "")}</textarea>
+    <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
+    ${orgBar}
+    ${grid}
+    ${renderCapsuleLooksSection(capsuleId)}
+    <div class="cap-footer">
+      <div class="cap-actions">
+        <button class="cap-act2" data-cap-rename>Rename</button>
+        <button class="cap-act2" data-cap-dup>Duplicate</button>
+        <button class="cap-act2" data-cap-share>Share list</button>
+      </div>
+      <button class="cap-del" data-cap-del>Delete capsule</button>
+    </div>`;
+}
+
+function renderCapsuleLooksSection(cid) {
+  const looks = activeOutfits().filter(o => outfitFullyInCapsule(o, cid))
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const tilesHtml = looks.length
+    ? `<div class="ogrid" style="padding:0 14px 4px">${looks.map(o =>
+        `<button class="otile" data-cap-look="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div></button>`
+      ).join("")}</div>`
+    : `<div class="placeholder" style="padding:16px 16px 8px;font-size:13px;color:var(--muted)">No saved looks use only these pieces yet — add a look to bring its pieces in.</div>`;
+  return `<div class="cap-secrow"><div class="t">Looks</div><button class="a" data-cap-look-add>＋ Add looks</button></div>${tilesHtml}`;
+}
+
+function openCapsuleLookPicker() {
+  const cid = capsuleId;
+  const looks = activeOutfits()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const grid = looks.length
+    ? `<div class="ogrid">${looks.map(o => {
+        const inCap = outfitFullyInCapsule(o, cid);
+        return `<button class="otile${inCap ? " selected" : ""}" data-lkpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div>${inCap ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">In capsule</div>` : ""}</button>`;
+      }).join("")}</div>`
+    : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">No saved looks yet.</div>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="lkPickCancel">Cancel</button>
+      <h2>Add a Look</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 16px 0;font-size:13px;color:var(--muted)">Tap a look to add its pieces to this capsule.</div>
+    <div style="padding:6px 0 30px">${grid}</div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#lkPickCancel").onclick = () => { hideSheet("logSheet"); };
+  $("#logInner").querySelectorAll("[data-lkpick]").forEach(b => {
+    b.onclick = async () => {
+      const o = outfitById.get(b.dataset.lkpick);
+      if (!o) return;
+      if (outfitFullyInCapsule(o, cid)) { toast("Already in capsule"); return; }
+      const itemIds = outfitItems(o).map(i => i.id);
+      if (!itemIds.length) return;
+      try {
+        await addItemsToCapsule(cid, itemIds);
+        hideSheet("logSheet");
+        renderCapsules();
+        toast("Look's pieces added to capsule");
+      } catch (err) { toast(err.message); }
+    };
+  });
+}
+
+/* ===================================================================
+   TRIP PER-DAY PLANNER
+   capsules.plan = { "<date>": ["<outfitId>", ...] }. Plans are intentions kept
+   separate from wears (past-only). "Wore it" converts a planned day to a real
+   wear. Needs migration/capsule_plan.sql.
+   =================================================================== */
+let _planWx = {};  // date → {maxT,minT,code,hist,locName} for the open trip
+let _planWxLoadedFor = null;  // capsuleId whose weather is already in _planWx (avoids reload loop)
+
+function tripPlan(c) { return (c && c.plan && typeof c.plan === "object") ? c.plan : {}; }
+// Reserved plan key: the trip/capsule "outfit bucket" — planned looks not tied
+// to a day yet. Rides the same plan JSONB + add/remove pipeline as real dates.
+const PLAN_BUCKET = "bucket";
+// Reserved SENTINEL inside a day's look array: this trip day is a laundry day
+// (hotel wash etc.) — the rewear budget resets there. Invisible to look rendering
+// because planActiveLooks drops any id outfitById doesn't know.
+const PLAN_LAUNDRY = "__laundry__";
+function planLooksForDate(c, date) {
+  const v = tripPlan(c)[date];
+  return Array.isArray(v) ? v : (v ? [v] : []);
+}
+function planLaundryDay(c, date) { return planLooksForDate(c, date).includes(PLAN_LAUNDRY); }
+async function togglePlanLaundry(cid, date) {
+  const c = capsuleById.get(cid); if (!c) return;
+  const plan = JSON.parse(JSON.stringify(tripPlan(c)));
+  let arr = Array.isArray(plan[date]) ? plan[date] : (plan[date] ? [plan[date]] : []);
+  if (arr.includes(PLAN_LAUNDRY)) arr = arr.filter(x => x !== PLAN_LAUNDRY); else arr.push(PLAN_LAUNDRY);
+  if (arr.length) plan[date] = arr; else delete plan[date];
+  await setCapsulePlan(c, plan);
+  if (capsuleView === "plan") renderCapsules();
+}
+const ordinal = (n) => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][Math.min(n % 10, 4)] || "th");
+// Rewear budget: walk the trip days in order, counting each piece's planned
+// wear-days since the trip start (or the last laundry day). A day flags the
+// pieces it pushes PAST their wears-per-wash tolerance. Informational only —
+// nothing blocks; on trips rewearing is often the plan.
+function planRewearFlags(c, dates) {
+  const counts = new Map();
+  const flags = new Map();  // date → [{name, nth}]
+  for (const date of dates) {
+    if (planLaundryDay(c, date)) counts.clear();  // washed; today's outfits count fresh
+    const dayItems = new Set();
+    for (const oid of planActiveLooks(c, date)) {
+      const o = outfitById.get(oid);
+      if (o) for (const it of outfitItems(o)) dayItems.add(it);
+    }
+    for (const it of dayItems) {
+      const tol = wearTolerance(it);
+      if (tol === Infinity) continue;
+      if (it.last_washed && date <= it.last_washed) continue;
+      const n = (counts.get(it.id) || 0) + 1;
+      counts.set(it.id, n);
+      if (n > tol) {
+        let a = flags.get(date); if (!a) flags.set(date, a = []);
+        a.push({ name: it.name || "Untitled", nth: n });
+      }
+    }
+  }
+  return flags;
+}
+// Same, but drops deleted/archived looks (archived lives only in Archive + calendar).
+function planActiveLooks(c, date) {
+  return planLooksForDate(c, date).filter(oid => {
+    const o = outfitById.get(oid);
+    return o && !effectiveArchived(o);
+  });
+}
+// Season/weather anchor for a plan context — the bucket has no date of its own,
+// so fall back to the trip start (or today for undated capsules).
+function planCtxSeasonDate(planCtx) {
+  if (planCtx.date !== PLAN_BUCKET) return planCtx.date;
+  const c = capsuleById.get(planCtx.capsuleId);
+  return (c && c.start_date) || todayStr();
+}
+function tripDates(c) {
+  const out = [];
+  if (!c.start_date || !c.end_date) return out;
+  let d = new Date(c.start_date + "T00:00:00"), e = new Date(c.end_date + "T00:00:00");
+  while (d <= e) { out.push(localISO(d)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+function planDayLabel(date) {
+  if (date === PLAN_BUCKET) return "Outfit bucket";
+  const o = new Date(date + "T00:00:00");
+  return o.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+// A wear already logged for this look on this date → the day was actually worn.
+function planWorn(date, outfitId) {
+  return wears.some(w => w.worn_on === date && w.outfit_id === outfitId);
+}
+
+async function setCapsulePlan(c, plan) {
+  c.plan = plan;  // optimistic
+  try {
+    await rest(`/capsules?id=eq.${c.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ plan }),
+    });
+  } catch (e) { toast(e.message); }
+}
+async function addPlanLook(cid, date, outfitId) {
+  const c = capsuleById.get(cid); if (!c) return;
+  const plan = JSON.parse(JSON.stringify(tripPlan(c)));
+  const arr = Array.isArray(plan[date]) ? plan[date] : (plan[date] ? [plan[date]] : []);
+  if (!arr.includes(outfitId)) arr.push(outfitId);
+  plan[date] = arr;
+  await setCapsulePlan(c, plan);
+  if (capsuleView === "plan") renderCapsules();
+}
+async function removePlanLook(cid, date, outfitId) {
+  const c = capsuleById.get(cid); if (!c) return;
+  const plan = JSON.parse(JSON.stringify(tripPlan(c)));
+  let arr = Array.isArray(plan[date]) ? plan[date] : (plan[date] ? [plan[date]] : []);
+  arr = arr.filter(x => x !== outfitId);
+  if (arr.length) plan[date] = arr; else delete plan[date];
+  await setCapsulePlan(c, plan);
+  if (capsuleView === "plan") renderCapsules();
+}
+
+// Record that a planned look was actually worn that day → a real wear row.
+async function planWoreIt(date, outfitId) {
+  const o = outfitById.get(outfitId);
+  if (!o) return;
+  const its = outfitItems(o);
+  if (!its.length) { toast("This look has no pieces"); return; }
+  try {
+    const fml = deriveWearFormality(its.map(it => it.id));
+    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: outfitId, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
+    const rows = await rest("/wears", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    if (Array.isArray(rows)) wears.push(...rows); else payload.forEach(p => wears.push(p));
+    buildOutfitWearMap();
+    toast("Logged as worn");
+    if (capsuleView === "plan") renderCapsules();
+  } catch (e) { toast(e.message); }
+}
+
+async function loadPlanWeather(c) {
+  const cached = _wxCache[c.id];
+  let days;
+  if (cached && Date.now() - cached.ts < WX_TTL) days = cached.days;
+  else { try { days = await buildTripWeather(c); _wxCache[c.id] = { days, ts: Date.now() }; } catch (e) { days = []; } }
+  _planWx = {};
+  (days || []).forEach(d => { _planWx[d.date] = d; });
+  _planWxLoadedFor = c.id;
+  if (capsuleView === "plan") renderCapsules();
+}
+
+function openTripPlan(id) {
+  capsuleId = id;
+  capsuleView = "plan";
+  _planWx = {};
+  _planWxLoadedFor = null;
+  renderCapsules();
+}
+
+function planDayWxHtml(date) {
+  const w = _planWx[date];
+  if (!w || w.maxT == null) return "";
+  return `<span class="plan-wx"><span class="e">${wmoEmoji(w.code)}</span>${w.maxT}° / ${w.minT}°${w.hist ? " <span style='opacity:.7'>avg</span>" : ""}</span>`;
+}
+
+function renderCapsulePlan() {
+  const c = capsuleById.get(capsuleId);
+  const dates = tripDates(c);
+  const memberCount = capsuleItems(capsuleId).length;
+  const bucketIds = planActiveLooks(c, PLAN_BUCKET);
+
+  // Bucket looks already assigned to some day get a "✓ planned" mark (they stay
+  // in the bucket — one outfit can cover several days).
+  const plannedSomewhere = new Set(dates.flatMap(d => planLooksForDate(c, d)));
+  const bucketTiles = bucketIds.map(oid => {
+    const o = outfitById.get(oid);
+    return `<div class="plan-look">
+      <div data-plan-open="${esc(oid)}">${outfitCollageHtml(o, 4)}</div>
+      <button class="plan-look-x" data-plan-remove="${esc(oid)}" data-plan-date="${PLAN_BUCKET}" aria-label="Remove">×</button>
+      <div class="plan-look-name">${plannedSomewhere.has(oid) ? `<span class="plan-worn">✓ planned</span>` : esc(outfitName(o))}</div>
+    </div>`;
+  }).join("");
+  const bucketCard = `<div class="plan-day">
+    <div class="plan-day-hd">
+      <div class="plan-day-date">Outfit bucket<small>${bucketIds.length ? `${bucketIds.length} outfit${bucketIds.length === 1 ? "" : "s"} ready to assign` : "plan outfits here, then pull them onto days"}</small></div>
+    </div>
+    ${bucketIds.length ? `<div class="plan-looks">${bucketTiles}</div>` : ""}
+    <div class="plan-add-row">
+      <button class="plan-act" data-plan-assign="${PLAN_BUCKET}">＋ Look</button>
+      <button class="plan-act" data-plan-suggest="${PLAN_BUCKET}">✨ Suggest</button>
+      <button class="plan-act" data-plan-build="${PLAN_BUCKET}">✎ Build</button>
+    </div>
+  </div>`;
+
+  const rewearFlags = planRewearFlags(c, dates);
+  const dayCards = dates.map(date => {
+    const looks = planActiveLooks(c, date);
+    const isLaun = planLaundryDay(c, date);
+    const rw = rewearFlags.get(date);
+    const looksHtml = looks.map(oid => {
+      const o = outfitById.get(oid);
+      const worn = planWorn(date, oid);
+      return `<div class="plan-look">
+        <div data-plan-open="${esc(oid)}">${outfitCollageHtml(o, 4)}</div>
+        <button class="plan-look-x" data-plan-remove="${esc(oid)}" data-plan-date="${esc(date)}" aria-label="Remove">×</button>
+        <div class="plan-look-name">${worn ? `<span class="plan-worn">✓ worn</span>` : esc(outfitName(o))}</div>
+        ${worn ? "" : `<button class="plan-act" style="margin-top:4px;padding:5px 9px;font-size:11px" data-plan-wore="${esc(oid)}" data-plan-date="${esc(date)}">Wore it</button>`}
+      </div>`;
+    }).join("");
+    return `<div class="plan-day">
+      <div class="plan-day-hd">
+        <div class="plan-day-date">${esc(planDayLabel(date))}<small>${esc(date)}</small></div>
+        ${planDayWxHtml(date)}
+      </div>
+      ${isLaun ? `<div class="plan-launday">🧺 Laundry day — rewear counts reset</div>` : ""}
+      ${rw ? `<div class="plan-rewarn">${rw.map(f => `⚠︎ ${esc(f.name)} — ${ordinal(f.nth)} wear since laundry`).join("<br>")}</div>` : ""}
+      ${looks.length ? `<div class="plan-looks">${looksHtml}</div>` : ""}
+      <div class="plan-add-row">
+        ${bucketIds.length ? `<button class="plan-act" data-plan-frombucket="${esc(date)}">🪣 From bucket</button>` : ""}
+        <button class="plan-act" data-plan-assign="${esc(date)}">＋ Look</button>
+        <button class="plan-act" data-plan-suggest="${esc(date)}">✨ Suggest</button>
+        <button class="plan-act" data-plan-build="${esc(date)}">✎ Build</button>
+        <button class="plan-act" data-plan-laundry="${esc(date)}"${isLaun ? ` style="color:var(--accent);border-color:var(--accent)"` : ""}>🧺 Did laundry${isLaun ? " ✓" : ""}</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  const kind = capModeLabel(c).toLowerCase();
+  return capToolbar(c.name + (dates.length ? " · By day" : " · Planned outfits"), true) + `
+    <div class="cap-hdr">
+      <div class="ch-name">${dates.length ? "Plan by day" : "Planned outfits"}</div>
+      <div class="ch-sub">${dates.length ? `${dates.length} day${dates.length === 1 ? "" : "s"} · ` : ""}${memberCount} piece${memberCount === 1 ? "" : "s"} in this ${esc(kind)}</div>
+    </div>
+    ${memberCount ? "" : `<div class="placeholder" style="padding:24px 32px"><b>No pieces yet</b><div>Add items to the ${esc(kind)} first — planning is scoped to its pieces.</div></div>`}
+    ${bucketCard}
+    ${dayCards}
+    <div style="height:30px"></div>`;
+}
+
+// "🪣 From bucket": assign a bucket look to a specific day (the look stays in
+// the bucket; assigning again on another day is fine).
+function openBucketAssignSheet(date) {
+  const c = capsuleById.get(capsuleId);
+  const bucketIds = planActiveLooks(c, PLAN_BUCKET);
+  const onDay = new Set(planLooksForDate(c, date));
+  const grid = bucketIds.length
+    ? `<div class="ogrid">${bucketIds.map(oid => {
+        const o = outfitById.get(oid);
+        const used = onDay.has(oid);
+        return `<button class="otile${used ? " selected" : ""}" data-bktpick="${esc(oid)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div>${used ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">On this day</div>` : ""}</button>`;
+      }).join("")}</div>`
+    : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">The bucket is empty.</div>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="bktPickCancel">Cancel</button>
+      <h2>Bucket → ${esc(planDayLabel(date))}</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 0 30px">${grid}</div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#bktPickCancel").onclick = () => { hideSheet("logSheet"); };
+  $("#logInner").querySelectorAll("[data-bktpick]").forEach(b => {
+    b.onclick = () => {
+      const oid = b.dataset.bktpick;
+      if (onDay.has(oid)) { toast("Already planned for this day"); return; }
+      hideSheet("logSheet");
+      addPlanLook(capsuleId, date, oid);
+    };
+  });
+}
+
+// Assign a saved look to a trip day — scoped to looks built entirely from the
+// trip's pieces (falls back to a hint when none qualify).
+let _planPickQ = ""; // P3: keyword search in the plan look picker
+function planPickGridHtml() {
+  const q = _planPickQ.trim().toLowerCase();
+  // L5: liked looks first, then most-recently-created.
+  let looks = activeOutfits().filter(o => outfitFullyInCapsule(o, capsuleId))
+    .sort((a, b) => (b.rating === 1 ? 1 : 0) - (a.rating === 1 ? 1 : 0) || String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  if (q) looks = looks.filter(o => outfitName(o).toLowerCase().includes(q));
+  return looks.length
+    ? `<div class="ogrid">${looks.map(o => `<button class="otile" data-planpick="${esc(o.id)}">${outfitCollageHtml(o, 4)}${o.rating === 1 ? `<div class="otile-heart"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></div>` : ""}<div class="oname">${esc(outfitName(o))}</div></button>`).join("")}</div>`
+    : `<div class="cal-day-empty" style="padding:24px 16px;text-align:center;color:var(--muted)">${q ? "No looks match that search." : "No saved looks use only this trip's pieces yet.<br>Use ✨ Suggest or ✎ Build to make one."}</div>`;
+}
+function openPlanLookPicker(date) {
+  _planPickQ = "";
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="planPickCancel">Cancel</button>
+      <h2>${date === PLAN_BUCKET ? "Add to bucket" : `Look for ${esc(planDayLabel(date))}`}</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 16px 8px"><input class="inp" id="planPickSearch" placeholder="Search looks…" value=""></div>
+    <div id="planPickResults" style="padding:6px 0 30px">${planPickGridHtml()}</div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#planPickCancel").onclick = () => { hideSheet("logSheet"); };
+  const s = $("#planPickSearch");
+  if (s) s.oninput = () => {
+    _planPickQ = s.value;
+    const wrap = $("#planPickResults");
+    if (wrap) { wrap.innerHTML = planPickGridHtml(); hydratePhotos($("#logInner")); wirePlanPickTaps(date); }
+  };
+  wirePlanPickTaps(date);
+}
+function wirePlanPickTaps(date) {
+  $("#logInner").querySelectorAll("[data-planpick]").forEach(b => {
+    b.onclick = () => { hideSheet("logSheet"); addPlanLook(capsuleId, date, b.dataset.planpick); };
+  });
+}
+
+// Persist a suggester/builder combo as a real look so it can be referenced by a plan.
+async function saveComboAsOutfit(pieces) {
+  const itemIds = pieces.map(p => p.id);
+  const dup = findDuplicateOutfit(itemIds, null);
+  if (dup) return dup.id;
+  const layout = suggestionLayout(pieces);
+  const rows = await rest("/outfits?select=*", {
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify({ name: null, layout }),
+  });
+  const o = Array.isArray(rows) ? rows[0] : rows;
+  if (!o || !o.id) throw new Error("Could not save look");
+  o.layout = layout; outfits.push(o);
+  const links = itemIds.map(item_id => ({ outfit_id: o.id, item_id }));
+  await rest("/outfit_items", {
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify(links),
+  });
+  outfitLinks = outfitLinks.concat(links);
+  buildOutfitIndexes();
+  return o.id;
+}
+
+// ---- build a plain-text checklist of a capsule (grouped by category) ----
+function capsuleListText(id) {
+  const c = capsuleById.get(id);
+  if (!c) return "";
+  const trip = isTrip(c);
+  const packedSet = new Set((capsuleLinkMap.get(id) || []).filter(l => l.packed).map(l => l.item_id));
+  const lines = [c.name];
+  const dates = capDateLabel(c);
+  if (dates) lines.push(dates);
+  lines.push("");
+  const groups = groupByCategory(capsuleItems(id));
+  if (!groups.length) lines.push("(no items yet)");
+  for (const g of groups) {
+    lines.push(`${g.key.toUpperCase()} (${g.items.length})`);
+    for (const i of g.items) {
+      const box = trip ? (packedSet.has(i.id) ? "[x] " : "[ ] ") : "• ";
+      lines.push(`${box}${i.name || "Untitled"}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
+async function shareCapsuleList(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  const text = capsuleListText(id);
+  try {
+    if (navigator.share) { await navigator.share({ title: c.name, text }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }  // user dismissed the share sheet
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("List copied to clipboard");
+  } catch (_) {
+    // last-resort fallback for browsers without the async clipboard API
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("List copied to clipboard"); }
+    catch { toast("Couldn't copy the list"); }
+    ta.remove();
+  }
+}
+
+// ---- rename a capsule (reuses #logSheet) ----
+function renameCapsule(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="renCancel">Cancel</button>
+      <h2>Rename</h2>
+      <button class="lnk" id="renSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:18px 18px 30px">
+      <input class="inp" id="renName" value="${esc(c.name)}" placeholder="Capsule name" style="width:100%;font-size:16px">
+    </div>`;
+  showSheet("logSheet");
+  $("#renCancel").onclick = () => { hideSheet("logSheet"); };
+  $("#renSave").onclick = async () => {
+    const name = $("#renName").value.trim();
+    if (!name) { toast("Give it a name"); return; }
+    hideSheet("logSheet");
+    const prev = c.name;
+    c.name = name;  // optimistic
+    try {
+      await rest(`/capsules?id=eq.${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ name }),
+      });
+      renderCapsules();
+      toast("Renamed");
+    } catch (e) { c.name = prev; toast(e.message); }
+  };
+}
+
+// ---- duplicate a capsule (shell + its items; packing resets) ----
+async function duplicateCapsule(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  const itemIds = (capsuleLinkMap.get(id) || []).map(l => l.item_id);
+  try {
+    const payload = { name: `${c.name} (copy)`, kind: c.kind, notes: c.notes || null };
+    if (c.start_date) payload.start_date = c.start_date;
+    if (c.end_date)   payload.end_date   = c.end_date;
+    if (c.locations)  payload.locations  = c.locations;  // column exists since r9
+    const rows = await rest("/capsules?select=*", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    const nc = Array.isArray(rows) ? rows[0] : rows;
+    if (!nc || !nc.id) throw new Error("Could not duplicate");
+    capsules.unshift(nc);
+    buildCapsuleIndexes();
+    if (itemIds.length) await addItemsToCapsule(nc.id, itemIds);
+    capsuleId = nc.id;
+    capsuleView = "detail";
+    renderCapsules();
+    toast("Capsule duplicated");
+  } catch (e) { toast(e.message); }
+}
+
+function planFromCapsule(id) {
+  activeCapsuleId = id;
+  closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
+  switchTab("closet");
+  const c = capsuleById.get(id);
+  toast(c ? `Planning from ${c.name}` : "Capsule active");
+}
+
+async function deleteCapsule(id) {
+  const c = capsuleById.get(id);
+  if (!confirm(`Delete "${c ? c.name : "this capsule"}"? Your items are not affected.`)) return;
+  try {
+    await rest(`/capsules?id=eq.${id}`, { method: "DELETE" });
+    capsules = capsules.filter(x => x.id !== id);
+    capsuleLinks = capsuleLinks.filter(l => l.capsule_id !== id);
+    if (activeCapsuleId === id) activeCapsuleId = null;
+    buildCapsuleIndexes();
+    capsuleView = "list"; capsuleId = null;
+    renderCapsules();
+    toast("Capsule deleted");
+  } catch (e) { toast(e.message); }
+}
+
+function saveCapsuleNotes(id, value) {
+  clearTimeout(_capNotesTimer);
+  _capNotesTimer = setTimeout(async () => {
+    try {
+      await rest(`/capsules?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes: value || null }) });
+      const c = capsuleById.get(id); if (c) c.notes = value;
+    } catch (e) { /* silent */ }
+  }, 900);
+}
+
+// ---- packing tick ----
+async function togglePack(itemId) {
+  const links = capsuleLinkMap.get(capsuleId) || [];
+  const link = links.find(l => l.item_id === itemId);
+  if (!link) return;
+  const next = !link.packed;
+  link.packed = next; // optimistic
+  // surgical tile update + progress refresh
+  const tile = $(`[data-cap-item="${itemId}"]`);
+  if (tile) tile.classList.toggle("packed", next);
+  refreshPackProgress();
+  if (_capUnpackedOnly && next && tile) {
+    tile.remove();
+    $$(".cap-grp").forEach(g => { if (!g.querySelector(".gtile")) g.remove(); });
+    if (!$(".cap-grp")) renderCapsules();
+  }
+  refreshPackGroupCounts();
+  try {
+    await rest(`/capsule_items?capsule_id=eq.${capsuleId}&item_id=eq.${itemId}`,
+      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ packed: next }) });
+  } catch (e) { link.packed = !next; toast(e.message); renderCapsules(); }
+}
+function refreshPackProgress() {
+  const fill = $(".cap-pack-fill"), lbl = $(".cap-pack-lbl");
+  if (!fill) return;
+  const links = capsuleLinkMap.get(capsuleId) || [];
+  const total = capsuleItems(capsuleId).length;
+  const packed = links.filter(l => l.packed && itemById.has(l.item_id)).length;
+  fill.style.width = (total ? Math.round((packed / total) * 100) : 0) + "%";
+  if (lbl) lbl.textContent = `${packed} of ${total} packed · tap the circle on a piece to check it off`;
+}
+// recompute each category/formality group's "N/M packed" header from the DOM tiles
+function refreshPackGroupCounts() {
+  $$(".cap-grp").forEach(grp => {
+    const cnt = grp.querySelector("[data-grp-cnt]");
+    if (!cnt) return;
+    const total = grp.querySelectorAll(".gtile").length;
+    const packed = grp.querySelectorAll(".gtile.packed").length;
+    cnt.textContent = `${packed}/${total} packed`;
+    cnt.classList.toggle("done", packed === total);
+  });
+}
+
+// ---- add-items picker (membership editor) ----
+function openCapsulePicker(id) {
+  capsuleId = id;
+  _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
+  _capPickFilter = "";
+  _capPickCat = null;
+  _capPickSub = null;
+  _capPickStatus = "Available";
+  _pickTripScope = false;  // adding items TO a capsule needs the whole closet
+  pickerFilter = newFilterState();
+  capsuleView = "pick";
+  renderCapsules();
+}
+
+// status + keyword filtered (before category chip filter)
+function pickerPoolBase() {
+  let pool = _capPickStatus === "All"
+    ? items.filter(i => itemStatus(i) !== "Archive")
+    : items.filter(i => itemStatus(i) === _capPickStatus);
+  // Trip mode (calendar log picker only): default to the suitcase, with the
+  // "Suitcase only" chip as the whole-closet escape hatch.
+  if (_pickTripScope && tripModeId) {
+    const set = new Set((capsuleLinkMap.get(tripModeId) || []).map(l => l.item_id));
+    pool = pool.filter(i => set.has(i.id));
+  }
+  // Shares the closet's matcher (Round C) so one box behaves the same
+  // everywhere — multi-term AND, and colour/retailer/size/notes/tags too.
+  const q = _capPickFilter.trim();
+  if (q) pool = pool.filter(i => itemMatchesText(i, q));
+  if (hasActiveFilter(pickerFilter)) pool = pool.filter(i => itemMatchesFilter(i, pickerFilter, { noStatusDefault: true }));
+  return pool;
+}
+function pickerPool() {
+  let pool = pickerPoolBase();
+  if (_capPickCat) pool = pool.filter(i => (i.category || "Other") === _capPickCat);
+  if (_capPickSub) pool = pool.filter(i => (i.subcategory || "") === _capPickSub);
+  return sortItems(pool);
+}
+
+// subcategory chips (shown when a category is selected)
+function pickerSubBar() {
+  if (!_capPickCat) return "";
+  const subs = TAXONOMY[_capPickCat] || [];
+  if (!subs.length) return "";
+  const catPool = pickerPoolBase().filter(i => (i.category || "Other") === _capPickCat);
+  const counts = new Map();
+  for (const i of catPool) { const s = i.subcategory || ""; if (s) counts.set(s, (counts.get(s) || 0) + 1); }
+  const chip = (key, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-picksub="${esc(key)}">${esc(lbl)}${counts.has(key) ? " " + counts.get(key) : ""}</button>`;
+  const visibleSubs = subs.filter(s => counts.has(s));
+  if (!visibleSubs.length) return "";
+  return `<div class="cap-catbar" style="padding-top:0">${chip("", "All", !_capPickSub)}${visibleSubs.map(s => chip(s, s, _capPickSub === s)).join("")}</div>`;
+}
+
+// horizontal category jump-chips with counts (built from the keyword-filtered pool)
+function pickerCatBar() {
+  const base = pickerPoolBase();
+  const counts = new Map();
+  for (const i of base) { const c = i.category || "Other"; counts.set(c, (counts.get(c) || 0) + 1); }
+  const cats = [...counts.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
+  const chip = (key, lbl, n, on) => `<button class="cap-chip${on ? " on" : ""}" data-pickcat="${esc(key)}">${esc(lbl)} ${n}</button>`;
+  return `<div class="cap-catbar">${chip("__all__", "All", base.length, !_capPickCat)}${cats.map(c => chip(c, c, counts.get(c), _capPickCat === c)).join("")}</div>`;
+}
+
+// category-grouped selectable grid for the picker
+function pickerGridHtml(pool) {
+  return itemGridView(pool, {
+    group: "category",
+    select: true,
+    selSet: _capPick,
+    onTap: "pick",
+    emptyMsg: "No matches",
+  });
+}
+
+// "★ Suggested" strip at the top of the capsule picker: in-season workhorses
+// (high wear index vs similar items) not yet picked. Hidden while searching or
+// drilled into a category. Trip capsules use the trip's start-date season.
+function capsulePickSuggestHtml() {
+  if (_capPickFilter.trim() || _capPickCat) return "";
+  const c = capsuleById.get(capsuleId);
+  const season = (c && c.start_date) ? seasonOf(c.start_date) : currentSeason();
+  const per = buildItemPerf(items);
+  const sugg = items.filter(i => {
+    if (itemStatus(i) !== "Available") return false;
+    const p = per.get(i.id);
+    return p && p.count >= 3 && p.idx != null && p.idx >= 1.2 && inSeason(i, season);
+  }).sort((a, b) => per.get(b.id).idx - per.get(a.id).idx).slice(0, 12);
+  if (!sugg.length) return "";
+  const tile = (i) => `<button class="gtile cap-sug-tile${_capPick.has(i.id) ? " selected" : ""}" data-pick="${esc(i.id)}">
+    <div class="sel-dot${_capPick.has(i.id) ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>
+    ${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div>
+  </button>`;
+  return `<div class="sf-label" style="padding:8px 14px 2px">★ Suggested · ${esc(season)} workhorses</div>
+    <div class="cap-sug-strip">${sugg.map(tile).join("")}</div>`;
+}
+
+function renderCapsulePicker() {
+  const c = capsuleById.get(capsuleId);
+  const right = `<div style="display:flex;align-items:center;gap:8px">
+    <button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>
+  </div>`;
+  const lensBtn = (s, lbl) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${lbl}</button>`;
+  return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
+    <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
+      <input class="inp" id="capPickSearch" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}">
+      ${funnelBtnHtml("capPickFilter", pickerFilter, () => renderCapsules())}
+    </div>
+    <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
+    <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
+    <div id="capPickResults">${capsulePickSuggestHtml()}${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>`;
+}
+
+function togglePick(id) {
+  if (_capPick.has(id)) _capPick.delete(id); else _capPick.add(id);
+  // $$: the item can appear twice (suggested strip + main grid) — update both
+  $$(`[data-pick="${id}"]`).forEach(tile => {
+    const on = _capPick.has(id);
+    tile.classList.toggle("selected", on);
+    const dot = tile.querySelector(".sel-dot"); if (dot) dot.classList.toggle("on", on);
+  });
+  const cnt = $("#capPickCount"); if (cnt) cnt.textContent = `${_capPick.size} selected`;
+  const logAsLook = $("#calLogAsLook"); if (logAsLook) logAsLook.hidden = _capPick.size < 2;
+}
+
+async function saveCapsulePicker() {
+  const cid = capsuleId;
+  const current = new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
+  const selected = _capPick;
+  const toAdd = [...selected].filter(id => !current.has(id));
+  const toRemove = [...current].filter(id => !selected.has(id));
+  try {
+    if (toAdd.length) await addItemsToCapsule(cid, toAdd, true);
+    if (toRemove.length) {
+      const inList = `(${toRemove.map(id => `"${id}"`).join(",")})`;
+      await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=in.${inList}`, { method: "DELETE" });
+      capsuleLinks = capsuleLinks.filter(l => !(l.capsule_id === cid && toRemove.includes(l.item_id)));
+      buildCapsuleIndexes();
+    }
+    capsuleView = "detail";
+    renderCapsules();
+    toast("Items updated");
+  } catch (e) { toast(e.message); }
+}
+
+// Insert membership rows; `skipBuild` avoids a double rebuild when caller rebuilds.
+async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
+  const fresh = itemIds.filter(id => !(capsuleLinkMap.get(cid) || []).some(l => l.item_id === id));
+  if (!fresh.length) return;
+  // `packed` is omitted so this works before the column migration; DB default fills it after.
+  const payload = fresh.map(id => ({ capsule_id: cid, item_id: id }));
+  const rows = await rest("/capsule_items?select=*", {
+    method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(payload),
+  });
+  capsuleLinks = capsuleLinks.concat(rows && rows.length ? rows : payload);
+  buildCapsuleIndexes();
+}
+
+// ---- assign a single item to capsules (multi-select toggle sheet, reuses #moveSheet) ----
+// currentIds: array of capsule ids the item is in. onSave(newIds[]) is called with the
+// chosen set when the user taps Save. Used by item detail and the Add form.
+function openCapsuleAssign(currentIds, onSave) {
+  const sel = new Set(currentIds);
+  const render = () => {
+    const rows = capsules.map(c => {
+      const on = sel.has(c.id);
+      return `<button class="sheet-row" data-cap-tog="${esc(c.id)}">
+        <span>${esc(c.name)}</span>
+        <span class="rt" style="color:${on ? "var(--accent)" : "var(--muted)"};font-weight:${on ? "700" : "400"}">${on ? "✓ In" : "Add"}</span>
+      </button>`;
+    }).join("");
+    $("#moveInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="capAssignCancel">Cancel</button>
+        <h2>Capsules</h2>
+        <button class="lnk" id="capAssignSave" style="font-weight:700">Save</button>
+      </div>
+      ${rows || `<div class="sheet-note">No capsules yet. Create one from the Capsules screen.</div>`}`;
+    $("#capAssignCancel").onclick = () => { hideSheet("moveSheet"); };
+    $("#capAssignSave").onclick = () => { hideSheet("moveSheet"); onSave([...sel]); };
+    $("#moveInner").querySelectorAll("[data-cap-tog]").forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.capTog;
+        sel.has(id) ? sel.delete(id) : sel.add(id);
+        render();
+      };
+    });
+  };
+  render();
+  showSheet("moveSheet");
+}
+
+// Diff an item's capsule membership against a chosen set, writing capsule_items rows.
+async function saveItemCapsules(itemId, newIds) {
+  const current = new Set(capsulesForItem(itemId));
+  const next = new Set(newIds);
+  const toAdd = [...next].filter(id => !current.has(id));
+  const toRemove = [...current].filter(id => !next.has(id));
+  try {
+    for (const cid of toAdd) await addItemsToCapsule(cid, [itemId]);
+    for (const cid of toRemove) {
+      await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=eq.${itemId}`, { method: "DELETE" });
+      capsuleLinks = capsuleLinks.filter(l => !(l.capsule_id === cid && l.item_id === itemId));
+    }
+    if (toRemove.length) buildCapsuleIndexes();
+    if (toAdd.length || toRemove.length) toast("Capsules updated");
+  } catch (e) { toast(e.message); }
+}
+
+// ---- bulk "add to capsule" from closet select mode (reuses #moveSheet) ----
+function openCapsuleSheet() {
+  if (!selectedIds.size) return;
+  _capSheetMode = true;
+  const rows = capsules.map(c =>
+    `<button class="sheet-row" data-cap-target="${esc(c.id)}">
+      <span>${esc(c.name)}</span>
+      <span class="rt" style="color:var(--muted);font-size:13px">${capModeLabel(c)} · ${capsuleItemCount(c.id)}</span>
+    </button>`).join("");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="capSheetCancel">Cancel</button>
+      <h2>Add to capsule</h2>
+      <span style="width:54px"></span>
+    </div>
+    ${rows || `<div class="sheet-note">No capsules yet.</div>`}
+    <button class="sheet-row" data-cap-target="__new__" style="color:var(--accent);font-weight:600"><span>＋ New capsule…</span></button>
+    <div class="sheet-note">${selectedIds.size} item${selectedIds.size === 1 ? "" : "s"} selected.</div>`;
+  $("#capSheetCancel").onclick = closeCapsuleSheet;
+  $("#moveInner").querySelectorAll("[data-cap-target]").forEach(b => {
+    b.onclick = () => capSheetPick(b.dataset.capTarget);
+  });
+  showSheet("moveSheet");
+}
+function closeCapsuleSheet() { _capSheetMode = false; hideSheet("moveSheet"); }
+
+async function capSheetPick(target) {
+  const ids = [...selectedIds];
+  closeCapsuleSheet();
+  if (target === "__new__") {
+    _pendingAddIds = ids;
+    exitSelectMode();
+    switchTab("capsules");
+    openCapsuleNew();
+    return;
+  }
+  try {
+    await addItemsToCapsule(target, ids);
+    exitSelectMode();
+    renderCloset();
+    const c = capsuleById.get(target);
+    toast(`Added to ${c ? c.name : "capsule"}`);
+  } catch (e) { toast(e.message); }
+}
+

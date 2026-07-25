@@ -42,9 +42,28 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b) ? true : `${J
 // the preview server's browser caches index.html hard, and a fixed
 // "?selftest=1" would let a green run be scored against a stale copy of the
 // app. A gate that can pass on last deploy's code is worse than no gate.
+//
+// Since the 2026-07-25 split, busting index.html is NOT enough — it is 278
+// lines of markup pointing at 21 cached sub-resources, and those carry a "?v="
+// that only changes on deploy, so mid-session edits to js/*.js would be
+// invisible here. Re-fetch each one with cache:"reload" first, which refreshes
+// the browser's HTTP cache entry; the iframe then loads the fresh copies.
 const frameEl = document.getElementById("app");
 frameEl.addEventListener("load", () => setTimeout(run, 300));
-frameEl.src = `/index.html?selftest=1&_=${Date.now()}`;
+
+(async () => {
+  try {
+    const html = await (await fetch(`/index.html?_=${Date.now()}`, { cache: "reload" })).text();
+    const srcs = [...html.matchAll(/(?:src|href)="((?:js|css)\/[^"]+)"/g)].map(m => m[1]);
+    if (!srcs.length) throw new Error("no js/ or css/ tags found in index.html");
+    await Promise.all(srcs.map(s => fetch(s, { cache: "reload" })));
+  } catch (e) {
+    // Don't fail silently into a stale run — a fresh iframe is the whole point.
+    document.getElementById("summary").textContent = `FAIL: could not refresh app sources — ${e.message}`;
+    return;
+  }
+  frameEl.src = `/index.html?selftest=1&_=${Date.now()}`;
+})();
 
 function run() {
   const frame = document.getElementById("app");
@@ -70,6 +89,20 @@ function run() {
   // ---- version lockstep (phantom update-toast guard) ----
   t("APP_VERSION matches <meta app-version>", () =>
     eq(W.APP_VERSION, W.document.querySelector('meta[name="app-version"]').content));
+  // Since the split there are 21 more places the version lives: the "?v=" on
+  // every js/ and css/ tag. Miss one and GitHub Pages happily serves a fresh
+  // index.html beside a stale module — a half-updated app, which is worse than
+  // an un-updated one. The deploy skill rewrites them with sed; this is what
+  // stops a missed one from shipping.
+  t("every js/ + css/ tag is cache-busted to the current APP_VERSION", () => {
+    const want = W.APP_VERSION.replace(/\s+/g, "");
+    const tags = [...W.document.querySelectorAll('script[src], link[rel="stylesheet"]')]
+      .map(el => el.getAttribute("src") || el.getAttribute("href"))
+      .filter(u => /^(js|css)\//.test(u));
+    const wrong = tags.filter(u => new URLSearchParams(u.split("?")[1] || "").get("v") !== want);
+    return tags.length >= 21 && !wrong.length
+      ? true : `${tags.length} tags, want v=${want}, wrong: ${JSON.stringify(wrong)}`;
+  });
 
   // ---- dates ----
   t("shiftDate crosses month boundaries", () =>

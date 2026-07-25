@@ -4,7 +4,7 @@ A personal, single-user wardrobe tracker. Photograph clothing, track details,
 log every wear, build outfits, plan capsules, and see stats like cost-per-wear
 and formality coverage.
 
-**Status:** Live. 476 items + ~4,000 wears. — _2026-07-25 r11_
+**Status:** Live. 476 items + ~4,000 wears. — _2026-07-25 r13_
 
 Live: https://aluke0311.github.io/wardrobe_app/  
 Repo: https://github.com/aluke0311/wardrobe_app
@@ -67,9 +67,15 @@ _(For the current, complete feature list see [APP_DESCRIPTION.md](APP_DESCRIPTIO
 
 ## Architecture
 
-**One file.** The entire app is `index.html` (~15,900 lines). HTML + CSS + JS inline.
-No build step, no framework, no bundler, no CDN, no JS libraries. Plain `fetch` for
-all network calls.
+**Static files, no build step.** `index.html` is ~280 lines of markup plus ordered
+`<script src>` tags; the app itself is `css/styles.css` and `js/01…20-*.js`
+(~14,600 lines). No framework, no bundler, no CDN, no JS libraries — what's
+committed is what runs. Plain `fetch` for all network calls.
+
+They're classic scripts, not modules, so they share one global scope and **load
+order matters** — the numeric prefixes are the order. (It was all one 16k-line
+`index.html` until 2026-07-25; the split was pure cut-and-paste at the existing
+section banners.)
 
 **Backend: Supabase (free tier).** Auth, REST (PostgREST), and Storage.
 
@@ -111,19 +117,21 @@ Eight tables, all RLS-scoped to `auth.uid()`. Full definition in `schema.sql`.
 ## Deploy
 
 ```
-git add index.html && git commit -m "…" && git push origin main
+git add -A && git commit -m "…" && git push origin main
 ```
 
 GitHub Pages rebuilds in ~1–2 min. Hard-refresh (`Cmd+Shift+R`) to clear cache.
 Use the `deploy-wardrobe` skill from Claude Code.
 
 **`APP_VERSION`** format: `YYYY-MM-DD rN` (same day → increment N). Shown in UI.
+Lives in `js/01-config.js`, the `<meta name="app-version">` tag, and the `?v=` on
+all 21 asset tags — all three must match; the deploy skill and selftest enforce it.
 
 ---
 
 ## Development
 
-No build step. Edit `index.html`, preview with:
+No build step. Edit the file under `js/` or `css/`, preview with:
 
 ```
 python3 -m http.server 4173

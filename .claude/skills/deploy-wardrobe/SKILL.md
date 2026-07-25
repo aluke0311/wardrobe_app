@@ -5,8 +5,10 @@ description: Deploy the wardrobe app to GitHub Pages. Use when the user wants to
 
 # Deploy the Wardrobe App
 
-The app is a single `index.html` hosted on GitHub Pages off `origin/main`.
-Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
+The app is static files on GitHub Pages off `origin/main`: `index.html`
+(markup + ordered `<script src>` tags), `css/styles.css`, `js/01…20-*.js`.
+No build step — what you commit is what runs. Deploying = check, bump version,
+commit, push. Pages rebuilds in ~1–2 minutes.
 
 ## Steps
 
@@ -69,22 +71,42 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
    "parse-checked, selftest skipped (CSS-only)" are different claims — never let
    "shipped" imply "tested".
 
-1. **Bump `APP_VERSION`** in `index.html` (a constant near the top of the
-   `<script>`, shown in the UI). Format is **`YYYY-MM-DD rN`** (matches the
-   convention in CLAUDE.md):
+1. **Bump `APP_VERSION`** in `js/01-config.js` (near the top, shown in the UI).
+   Format is **`YYYY-MM-DD rN`** (matches the convention in CLAUDE.md):
    - If the current value's date is **before today** → set today's date with `r1`.
    - If it's **already today** → increment the `rN` (so multiple pushes the same
      day differ: `r1` → `r2` → …). Check the value in the LAST COMMIT
-     (`git show HEAD:index.html | grep APP_VERSION`), not just the working tree —
-     an earlier session may already have deployed today's `r1`.
+     (`git show HEAD:js/01-config.js | grep APP_VERSION`), not just the working
+     tree — an earlier session may already have deployed today's `r1`. This
+     happens for real: two sessions overlapped on 2026-07-25.
    The UI prints `APP_VERSION` verbatim.
 
-   ⚠️ **Also bump the `<meta name="app-version">` tag in `<head>` to the SAME
-   value** (added 2026-07-17). The in-app update check (`checkForNewVersion`)
-   Range-fetches the first 2KB of the deployed page and compares that meta tag
-   against the running `APP_VERSION` — if the two ever diverge, users get a
-   phantom "Update available" toast (or never see a real one). One value, two
-   places, always in lockstep.
+   ⚠️ **The version lives in THREE places and all must match.** Bump them
+   together, in one pass:
+
+   ```bash
+   # from the repo root — OLD and NEW as "2026-07-25 r13"
+   sed -i '' 's/APP_VERSION = "OLD"/APP_VERSION = "NEW"/' js/01-config.js
+   sed -i '' 's/content="OLD"/content="NEW"/' index.html          # <meta app-version>
+   sed -i '' 's/?v=OLDNOSPACE/?v=NEWNOSPACE/g' index.html          # all 21 tags
+   ```
+
+   - `APP_VERSION` in `js/01-config.js` — what the UI prints.
+   - `<meta name="app-version">` in `index.html` — `checkForNewVersion`
+     Range-fetches the first 2KB of the deployed page and compares it against
+     the running `APP_VERSION`. Diverge and users get a phantom "Update
+     available" toast, or never see a real one.
+   - the **`?v=` on every `js/`+`css/` tag** (21 of them, no space in the
+     token: `2026-07-25r13`). This is the cache-bust. Miss one and Pages serves
+     a fresh `index.html` next to a stale module — a half-updated app, which is
+     worse than an un-updated one.
+
+   Verify before committing — this is cheap and the failure is ugly:
+   ```bash
+   grep -c "?v=$(grep -o 'r[0-9]*"' js/01-config.js | head -1 | tr -d '"')" index.html
+   ```
+   The selftest also pins all three (`every js/ + css/ tag is cache-busted…`),
+   which is the real backstop on a logic deploy.
 
    **Also refresh `WHATS_NEW`** (the const right under `APP_VERSION`, added
    2026-07-19): replace its bullets with 2–4 plain-language, user-facing lines
@@ -111,8 +133,15 @@ Deploying = bump version, commit, push. Pages rebuilds in ~1–2 minutes.
 
 ## Notes
 
-- Only `index.html` matters for the live app. `.claude/`, `README.md`,
-  `CLAUDE.md` are repo hygiene and safe to commit but don't affect the page.
+- `index.html`, `css/`, `js/`, `manifest.json` and the icons are the live app —
+  **stage `js/` and `css/`, not just `index.html`** (`git add -A` is safest; a
+  commit that ships markup without its modules is a white screen). `.claude/`,
+  `migration/`, `README.md`, `CLAUDE.md` are repo hygiene: safe to commit,
+  no effect on the page.
+- **Load order is the contract.** Adding a `js/` file means adding its
+  `<script src>` tag in the right position — top-level `const`/`let` are shared
+  across classic scripts, so a file can only use a binding declared in a file
+  loaded earlier. Keep the numeric prefix and the tag order in sync.
 - Never commit a Supabase **secret** key. Only the publishable key belongs in
   `index.html` (it's safe — RLS scopes it to the signed-in user).
 - If the user reports the page is stale after a push, confirm the commit landed

@@ -167,27 +167,78 @@ override, tag edge cases, rewear-reset fixture).
 
 ## What this is
 
-A personal, single-user wardrobe tracker. **The entire app is one file:
-`index.html`** (HTML + CSS + JS inline). No build step, no framework, no
-bundler, no JS libraries, no CDN scripts. It talks to Supabase using the **REST
-API and Storage API via plain `fetch`** — do **not** add supabase-js or any
-library. If something seems to need a library, ask the user first.
+A personal, single-user wardrobe tracker. **Plain static files served straight
+off GitHub Pages** — `index.html` + `css/styles.css` + `js/01…20-*.js`, loaded
+by ordered `<script src>` tags. No build step, no framework, no bundler, no JS
+libraries, no CDN scripts; what's committed is what runs. It talks to Supabase
+using the **REST API and Storage API via plain `fetch`** — do **not** add
+supabase-js or any library. If something seems to need a library, ask the user
+first. (It was all one 16k-line `index.html` until 2026-07-25 r13; see
+**File layout** below.)
 
 ## Hard constraints (do not break)
 
-- Keep it a single `index.html`. No external JS/CSS assets, no `<script src>`.
-  Sole exceptions (user-approved 2026-07-17, PWA install): `manifest.json` +
-  `icon-180.png` + `icon-512.png` in repo root. **No service worker, ever** —
-  that would be a real second JS file.
+- **No build step, no framework, no bundler, no libraries, no CDN scripts.**
+  What's in the repo is what runs. This is the constraint that actually
+  matters — it survived the 2026-07-25 file split unchanged.
+  ⚠️ **The "keep it one file" rule is GONE (2026-07-25, user decision).** It was
+  never an intentional choice — it "just happened" and then got written down
+  here as law. `index.html` is now 278 lines of markup pointing at
+  `css/styles.css` + `js/01…20-*.js` via plain `<script src>` tags. Don't
+  re-consolidate, and don't cite the old rule to refuse a new file.
+- **No service worker, still** — offline caching is already handled by the
+  snapshot + photo byte cache, and a SW would silently serve stale modules.
 - Plain `fetch` only for all Supabase calls.
 - Mobile-first; the user mostly uses this on a phone and takes photos with it.
 - Only the publishable (anon) key ever appears in client code — it's safe to
   ship because RLS scopes everything to the signed-in user. The **secret key
   must never** be added or committed.
 
-## Architecture (inside `index.html`)
+## File layout (since the 2026-07-25 r13 split)
 
-**Current state: 2026-07-17 r1. Full rework from v25. ~11,900 lines.**
+`index.html` = `<head>` + body markup + ordered `<script src>` tags, ~278 lines.
+Everything else moved out **untouched** — the split was cut-and-paste at the
+existing `/* ==== */` section banners and verified byte-identical, so no logic,
+naming or ordering changed. ~14,600 lines of JS across 20 files:
+
+| file | lines | what's in it |
+|---|---|---|
+| `js/01-config.js` | 100 | `APP_VERSION`, `WHATS_NEW`, keys, `TAXONOMY`, ladders, `store` |
+| `js/02-api.js` | 240 | `api`/`rest`, signed URLs, `photoUrl` byte cache, `compressImage` |
+| `js/03-state.js` | 447 | globals, `loadData`, derived helpers, kv store, day plans |
+| `js/04-laundry.js` | 181 | derived dirty state, tolerances, overrides |
+| `js/05-dom.js` | 133 | `$`/`$$`, `esc`, toast, sheets, scroll helpers |
+| `js/06-home.js` | 884 | launcher, attention group, Tomorrow card, weather memory |
+| `js/07-closet.js` | 121 | lens/folder rendering |
+| `js/08-trip-mode.js` | 877 | trip mode, dashboards, recap, rhythm, milestones |
+| `js/09-item-detail.js` | 1321 | photo + details views, `FIELD_CONFIGS`, field sheet |
+| `js/10-search.js` | 190 | keyword search + filter plumbing |
+| `js/11-add-item.js` | 328 | Add form, `_addState` |
+| `js/12-looks.js` | 2804 | looks lenses, formulas, **exclusions + the suggester** |
+| `js/13-grid-bar.js` | 440 | density picker, select mode, bulk actions |
+| `js/14-calendar.js` | 1028 | month/day views, logging pickers |
+| `js/15-stats.js` | 2343 | every stats view + report cards + review |
+| `js/16-capsules.js` | 1175 | capsules, trips, per-day planner |
+| `js/17-builder.js` | 692 | Build-a-Look canvas |
+| `js/18-weather.js` | 311 | Open-Meteo, geocoding, `_wxCache` |
+| `js/19-wiring.js` | 798 | `switchTab`, `wireEvents`, delegation |
+| `js/20-boot.js` | 183 | snapshot, freshness, auth, `init()` |
+
+**Load order is the contract.** Top-level `const`/`let` in classic scripts share
+one global lexical scope, which is why the split needed zero code changes — but
+it also means a file can only use a binding from a file loaded *earlier* at
+**load time**. Function bodies are fine (they run after `init()`), top-level
+statements are not. The numeric prefixes exist so the order can't be shuffled by
+accident; adding a file means inserting a tag in the right place.
+
+⚠️ `js/12-looks.js` and `js/15-stats.js` are still big (2.8k / 2.3k) because the
+cut only followed existing banners. Splitting the suggester out of `looks.js` is
+a clean follow-up — it just needs judgment about where the boundary is, which
+the banners don't mark.
+
+## Architecture
+
+**Current state: 2026-07-25 r13. Full rework from v25.**
 The old v25 is preserved at git tag `v25-full` and `archive/index_v25_full.html`.
 Do not use v25 as a reference for current UI code.
 
@@ -939,12 +990,18 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-25 r12`. ⚠️ Since 2026-07-17 the version lives in TWO
-  places that must stay in lockstep: the `APP_VERSION` constant AND the
-  `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
+  Currently `2026-07-25 r13`. ⚠️ The version lives in **THREE** places that must
+  stay in lockstep — the deploy skill does all three, the selftest pins all three:
+  1. `APP_VERSION` in `js/01-config.js`;
+  2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
+     which Range-fetches the first 2KB of the deployed page — a mismatch means a
+     phantom "Update available" toast, or never seeing a real one);
+  3. the **`?v=` on all 21 `js/`+`css/` tags** (since r13). Miss one and Pages
+     serves a fresh `index.html` beside a stale module — a half-updated app,
+     which is worse than an un-updated one.
 - Comment non-obvious logic only — match the surrounding density.
-- Fixed product choices live as top-of-script constants (`TAXONOMY`, `COLOR_FAMILIES`,
-  `OCCASION_LADDER`, `CONTEXTS`) — change them there.
+- Fixed product choices live as constants at the top of `js/01-config.js`
+  (`TAXONOMY`, `COLOR_FAMILIES`, `OCCASION_LADDER`, `CONTEXTS`) — change them there.
 - All item photos use **`background-size: contain`** everywhere. Never `cover`/`fill`.
 
 ## Filtering
