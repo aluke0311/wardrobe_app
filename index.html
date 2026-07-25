@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#f8f4ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)">
-<meta name="app-version" content="2026-07-25 r9">
+<meta name="app-version" content="2026-07-25 r10">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Wardrobe">
@@ -1366,12 +1366,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r9";
+const APP_VERSION = "2026-07-25 r10";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New in Style Stats: \u201cPalette\u201d \u2014 the colours you own, side by side with the colours you actually wear",
-  "Tells you which families punch above their weight and which just sit in the closet; tap any colour to see those pieces",
+  "New in Style Stats: \u201cWhat\u2019s missing\u201d \u2014 thin spots where the closet can\u2019t quite dress a context you actually live in",
+  "It looks at the THINNEST slot, not the total: twelve tops don\u2019t help if one pair of shoes covers the occasion",
+  "Plus \u201cMileage\u201d \u2014 the pieces that have done the most work, with age and $/wear. No predictions, just the numbers",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
@@ -7346,8 +7347,8 @@ function topContextsByWearCount(limit = 6) {
 }
 // Most common formality_for level among this context's wears (min 3 to trust);
 // falls back to the seed constant above.
-function contextFormalityLevel(context) {
-  const levels = wears.filter(w => ctxArr(w).includes(context) && w.formality_for).map(w => w.formality_for);
+function contextFormalityLevel(context, wearRows = null) {
+  const levels = (wearRows || wears).filter(w => ctxArr(w).includes(context) && w.formality_for).map(w => w.formality_for);
   if (levels.length >= 3) {
     const freq = {};
     for (const l of levels) freq[l] = (freq[l] || 0) + 1;
@@ -10837,6 +10838,7 @@ function renderStats() {
   if (statsView === "wrapped")     { renderStatsWrapped();      return; }
   if (statsView === "pixels")      { renderStatsPixelsPage();  return; }
   if (statsView === "palette")     { renderStatsPalettePage(); return; }
+  if (statsView === "missing")     { renderStatsMissingPage(); return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -11241,6 +11243,7 @@ function renderStatsMain() {
           ${row("Contexts", contextsRowSub, "looks:contexts")}
           ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
           ${row("Palette", "The colours you own vs the colours you wear", "palette")}
+          ${row("What's missing", "Thin spots in the closet, and what's done the most work", "missing")}
         </div>
       </div>
 
@@ -11327,6 +11330,9 @@ function renderStatsMain() {
       }
       if (action === "palette") {
         statsView = "palette"; renderStats(); return;
+      }
+      if (action === "missing") {
+        statsView = "missing"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -11618,6 +11624,133 @@ function buildGapStats() {
   }
   rows.sort((a, b) => b.delta - a.delta);
   return { rows, totalCtx, availN: avail.length };
+}
+
+/* ---- WHAT'S MISSING (2026-07-25) ------------------------------------------
+   The shopping-gap half of the deferred list. Strictly read-only and strictly
+   derived — she rejected a before-you-buy manual-entry check, so nothing here
+   asks her to type anything.
+
+   Two questions, deliberately kept separate because they have different
+   answers: what can't the closet DRESS (thin spots), and what has done the
+   most WORK (mileage).
+
+   The thin-spot insight is the one only this app can produce: an outfit needs a
+   top and a bottom and shoes, so a context isn't served by its total piece
+   count — it's served by its THINNEST required slot. Twelve tops that cover
+   Dressed Up are worth nothing if one pair of shoes does. */
+const GAP_SLOT_FLOOR = 3;        // fewer than this in a required slot = a thin spot
+const GAP_MIN_CTX_DAYS = 5;      // same noise floor as Closet vs Life
+const REQUIRED_SLOTS = ["Bottoms", "Shoes"];   // Tops is covered by Dresses too
+
+function buildThinSpots(pool = null, wearRows = null) {
+  const avail = pool || items.filter(i => itemStatus(i) === "Available");
+  const ws = wearRows || wears;
+  const ctxCounts = countByDay(ws, ctxArr);
+  let total = 0;
+  for (const n of ctxCounts.values()) total += n;
+  const out = [];
+  for (const [ctx, n] of ctxCounts) {
+    if (n < GAP_MIN_CTX_DAYS) continue;
+    const lvl = contextFormalityLevel(ctx, ws);
+    if (!lvl) continue;
+    const eligible = avail.filter(i => (itemFormalitySet(i) || []).includes(lvl) && !isNoSuggest(i));
+    const bySlot = new Map();
+    for (const i of eligible) {
+      const s = suggestSlot(i);
+      if (!s) continue;
+      bySlot.set(s, (bySlot.get(s) || 0) + 1);
+    }
+    // A dress covers top AND bottom, so it counts toward both.
+    const dresses = bySlot.get("Dresses") || 0;
+    const slots = {
+      Tops: (bySlot.get("Tops") || 0) + dresses,
+      Bottoms: (bySlot.get("Bottoms") || 0) + dresses,
+      Shoes: bySlot.get("Shoes") || 0,
+    };
+    const thin = ["Tops", ...REQUIRED_SLOTS]
+      .map(s => ({ slot: s, n: slots[s] }))
+      .sort((a, b) => a.n - b.n)[0];
+    out.push({ ctx, lvl, days: n, share: total ? n / total : 0,
+               slots, thinnest: thin, outfitsPossible: slots.Tops * slots.Bottoms * slots.Shoes });
+  }
+  // Thinnest binding slot first, then by how much of her life the context is.
+  out.sort((a, b) => a.thinnest.n - b.thinnest.n || b.share - a.share);
+  return out;
+}
+
+/* Mileage — the replacement queue, on transparent terms. There is NO durability
+   model here and this deliberately does not predict wear-out: it sorts by
+   accumulated wear-days and shows age and $/wear beside it, exactly the way
+   Workhorses/Declutter use a transparent sort rather than a composite score. */
+const MILEAGE_MIN_DAYS = 25;
+function buildMileage(pool = null) {
+  const avail = pool || items.filter(i => itemStatus(i) === "Available");
+  return avail
+    .map(i => {
+      const n = wearCount(i.id);
+      const since = i.purchase_date || null;
+      return { item: i, days: n, since,
+               months: since ? Math.max(1, Math.round((new Date(todayStr()) - new Date(since)) / (86400000 * 30.44))) : null,
+               cpw: i.price != null && n ? i.price / n : null };
+    })
+    .filter(r => r.days >= MILEAGE_MIN_DAYS)
+    .sort((a, b) => b.days - a.days);
+}
+
+function renderStatsMissingPage() {
+  const thin = buildThinSpots(statsPool());
+  const miles = buildMileage(statsPool());
+  const pct = (x) => `${Math.round(x * 100)}%`;
+
+  const thinRows = thin.filter(r => r.thinnest.n < GAP_SLOT_FLOOR * 2).slice(0, 6).map(r => {
+    const tone = r.thinnest.n < GAP_SLOT_FLOOR ? "var(--danger)" : "var(--muted)";
+    return `<div style="padding:11px 18px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:5px">
+        <span style="font-size:14.5px;font-weight:600;flex:1">${esc(r.ctx)}</span>
+        <span style="font-size:11.5px;color:var(--muted)">${r.days} day${r.days === 1 ? "" : "s"} · ${pct(r.share)} of your life</span>
+      </div>
+      <div style="font-size:13px;line-height:1.5">
+        Only <b style="color:${tone}">${r.thinnest.n} ${esc(r.thinnest.slot.toLowerCase())}</b> in the closet cover ${esc(occLabel(r.lvl))}.
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);padding-top:3px">
+        ${r.slots.Tops} tops · ${r.slots.Bottoms} bottoms · ${r.slots.Shoes} shoes
+      </div>
+    </div>`;
+  }).join("");
+
+  const mileRows = miles.slice(0, 20).map(r => `
+    <button data-miss-item="${esc(r.item.id)}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:9px 18px;border-bottom:1px solid var(--line)">
+      <span style="width:46px;flex:none">${thumbHtml(r.item.image_path)}</span>
+      <span style="flex:1;min-width:0">
+        <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.item.name || "Untitled")}</span>
+        <span style="display:block;font-size:11.5px;color:var(--muted)">${r.days} days out${r.months ? ` · owned ${r.months < 24 ? r.months + " mo" : Math.floor(r.months / 12) + " yr"}` : ""}${r.cpw != null ? ` · ${money(r.cpw)}/wear` : ""}</span>
+      </span>
+      <svg class="chev" viewBox="0 0 24 24" style="flex:none"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`).join("");
+
+  $("#statsBody").innerHTML = statsToolbar("What's missing", true, false, true) + `
+    <div style="padding-bottom:32px">
+      <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Thin spots</div><div class="s">Where the closet can't quite dress your life</div></div>
+        <div class="stats-sec-body">
+          ${thinRows || `<div class="placeholder" style="padding:26px 24px"><b>No thin spots</b><div>Every context you log has a decent spread of tops, bottoms and shoes at its formality.</div></div>`}
+        </div>
+      </div>
+      <div class="stats-note">An outfit needs a top, a bottom and shoes, so a context is only as well served as its <b>thinnest</b> slot — twelve tops don't help if one pair of shoes covers the level. Dresses count toward both top and bottom. Contexts need ${GAP_MIN_CTX_DAYS}+ logged days and a formality signal to appear.</div>
+
+      <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Mileage</div><div class="s">What's done the most work</div></div>
+        <div class="stats-sec-body">
+          ${mileRows || `<div class="placeholder" style="padding:26px 24px"><b>Nothing with heavy mileage yet</b><div>Pieces show up here once they've been out ${MILEAGE_MIN_DAYS}+ days.</div></div>`}
+        </div>
+      </div>
+      <div class="stats-note">Sorted by days worn — this is mileage, not a prediction. The app has no idea how long your clothes last; it just knows which ones have done the work, and how long you've had them.</div>
+    </div>`;
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-miss-item]").forEach(el => {
+    el.onclick = () => openItemFromStats(el.dataset.missItem);
+  });
 }
 
 /* ---- PALETTE (2026-07-25) -------------------------------------------------

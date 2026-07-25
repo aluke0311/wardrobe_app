@@ -812,6 +812,48 @@ function run() {
     return eq([beige.pieceDays, beige.wearShare, beige.index], [0, 0, 0]);
   });
 
+  // ---- What's missing: thin spots + mileage ----
+  t("buildThinSpots: a context is only as served as its THINNEST slot", () => {
+    const pool = [
+      { id: "t1", category: "Tops", formality: [6], status: "Available", tags: [] },
+      { id: "t2", category: "Tops", formality: [6], status: "Available", tags: [] },
+      { id: "t3", category: "Tops", formality: [6], status: "Available", tags: [] },
+      { id: "p1", category: "Bottoms", formality: [6], status: "Available", tags: [] },
+      { id: "p2", category: "Bottoms", formality: [6], status: "Available", tags: [] },
+      { id: "s1", category: "Shoes", formality: [6], status: "Available", tags: [] },
+    ];
+    const ws = [];
+    for (let k = 0; k < 6; k++) ws.push({ item_id: "t1", worn_on: D(-k), context: ["Gala"], formality_for: 6 });
+    const r = W.buildThinSpots(pool, ws);
+    const gala = r.find(x => x.ctx === "Gala");
+    if (!gala) return "Gala row missing — contextFormalityLevel gave no signal";
+    return eq([gala.thinnest.slot, gala.thinnest.n, gala.slots.Tops, gala.slots.Bottoms],
+              ["Shoes", 1, 3, 2]);
+  });
+  t("buildThinSpots: a dress counts toward both top and bottom", () => {
+    const pool = [
+      { id: "d1", category: "Dresses", formality: [6], status: "Available", tags: [] },
+      { id: "s1", category: "Shoes", formality: [6], status: "Available", tags: [] },
+      { id: "s2", category: "Shoes", formality: [6], status: "Available", tags: [] },
+    ];
+    const ws = [];
+    for (let k = 0; k < 6; k++) ws.push({ item_id: "d1", worn_on: D(-k), context: ["Gala"], formality_for: 6 });
+    const g = W.buildThinSpots(pool, ws).find(x => x.ctx === "Gala");
+    return g ? eq([g.slots.Tops, g.slots.Bottoms, g.slots.Shoes], [1, 1, 2]) : "Gala row missing";
+  });
+  t("buildMileage: sorts by wear DAYS and honours the floor", () => {
+    const savedWears = W.wears;
+    const pool = [{ id: "hi", name: "Jeans", price: 100 }, { id: "lo", name: "Blazer" }];
+    const ws = [];
+    for (let k = 0; k < 40; k++) ws.push({ item_id: "hi", worn_on: D(-k) });
+    ws.push({ item_id: "hi", worn_on: D(-1) });      // duplicate row — must not count twice
+    for (let k = 0; k < 3; k++) ws.push({ item_id: "lo", worn_on: D(-k) });
+    W.wears = ws;
+    const r = W.buildMileage(pool);
+    W.wears = savedWears;
+    return eq([r.length, r[0].item.id, r[0].days, r[0].cpw], [1, "hi", 40, 2.5]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;
