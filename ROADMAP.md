@@ -1,10 +1,47 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-25 r8** (Round C "Memory + Payback" — SHIPPED, all 9
-> steps, one deploy per step). ▶ NEXT UP: nothing scheduled. The agreed next round
-> is **palette page + shopping gap / replacement watch** (see Round C's deferred
-> list); ask the user before starting.
+> Current version: **2026-07-25 r10**. Round C "Memory + Payback" SHIPPED (all 9
+> steps, r1→r8), then its own deferred list SHIPPED too (r9 Palette, r10 What's
+> missing). ▶ NEXT UP: nothing scheduled — ask the user before starting new work.
+> The only carried-over item is the **Formulas remainder**, which is gated on
+> tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
+
+---
+
+## ✅ SHIPPED — Round C deferred list (2026-07-25, r9→r10)
+
+Both items she'd answered "yes, next round" to, built straight after Round C.
+
+**r9 — Palette** (`buildPaletteStats` / `renderStatsPalettePage`, `statsView
+"palette"`, row in Looks Stats beside Closet vs Life). Share of pieces OWNED per
+colour family against share of pieces WORN; two stacked bars, then a row per family
+sorted by the gap, tapping through to that colour's items.
+⚠️ **The unit is PIECE-DAYS** — each piece counted once per day it went out. This is
+the only unit comparable to a per-item closet share: wear rows would double-count
+(the app-wide "a wear is a DAY" rule) and wear-DAYS would flatter accent colours
+that only ever appear one piece at a time. Same unit `buildWrappedStats` calls
+`pieceDays`; **the UI never calls this number "wears"**. Colourless pieces are
+excluded from both sides so the columns stay comparable and each totals 100%.
+
+**r10 — What's missing** (`buildThinSpots` / `buildMileage` /
+`renderStatsMissingPage`, `statsView "missing"`). Strictly read-only and derived —
+the before-you-buy manual-entry check stays rejected, so nothing here asks for input.
+- **Thin spots:** per context above `GAP_MIN_CTX_DAYS`(5), count Available pieces
+  covering its formality **per slot** and report the thinnest (`GAP_SLOT_FLOOR`=3).
+  An outfit needs a top AND a bottom AND shoes, so a context is only as served as
+  its binding slot — twelve Dressed-Up tops are worth nothing against one pair of
+  shoes. Dresses count toward top and bottom both. This is the insight only this
+  app can derive, and the reason the page isn't just "Closet vs Life again".
+- **Mileage:** `MILEAGE_MIN_DAYS`(25)+ wear-days, sorted desc, with age and $/wear.
+  **Explicitly NOT a wear-out prediction** — there is no durability model and the
+  page's note says so. Transparent sort, no composite score (Workhorses/Declutter
+  doctrine).
+- `contextFormalityLevel(context, wearRows?)` gained an optional rows arg: it was
+  reading the global `wears` while its new caller took a fixture, which would have
+  made the selftest lie.
+
+Selftest 80 → **87 cases. Still not run** (no browser, per [[verify-cli-not-preview]]).
 
 ---
 

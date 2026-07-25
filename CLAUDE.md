@@ -2,6 +2,26 @@
 
 Guidance for working in this repo. Read alongside `README.md`.
 
+**Round C deferred list (2026-07-25, r9→r10) — SHIPPED.** The two items she'd
+answered "yes, next round" to, built straight after Round C.
+① **PALETTE** — `buildPaletteStats(pool?, wearRows?)` / `renderStatsPalettePage()` /
+`statsView "palette"`; row in Looks Stats beside Closet vs Life. Share of pieces
+OWNED per colour family vs share WORN, two stacked bars + a row per family sorted
+by the gap, tapping into that colour's grid. ⚠️ **Unit is PIECE-DAYS** (each piece
+once per day it went out) — the only unit comparable to a per-item closet share;
+rows would double-count and wear-DAYS would flatter accent colours worn one piece
+at a time. **Never call it "wears" in the UI.** Colourless pieces excluded from
+both sides.
+② **WHAT'S MISSING** — `buildThinSpots(pool?, wearRows?)` / `buildMileage(pool?)` /
+`renderStatsMissingPage()` / `statsView "missing"`. **Thin spots:** per context over
+`GAP_MIN_CTX_DAYS`(5), count level-covering Available pieces PER SLOT and report the
+thinnest (`GAP_SLOT_FLOOR`=3); a context is only as served as its binding slot, and
+dresses count toward Tops AND Bottoms. **Mileage:** `MILEAGE_MIN_DAYS`(25)+ wear-days
+desc with age + $/wear — **explicitly not a wear-out prediction** (no durability
+model exists; the note says so). Read-only: the before-you-buy manual-entry check
+stays rejected. `contextFormalityLevel` gained an optional `wearRows` arg so the new
+functions are genuinely injectable.
+
 **Round C "Memory + Payback" (2026-07-25, r1→r8) — SHIPPED, all 9 steps.**
 Reviewed and built the same day; one deploy per step. Selftest 52 → **80 cases,
 written but NOT RUN** (no browser this session — run `migration/selftest.html`).
@@ -915,7 +935,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-25 r8`. ⚠️ Since 2026-07-17 the version lives in TWO
+  Currently `2026-07-25 r10`. ⚠️ Since 2026-07-17 the version lives in TWO
   places that must stay in lockstep: the `APP_VERSION` constant AND the
   `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
