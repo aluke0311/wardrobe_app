@@ -939,7 +939,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-25 r11`. ⚠️ Since 2026-07-17 the version lives in TWO
+  Currently `2026-07-25 r12`. ⚠️ Since 2026-07-17 the version lives in TWO
   places that must stay in lockstep: the `APP_VERSION` constant AND the
   `<meta name="app-version">` tag in `<head>` (read by `checkForNewVersion`).
 - Comment non-obvious logic only — match the surrounding density.
@@ -1042,6 +1042,20 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   UI). Use `wearCountMapInRange()` — one pass, `Map(item_id → count)`. Both count
   distinct wear DAYS in every range mode (the ranged branch counted raw rows
   until 2026-07-24 r1; the selftest pins the agreement).
+- **Drilling in must reset scroll; re-rendering must NOT** (2026-07-25 r12,
+  user-reported "clicking into stats starts in the middle of the page"). Body is
+  one scroll container shared by every screen, so a short child page inherits a
+  long parent's offset. `switchTab` resets it; nothing else used to. The trap:
+  `renderCloset()`/`renderStats()`/`renderCapsules()` are each called BOTH to
+  navigate and to refresh in place (after a log, an undo, a filter change), so a
+  bare `scrollToTop()` inside them yanks the page out from under her. Two
+  patterns, use the right one: **Stats** compares `_statsLastView` to `statsView`
+  inside `renderStats()` (the wrapper around `_renderStatsView()`) — view changed
+  = navigation, same view = re-render. **Everything else** uses the per-surface
+  stack `navDeeper(surface)` / `navShallower(surface)` / `navResetScroll(surface)`
+  called at the *navigation handler*, never inside a render. ⚠️ `navShallower`
+  deliberately does not just call `restoreScroll(y)` — that early-returns on 0 and
+  would strand you at the child's offset when the parent was at the top.
 - **Screen-top scrolling**: use `scrollToTop()` (instant) / `smoothScrollTop()`
   (animated, for deliberate "take me up" taps — header, re-tapping the active
   tab) / `getScrollTop()` / `restoreScroll(y)`. `window.scrollTo` AND
