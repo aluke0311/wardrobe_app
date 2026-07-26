@@ -1473,14 +1473,18 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **130/130** (2026-07-26 r2, RUN GREEN; the count DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding). **It is a deploy gate for logic
+passed` — currently **131/131** (2026-07-26 r2, RUN GREEN; the count DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding). **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
 something worth keeping true.** Gotchas baked in: app globals are top-level
 const/let (invisible on `contentWindow` — the harness injects an eval-bridge
 Proxy), and Sets passed into app code must be created in the IFRAME's realm
-(`W.Set`) or `instanceof Set` fails.
+(`W.Set`) or `instanceof Set` fails. The iframe is parked **off-screen**, not
+`display:none` — a display:none subtree has no layout, so every
+`getBoundingClientRect()` in it returns 0 and layout assertions silently pass
+on zeros (2026-07-26). Layout regressions are testable because of this; the
+full-width-button case measures detached nodes in a 390px host.
 
 ⚠️⚠️ **THE GATE ITSELF WAS BROKEN FROM THE FILE SPLIT UNTIL 2026-07-26 — read
 this before "improving" the harness's loading.** The 2026-07-25 fix (re-fetch

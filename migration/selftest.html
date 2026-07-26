@@ -17,7 +17,11 @@
   .fail { color: #c0392b; font-weight: 700; }
   #summary { font-size: 16px; font-weight: 700; margin: 12px 0; }
   li { margin: 2px 0; }
-  iframe { display: none; }
+  /* Off-screen rather than display:none. A display:none subtree has NO layout,
+     so every getBoundingClientRect() inside it returns 0 and any layout
+     assertion silently "passes" on zeros (2026-07-26). Parked off-screen at a
+     realistic phone width, the app lays out normally and stays invisible. */
+  iframe { position: absolute; left: -10000px; top: 0; width: 390px; height: 844px; border: 0; }
 </style>
 </head>
 <body>
@@ -169,6 +173,25 @@ function run() {
     const guilty = files.filter(p => src[p].includes("↻"));
     return files.length >= 20 && !guilty.length
       ? true : `${files.length} modules scanned, ↻ still in: ${JSON.stringify(guilty)}`;
+  });
+
+  // ---- full-width buttons (2026-07-26 audit H0) ----
+  // A <button> sizes to its CONTENT regardless of `display`, so .log-cta — the
+  // app's primary action — spent months rendering as a 181px stub in a 390px
+  // column, and .logged-row (also laundry / backup / planned rows) at 259px.
+  // Measured on detached nodes in a fixed-width host: no app state is touched,
+  // so this can't perturb the fixtures the rest of the suite builds.
+  t("Home's full-width buttons actually fill their column", () => {
+    const d = W.document;
+    const host = d.createElement("div");
+    host.style.cssText = "width:390px;position:absolute;left:-9999px;top:0";
+    const mk = cls => { const b = d.createElement("button"); b.className = cls; b.textContent = "x"; host.appendChild(b); return b; };
+    const cta = mk("log-cta"), row = mk("logged-row");
+    d.body.appendChild(host);
+    const w = [cta.getBoundingClientRect().width, row.getBoundingClientRect().width].map(Math.round);
+    host.remove();
+    // 390 host − 2×16px side margins
+    return w.every(x => x === 358) ? true : `got ${JSON.stringify(w)}, want [358,358] in a 390px column`;
   });
 
   // ---- sheet registry (2026-07-26 audit M5) ----
