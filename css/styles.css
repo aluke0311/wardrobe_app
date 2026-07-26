@@ -218,7 +218,8 @@
   .tile .tsub { font-size: 12px; color: var(--muted); margin-top: -6px; }
   .tile.wide { grid-column: 1 / -1; }
   /* V3: "logged today" acknowledgment row on Home (replaces the CTA once logged) */
-  .logged-row { display: flex; align-items: center; gap: 8px; margin: 12px 16px 0; padding: 12px 14px;
+  .logged-row { display: flex; align-items: center; gap: 8px; width: calc(100% - 32px);
+    margin: 12px 16px 0; padding: 12px 14px;
     border-radius: 14px; background: var(--accent-soft); color: var(--ink);
     font-size: 14.5px; font-weight: 500; text-align: left; }
   .logged-row .lr-check { color: var(--accent); font-weight: 700; flex: none; }
@@ -288,7 +289,13 @@
      both themes (the pill is --ink, which flips light/dark). */
   .toast-chip { display:inline-block; margin-left:10px; padding:3px 9px; background:rgba(255,255,255,.22);
     background:color-mix(in srgb, var(--bg) 24%, transparent); border-radius:999px; font-size:12.5px; font-weight:600; pointer-events: auto; }
-  .log-cta { display:block; margin:12px 16px 0; padding:14px; background:var(--accent); color:var(--on-accent); border-radius:14px; font-size:16px; font-weight:600; text-align:center; box-shadow:0 3px 10px rgba(107,39,55,.22); transition: transform .1s ease; }
+  /* width is REQUIRED, not decorative: a <button> sizes to its content no matter
+     what `display` says, so this rule rendered the app's primary action as a
+     181px stub in a 390px column (2026-07-26). Same for .logged-row below.
+     `calc(100% - 32px)` matches the 16px side margins — the idiom .otd-row and
+     .td-laun already use. Any new full-width BUTTON needs it; .btn/.btn-sec/
+     .sheet-action-btn already set width:100% and are fine. */
+  .log-cta { display:block; width:calc(100% - 32px); margin:12px 16px 0; padding:14px; background:var(--accent); color:var(--on-accent); border-radius:14px; font-size:16px; font-weight:600; text-align:center; box-shadow:0 3px 10px rgba(107,39,55,.22); transition: transform .1s ease; }
   .log-cta:active { transform: scale(.98); }
   /* Home laundry row: previous-day confirm strip / "done laundry?" prompt */
   .laun-row { margin: 12px 16px 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; text-align: left; }
@@ -737,10 +744,19 @@
     font-size:15px; font-weight:600; }
   .cal-make-look-btn svg { width:18px; height:18px; stroke:var(--on-accent); stroke-width:2.5; fill:none; }
 
-  /* V3 "On this day" history row in day view */
+  /* V3 "On this day" history row in day view.
+     .otd-row is the ACTION treatment — it commits something (the day view's
+     "Planned: X · Wear it ✓" row writes wears). A memory must not look like a
+     button that does things: "On this day" and the planned row were rendering
+     identically, so the day view offered no way to triage what was a fact from
+     what was a choice (2026-07-26 audit H1). .otd-memory drops the container
+     entirely — Home already treats this row as "a delight row, not an attention
+     row", and the day view now agrees. */
   .otd-row { display:flex; align-items:center; gap:12px; width:calc(100% - 32px);
     margin:10px 16px 0; padding:10px 12px; border-radius:12px;
     background:var(--surface); border:1px solid var(--line); text-align:left; }
+  .otd-memory { background:none; border:none; padding:10px 0; opacity:.72; }
+  .otd-memory .otd-title { font-weight:500; }
   .otd-collage { width:44px; flex:none; }
   .otd-text { flex:1; min-width:0; }
   .otd-title { font-size:13.5px; font-weight:600; }

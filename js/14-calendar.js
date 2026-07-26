@@ -52,7 +52,11 @@ function onThisDayHtml(dateStr) {
   const nItems = new Set(wears.filter(w => w.worn_on === pd).map(w => w.item_id)).size;
   const detail = ctxs.length ? ctxs.join(', ') : `${nItems} item${nItems === 1 ? '' : 's'}`;
   const collage = g ? calCellCollageHtml(g.itemIds, g.outfitId ? outfitById.get(g.outfitId) : null) : '';
-  return `<button class="otd-row" data-otd="${esc(pd)}">
+  // .otd-memory: this is a fact about the past, not an action. Sharing the
+  // plain .otd-row look with the day view's "Wear it ✓" row made a memory and a
+  // database write indistinguishable (2026-07-26 audit H1). Used on Home too,
+  // where this row was already documented as delight rather than attention.
+  return `<button class="otd-row otd-memory" data-otd="${esc(pd)}">
     <div class="otd-collage">${collage}</div>
     <div class="otd-text">
       <div class="otd-title">On this day in ${esc(pd.slice(0, 4))}</div>
@@ -280,7 +284,6 @@ function renderCalendarDay(body) {
            </button>`
         : '';
     })()}
-    ${onThisDay}
     ${dateStr === todayStr() && !tripModeId ? dayPlan(dateStr).map((e, idx) => {
       const o = e.outfit ? outfitById.get(e.outfit) : null;
       if (!o || planWorn(dateStr, o.id)) return "";
@@ -304,6 +307,7 @@ function renderCalendarDay(body) {
         ${dateStr >= todayStr() && !tripModeId ? `<button id="calPlanDay">📅 Plan</button>` : ""}
       </div>
     </div>
+    ${onThisDay}
   </div>`;
 
   body.onclick = null;  // clear any stale picker/month delegation

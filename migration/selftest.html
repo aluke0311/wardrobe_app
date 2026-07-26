@@ -44,32 +44,54 @@ function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b) ? true : `${J
 // app. A gate that can pass on last deploy's code is worse than no gate.
 //
 // Since the 2026-07-25 split, busting index.html is NOT enough — it is 278
-// lines of markup pointing at 21 cached sub-resources, and those carry a "?v="
-// that only changes on deploy, so mid-session edits to js/*.js would be
-// invisible here. Re-fetch each one with cache:"reload" first, which refreshes
-// the browser's HTTP cache entry; the iframe then loads the fresh copies.
+// lines of markup pointing at 21 sub-resources whose "?v=" only changes on
+// deploy. Every edit made WITHOUT a version bump — i.e. every edit during a
+// working session — keeps the same URL, so the iframe replays the cached copy
+// and the suite scores code that is not on disk.
+//
+// ⚠️ Re-fetching each module with cache:"reload" does NOT fix this (it was the
+// fix from 2026-07-25 and it is not sufficient — measured 2026-07-26: with a
+// freshly edited js/14-calendar.js on disk and on the wire, the iframe still
+// executed the previous copy). The iframe navigation does not necessarily
+// consult the same cache entry the fetch refreshed.
+//
+// So don't rely on cache semantics at all: rewrite the markup to carry a
+// per-run token on every js/ and css/ URL, and hand that to the iframe via
+// srcdoc. A URL nothing has ever requested cannot be served from cache.
+// srcdoc needs <base href="/"> — relative URLs would otherwise resolve against
+// /migration/, and the app would silently load nothing.
 const frameEl = document.getElementById("app");
 frameEl.addEventListener("load", () => setTimeout(run, 300));
 
 (async () => {
+  const token = Date.now();
   try {
-    const html = await (await fetch(`/index.html?_=${Date.now()}`, { cache: "reload" })).text();
+    const html = await (await fetch(`/index.html?_=${token}`, { cache: "reload" })).text();
     const srcs = [...html.matchAll(/(?:src|href)="((?:js|css)\/[^"]+)"/g)].map(m => m[1]);
     if (!srcs.length) throw new Error("no js/ or css/ tags found in index.html");
-    // The reload-fetch already pulls every module; keep the text so source-level
-    // invariants (icon vocabulary, banned patterns) can be asserted synchronously
-    // inside run(). Costs nothing — the responses were being discarded.
+    // Keep the text so source-level invariants (icon vocabulary, banned
+    // patterns) can be asserted synchronously inside run().
+    // ⚠️ LEADING SLASH. This harness lives at /migration/selftest.html, so a
+    // relative "js/01-config.js" resolves to /migration/js/01-config.js — a 404.
+    // That is what the 2026-07-25 "re-fetch with cache:reload" fix actually did:
+    // 21 silent 404s, refreshing nothing, which is why stale modules survived it
+    // (found 2026-07-26). fetch() does not throw on 404, so it looked fine.
     window.__src = {};
     await Promise.all(srcs.map(async s => {
-      const r = await fetch(s, { cache: "reload" });
+      const r = await fetch(`/${s}${s.includes("?") ? "&" : "?"}_=${token}`, { cache: "reload" });
+      if (!r.ok) throw new Error(`${s} → HTTP ${r.status}`);
       window.__src[s.split("?")[0]] = await r.text();
     }));
+    const busted = html
+      .replace(/<head(\s[^>]*)?>/i, m => `${m}<base href="/">`)
+      .replace(/((?:src|href)=")((?:js|css)\/[^"]+)(")/g,
+               (m, a, u, b) => `${a}${u}${u.includes("?") ? "&" : "?"}_=${token}${b}`);
+    if (!/<base href="\/">/.test(busted)) throw new Error("could not inject <base> — index.html has no <head>");
+    frameEl.srcdoc = busted;
   } catch (e) {
     // Don't fail silently into a stale run — a fresh iframe is the whole point.
     document.getElementById("summary").textContent = `FAIL: could not refresh app sources — ${e.message}`;
-    return;
   }
-  frameEl.src = `/index.html?selftest=1&_=${Date.now()}`;
 })();
 
 function run() {
@@ -92,6 +114,29 @@ function run() {
   }
   const today = W.todayStr();
   const D = (n) => W.shiftDate(today, n);
+
+  // ---- freshness (the gate's own gate) ----
+  // Everything below is worthless if the iframe is executing a cached copy of
+  // the app instead of what's on disk — that is not hypothetical, it happened
+  // on 2026-07-26 and silently passed 129 cases against a stale module.
+  // Function.prototype.toString() returns exact source text, so a live function
+  // whose body isn't a substring of the freshly-fetched file proves the two
+  // have diverged. Checks a handful per module, which is enough: staleness is
+  // per-file, never per-function.
+  t("the iframe is running the code on disk, not a cached copy", () => {
+    const src = window.__src || {};
+    const stale = [];
+    for (const path of Object.keys(src).filter(p => p.endsWith(".js"))) {
+      const names = [...src[path].matchAll(/^(?:async )?function (\w+)\s*\(/gm)]
+        .map(m => m[1]).slice(0, 5);
+      for (const n of names) {
+        const fn = W[n];
+        if (typeof fn !== "function") { stale.push(`${path}:${n} missing`); break; }
+        if (!src[path].includes(fn.toString())) { stale.push(`${path}:${n} differs`); break; }
+      }
+    }
+    return !stale.length ? true : `stale modules — ${JSON.stringify(stale)}`;
+  });
 
   // ---- version lockstep (phantom update-toast guard) ----
   t("APP_VERSION matches <meta app-version>", () =>
