@@ -1,21 +1,54 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-25 r13**. Round C "Memory + Payback" SHIPPED (all 9
-> steps, r1→r8), then its own deferred list SHIPPED too (r9 Palette, r10 What's
-> missing). ▶ NEXT UP: **Round D "Where You Were"** — planned by Fable 2026-07-25,
-> decisions locked, spec below; ready for Opus to build.
-> The only other carried-over item is the **Formulas remainder**, which is gated on
+> Current version: **2026-07-25 r14**. Round C "Memory + Payback" SHIPPED (all 9
+> steps, r1→r8), its deferred list SHIPPED (r9 Palette, r10 What's missing), and
+> **Round D "Where You Were" SHIPPED** (r14, planned + built + tested same day).
+> ▶ NEXT UP: nothing scheduled — ask before starting new work.
+> The only carried-over item is the **Formulas remainder**, which is gated on
 > tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
 
 ---
 
-## ▶ PLANNED — Round D "Where You Were" (season × weather truth)
+## ✅ SHIPPED — Round D "Where You Were" (planned + built 2026-07-25, r14)
 
-**Planned by Fable 2026-07-25 from her ask; decisions locked with the user —
-do not re-litigate. Written for Opus to execute mechanically: every judgment
-call is resolved in this spec.** Read CLAUDE.md's Round C entry first — this
-round builds directly on the WEATHER MEMORY machinery (`js/06-home.js`).
+**Planned by Fable, built by Opus the same day, shipped as ONE deploy (r14).
+Selftest 91 → 112 and — unlike the last several rounds — actually RUN: 112/112
+green, plus a browser smoke-test of the audit sheet, the Where sheet, and the
+trip-guess → date-prefill handoff.** Implementation names are in CLAUDE.md's
+Round D entry; the plan below is kept for the reasoning.
+
+**Deviations, all deliberate:**
+- The per-range helper is **`correctAwayWeather(r)`**, not `backfillAwayRange`.
+- **One deploy, not eight.** The plan's per-step cadence was insurance against
+  having no browser; with a green selftest available, a single reviewed diff was
+  the safer option rather than the riskier one.
+- **`daysBetween(a, b)` had to be written** (`js/03-state.js`) — the plan assumed
+  it existed. Only `daysSince` did.
+- **`SEASON_BAND_TRIM` was added and is load-bearing.** Not in the plan: the new
+  tests caught untagged away days inflating the very band they'd be measured
+  against (an 8-day warm-December fixture moved Winter p90 27° → 84°, silently
+  disarming the detector). Percentiles are now taken after a ±35°F trim around
+  the median. This is the round's one genuine design change under test pressure.
+- **The "guilty" day set is per flag kind** (out-of-band for `temp`,
+  out-of-season for `calendar`). The plan said "days outside the claimed bands"
+  for both; implemented that way, a warm December week reads as Winter on the
+  calendar, so the set came back empty and the trip cluster never formed.
+
+**Where it surfaces** (asked on the day, worth writing down): the audit is
+behind **Settings → Run data health check → "Season tags that disagree with the
+weather" → Review**, and that row is **hidden at zero** like every other health
+row. It also needs the away-corrected backfill to have run, and it only judges
+items with an **explicit** season — derived-season items self-heal through
+`effectiveSeasonOf` instead. Order for a first run: log where you've been →
+"Look up past weather" → health check.
+
+---
+
+### The plan as locked (kept for the reasoning)
+
+Read CLAUDE.md's Round C entry first — this round builds directly on the
+WEATHER MEMORY machinery (`js/06-home.js`).
 
 ### The ask, and the insight underneath it
 
