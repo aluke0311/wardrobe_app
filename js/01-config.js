@@ -6,14 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r17";
+const APP_VERSION = "2026-07-25 r18";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Fixed days showing 0\u00b0/0\u00b0 \u2014 those were gaps in the weather archive being stored as freezing, which was quietly skewing seasons, \u201cusually worn\u201d ranges and the trip guesses. Re-run \u201cLook up past weather\u201d to clear them",
-  "Flags now say what's probably missing (\u201cthat's Summer weather here \u2014 should it include Summer?\u201d), not just that something's off",
-  "\u201cSee these days\u201d highlights the exact piece that made a day look wrong, and by how much",
-  "Every trip question has both answers now: \u201cI was away\u201d or \u201cI was home\u201d \u2014 and Closet Review shows how each season was worked out",
+  "Fixed days showing 0\u00b0/0\u00b0 \u2014 gaps in the weather archive were being stored as freezing, which skewed seasons, \u201cusually worn\u201d ranges and the trip guesses alike. Re-run \u201cLook up past weather\u201d to clear them",
+  "Far fewer, better flags: nothing is raised unless there's an actual fix, and every one now has a one-tap \u201c\uff0b Add Summer\u201d (or whichever season the weather points to)",
+  "A piece worn at the mild end of its own season is no longer called wrong",
+  "\u201cSee these days\u201d highlights exactly which piece made a day look odd and by how much, and says whether a season was set by you or worked out from the weather",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

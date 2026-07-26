@@ -510,32 +510,49 @@ function buildSeasonWxFlags({ pool = null, wearRows = null, log = null, bands = 
     if (usable.length) {
       const ceil = Math.max(...usable.map(b => b.p90));
       const floorT = Math.min(...usable.map(b => b.p10));
-      if (lo > ceil + WXA_TEMP_MARGIN) {
+      /* Widen the bar by the claimed season's OWN spread, the same correction
+         that fixed the day detector. A season that swings 30° here can't be
+         contradicted by a piece worn 5° outside its 90th percentile — that's a
+         piece worn at the mild end of its season, not a mislabelled one. */
+      const spread = Math.max(...usable.map(b => b.p90 - b.p10));
+      const bar = Math.max(WXA_TEMP_MARGIN, 0.5 * spread);
+      if (lo > ceil + bar) {
         flag = { kind: "temp", dir: "hot", lo, hi, band: [floorT, ceil] };
-        guilty = days.filter(d => L[d].maxT > ceil + WXA_TEMP_MARGIN);
-      } else if (hi < floorT - WXA_TEMP_MARGIN) {
+        guilty = days.filter(d => L[d].maxT > ceil + bar);
+      } else if (hi < floorT - bar) {
         flag = { kind: "temp", dir: "cold", lo, hi, band: [floorT, ceil] };
-        guilty = days.filter(d => L[d].maxT < floorT - WXA_TEMP_MARGIN);
+        guilty = days.filter(d => L[d].maxT < floorT - bar);
       }
     }
     if (!flag && days.length >= WXA_MIN_DAYS && off.length / days.length > 1 - WXA_CAL_SHARE)
       flag = { kind: "calendar", inSeason: days.length - off.length, lo, hi };
     if (!flag) continue;
 
-    /* What the temperatures actually look like, so the flag can say what the
-       fix probably IS ("looks like it should include Summer") rather than only
-       that something is off — she couldn't tell whether a piece was missing a
-       season or wearing the wrong one. */
+    /* What the fix probably IS, so the flag isn't just "something's off".
+       ⚠️ Each kind proposes in the SAME currency as its evidence. A temp flag
+       reads the temperatures (its whole point is that a December day can feel
+       like Summer); a calendar flag reads the seasons those days actually fell
+       in — it fires when there are no usable temperature bands, so asking the
+       temperature would leave it with nothing to propose and silently suppress
+       the one flag that had evidence. */
+    const fitSrc = flag.kind === "temp" ? days : guilty;
     const fitTally = new Map();
-    for (const d of days) {
-      const s = seasonForTemp(L[d].maxT, B);
+    for (const d of fitSrc) {
+      const s = flag.kind === "temp" ? seasonForTemp(L[d].maxT, B) : effectiveSeasonOf(d, log, B);
       if (s) fitTally.set(s, (fitTally.get(s) || 0) + 1);
     }
-    const fit = [...fitTally.entries()].filter(([, n]) => n / days.length >= 0.25)
+    const fit = [...fitTally.entries()].filter(([, n]) => n / Math.max(1, fitSrc.length) >= 0.25)
       .sort((a, b) => b[1] - a[1]).map(([s]) => s);
+    const missing = fit.filter(s => !claimed.includes(s));
+    /* ⚠️ No proposal, no flag. If the seasons these temperatures resemble are
+       ALREADY on the piece, there is nothing she can do about it — the tag is
+       right and the weather simply varies. Raising it anyway produced a list
+       of unactionable warnings, which is worse than silence (user, 2026-07-25:
+       "there's nothing I can do about a lot of these flags — they already have
+       the season in question on them"). */
+    if (!missing.length) continue;
     flags.push({ ...flag, id: i.id, name: i.name, image_path: i.image_path,
-                 season: claimed, days: days.length, off: guilty,
-                 fit, missing: fit.filter(s => !claimed.includes(s)) });
+                 season: claimed, days: days.length, off: guilty, fit, missing });
   }
 
   /* Trip guesses come ONLY from day anomalies — never from a flagged item's
@@ -582,9 +599,19 @@ function wxFlagText(f) {
     why = `Tagged ${s}, but only ${f.inSeason} of ${f.days} days you wore it felt like ${s}.`;
   }
   const miss = f.missing || [];
-  if (miss.length) return `${why} That's ${miss.join(" / ")} weather here — should it include ${miss.join(" or ")}?`;
-  if ((f.fit || []).length) return `${why} Those days were mostly ${f.fit.join(" / ")}.`;
-  return why;
+  return `${why} That's ${miss.join(" / ")} weather here.`;
+}
+
+// One tap: append the season(s) the weather says are missing, keeping whatever
+// is already there. Never removes — the piece may well be right about Winter
+// AND also need Summer.
+async function addFlagSeason(id, seasons) {
+  const i = itemById.get(id);
+  if (!i || !seasons.length) return;
+  const next = [...new Set([...(i.season || []), ...seasons])];
+  await saveField(id, "season", next);
+  _wxAudit = null;
+  toast(`${i.name || "Item"} is now ${next.join(" + ")}`);
 }
 
 /* "Nothing to show" has several very different causes here, and silence made
@@ -635,8 +662,9 @@ function openSeasonAuditSheet() {
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name || "Untitled")}</div>
         <div class="muted" style="font-size:12px;line-height:1.4">${esc(wxFlagText(f))}</div>
-        <div style="display:flex;gap:8px;margin-top:6px">
-          <button class="cap-chip" data-wxa-edit="${esc(f.id)}">Edit season</button>
+        <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <button class="cap-chip" data-wxa-add="${esc(f.id)}" style="color:var(--accent);font-weight:600">＋ Add ${esc(f.missing.join(" & "))}</button>
+          <button class="cap-chip" data-wxa-edit="${esc(f.id)}">Edit…</button>
           <button class="cap-chip" data-wxa-ok="${esc(f.id)}" style="color:var(--muted)">It's fine</button>
         </div>
       </div>
@@ -684,6 +712,15 @@ function openSeasonAuditSheet() {
   $("#wxAuditInner").querySelectorAll("[data-wxa-edit]").forEach(b => {
     b.onclick = () => openWxSeasonEdit(b.dataset.wxaEdit);
   });
+  $("#wxAuditInner").querySelectorAll("[data-wxa-add]").forEach(b => {
+    b.onclick = async () => {
+      const f = flags.find(x => x.id === b.dataset.wxaAdd);
+      if (!f) return;
+      b.disabled = true;
+      await addFlagSeason(f.id, f.missing);
+      openSeasonAuditSheet();
+    };
+  });
   $("#wxAuditInner").querySelectorAll("[data-wxa-ok]").forEach(b => {
     b.onclick = async () => {
       const i = itemById.get(b.dataset.wxaOk);
@@ -730,7 +767,15 @@ function openWxDaysView(g) {
       if (!i) return "";
       const p = itemWxProfile(id);
       const c = itemTempCenter(id);
-      const season = (i.season && i.season.length) ? i.season.join(", ") : "no season set";
+      /* Explicit vs derived, said out loud. A piece with no season isn't
+         season-less — the app works one out from the weather it's been worn in,
+         and that one self-corrects as trips get logged. Setting a season here
+         REPLACES that with a fixed answer, which is worth knowing before you
+         tap it. */
+      const derived = (!i.season || !i.season.length) ? itemSeasonSet(i) : null;
+      const season = (i.season && i.season.length) ? i.season.join(", ")
+        : derived && derived.length ? `${derived.join(", ")} (worked out, not set)`
+        : "no season yet";
       const isCulprit = culprits.has(id);
       // Spell out the arithmetic for the piece that actually drove the verdict.
       const why = isCulprit && c && e && e.maxT != null

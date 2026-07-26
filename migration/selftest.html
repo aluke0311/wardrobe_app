@@ -1326,11 +1326,36 @@ function run() {
     W.wears = savedWears;
     return eq([clean.p10 === withArtifact.p10, prof.lo >= 80], [true, true]);
   });
+  t("no flag when the seasons the weather suggests are ALREADY tagged", () => {
+    // Worn on hot July days, tagged Winter AND Summer. Summer is already there,
+    // so there is nothing to propose — and an unactionable warning is noise.
+    const f = auditFix({ season: ["Winter", "Summer"] });
+    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
+    return eq(r.flags.length, 0);
+  });
+  t("every flag carries a concrete season to add", () => {
+    const f = auditFix();
+    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
+    return eq(r.flags.every(x => x.missing && x.missing.length > 0), true);
+  });
+  t("a piece worn at the mild end of its own season isn't flagged", () => {
+    // Tagged Winter, worn on the warmer winter days. The old flat 3° margin
+    // called that a contradiction; the season's own spread says it isn't.
+    const log = {};
+    for (let k = 1; k <= 30; k++)                                  // winter spans 10°–50°
+      log[`2026-01-${String(k).padStart(2, "0")}`] = { maxT: 10 + k + (k % 3) * 3, minT: 0, code: 0 };
+    const days = [];
+    for (let k = 24; k <= 30; k++) days.push(`2026-01-${k}`);      // the mild end
+    const item = { id: "wc", name: "Wool coat", season: ["Winter"], status: "Available", image_path: "" };
+    const rows = days.map(d => ({ item_id: "wc", worn_on: d }));
+    const r = W.buildSeasonWxFlags({ pool: [item], wearRows: rows, log, ranges: [], dismissed: {} });
+    return eq(r.flags.length, 0);
+  });
   t("a flag says what's probably MISSING, not just that something is off", () => {
     const f = auditFix();   // 8 July days at 82°, tagged Winter
     const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
     const txt = W.wxFlagText(r.flags[0]);
-    return eq([r.flags[0].fit, r.flags[0].missing, /should it include Summer/.test(txt)],
+    return eq([r.flags[0].fit, r.flags[0].missing, /That's Summer weather here/.test(txt)],
               [["Summer"], ["Summer"], true]);
   });
   t("a mis-tagged seasonal item flags the ITEM but invents no trips", () => {
