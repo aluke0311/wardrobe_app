@@ -248,11 +248,28 @@ function seasonCompare(i) {
   return { explicit, derived, differs };
 }
 
+/* The one-tap answer is the UNION, never the derived set alone. Accepting a
+   narrower derivation would silently delete a season she deliberately chose —
+   "worn like Winter" for a piece tagged Winter+Summer means she hasn't worn it
+   in summer yet, not that it isn't a summer piece. Additive by default,
+   same rule as the item-page flag; narrowing stays a manual edit. */
+const seasonCompareMerged = (i) => {
+  const { explicit, derived } = seasonCompare(i);
+  if (!derived) return explicit;
+  return SEASONS.filter(s => (explicit || []).includes(s) || derived.includes(s));
+};
+
 function seasonCompareNote(i) {
   const { explicit, derived } = seasonCompare(i);
   if (!explicit || !derived) return null;
   const days = new Set(wears.filter(w => w.item_id === i.id && w.worn_on).map(w => w.worn_on)).size;
-  return `You set ${explicit.join(" + ")} · worn like ${derived.join(" + ")} over ${days} day${days === 1 ? "" : "s"}. Saving takes the worn-like answer; Skip keeps yours.`;
+  const merged = seasonCompareMerged(i);
+  const adds = merged.filter(s => !explicit.includes(s));
+  const unworn = explicit.filter(s => !derived.includes(s));
+  let s = `You set ${explicit.join(" + ")} · worn like ${derived.join(" + ")} over ${days} day${days === 1 ? "" : "s"}.`;
+  if (adds.length) s += ` Saving adds ${adds.join(" + ")}.`;
+  if (unworn.length) s += ` (${unworn.join(" + ")} kept — you just haven't worn it then.)`;
+  return s + " Skip leaves it alone.";
 }
 
 // Why the guess says what it says — she asked to be able to see and revise the
@@ -298,7 +315,7 @@ const REVIEW_FIELDS = [
     missing: i => seasonCompare(i).differs,
     edit: i => openReviewField(i, "season"),
     value: i => (i.season || []).join(", ") || null,
-    guess: i => seasonCompare(i).derived,
+    guess: i => seasonCompareMerged(i),
     note: i => seasonCompareNote(i) },
   { key: "retailer", label: "Retailer", missing: i => !(i.retailer && i.retailer.trim()),
     edit: i => openReviewField(i, "retailer"), value: i => i.retailer || null },

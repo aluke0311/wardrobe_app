@@ -1191,10 +1191,23 @@ function run() {
     return eq([drift.differs, drift.derived, agree.differs, untagged.differs, untagged.derived],
               [true, ["Summer"], false, false, ["Summer"]]);
   });
-  t("the review row offers the derived set as the one-tap answer", () => {
+  t("the review row's one-tap answer ADDS and never deletes a chosen season", () => {
+    // Tagged Winter+Summer but only ever worn cold: accepting must keep Summer.
+    // Deleting a season she deliberately chose is not something a one-tap
+    // "Save & Next" is allowed to do.
+    const savedWears = W.wears, savedKv = W.kvData.get("wxlog");
+    const log = bandLog();
+    const rows = [];
+    for (let k = 1; k <= 8; k++) rows.push({ item_id: "d5", worn_on: `2026-01-0${k}` });
+    W.wears = rows; W.kvData.set("wxlog", log);
+    const narrow = W.seasonCompareMerged({ id: "d5", season: ["Winter", "Summer"] });
+    const widen  = W.seasonCompareMerged({ id: "d5", season: ["Summer"] });
     const row = W.REVIEW_FIELDS.find(f => f.key === "season_check");
-    return eq([!!row, row.saveKey, typeof row.guess, typeof row.missing, typeof row.note],
-              [true, "season", "function", "function", "function"]);
+    const guess = row.guess({ id: "d5", season: ["Winter", "Summer"] });
+    W.wears = savedWears;
+    if (savedKv === undefined) W.kvData.delete("wxlog"); else W.kvData.set("wxlog", savedKv);
+    return eq([narrow, widen, guess, row.saveKey],
+              [["Summer", "Winter"], ["Summer", "Winter"], ["Summer", "Winter"], "season"]);
   });
 
   /* ---- Round D.4: a location answer must be reversible ----
