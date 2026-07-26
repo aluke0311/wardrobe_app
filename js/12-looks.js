@@ -1689,7 +1689,7 @@ function renderSuggestSheet() {
           const lbl = (isDirty(p, ls) ? "🧺 " : "") + ((layerPc && layerPc.id === p.id) ? "Layer" : suggSlotLabel(p));
           return `<span style="display:inline-flex;gap:1px">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
-            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>↻ ${esc(lbl)}</button>
+            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>✨ ${esc(lbl)}</button>
             ${p.id === _sugg.seedItemId ? "" : `<button class="cap-chip" data-sban="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Not this piece today">⃠</button>`}
           </span>`;
         }).join("")}
@@ -1708,10 +1708,10 @@ function renderSuggestSheet() {
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
       <button class="btn" data-swear>${_sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date))) : "Wear this today"}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
-      <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>↻ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
+      <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>✨ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
     </div>` : `
-    <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>↻ Try again</button></div>`}`;
+    <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>✨ Try again</button></div>`}`;
 
   $("#sgClose").onclick = () => {
     // Opened from the Tomorrow card: whatever it ends as is what the card keeps.

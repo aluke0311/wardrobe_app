@@ -184,37 +184,19 @@ function renderCalendarMonth(body) {
       renderCalendarMonth(body); return;
     }
     const btn = e.target.closest('[data-calday]');
-    if (btn) { navDeeper('calendar'); openCalDaySheet(btn.dataset.calday, body); }
+    // Tapping a day opens the day (2026-07-26 audit C3). It used to open a sheet
+    // offering "View day / + Add clothing / + Add look" — a menu choosing between
+    // the one thing she always wants and two things already in the day footer,
+    // one screen deeper. On an empty future date that sheet's entire content was
+    // the words "Nothing logged yet".
+    // navDeeper belongs HERE, on the real navigation. Firing it on sheet-open
+    // scrolled the month grid to the top behind the sheet, and Cancel had no
+    // matching navShallower — so every backed-out day tap leaked a stack entry
+    // and desynced the offsets for the next real back.
+    if (btn) { navDeeper('calendar'); calendarDay = btn.dataset.calday; renderCalendarDay(body); }
   };
 
   hydratePhotos(body);
-}
-
-function openCalDaySheet(dateStr, body) {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const title = `${CAL_MONTHS[m - 1]} ${d}`;
-  const hasEntries = dayGroups(dateStr).length > 0;
-  const isFuture = dateStr > todayStr();
-  $("#logInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="calDaySheetClose">Cancel</button>
-      <h2>${esc(title)}</h2>
-      <div></div>
-    </div>
-    <div style="padding:8px 18px 30px;display:flex;flex-direction:column;gap:10px">
-      ${hasEntries ? `<button class="sheet-action-btn" id="calDaySheetView">View day</button>` : ""}
-      ${!isFuture ? `<button class="sheet-action-btn" id="calDaySheetClothing">+ Add clothing</button>` : ""}
-      ${!isFuture ? `<button class="sheet-action-btn" id="calDaySheetLook">+ Add look</button>` : ""}
-      ${!hasEntries && isFuture ? `<div class="muted" style="text-align:center;font-size:14px;padding:20px 0">Nothing logged yet.</div>` : ""}
-    </div>`;
-  showSheet("logSheet");
-  $("#calDaySheetClose").onclick = () => { hideSheet("logSheet"); };
-  const viewBtn = $("#calDaySheetView");
-  if (viewBtn) viewBtn.onclick = () => { hideSheet("logSheet"); calendarDay = dateStr; renderCalendarDay(body); };
-  const clothBtn = $("#calDaySheetClothing");
-  if (clothBtn) clothBtn.onclick = () => { hideSheet("logSheet"); calendarDay = dateStr; renderCalendarDay(body); openCalAddClothing(); };
-  const lookBtn = $("#calDaySheetLook");
-  if (lookBtn) lookBtn.onclick = () => { hideSheet("logSheet"); calendarDay = dateStr; renderCalendarDay(body); openCalAddLook(); };
 }
 
 function renderCalendarDay(body) {
@@ -314,10 +296,11 @@ function renderCalendarDay(body) {
     <div class="cal-day-foot">
       <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
       <div class="cal-day-foot-add">
-        <span>add more items:</span>
-        <button id="calWearAgain">↻ Wear again</button>
+        <span>${isFuture ? "plan ahead:" : "add more items:"}</span>
+        ${isFuture ? "" : `
+        <button id="calWearAgain">Wear again</button>
         <button id="calAddClothing">+ Clothing</button>
-        <button id="calAddLook">+ Look</button>
+        <button id="calAddLook">+ Look</button>`}
         ${dateStr >= todayStr() && !tripModeId ? `<button id="calPlanDay">📅 Plan</button>` : ""}
       </div>
     </div>
@@ -327,9 +310,14 @@ function renderCalendarDay(body) {
   $('#calDayBack').onclick = () => { calendarDay = null; renderCalendarMonth(body); navShallower('calendar'); };
   $('#calDayPrev').onclick = () => { calendarDay = prevD; renderCalendarDay(body); };
   if (!isFuture) $('#calDayNext').onclick = () => { calendarDay = nextD; renderCalendarDay(body); };
-  $('#calAddClothing').onclick = () => openCalAddClothing();
-  $('#calAddLook').onclick     = () => openCalAddLook();
-  $('#calWearAgain').onclick   = () => openWearAgainChooser(dateStr);
+  // Absent on future dates — you can plan a day you haven't lived, not log it.
+  // (The deleted day sheet gated these with the same rule; routing the month tap
+  // straight here made future day views reachable for the first time.)
+  if (!isFuture) {
+    $('#calAddClothing').onclick = () => openCalAddClothing();
+    $('#calAddLook').onclick     = () => openCalAddLook();
+    $('#calWearAgain').onclick   = () => openWearAgainChooser(dateStr);
+  }
   const makeLookBtn = $('#calMakeLook');
   if (makeLookBtn) makeLookBtn.onclick = () => makeLookFromDay(dateStr, body);
   const planDayBtn = $('#calPlanDay');

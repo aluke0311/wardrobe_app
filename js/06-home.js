@@ -887,7 +887,7 @@ function tomorrowCardHtml() {
         <div style="display:flex;align-items:center;gap:8px;padding-top:6px">
           <span class="muted" style="font-size:12px;flex:1;min-width:0;line-height:1.35">${esc(why)}</span>
           <button class="cap-chip" data-tm-keep="${idx}" style="font-size:12px" title="Save as a real look on the plan">📌 Keep</button>
-          <button class="cap-chip" data-tm-reroll="${idx}" style="font-size:12px" title="Try a different one">↻</button>
+          <button class="cap-chip" data-tm-reroll="${idx}" style="font-size:12px" title="Try a different one">✨</button>
         </div>
       </div>`;
     }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
@@ -963,11 +963,26 @@ function renderHome() {
     </button>`).join("");
   const today = todayStr();
   const hasWearToday = dataReady && wearDayMap().has(today);
-  // V3: once today is logged, acknowledge it (habit feedback) + keep a one-tap
-  // path into today's day view for the evening outfit — instead of going silent.
+  // The morning question owns the primary button, permanently (2026-07-26 audit
+  // C1). It used to be reachable ONLY through "Log today's wear" → wear-again
+  // chooser → ✨ — three taps behind a verb she isn't doing yet, since at that
+  // moment she's deciding, not recording. Worse, the CTA swapped to the quiet
+  // logged-row once the day was logged, so the path vanished exactly when she'd
+  // want to change one piece in the evening. Deciding and logging are separate
+  // intentions and now have separate buttons, both always present.
+  // Trip mode is exempt: tripDashHtml owns the suitcase-scoped ✨ Suggest.
+  // (Guarded on tripModeId, not on `tc` — that's declared ~40 lines below this
+  // point and reading it here is a TDZ ReferenceError. Same guard the "On this
+  // day" row uses.)
+  const ask = (dataReady && !tripModeId)
+    ? `<button class="log-cta" id="homeAsk">What should I wear?</button>` : "";
+  // Logging is a small confirmation, not a decision — it takes the quiet row in
+  // both states so the screen keeps ONE primary action.
   let cta = "";
   if (dataReady && !hasWearToday) {
-    cta = `<button class="log-cta" id="homeLogCta">Log today's wear</button>`;
+    cta = `<button class="logged-row" id="homeLogCta">
+      <span class="lr-check">＋</span><span class="lr-text">Log today's wear</span>
+    </button>`;
   } else if (dataReady) {
     const todayWears = wears.filter(w => w.worn_on === today);
     const ctxs = [...new Set(todayWears.flatMap(w => ctxArr(w)))];
@@ -1037,7 +1052,7 @@ function renderHome() {
   // an attention row, so it stays out of the folding group above.
   const otd = (dataReady && !tripModeId) ? onThisDayHtml(today) : "";
 
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${cta}${tomorrowCardHtml()}${attnHtml}${otd}`;
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${ask}${cta}${tomorrowCardHtml()}${attnHtml}${otd}`;
   hydratePhotos($("#homeBody"));
   wireWxMemory($("#homeBody"));
   $("#homeBody").querySelectorAll("[data-otd]").forEach(b => {
@@ -1146,6 +1161,11 @@ function renderHome() {
       renderHome();
     };
   });
+  // Straight into the sheet — no tab change. The old path routed through
+  // switchTab("calendar") first, so asking "what should I wear" moved her to the
+  // logging tab and closing the sheet stranded her there instead of on Home.
+  const askBtn = $("#homeAsk");
+  if (askBtn) askBtn.onclick = () => openSuggestSheet();
   const ctaBtn = $("#homeLogCta");
   // G6: the most common real log is a repeat — offer "wear again" first, not a
   // blank picker.

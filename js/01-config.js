@@ -6,15 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r22";
+const APP_VERSION = "2026-07-26 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Simplified. The app no longer tries to guess when you were travelling \u2014 that guessing is what caused every problem you hit. Travel is yours to enter, in Settings \u2192 \u201cWhere you've been\u201d",
-  "Season flags are down to one rule: if a piece is commonly worn in weather none of its tagged seasons covers, it says so on the item's own page \u2014 with a one-tap \u201c\uff0b Add Summer\u201d",
-  "Every piece now shows a “worn like…” season under Season, worked out from its history whether or not you've set one — and Closet Review puts yours next to it so you can settle the difference in one tap",
-  "Archive a capsule or a finished trip: it keeps everything (packing list, plans, locations) but drops out of the main list into an “🗄 Archived” section",
-  "Deleting a trip you logged now puts the home weather back properly, and saving one can be undone. The season editor no longer opens underneath the sheet you tapped it from",
+  "“What should I wear?” is now its own button on Home, and it stays there all day — including after you’ve logged, which is exactly when you’d want to swap one piece. It used to be three taps inside “Log today’s wear”",
+  "Logging moved to the quiet row underneath it. Still one tap — it just isn’t the loudest thing on the screen any more, because deciding comes before recording",
+  "The little shuffle arrow is gone. It meant “show me looks I already own” in one place and “build me a new outfit” in another — two opposite things wearing the same icon. ✨ now always means make something new",
+  "Tapping a day on the calendar opens that day, instead of first asking which of three things you meant",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

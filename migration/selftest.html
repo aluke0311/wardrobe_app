@@ -56,7 +56,14 @@ frameEl.addEventListener("load", () => setTimeout(run, 300));
     const html = await (await fetch(`/index.html?_=${Date.now()}`, { cache: "reload" })).text();
     const srcs = [...html.matchAll(/(?:src|href)="((?:js|css)\/[^"]+)"/g)].map(m => m[1]);
     if (!srcs.length) throw new Error("no js/ or css/ tags found in index.html");
-    await Promise.all(srcs.map(s => fetch(s, { cache: "reload" })));
+    // The reload-fetch already pulls every module; keep the text so source-level
+    // invariants (icon vocabulary, banned patterns) can be asserted synchronously
+    // inside run(). Costs nothing — the responses were being discarded.
+    window.__src = {};
+    await Promise.all(srcs.map(async s => {
+      const r = await fetch(s, { cache: "reload" });
+      window.__src[s.split("?")[0]] = await r.text();
+    }));
   } catch (e) {
     // Don't fail silently into a stale run — a fresh iframe is the whole point.
     document.getElementById("summary").textContent = `FAIL: could not refresh app sources — ${e.message}`;
@@ -102,6 +109,36 @@ function run() {
     const wrong = tags.filter(u => new URLSearchParams(u.split("?")[1] || "").get("v") !== want);
     return tags.length >= 21 && !wrong.length
       ? true : `${tags.length} tags, want v=${want}, wrong: ${JSON.stringify(wrong)}`;
+  });
+
+  // ---- icon vocabulary (2026-07-26 audit C2) ----
+  // ↻ used to mean three things — "wear again" (show me looks I already own) in
+  // the calendar footer, "reshuffle" (generate a new combo) in the suggester,
+  // and a per-piece swap — two of which are opposites. That's a recall tax on a
+  // one-tap control, so the glyph was retired outright: ✨ is now the single
+  // mark for "make something new", and history actions carry a plain word. The
+  // weather refresh control is an inline SVG, so nothing legitimately needs ↻.
+  t("↻ is retired — ✨ is the only 'make something new' glyph", () => {
+    const src = window.__src || {};
+    const files = Object.keys(src).filter(p => p.endsWith(".js"));
+    const guilty = files.filter(p => src[p].includes("↻"));
+    return files.length >= 20 && !guilty.length
+      ? true : `${files.length} modules scanned, ↻ still in: ${JSON.stringify(guilty)}`;
+  });
+
+  // ---- sheet registry (2026-07-26 audit M5) ----
+  // uiCanRefetch() suppresses the visibility-change refetch while any sheet is
+  // open. It does that from a hand-maintained id list, so a NEW sheet wrapper
+  // that nobody remembers to add gets its contents yanked out from under an
+  // open edit. Cheap to assert, and it catches the whole class.
+  t("uiCanRefetch names every sheet wrapper in index.html", () => {
+    const wrappers = [...W.document.querySelectorAll('div[id$="Sheet"]')]
+      .filter(d => d.querySelector(":scope > .sheet"))
+      .map(d => d.id);
+    const src = W.uiCanRefetch.toString();
+    const missing = wrappers.filter(id => !src.includes(`"${id}"`));
+    return wrappers.length >= 9 && !missing.length
+      ? true : `wrappers=${JSON.stringify(wrappers)} missing=${JSON.stringify(missing)}`;
   });
 
   // ---- dates ----
