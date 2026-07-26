@@ -1,12 +1,158 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-25 r14**. Round C "Memory + Payback" SHIPPED (all 9
-> steps, r1→r8), its deferred list SHIPPED (r9 Palette, r10 What's missing), and
-> **Round D "Where You Were" SHIPPED** (r14, planned + built + tested same day).
-> ▶ NEXT UP: nothing scheduled — ask before starting new work.
-> The only carried-over item is the **Formulas remainder**, which is gated on
+> Current version: **2026-07-25 r18**. Round D "Where You Were" shipped r14 and
+> was then hardened live against her real data across r15–r18 (see the r15–r18
+> section below — every round was a response to a real failure she reported).
+> ▶ NEXT UP: **Round D.3 "Answer, don't audit" (r19)** — planned by Fable
+> 2026-07-25 (below), awaiting her answers to 3 questions, then Opus builds.
+> The only other carried-over item is the **Formulas remainder**, gated on
 > tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
+
+---
+
+## ▶ PLANNED — Round D.3 "Answer, don't audit" (r19)
+
+**Planned by Fable 2026-07-25 after a step-back review of the whole r14→r18
+arc. Two live bugs, one latent bug, and a reframe of the surface. The
+detection MATH stays — it converged through r15–r18 into something defensible
+and 136-case-tested. What keeps failing is the FRAME: this was built as an
+audit (a list of accusations) when the job is answering questions about days.
+Every complaint she filed is a workflow complaint: can't see the days, can't
+fix things from where she's looking, "I was home" dead-ends, buttons buried.**
+
+### The step-back verdict (why not a different system)
+
+Considered honestly, because she asked:
+- **Rebuild the detectors?** No. Each patch round fixed a real, named flaw
+  (own-spread bars, span+density clustering, null-day hygiene, signal
+  separation, no-proposal-no-flag) and each is pinned by tests. A rewrite
+  re-earns those lessons from scratch.
+- **A provenance ledger** (every derived value carries evidence + override)?
+  Overkill — the day view + review notes already deliver the visible/revisable
+  part, and the app's derive-first philosophy means most values should stay
+  fluid, not pinned.
+- **The keeper from the "different system" thinking:** the one real unknown is
+  WHERE SHE WAS. Given that, everything else is derivation, not detection. So
+  promote day classification to a first-class three-state — **away / home /
+  unknown** — make it visible, and let "unknown" be an honest answer instead
+  of a presumption of home. The audit's job then shrinks to: surface suspect
+  windows as QUESTIONS, and leave a small residue of one-tap tag fixes.
+  That is a reframe of the existing surface, not a new engine.
+- **Sheet vs full screen:** keep sheets. The stacking bug (below) is a
+  one-line DOM-order fix, and the day view fits a sheet fine. A stats-screen
+  queue is the fallback if sheets keep chafing — not now.
+
+### Step 1 — Fix the buried field sheet (her bug 1, root-caused)
+
+Every sheet wrapper is `z-index: 301` (backdrop 300), so **DOM order decides
+the stack**. `#whereSheet` and `#wxAuditSheet` were appended LAST in
+index.html — after `#fieldSheet` — so "Edit season" / "Season ✎" genuinely
+opens the field sheet UNDERNEATH the audit sheet. It has worked all along;
+she just couldn't see it. ("✈️ I was away" worked because that path hides the
+audit sheet first — which is also the diagnostic that confirms this.)
+**Fix:** move the `#whereSheet` + `#wxAuditSheet` wrapper divs ABOVE
+`#fieldSheet` in index.html. Nothing else changes; the `_fieldOnSave`
+callbacks already refresh the audit list underneath.
+**CLAUDE.md gotcha to add:** sheets stack by DOM order; a sheet that must
+open OVER another must be declared LATER in index.html; `#fieldSheet` should
+stay last among sheets that host field edits.
+
+### Step 2 — "I was home" keeps her working (her bug 2)
+
+Both home buttons (trip card + day view) currently persist and bounce back to
+the audit root — a dead end. New flow: persist → toast **with Undo** (removes
+the range) → **stay in / open the day view for that window** in a `home` mode:
+banner "Marked as home ✓ — the weather stands. If a piece's season looks
+wrong below, fix it here." For each piece with an EXPLICIT season and a
+computable proposal (`seasonForTemp` over the window's day temps, minus its
+tags), show the one-tap "＋ Add X" chip beside "Season ✎".
+**Untagged pieces get no chip, deliberately** — their season is derived and
+self-correcting, one odd home day doesn't move a ≥15%-share derivation, and
+setting a season would permanently replace the derivation with a fixed answer
+(the day view already labels these "worked out, not set"). [Q1 below.]
+
+### Step 3 — Deleting/undoing a location answer must revert the weather
+(latent bug, found while planning)
+
+`removeWhereEntry` deletes the range but leaves its days stranded with
+`away:1` + the away location's weather — the correction outlives the answer
+that justified it. **Fix:** `revertAwayWeather(r)` mirroring
+`correctAwayWeather(r)`: fetch HOME weather for the span, merge (rebuilt
+entries carry no `away` flag), then re-run `correctAwayWeather` for any
+REMAINING away ranges that overlap the span (so deleting one of two
+overlapping answers doesn't wipe the survivor). Call it from:
+`removeWhereEntry`, the new home-toast Undo (step 2), and a new Undo chip on
+the where-sheet save toast. Fire-and-forget like its mirror; `_wxAudit = null`
+after each.
+
+### Step 4 — Make the three-way day state visible (small, no nudges)
+
+- `dayStatus(date, ranges?, home?)` → `"away" | "home" | "unknown"` helper
+  (pure, selftest-facing); day view day-headers show 🏠 on confirmed-home days
+  (away days already show the place).
+- Settings "Where you've been" card gains one muted line: "N worn days still
+  unaccounted for — the health check asks about the suspicious ones." Count =
+  distinct wear-days not inside away ∪ home ranges. Visibility only — no
+  queue, no badge, no Home-screen anything (her no-nudges ethos). [Q2 below.]
+- Docs: the kv key stays `wxaudit_home` (data exists) but is documented as
+  the **homelog** — first-class data consumed by the detectors, not a
+  dismissal list.
+
+### Step 5 — Selftest + docs
+
+Cases: `dayStatus` three states · revert-then-reapply overlap logic via
+`mergeWxDays` (pure: away merge → home revert clears the flag → surviving
+overlap re-applies) · unaccounted-days count · home-mode proposal chips only
+on explicitly-tagged pieces. The sheet-order fix is browser-verified (open
+audit → Edit… → field sheet visibly on top), not selftested. CLAUDE.md gotcha
++ Round D entry update, ROADMAP flip, memory per [[close-out-routine]].
+
+### Open questions (answer before Opus builds)
+
+1. **Untagged pieces after "I was home":** plan says no season chip (one odd
+   day shouldn't fix a tag; derivation ignores it). OK, or do you want a
+   "Set season…" shortcut there anyway?
+2. **The "N days unaccounted for" line:** visibility only this round, or do
+   you want a way to browse them (e.g., a dimmed calendar overlay)? Plan says
+   visibility only.
+3. **Detector accuracy check:** after re-running "Look up past weather" on
+   r18, are the remaining flags/windows sane on your real data? If something
+   still looks wrong, name one wrong flag and what you'd have wanted it to
+   say — that decides whether this round is UI-only (as planned) or needs one
+   more detector change.
+
+---
+
+## ✅ SHIPPED — Round D hardening against her real data (2026-07-25, r15→r18)
+
+Four same-day rounds, each answering a failure she reported live. Selftest
+112 → 136. Full reasoning in the commit messages (e6067c1, 068aa07, b80e232,
+22719cf); the lessons, briefly:
+- **r15** — her St Lucia dress wasn't flagged: for an uncorrected away day the
+  stored (home) weather and the calendar AGREE, so a trip-only piece is
+  structurally invisible to tag-checking. Added `buildDayWxAnomalies`: the
+  OUTFIT vs the day (sandals with years of summer habit on a "25°" day), with
+  votes weighted by habit strength — a trip-only piece's habit IS the wrong
+  weather, so it abstains.
+- **r16** — "huge swaths of dates": judging pieces against their MEDIAN at a
+  flat 30° bar made every cold snap read as travel (jeans median 55° vs a real
+  18° day); clustering chained transitively across months. Now: own-spread
+  bars (max(30°, 1.5·IQR)), span cap 24d, density ≥ 0.5. Plus the day view
+  ("See these days"), I-was-home, and review integration, all her asks.
+- **r17** — "some dates have 0°/0°": Open-Meteo nulls, `Math.round(null)`=0 —
+  archive gaps stored as hard freezes, poisoning bands/profiles/detector at
+  once. `_wxDay` drops nulls at the source; `purgeNullWxDays` clears stored
+  artifacts. Flags gained `fit`/`missing` ("that's Winter weather here");
+  day view names the exact culprit with arithmetic. And trip guesses stopped
+  being fed by flagged items' histories — a mis-tagged winter coat's own
+  consecutive cold-day wears had been clustering into spurious trips.
+- **r18** — "nothing I can do about these flags": no-proposal-no-flag (a flag
+  whose suggested seasons are already tagged is dropped), temp margin scales
+  with the claimed season's own spread, one-tap "＋ Add Winter". Each flag
+  kind proposes in the same currency as its evidence (temp→temperatures,
+  calendar→calendar) — using temperature for both silently suppressed the
+  calendar flag, caught by tests.
 
 ---
 
