@@ -114,6 +114,22 @@ const awayRangeFor = (date, ranges) => ranges.find(r => date >= r.from && date <
    being rewritten by a forecast of the same day; an AWAY fetch ignores that
    guard, because on a day she was elsewhere the home reading is wrong by
    construction, however recently it was taken. */
+/* A day stored as exactly 0°/0° is the null-artifact described in _wxDay, not
+   weather — max AND min landing on precisely zero effectively doesn't happen.
+   Dropping them lets a re-run of the backfill refill them properly, and if the
+   archive genuinely has nothing, absent is the correct end state. */
+const isNullWxDay = (e) => !!e && e.maxT === 0 && e.minT === 0;
+
+function purgeNullWxDays(log) {
+  const out = {};
+  let n = 0;
+  for (const [d, e] of Object.entries(log || {})) {
+    if (isNullWxDay(e)) { n++; continue; }
+    out[d] = e;
+  }
+  return { log: out, n };
+}
+
 function mergeWxDays(log, fetched, { today, keepAfter = null, away = false, loc = null, floor = null } = {}) {
   const out = { ...log };
   let n = 0;
@@ -141,9 +157,11 @@ async function backfillWxLog() {
   const loc = await getHomeLocation();
   if (!loc) throw new Error("Location is off — can't look up past weather");
   const res = await fetchWeatherRange(loc.lat, loc.lon, start, today);
+  // Clear any 0°/0° null-artifacts first so this pass can refill them.
+  const cleaned = purgeNullWxDays(wxLog());
   // Anything logged live in the last 15 days came from a FORECAST; ERA5 is
   // observed, so it wins on older days and leaves the recent ones alone.
-  let { log, n } = mergeWxDays(wxLog(), res, { today, keepAfter: shiftDate(today, -15), floor });
+  let { log, n } = mergeWxDays(cleaned.log, res, { today, keepAfter: shiftDate(today, -15), floor });
   // Second pass: every window she was somewhere else gets that place's real
   // weather, overwriting the home reading this first pass just wrote.
   for (const r of awayRanges()) {
@@ -204,7 +222,7 @@ function similarDays(wx, { contexts = null, limit = 4, excludeDays = 14,
   for (const [date, rows] of dm) {
     if (date > cutoff) continue;                 // too recent — she remembers it
     const e = L[date];
-    if (!e || e.maxT == null) continue;
+    if (!e || e.maxT == null || isNullWxDay(e)) continue;
     if (!e.away && awayRangeFor(date, away)) continue;
     if (want && !rows.some(r => ctxArr(r).some(c => want.has(c)))) continue;
     let score = Math.abs(e.maxT - wx.maxT);
@@ -240,7 +258,7 @@ const WX_PROFILE_MIN = 5;
 function itemWxProfile(itemId, log = null) {
   const L = log || wxLog();
   const temps = [...new Set(wears.filter(w => w.item_id === itemId).map(w => w.worn_on))]
-    .map(d => L[d]).filter(e => e && e.maxT != null).map(e => e.maxT).sort((a, b) => a - b);
+    .map(d => L[d]).filter(e => e && e.maxT != null && !isNullWxDay(e)).map(e => e.maxT).sort((a, b) => a - b);
   if (temps.length < WX_PROFILE_MIN) return null;
   const at = f => temps[Math.min(temps.length - 1, Math.max(0, Math.round(f * (temps.length - 1))))];
   return { lo: at(0.1), hi: at(0.9), n: temps.length };
@@ -261,7 +279,7 @@ function seasonBands(log = null) {
   const by = {};
   for (const s of SEASONS) by[s] = [];
   for (const [d, e] of Object.entries(L)) {
-    if (!e || e.away || e.maxT == null) continue;
+    if (!e || e.away || e.maxT == null || isNullWxDay(e)) continue;
     const s = seasonOf(d);
     if (by[s]) by[s].push(e.maxT);
   }
@@ -290,18 +308,22 @@ function seasonBands(log = null) {
    lies about what she dressed for — a Christmas in St Lucia is a summer day in
    every way that matters to a wardrobe — so an away day is re-labelled with
    the home season its temperature most resembles. */
+// Which season a temperature feels like here. Null when no band is usable yet.
+function seasonForTemp(t, bands) {
+  let best = null, bestD = Infinity;
+  for (const s of SEASONS) {
+    if (!bands[s]) continue;
+    const d = Math.abs(t - bands[s].median);
+    if (d < bestD) { bestD = d; best = s; }
+  }
+  return best;
+}
+
 function effectiveSeasonOf(dateStr, log = null, bands = null) {
   const L = log || wxLog();
   const e = L[dateStr];
-  if (!e || !e.away || e.maxT == null) return seasonOf(dateStr);
-  const b = bands || seasonBands(log);
-  let best = null, bestD = Infinity;
-  for (const s of SEASONS) {
-    if (!b[s]) continue;
-    const d = Math.abs(e.maxT - b[s].median);
-    if (d < bestD) { bestD = d; best = s; }
-  }
-  return best || seasonOf(dateStr);
+  if (!e || !e.away || e.maxT == null || isNullWxDay(e)) return seasonOf(dateStr);
+  return seasonForTemp(e.maxT, bands || seasonBands(log)) || seasonOf(dateStr);
 }
 
 /* ---- SEASON vs WEATHER AUDIT (Round D) -------------------------------------
@@ -374,7 +396,7 @@ function itemTempCenter(itemId, log = null, dayMapByItem = null) {
   const L = log || wxLog();
   const days = dayMapByItem ? (dayMapByItem.get(itemId) || new Set())
     : new Set(wears.filter(w => w.item_id === itemId).map(w => w.worn_on));
-  const t = [...days].map(d => L[d]).filter(e => e && e.maxT != null)
+  const t = [...days].map(d => L[d]).filter(e => e && e.maxT != null && !isNullWxDay(e))
     .map(e => e.maxT).sort((a, b) => a - b);
   if (t.length < WX_PROFILE_MIN) return null;
   const at = f => t[Math.min(t.length - 1, Math.max(0, Math.round(f * (t.length - 1))))];
@@ -410,7 +432,7 @@ function buildDayWxAnomalies({ wearRows = null, log = null, ranges = null, home 
   const odd = [];
   for (const [d, ids] of byDay) {
     const e = L[d];
-    if (!e || e.maxT == null) continue;
+    if (!e || e.maxT == null || isNullWxDay(e)) continue;
     if (awayRangeFor(d, R)) continue;         // already known — nothing to ask
     if (isMarkedHome(d, H)) continue;         // already answered "I was home"
     /* Votes are WEIGHTED by how well-established the habit is, which matters
@@ -463,11 +485,11 @@ function buildSeasonWxFlags({ pool = null, wearRows = null, log = null, bands = 
     daysBy.get(w.item_id).add(w.worn_on);
   }
 
-  const flags = [], badDays = [];
+  const flags = [];
   for (const i of list) {
     if (!i.season || !i.season.length) continue;      // no claim = nothing to contradict
     if (OK[i.id] === JSON.stringify(i.season)) continue;
-    const days = [...(daysBy.get(i.id) || [])].filter(d => L[d] && L[d].maxT != null).sort();
+    const days = [...(daysBy.get(i.id) || [])].filter(d => L[d] && L[d].maxT != null && !isNullWxDay(L[d])).sort();
     // The two tests need different amounts of evidence: the temp test measures
     // a huge effect (a whole climate off), the calendar test is a proportion
     // and needs enough days to be a proportion of.
@@ -500,25 +522,34 @@ function buildSeasonWxFlags({ pool = null, wearRows = null, log = null, bands = 
       flag = { kind: "calendar", inSeason: days.length - off.length, lo, hi };
     if (!flag) continue;
 
+    /* What the temperatures actually look like, so the flag can say what the
+       fix probably IS ("looks like it should include Summer") rather than only
+       that something is off — she couldn't tell whether a piece was missing a
+       season or wearing the wrong one. */
+    const fitTally = new Map();
+    for (const d of days) {
+      const s = seasonForTemp(L[d].maxT, B);
+      if (s) fitTally.set(s, (fitTally.get(s) || 0) + 1);
+    }
+    const fit = [...fitTally.entries()].filter(([, n]) => n / days.length >= 0.25)
+      .sort((a, b) => b[1] - a[1]).map(([s]) => s);
     flags.push({ ...flag, id: i.id, name: i.name, image_path: i.image_path,
-                 season: claimed, days: days.length, off: guilty });
-    /* Trip evidence is the days that actually contradict, and which days those
-       are depends on WHICH test fired: a temperature flag is contradicted by
-       out-of-band days (a warm December week reads as Winter on the calendar,
-       so the calendar set would be empty and the cluster would never form),
-       a calendar flag by out-of-season ones. */
-    for (const d of guilty) if (!awayRangeFor(d, R) && !isMarkedHome(d, H)) badDays.push({ d, id: i.id });
+                 season: claimed, days: days.length, off: guilty,
+                 fit, missing: fit.filter(s => !claimed.includes(s)) });
   }
 
-  /* Two independent sources of "you were probably away", clustered together:
-     the contradicting days of tagged items above, AND days where the outfit
-     itself disagreed with the recorded weather. The second is what catches a
-     trip made up of untagged or rarely-worn pieces — the case the tagged path
-     structurally cannot see. */
+  /* Trip guesses come ONLY from day anomalies — never from a flagged item's
+     contradicting days. That seemed reasonable and was badly wrong: for a
+     mis-tagged seasonal piece EVERY wear contradicts, and a winter coat tagged
+     Summer is worn on consecutive cold days, so its own history clusters into a
+     run of dense, entirely spurious "were you away?" windows. The two signals
+     answer different questions and each already has its own fix: a flag means
+     the TAG is suspect (edit the season), an anomaly means the DAY is suspect
+     (log where you were). Mixing them made both worse. */
   const anom = buildDayWxAnomalies({ wearRows: rows, log, ranges: R, home: H });
-  for (const o of anom.days) for (const id of o.ids) badDays.push({ d: o.d, id });
-  const tripGuesses = _clusterAwayDays(badDays);
+  const tripGuesses = _clusterAwayDays(anom.days.flatMap(o => o.ids.map(id => ({ d: o.d, id }))));
   return {
+    dayAnomalies: anom.days,   // per-DAY detail, so the day view can name the culprit
     flags: flags.sort((a, b) => b.days - a.days),
     tripGuesses: tripGuesses.filter(g => g.dates.size >= WXA_RUN_MIN)
       .map(g => ({ from: g.from, to: g.to, dates: [...g.dates].sort(), itemIds: [...g.itemIds] }))
@@ -537,14 +568,23 @@ function wxAuditFlags() {
 }
 const wxFlagFor = (id) => wxAuditFlags().flags.find(f => f.id === id) || null;
 
-// One plain sentence of evidence. No verdict — she decides which side is wrong.
+/* The evidence, then the likely fix. Both halves matter: the first says why
+   the app thinks something is off, the second answers "off HOW — is it missing
+   Winter?", which the evidence alone never told her. */
 function wxFlagText(f) {
   const s = f.season.join("/");
-  if (f.kind === "temp")
-    return f.dir === "hot"
-      ? `Marked ${s} — but usually worn ${f.lo}°–${f.hi}°, and your ${s.toLowerCase()} tops out around ${f.band[1]}°.`
-      : `Marked ${s} — but usually worn ${f.lo}°–${f.hi}°, and your ${s.toLowerCase()} bottoms out around ${f.band[0]}°.`;
-  return `Marked ${s} — but only ${f.inSeason} of ${f.days} worn days felt like it.`;
+  let why;
+  if (f.kind === "temp") {
+    why = f.dir === "hot"
+      ? `Tagged ${s}, but you wear it in ${f.lo}°–${f.hi}° — your ${s.toLowerCase()} tops out near ${f.band[1]}°.`
+      : `Tagged ${s}, but you wear it in ${f.lo}°–${f.hi}° — your ${s.toLowerCase()} bottoms out near ${f.band[0]}°.`;
+  } else {
+    why = `Tagged ${s}, but only ${f.inSeason} of ${f.days} days you wore it felt like ${s}.`;
+  }
+  const miss = f.missing || [];
+  if (miss.length) return `${why} That's ${miss.join(" / ")} weather here — should it include ${miss.join(" or ")}?`;
+  if ((f.fit || []).length) return `${why} Those days were mostly ${f.fit.join(" / ")}.`;
+  return why;
 }
 
 /* "Nothing to show" has several very different causes here, and silence made
@@ -664,9 +704,10 @@ function openSeasonAuditSheet() {
    edit a piece's season, or jump to that day in the calendar to move the wear. */
 function openWxDaysView(g) {
   const L = wxLog();
-  const away = awayRanges();
   const anomDays = new Set(g.dates);
-  const drivers = new Set(g.itemIds);
+  // Per-DAY culprits, not a union across the window: she couldn't tell which
+  // piece made a given day suspect when every driver was marked on every day.
+  const anomByDate = new Map((wxAuditFlags().dayAnomalies || []).map(o => [o.d, o]));
   const rowsByDay = new Map();
   for (const w of wears) {
     if (w.worn_on < g.from || w.worn_on > g.to) continue;
@@ -682,16 +723,25 @@ function openWxDaysView(g) {
     const wd = new Date(d + "T00:00:00");
     const label = wd.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     const loc = e && e.away ? e.loc : null;
+    const an = anomByDate.get(d);
+    const culprits = new Set(an ? an.ids : []);
     const pieces = ids.map(id => {
       const i = itemById.get(id);
       if (!i) return "";
       const p = itemWxProfile(id);
+      const c = itemTempCenter(id);
       const season = (i.season && i.season.length) ? i.season.join(", ") : "no season set";
-      return `<div style="display:flex;align-items:center;gap:9px;padding:5px 0 5px 10px">
+      const isCulprit = culprits.has(id);
+      // Spell out the arithmetic for the piece that actually drove the verdict.
+      const why = isCulprit && c && e && e.maxT != null
+        ? `<div style="font-size:11px;color:var(--accent);margin-top:1px">⚠ flagged this day — usually around ${c.t}°, about ${Math.abs(c.t - e.maxT)}° ${c.t > e.maxT ? "warmer" : "colder"} than this</div>`
+        : "";
+      return `<div style="display:flex;align-items:center;gap:9px;padding:5px 0 5px 10px${isCulprit ? ";background:var(--accent-soft);border-radius:10px" : ""}">
         <div style="width:34px;flex:none">${thumbHtml(i.image_path || "")}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}${drivers.has(id) ? " ⚠" : ""}</div>
-          <div class="muted" style="font-size:11px">${esc(season)}${p ? ` · usually ${p.lo}°–${p.hi}°` : ""}</div>
+          <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</div>
+          <div class="muted" style="font-size:11px">${esc(season)}${p ? ` · usually ${p.lo}°–${p.hi}°` : " · not worn enough to have a usual range"}</div>
+          ${why}
         </div>
         <button class="cap-chip" data-wxd-season="${esc(id)}" style="flex:none;font-size:11.5px">Season ✎</button>
       </div>`;
@@ -699,7 +749,7 @@ function openWxDaysView(g) {
     return `<div style="padding:9px 16px;border-bottom:1px solid var(--line);${anomDays.has(d) ? "background:var(--panel)" : ""}">
       <div style="display:flex;align-items:baseline;gap:8px">
         <div style="font-size:13.5px;font-weight:600;flex:1">${esc(label)}${anomDays.has(d) ? " ⚠" : ""}</div>
-        <div class="muted" style="font-size:12px">${e && e.maxT != null ? `${e.maxT}°/${e.minT}°${loc ? ` · ${esc(String(loc).split(",")[0])}` : ""}` : "no weather"}</div>
+        <div class="muted" style="font-size:12px">${e && e.maxT != null && !isNullWxDay(e) ? `${e.maxT}°/${e.minT}°${loc ? ` · ${esc(String(loc).split(",")[0])}` : ""}` : "no weather on record"}</div>
       </div>
       ${pieces || `<div class="muted" style="font-size:12px;padding:4px 0 2px 10px">Nothing logged this day.</div>`}
       <button class="lnk" data-wxd-cal="${esc(d)}" style="font-size:11.5px;padding:4px 0 0 10px;color:var(--muted)">Open in calendar — wrong date? ›</button>

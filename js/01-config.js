@@ -6,14 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r16";
+const APP_VERSION = "2026-07-25 r17";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Fixed the trip detector guessing huge stretches of dates \u2014 every piece is now judged against its own usual range, so year-round jeans stop looking odd on a genuinely cold day",
-  "\u201cSee these days\u201d shows each day of a suspect stretch: the weather on record, everything you wore, and its usual range \u2014 fix a season right there, or open the day in the calendar if the DATE is what's wrong",
-  "Every trip question now has both answers: \u201cI was away\u201d or \u201cI was home\u201d (which stops it asking again)",
-  "Closet Review shows how a season was worked out and lists pieces the weather disagrees with, so these guesses are visible and revisable in one place",
+  "Fixed days showing 0\u00b0/0\u00b0 \u2014 those were gaps in the weather archive being stored as freezing, which was quietly skewing seasons, \u201cusually worn\u201d ranges and the trip guesses. Re-run \u201cLook up past weather\u201d to clear them",
+  "Flags now say what's probably missing (\u201cthat's Summer weather here \u2014 should it include Summer?\u201d), not just that something's off",
+  "\u201cSee these days\u201d highlights the exact piece that made a day look wrong, and by how much",
+  "Every trip question has both answers now: \u201cI was away\u201d or \u201cI was home\u201d \u2014 and Closet Review shows how each season was worked out",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

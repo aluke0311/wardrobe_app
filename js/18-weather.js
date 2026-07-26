@@ -30,6 +30,19 @@ async function geocodeLocation(q) {
   }));
 }
 
+/* One day out of an Open-Meteo `daily` block, or null when it has no reading.
+   ⚠️ Load-bearing null check (2026-07-25 r17, user-reported "some dates show
+   0°/0°"). The API returns null for days it has no data — an ERA5 gap, a
+   station outage — and `Math.round(null)` is 0, so those days were stored as a
+   hard freeze. That silently poisoned the season bands, every item's "usually
+   worn" range, and the trip detector, which saw a 0° day and concluded she must
+   have been somewhere very cold. Absent beats wrong. */
+function _wxDay(daily, i) {
+  const mx = daily.temperature_2m_max[i], mn = daily.temperature_2m_min[i];
+  if (mx == null || mn == null || !isFinite(mx) || !isFinite(mn)) return null;
+  return { maxT: Math.round(mx), minT: Math.round(mn), code: daily.weather_code[i], hist: false };
+}
+
 // Fetch weather for a lat/lon + date range.
 // 3 zones: past (archive), recent+near-future (forecast), far-future (3-yr historical avg).
 async function fetchWeatherRange(lat, lon, startStr, endStr) {
@@ -50,7 +63,8 @@ async function fetchWeatherRange(lat, lon, startStr, endStr) {
         `&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto` +
         `&temperature_unit=fahrenheit&start_date=${zAS}&end_date=${zAE}`).then(r => r.json());
       if (d.daily) d.daily.time.forEach((date, i) => {
-        result[date] = { maxT: Math.round(d.daily.temperature_2m_max[i]), minT: Math.round(d.daily.temperature_2m_min[i]), code: d.daily.weather_code[i], hist: false };
+        const e2 = _wxDay(d.daily, i);
+        if (e2) result[date] = e2;
       });
     } catch (e) {}
   }
@@ -63,7 +77,9 @@ async function fetchWeatherRange(lat, lon, startStr, endStr) {
         `&daily=temperature_2m_max,temperature_2m_min,weather_code` +
         `&start_date=${startStr}&end_date=${zBE}&temperature_unit=fahrenheit`).then(r => r.json());
       if (d.daily) d.daily.time.forEach((date, i) => {
-        if (!result[date]) result[date] = { maxT: Math.round(d.daily.temperature_2m_max[i]), minT: Math.round(d.daily.temperature_2m_min[i]), code: d.daily.weather_code[i], hist: false };
+        if (result[date]) return;
+        const e2 = _wxDay(d.daily, i);
+        if (e2) result[date] = e2;
       });
     } catch (e) {}
   }
@@ -89,10 +105,12 @@ async function fetchWeatherRange(lat, lon, startStr, endStr) {
           d.daily.time.forEach((archDate, i) => {
             const mapped = archDate.replace(/^\d{4}/, String(parseInt(archDate.slice(0, 4)) + yOff));
             if (!histDates.includes(mapped)) return;
+            const e2 = _wxDay(d.daily, i);
+            if (!e2) return;                    // a null year can't average in as 0
             if (!totals[mapped]) totals[mapped] = { mx: 0, mn: 0, codes: [], n: 0 };
-            totals[mapped].mx += Math.round(d.daily.temperature_2m_max[i]);
-            totals[mapped].mn += Math.round(d.daily.temperature_2m_min[i]);
-            totals[mapped].codes.push(d.daily.weather_code[i]);
+            totals[mapped].mx += e2.maxT;
+            totals[mapped].mn += e2.minT;
+            totals[mapped].codes.push(e2.code);
             totals[mapped].n++;
           });
         } catch (e) {}
