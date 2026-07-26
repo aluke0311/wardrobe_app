@@ -5,7 +5,8 @@
 > was then hardened live against her real data across r15–r18 (see the r15–r18
 > section below — every round was a response to a real failure she reported).
 > ▶ NEXT UP: **Round D.3 "Answer, don't audit" (r19)** — planned by Fable
-> 2026-07-25 (below), awaiting her answers to 3 questions, then Opus builds.
+> 2026-07-25, her 3 answers folded in, **LOCKED and ready for Opus to build**
+> (steps 1–6 below; step 4b and step 6 came from her answers).
 > The only other carried-over item is the **Formulas remainder**, gated on
 > tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
 
@@ -108,19 +109,57 @@ on explicitly-tagged pieces. The sheet-order fix is browser-verified (open
 audit → Edit… → field sheet visibly on top), not selftested. CLAUDE.md gotcha
 + Round D entry update, ROADMAP flip, memory per [[close-out-routine]].
 
-### Open questions (answer before Opus builds)
+### Her answers (2026-07-25, plan LOCKED — build all of the below)
 
-1. **Untagged pieces after "I was home":** plan says no season chip (one odd
-   day shouldn't fix a tag; derivation ignores it). OK, or do you want a
-   "Set season…" shortcut there anyway?
-2. **The "N days unaccounted for" line:** visibility only this round, or do
-   you want a way to browse them (e.g., a dimmed calendar overlay)? Plan says
-   visibility only.
-3. **Detector accuracy check:** after re-running "Look up past weather" on
-   r18, are the remaining flags/windows sane on your real data? If something
-   still looks wrong, name one wrong flag and what you'd have wanted it to
-   say — that decides whether this round is UI-only (as planned) or needs one
-   more detector change.
+1. **No chip for untagged pieces** after "I was home" — as planned (step 2
+   stands as written).
+2. **The unaccounted-days line must be BROWSABLE** — step 4 grows into
+   step 4b below.
+3. **Detector criterion replaced at her direction** — "it needs to be with
+   commonly worn + general ranges for the season its tags are assigned to,
+   to fix the issue with flags that have no solution." That is a better
+   construction than the shipped one; it becomes step 6.
+
+### Step 4b — "Where you were" browse (extends step 4, her call)
+
+Tapping the "N worn days unaccounted for" line in Settings opens a **year
+pixel grid** of day classification — same `.pxgrid` machinery as Year in
+Pixels (fixed 11px cells, sideways scroll, one row block per year of wear
+history, newest first). Cell color by `dayStatus`: away = `var(--accent)` ·
+confirmed-home = soft accent · worn-but-unknown = `var(--panel2)` dot ·
+not-worn = empty `var(--panel)`. A ⚠ tint over days inside a CURRENT suspect
+window. Legend underneath. **Read-only browse**: tapping a day opens the
+calendar day view (same handoff as the audit's "Open in calendar"); answering
+still happens through the audit queue and `#whereSheet` (an "＋ Add
+somewhere" button sits in the sheet header for direct entry). Lives in a
+sheet (`#wherePxSheet` — declared BEFORE `#fieldSheet` per the step-1 gotcha,
+added to `uiCanRefetch`).
+
+### Step 6 — Detector v2: commonly-worn vs the season's general range (her Q3)
+
+Replace the temp-flag test in `buildSeasonWxFlags` (r18's p10/p90 +
+spread-scaled margin construction) with an **overlap test between central
+masses** — one currency for both judgment and proposal, no margins to tune:
+
+- `pieceCommon` = **[p25, p75]** of the item's weather-matched wear temps
+  (post-correction; still ≥ `WXA_TEMP_MIN_DAYS` days). "Commonly worn."
+- A season's **general range** = its band's **[p10, p90]** (already computed
+  by `seasonBands`).
+- **No flag if ANY tagged season's general range overlaps `pieceCommon`.**
+  A piece commonly worn inside any season it claims is fine, full stop —
+  this is what kills the no-solution flags structurally rather than by
+  suppression.
+- Otherwise flag, and in the same currency: `fit` = seasons whose general
+  range overlaps `pieceCommon`; `missing` = fit − claimed; **no-proposal →
+  no flag** (kept from r18). Direction for the sentence: `pieceCommon.lo >`
+  every claimed p90 → "hot"; `hi <` every claimed p10 → "cold"; otherwise it
+  sits in a gap between claimed seasons ("between your winter and summer").
+- `wxFlagText` v2: "Commonly worn 76°–89° — your winter generally runs
+  10°–45°. That's Summer weather here." + the ＋ Add chip as shipped.
+- Calendar flag unchanged (it exists for the no-usable-bands case).
+- Selftest: rewrite the r18 margin cases as overlap cases (mild-end coat
+  passes naturally — its IQR overlaps winter's general range); add a
+  gap-between-seasons fixture; keep both no-flag guards.
 
 ---
 
