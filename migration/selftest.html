@@ -1217,6 +1217,81 @@ function run() {
   t("the temp flag needs fewer days than the calendar flag", () =>
     eq(W.WXA_TEMP_MIN_DAYS < W.WXA_MIN_DAYS, true));
 
+  /* ---- Round D r16: the false-positive test that matters ----
+     User-reported: the trip detector "guessed huge swaths of dates". Two
+     causes, and this fixture reproduces both — a realistic two-year wardrobe
+     with year-round basics, genuine cold snaps and heat waves, and exactly ONE
+     real trip. Anything other than that one window is a false positive. */
+  const realisticYear = () => {
+    let seed = 12345;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const log = {}, rows = [];
+    const days = [];
+    const start = new Date("2024-01-01T00:00:00");
+    for (let k = 0; k < 730; k++) {
+      const dt = new Date(start.getTime() + k * 86400000);
+      const ds = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+      const doy = k % 365;
+      let maxT = Math.round(55 - 30 * Math.cos(2 * Math.PI * (doy - 15) / 365) + (rnd() * 16 - 8));
+      if (ds.slice(5) >= "02-05" && ds.slice(5) <= "02-09") maxT = 4;    // real cold snap
+      if (ds.slice(5) >= "08-10" && ds.slice(5) <= "08-14") maxT = 101;  // real heat wave
+      log[ds] = { maxT, minT: maxT - 14, code: 0 };
+      days.push({ ds, maxT });
+    }
+    for (const { ds, maxT } of days) {
+      if (days.indexOf(days.find(x => x.ds === ds)) % 3 === 0) rows.push({ item_id: "jeans", worn_on: ds });
+      if (maxT < 42) rows.push({ item_id: "coat", worn_on: ds });
+      if (maxT > 74) rows.push({ item_id: "sandals", worn_on: ds });
+    }
+    // ONE real trip: sandals + an untagged sundress, in a December still on record
+    // as home weather. This is the only window that should be reported.
+    const trip = [];
+    for (let k = 20; k <= 26; k++) {
+      const ds = `2025-12-${k}`;
+      trip.push(ds);
+      rows.push({ item_id: "sandals", worn_on: ds });
+      rows.push({ item_id: "sundress", worn_on: ds });
+    }
+    return { log, rows, trip };
+  };
+  t("a real cold snap and heat wave are NOT mistaken for travel", () => {
+    const f = realisticYear();
+    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
+    const bad = r.days.map(d => d.d).filter(d => !f.trip.includes(d));
+    return bad.length ? `false positives: ${JSON.stringify(bad.slice(0, 12))} (${bad.length})` : true;
+  });
+  t("the realistic wardrobe yields exactly ONE trip window, the real one", () => {
+    const f = realisticYear();
+    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
+    return eq(r.clusters.map(c => [c.from, c.to]), [["2025-12-20", "2025-12-26"]]);
+  });
+  t("year-round basics are judged against their OWN spread, so extremes don't fire", () => {
+    const f = realisticYear();
+    const byItem = new Map();
+    for (const w of f.rows) {
+      if (!byItem.has(w.item_id)) byItem.set(w.item_id, new Set());
+      byItem.get(w.item_id).add(w.worn_on);
+    }
+    const jeans = W.itemTempCenter("jeans", f.log, byItem);
+    const sandals = W.itemTempCenter("sandals", f.log, byItem);
+    // Jeans span the year, so their bar is wide; sandals are picky, so theirs is the floor.
+    return eq([jeans.iqr > 25, sandals.iqr < 25], [true, true]);
+  });
+  t("clustering can't chain scattered days into a giant window", () => {
+    // 8 lone anomalies, each 3 days apart — gap-chaining alone would merge all
+    // 8 into a 22-day 'trip'. Density has to reject it.
+    const e = [];
+    for (let k = 0; k < 8; k++) e.push({ d: W.shiftDate("2025-03-01", k * 3), id: "x" });
+    const c = W._clusterAwayDays(e);
+    return eq(c.length, 0);
+  });
+  t("a genuine run of consecutive days still clusters", () => {
+    const e = [];
+    for (let k = 0; k < 6; k++) e.push({ d: W.shiftDate("2025-03-01", k), id: "x" });
+    const c = W._clusterAwayDays(e);
+    return eq(c.map(x => [x.from, x.to]), [["2025-03-01", "2025-03-06"]]);
+  });
+
   // ---- Round D: temperature-eligible rescue ----
   t("inSeasonWx rescues an out-of-season piece the forecast actually fits", () => {
     const savedWears = W.wears;

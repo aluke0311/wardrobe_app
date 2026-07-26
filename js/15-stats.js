@@ -218,20 +218,35 @@ const RANGE_OPTIONS = [
 // date, a guessed value that wants confirming). `value` renders the current value.
 // Derive a likely season from purchase_date month or wear history.
 // Returns an array (e.g. ["Summer"]) or null if no data to guess from.
+/* The review's season guess now defers to `itemSeasonSet` — the SAME derivation
+   the rest of the app uses (Round D made it temperature-aware, so a piece worn
+   on warm-weather trips derives Summer rather than the December the calendar
+   saw). It used to run its own month-counting logic and lead with purchase
+   date, so the review could confidently propose a season the app itself
+   disagreed with. Purchase month is now only the last resort. */
 function guessSeason(item) {
-  const monthToSeason = m => m <= 2 || m === 12 ? "Winter" : m <= 5 ? "Spring" : m <= 8 ? "Summer" : "Fall";
+  const derived = itemSeasonSet(item);
+  if (derived && derived.length) return derived;
   if (item.purchase_date) {
     const m = +String(item.purchase_date).slice(5, 7);
-    return [monthToSeason(m)];
-  }
-  const itemWears = wears.filter(w => w.item_id === item.id && w.worn_on);
-  if (itemWears.length) {
-    const counts = new Map();
-    for (const w of itemWears) { const s = monthToSeason(+String(w.worn_on).slice(5, 7)); counts.set(s, (counts.get(s) || 0) + 1); }
-    const max = Math.max(...counts.values());
-    return [...counts.entries()].filter(([, n]) => n >= max * 0.5).map(([s]) => s);
+    return [m <= 2 || m === 12 ? "Winter" : m <= 5 ? "Spring" : m <= 8 ? "Summer" : "Fall"];
   }
   return null;
+}
+
+// Why the guess says what it says — she asked to be able to see and revise the
+// derivations this feature makes, and an unexplained guess isn't revisable.
+function seasonGuessWhy(item) {
+  const L = wxLog();
+  const days = [...new Set(wears.filter(w => w.item_id === item.id && w.worn_on).map(w => w.worn_on))];
+  const withWx = days.filter(d => L[d] && L[d].maxT != null);
+  if (!days.length) return item.purchase_date ? "From when you bought it — it's never been worn" : null;
+  if (!withWx.length) return `From the months you've worn it (${days.length} day${days.length === 1 ? "" : "s"}) — no weather on record for those days yet`;
+  const temps = withWx.map(d => L[d].maxT).sort((a, b) => a - b);
+  const awayN = withWx.filter(d => L[d].away).length;
+  const lo = temps[0], hi = temps[temps.length - 1];
+  return `Worn ${withWx.length} day${withWx.length === 1 ? "" : "s"} in ${lo}°–${hi}° weather`
+    + (awayN ? ` · ${awayN} of them while you were away, counted as the season that felt like` : "");
 }
 
 const REVIEW_FIELDS = [
@@ -251,7 +266,16 @@ const REVIEW_FIELDS = [
     edit: i => openReviewField(i, "fabric"), value: i => (i.fabric || []).join(", ") || null },
   { key: "season", label: "Season", missing: i => !(i.season && i.season.length),
     edit: i => openReviewField(i, "season"), value: i => (i.season || []).join(", ") || null,
-    guess: i => guessSeason(i), guessLabel: "Guessed from purchase date & wear history" },
+    guess: i => guessSeason(i), guessLabel: "Worked out from the weather you've worn it in",
+    note: i => seasonGuessWhy(i) },
+  // Not a missing field — a DISAGREEMENT. Items the season/weather audit has
+  // flagged surface here too, so the one place she reviews her closet is also
+  // where this feature's conclusions can be revised (her request).
+  { key: "season_check", label: "Season vs weather", saveKey: "season",
+    missing: i => !!wxFlagFor(i.id),
+    edit: i => openReviewField(i, "season"),
+    value: i => (i.season || []).join(", ") || null,
+    note: i => { const f = wxFlagFor(i.id); return f ? wxFlagText(f) : null; } },
   { key: "retailer", label: "Retailer", missing: i => !(i.retailer && i.retailer.trim()),
     edit: i => openReviewField(i, "retailer"), value: i => i.retailer || null },
   { key: "acquisition", label: "Acquisition", missing: i => !i.acquisition,
@@ -2195,7 +2219,10 @@ function renderReviewDeal() {
 
   const cur = f.value(item);
   const path = item.category ? (item.subcategory ? `${item.category} › ${item.subcategory}` : item.category) : "Uncategorized";
-  const inlineHtml = renderReviewInline(reviewField);
+  // A review row can edit a column it isn't named after (season_check writes
+  // `season`), so the inline editor and the save both key off saveKey.
+  const editKey = f.saveKey || reviewField;
+  const inlineHtml = renderReviewInline(editKey);
   const hasInline = !!inlineHtml;
   const hasPending = _rvPending !== null && _rvPending !== "" && !(Array.isArray(_rvPending) && !_rvPending.length);
   // Show the "this is a guess" banner only while the pending value still equals the
@@ -2204,6 +2231,12 @@ function renderReviewDeal() {
     && JSON.stringify(_rvPending) === JSON.stringify(guess);
   const guessHintHtml = showGuessHint
     ? `<div class="rv-guess-hint"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7.4L12 16.7 5.3 21.4l2.3-7.4-6-4.6h7.6z"/></svg>${esc(f.guessLabel)} — confirm or change</div>`
+    : "";
+  // The evidence behind a derivation, always shown when the field has one. A
+  // guess she can't inspect isn't one she can meaningfully revise.
+  const noteText = f.note ? f.note(item) : null;
+  const noteHtml = noteText
+    ? `<div class="muted" style="font-size:12.5px;line-height:1.45;padding:2px 18px 8px">${esc(noteText)}</div>`
     : "";
 
   body.innerHTML = toolbar
@@ -2217,6 +2250,7 @@ function renderReviewDeal() {
       </div>
     </div>
     ${guessHintHtml}
+    ${noteHtml}
     ${inlineHtml}
     <div class="rv-actions">
       ${hasInline
@@ -2235,7 +2269,7 @@ function renderReviewDeal() {
   if (hasInline) {
     const rvNext = $("#rvNext");
     rvNext.addEventListener("click", () => {
-      if (hasPending) saveField(item.id, reviewField, _rvPending);
+      if (hasPending) saveField(item.id, editKey, _rvPending);
       reviewAfterEdit();
     });
 
@@ -2263,7 +2297,7 @@ function renderReviewDeal() {
     const inp = $("#rvInpText");
     if (inp) {
       inp.addEventListener("input", () => {
-        _rvPending = reviewField === "price" ? (inp.value ? +inp.value : null) : inp.value;
+        _rvPending = editKey === "price" ? (inp.value ? +inp.value : null) : inp.value;
       });
       inp.focus();
     }

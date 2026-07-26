@@ -6,14 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r15";
+const APP_VERSION = "2026-07-25 r16";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "The health check now spots unlogged trips from the outfits themselves \u2014 no season tags needed. If you wore sandals on a 25\u00b0 day, it asks where you were",
-  "Settings \u2192 \u201cWhere you\u2019ve been\u201d: answer that, and those days get the weather you were actually in instead of the weather at home",
-  "Which then fixes the seasons, the \u201cusually worn\u201d ranges, and \u201cyou\u2019ve dressed for this before\u201d",
-  "Packing for somewhere warm in winter no longer hides your summer clothes from the suggester",
+  "Fixed the trip detector guessing huge stretches of dates \u2014 every piece is now judged against its own usual range, so year-round jeans stop looking odd on a genuinely cold day",
+  "\u201cSee these days\u201d shows each day of a suspect stretch: the weather on record, everything you wore, and its usual range \u2014 fix a season right there, or open the day in the calendar if the DATE is what's wrong",
+  "Every trip question now has both answers: \u201cI was away\u201d or \u201cI was home\u201d (which stops it asking again)",
+  "Closet Review shows how a season was worked out and lists pieces the weather disagrees with, so these guesses are visible and revisable in one place",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
