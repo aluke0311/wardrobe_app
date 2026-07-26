@@ -234,6 +234,27 @@ function guessSeason(item) {
   return null;
 }
 
+/* What she SET vs what the wear history says, for any item (her request:
+   "all items to have derived season, and wardrobe review to compare between
+   derived and selected"). `derivedSeasonSet` ignores the tag entirely, so a
+   piece that already has a season can still be asked what the evidence says —
+   which is the only way to notice the two have drifted apart. */
+function seasonCompare(i) {
+  const explicit = (i.season && i.season.length)
+    ? SEASONS.filter(s => i.season.includes(s)) : null;
+  const derived = derivedSeasonSet(i);
+  const differs = !!explicit && !!derived
+    && JSON.stringify(explicit) !== JSON.stringify(derived);
+  return { explicit, derived, differs };
+}
+
+function seasonCompareNote(i) {
+  const { explicit, derived } = seasonCompare(i);
+  if (!explicit || !derived) return null;
+  const days = new Set(wears.filter(w => w.item_id === i.id && w.worn_on).map(w => w.worn_on)).size;
+  return `You set ${explicit.join(" + ")} · worn like ${derived.join(" + ")} over ${days} day${days === 1 ? "" : "s"}. Saving takes the worn-like answer; Skip keeps yours.`;
+}
+
 // Why the guess says what it says — she asked to be able to see and revise the
 // derivations this feature makes, and an unexplained guess isn't revisable.
 function seasonGuessWhy(item) {
@@ -268,14 +289,17 @@ const REVIEW_FIELDS = [
     edit: i => openReviewField(i, "season"), value: i => (i.season || []).join(", ") || null,
     guess: i => guessSeason(i), guessLabel: "Worked out from the weather you've worn it in",
     note: i => seasonGuessWhy(i) },
-  // Not a missing field — a DISAGREEMENT. Items the season/weather audit has
-  // flagged surface here too, so the one place she reviews her closet is also
-  // where this feature's conclusions can be revised (her request).
-  { key: "season_check", label: "Season vs weather", saveKey: "season",
-    missing: i => !!wxFlagFor(i.id),
+  /* Not a missing field — a DISAGREEMENT between the season she set and the
+     one her wear history implies. `guess` is the DERIVED set, so the inline
+     chips arrive pre-filled with it and "Save & Next" accepts the evidence in
+     one tap, while Skip keeps her own answer. This is the compare-and-reconcile
+     surface she asked for. */
+  { key: "season_check", label: "Season: yours vs worn", saveKey: "season",
+    missing: i => seasonCompare(i).differs,
     edit: i => openReviewField(i, "season"),
     value: i => (i.season || []).join(", ") || null,
-    note: i => { const f = wxFlagFor(i.id); return f ? wxFlagText(f) : null; } },
+    guess: i => seasonCompare(i).derived,
+    note: i => seasonCompareNote(i) },
   { key: "retailer", label: "Retailer", missing: i => !(i.retailer && i.retailer.trim()),
     edit: i => openReviewField(i, "retailer"), value: i => i.retailer || null },
   { key: "acquisition", label: "Acquisition", missing: i => !i.acquisition,

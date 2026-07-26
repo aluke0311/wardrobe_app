@@ -280,18 +280,29 @@ const currentSeason = () => seasonOf(localISO(new Date()));
 // December derive as Summer instead of Winter. `effectiveSeasonOf` is a plain
 // lookup for the (overwhelmingly common) home day, and the bands behind it are
 // memoized, so this stays cheap enough for the filter loops that call it.
+/* The seasons the WEAR HISTORY alone implies, ignoring any explicit tag.
+   Split out so EVERY item can be asked what the evidence says, not just the
+   untagged ones (her request, 2026-07-25) — that's what lets Closet Review put
+   "you set" and "worked out" side by side and reconcile them. Null when the
+   piece hasn't been out enough (<3 days) to have an opinion. */
+const SEASON_DERIVE_MIN_DAYS = 3;
+const SEASON_DERIVE_SHARE = 0.15;
+function derivedSeasonSet(i, wearRows = null, log = null, bands = null) {
+  const days = [...new Set((wearRows || wears)
+    .filter(w => w.item_id === i.id && w.worn_on).map(w => w.worn_on))];
+  if (days.length < SEASON_DERIVE_MIN_DAYS) return null;
+  const counts = new Map();
+  const b = bands || seasonBands(log);
+  for (const d of days) { const s = effectiveSeasonOf(d, log, b); counts.set(s, (counts.get(s) || 0) + 1); }
+  const keep = [...counts.entries()].filter(([, n]) => n / days.length >= SEASON_DERIVE_SHARE)
+    .sort((a, b2) => b2[1] - a[1]).map(([s]) => s);
+  // Return in canonical SEASONS order so two derivations are comparable by ===.
+  return keep.length ? SEASONS.filter(s => keep.includes(s)) : null;
+}
+
 function itemSeasonSet(i, wearRows = null, log = null, bands = null) {
   if (i.season && i.season.length) return i.season;
-  const ws = (wearRows || wears).filter(w => w.item_id === i.id && w.worn_on);
-  if (ws.length >= 3) {
-    const counts = new Map();
-    const b = bands || seasonBands(log);
-    for (const w of ws) { const s = effectiveSeasonOf(w.worn_on, log, b); counts.set(s, (counts.get(s) || 0) + 1); }
-    // keep any season accounting for ≥15% of this item's wears
-    const keep = [...counts.entries()].filter(([, n]) => n / ws.length >= 0.15).map(([s]) => s);
-    if (keep.length) return keep;
-  }
-  return null;
+  return derivedSeasonSet(i, wearRows, log, bands);
 }
 // An item is eligible for a season if its set includes it, or its season is unknown.
 function inSeason(i, season) {

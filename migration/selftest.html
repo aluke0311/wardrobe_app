@@ -1036,7 +1036,12 @@ function run() {
                ["Rome", "2024-03-01", "2024-03-08", "log"]]);
   });
 
-  // ---- Round D: the detector ----
+  /* ---- Round D.4: the ONE flag criterion ----
+     Everything that tested the guessing layer (day anomalies, clustering, trip
+     guesses, home marks, per-day culprits, the margin-based temp test) was
+     deleted with the code it covered. The case count DROPS here, on purpose.
+     What remains is her criterion: a piece's commonly-worn range vs the general
+     range of each season it claims. Overlap with any = no flag. */
   const auditFix = (over) => {
     const log = bandLog();
     const days = [];
@@ -1046,335 +1051,174 @@ function run() {
     }
     const item = Object.assign({ id: "w1", name: "Wool coat", season: ["Winter"],
       status: "Available", image_path: "" }, over || {});
-    return { log, days, item,
-      rows: days.map(d => ({ item_id: "w1", worn_on: d })) };
+    return { log, days, item, rows: days.map(d => ({ item_id: "w1", worn_on: d })) };
   };
-  t("buildSeasonWxFlags: worn far hotter than the claimed season", () => {
-    const f = auditFix();
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.flags[0].kind, r.flags[0].dir, r.flags[0].id],
-              [1, "temp", "hot", "w1"]);
+  const flagsOf = (f, over) => W.buildSeasonWxFlags(
+    Object.assign({ pool: [f.item], wearRows: f.rows, log: f.log, dismissed: {} }, over || {}));
+
+  t("pieceCommonRange is the middle half, so one freak day can't define it", () => {
+    const log = {};
+    const rows = [];
+    for (let k = 1; k <= 9; k++) {
+      const d = `2026-07-0${k}`;
+      log[d] = { maxT: k === 1 ? 20 : 80 + k, minT: 60, code: 0 };   // one 20° outlier
+      rows.push({ item_id: "x", worn_on: d });
+    }
+    const c = W.pieceCommonRange("x", log, rows);
+    return eq([c.n, c.lo >= 80, c.hi <= 90], [9, true, true]);
   });
-  t("buildSeasonWxFlags: worn far colder than the claimed season", () => {
+  t("pieceCommonRange stays null under the wear floor", () => {
+    const log = { "2026-07-01": { maxT: 80, minT: 60, code: 0 } };
+    return eq(W.pieceCommonRange("x", log, [{ item_id: "x", worn_on: "2026-07-01" }]), null);
+  });
+
+  t("worn far hotter than every claimed season → flagged, with the fix", () => {
+    const r = flagsOf(auditFix());                    // tagged Winter, worn at 82°
+    return eq([r.length, r[0].dir, r[0].missing, r[0].id], [1, "hot", ["Summer"], "w1"]);
+  });
+  t("worn far colder than every claimed season → flagged", () => {
     const f = auditFix({ season: ["Summer"] });
     const log = f.log, days = [];
     for (let k = 1; k <= 8; k++) {                    // 8 January days at 24°
       const d = `2026-01-${String(k).padStart(2, "0")}`;
       days.push(d); log[d] = { maxT: 24, minT: 10, code: 0 };
     }
-    const rows = days.map(d => ({ item_id: "w1", worn_on: d }));
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: rows, log, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.flags[0].kind, r.flags[0].dir], [1, "temp", "cold"]);
+    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: days.map(d => ({ item_id: "w1", worn_on: d })),
+      log, dismissed: {} });
+    return eq([r.length, r[0].dir, r[0].missing], [1, "cold", ["Winter"]]);
   });
-  t("buildSeasonWxFlags: a right-season item is left alone", () => {
-    const f = auditFix({ season: ["Summer"] });
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    return eq(r.flags.length, 0);
-  });
-  t("buildSeasonWxFlags: under the temp-test minimum it stays quiet", () => {
-    const f = auditFix();
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 2), log: f.log, ranges: [], dismissed: {} });
-    return eq(r.flags.length, 0);
-  });
-  t("buildSeasonWxFlags: 3 days is enough for the temp test, not the calendar one", () => {
-    const f = auditFix();                       // 8 July days at 82°, tagged Winter
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 3), log: f.log, ranges: [], dismissed: {} });
-    // Same 3 days, but with no usable bands the calendar test can't reach its own floor.
-    const cal = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 3), log: f.log,
-      bands: { Winter: null, Spring: null, Summer: null, Fall: null }, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.flags[0].kind, cal.flags.length], [1, "temp", 0]);
-  });
-  t("buildSeasonWxFlags: no explicit season = nothing to contradict", () => {
-    const f = auditFix({ season: null });
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    return eq(r.flags.length, 0);
-  });
-  t("buildSeasonWxFlags: dismissal holds until the season is edited", () => {
-    const f = auditFix();
-    const off = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [],
-      dismissed: { w1: JSON.stringify(["Winter"]) } });
-    const back = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [],
-      dismissed: { w1: JSON.stringify(["Fall"]) } });   // season since changed
-    return eq([off.flags.length, back.flags.length], [0, 1]);
-  });
-  t("buildSeasonWxFlags: the calendar flag catches a right-temp wrong-month tag", () => {
-    // Worn on 8 real summer days, tagged Winter — but the bands are missing, so
-    // only the calendar test can fire.
-    const f = auditFix();
-    const thin = {};
-    for (const d of f.days) thin[d] = { maxT: 82, minT: 68, code: 0 };
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: thin,
-      bands: { Winter: null, Spring: null, Summer: null, Fall: null }, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.flags[0].kind, r.flags[0].inSeason], [1, "calendar", 0]);
-  });
-  t("mis-tagged items are flagged, but the TRIP question comes from the days", () => {
-    // Three pieces tagged Winter, worn only on one warm December week. Each is
-    // flagged. No trip is guessed from that alone: their whole history is that
-    // week, so nothing about the DAY is inconsistent with how they're worn —
-    // trip evidence has to come from a piece with an established habit.
-    const log = bandLog();
-    const days = [];
-    for (let k = 20; k <= 27; k++) {
-      const d = `2025-12-${k}`;
-      days.push(d); log[d] = { maxT: 84, minT: 75, code: 0 };
-    }
-    const pool = ["a", "b", "c"].map(id => ({ id, name: id, season: ["Winter"], status: "Available", image_path: "" }));
-    const rows = pool.flatMap(i => days.map(d => ({ item_id: i.id, worn_on: d })));
-    const r = W.buildSeasonWxFlags({ pool, wearRows: rows, log, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.flags.every(f => f.kind === "temp"), r.tripGuesses.length],
-              [3, true, 0]);
-  });
-  t("buildSeasonWxFlags: days already covered by a known trip aren't re-asked", () => {
-    const log = bandLog();
-    const days = [];
-    for (let k = 20; k <= 27; k++) { const d = `2025-12-${k}`; days.push(d); log[d] = { maxT: 84, minT: 75, code: 0 }; }
-    const pool = [{ id: "a", name: "a", season: ["Winter"], status: "Available", image_path: "" }];
-    const rows = days.map(d => ({ item_id: "a", worn_on: d }));
-    const known = [{ from: "2025-12-19", to: "2025-12-28", name: "Castries", lat: 14, lon: -60 }];
-    const r = W.buildSeasonWxFlags({ pool, wearRows: rows, log, ranges: known, dismissed: {} });
-    return eq([r.flags.length, r.tripGuesses.length], [1, 0]);
-  });
-
-  // ---- Round D r15: the untagged-trip case (her St Lucia dress) ----
-  // A sundress with NO season tag and only trip wears is invisible to the
-  // tagged detector by construction — the stored (home) weather and the
-  // calendar agree with each other. What gives the trip away is the SANDALS:
-  // years of home summer wears, suddenly worn on a "25°" December day.
-  const stLuciaFix = () => {
-    const log = bandLog();
-    const rows = [];
-    for (let k = 1; k <= 20; k++) {                       // sandals: 20 real summer days
-      const d = `2026-07-${String(k).padStart(2, "0")}`;
-      rows.push({ item_id: "sandals", worn_on: d });
-    }
-    const trip = [];
-    for (let k = 20; k <= 26; k++) {                      // the trip, still recorded as HOME winter
-      const d = `2025-12-${k}`;
-      trip.push(d);
-      log[d] = { maxT: 25, minT: 12, code: 0 };
-      rows.push({ item_id: "sandals", worn_on: d });
-      rows.push({ item_id: "sundress", worn_on: d });     // no season tag, no history
-    }
-    return { log, rows, trip };
-  };
-  t("itemTempCenter is the median, so a few trip days can't move it", () => {
-    const f = stLuciaFix();
-    const c = W.itemTempCenter("sandals", f.log,
-      new Map([["sandals", new Set(f.rows.filter(r => r.item_id === "sandals").map(r => r.worn_on))]]));
-    return eq([c.t, c.n], [81, 27]);   // 7 cold trip days in the tail, median unmoved
-  });
-  t("itemTempCenter stays null under the history minimum", () => {
-    const f = stLuciaFix();
-    return eq(W.itemTempCenter("zz", f.log, new Map([["zz", new Set(f.trip.slice(0, 3))]])), null);
-  });
-  t("a trip-only piece abstains — its habit IS the wrong weather", () => {
-    // The sundress's own centre is 25°, computed from the same corrupted days,
-    // so it agrees with them trivially and must not be counted either way.
-    const f = stLuciaFix();
-    const c = W.itemTempCenter("sundress", f.log, new Map([["sundress", new Set(f.trip)]]));
-    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
-    return eq([c.t, r.days[0].ids], [25, ["sandals"]]);
-  });
-  t("buildDayWxAnomalies finds an unlogged trip from the outfit, not the tags", () => {
-    const f = stLuciaFix();
-    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
-    return eq([r.days.length, r.days[0].dir, r.clusters.length,
-               r.clusters[0].from, r.clusters[0].to],
-              [7, "warmer", 1, "2025-12-20", "2025-12-26"]);
-  });
-  t("buildSeasonWxFlags: an untagged trip still raises a trip guess", () => {
-    const f = stLuciaFix();
-    const pool = [{ id: "sundress", name: "Sundress", season: null, status: "Available", image_path: "" },
-                  { id: "sandals", name: "Sandals", season: null, status: "Available", image_path: "" }];
-    const r = W.buildSeasonWxFlags({ pool, wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.tripGuesses.length,
-               r.tripGuesses[0] && r.tripGuesses[0].from, r.tripGuesses[0] && r.tripGuesses[0].to],
-              [0, 1, "2025-12-20", "2025-12-26"]);
-  });
-  t("a day already inside a known away range is never re-asked", () => {
-    const f = stLuciaFix();
-    const known = [{ from: "2025-12-19", to: "2025-12-28", name: "Castries", lat: 14, lon: -60 }];
-    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: known });
-    return eq([r.days.length, r.clusters.length], [0, 0]);
-  });
-  t("an ordinary home summer day is not an anomaly", () => {
-    const f = stLuciaFix();
-    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
-    return eq(r.days.some(d => d.d.startsWith("2026-07")), false);
-  });
-  t("one WELL-ESTABLISHED piece is enough; one lightly-worn one is not", () => {
-    const f = stLuciaFix();
-    // Sandals alone (27 days of history) still carry the day…
-    const strong = W.buildDayWxAnomalies({
-      wearRows: f.rows.filter(r => r.item_id !== "sundress"), log: f.log, ranges: [] });
-    // …but a piece with just 6 summer days behind it doesn't, on its own.
-    const log2 = bandLog(); const rows2 = [];
-    for (let k = 1; k <= 6; k++) rows2.push({ item_id: "flip", worn_on: `2026-07-0${k}` });
-    for (let k = 20; k <= 26; k++) {
-      const d = `2025-12-${k}`; log2[d] = { maxT: 25, minT: 12, code: 0 };
-      rows2.push({ item_id: "flip", worn_on: d });
-    }
-    const weak = W.buildDayWxAnomalies({ wearRows: rows2, log: log2, ranges: [] });
-    return eq([strong.days.length > 0, weak.days.length], [true, 0]);
-  });
-  t("the temp flag needs fewer days than the calendar flag", () =>
-    eq(W.WXA_TEMP_MIN_DAYS < W.WXA_MIN_DAYS, true));
-
-  /* ---- Round D r16: the false-positive test that matters ----
-     User-reported: the trip detector "guessed huge swaths of dates". Two
-     causes, and this fixture reproduces both — a realistic two-year wardrobe
-     with year-round basics, genuine cold snaps and heat waves, and exactly ONE
-     real trip. Anything other than that one window is a false positive. */
-  const realisticYear = () => {
-    let seed = 12345;
-    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    const log = {}, rows = [];
-    const days = [];
-    const start = new Date("2024-01-01T00:00:00");
-    for (let k = 0; k < 730; k++) {
-      const dt = new Date(start.getTime() + k * 86400000);
-      const ds = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-      const doy = k % 365;
-      let maxT = Math.round(55 - 30 * Math.cos(2 * Math.PI * (doy - 15) / 365) + (rnd() * 16 - 8));
-      if (ds.slice(5) >= "02-05" && ds.slice(5) <= "02-09") maxT = 4;    // real cold snap
-      if (ds.slice(5) >= "08-10" && ds.slice(5) <= "08-14") maxT = 101;  // real heat wave
-      log[ds] = { maxT, minT: maxT - 14, code: 0 };
-      days.push({ ds, maxT });
-    }
-    for (const { ds, maxT } of days) {
-      if (days.indexOf(days.find(x => x.ds === ds)) % 3 === 0) rows.push({ item_id: "jeans", worn_on: ds });
-      if (maxT < 42) rows.push({ item_id: "coat", worn_on: ds });
-      if (maxT > 74) rows.push({ item_id: "sandals", worn_on: ds });
-    }
-    // ONE real trip: sandals + an untagged sundress, in a December still on record
-    // as home weather. This is the only window that should be reported.
-    const trip = [];
-    for (let k = 20; k <= 26; k++) {
-      const ds = `2025-12-${k}`;
-      trip.push(ds);
-      rows.push({ item_id: "sandals", worn_on: ds });
-      rows.push({ item_id: "sundress", worn_on: ds });
-    }
-    return { log, rows, trip };
-  };
-  t("a real cold snap and heat wave are NOT mistaken for travel", () => {
-    const f = realisticYear();
-    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
-    const bad = r.days.map(d => d.d).filter(d => !f.trip.includes(d));
-    return bad.length ? `false positives: ${JSON.stringify(bad.slice(0, 12))} (${bad.length})` : true;
-  });
-  t("the realistic wardrobe yields exactly ONE trip window, the real one", () => {
-    const f = realisticYear();
-    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
-    return eq(r.clusters.map(c => [c.from, c.to]), [["2025-12-20", "2025-12-26"]]);
-  });
-  t("year-round basics are judged against their OWN spread, so extremes don't fire", () => {
-    const f = realisticYear();
-    const byItem = new Map();
-    for (const w of f.rows) {
-      if (!byItem.has(w.item_id)) byItem.set(w.item_id, new Set());
-      byItem.get(w.item_id).add(w.worn_on);
-    }
-    const jeans = W.itemTempCenter("jeans", f.log, byItem);
-    const sandals = W.itemTempCenter("sandals", f.log, byItem);
-    // Jeans span the year, so their bar is wide; sandals are picky, so theirs is the floor.
-    return eq([jeans.iqr > 25, sandals.iqr < 25], [true, true]);
-  });
-  t("clustering can't chain scattered days into a giant window", () => {
-    // 8 lone anomalies, each 3 days apart — gap-chaining alone would merge all
-    // 8 into a 22-day 'trip'. Density has to reject it.
-    const e = [];
-    for (let k = 0; k < 8; k++) e.push({ d: W.shiftDate("2025-03-01", k * 3), id: "x" });
-    const c = W._clusterAwayDays(e);
-    return eq(c.length, 0);
-  });
-  t("a genuine run of consecutive days still clusters", () => {
-    const e = [];
-    for (let k = 0; k < 6; k++) e.push({ d: W.shiftDate("2025-03-01", k), id: "x" });
-    const c = W._clusterAwayDays(e);
-    return eq(c.map(x => [x.from, x.to]), [["2025-03-01", "2025-03-06"]]);
-  });
-
-  /* ---- Round D r17: null-weather days, and saying WHY ----
-     User-reported "some of the dates have 0/0 for degrees". Open-Meteo returns
-     null for days it has no reading and Math.round(null) is 0, so gaps were
-     stored as a hard freeze — which poisons the bands, every "usually worn"
-     range, and the trip detector all at once. */
-  t("_wxDay drops a null reading instead of rounding it to 0°", () => {
-    const daily = { temperature_2m_max: [72, null, 68], temperature_2m_min: [55, null, 51],
-                    weather_code: [0, 0, 0] };
-    return eq([W._wxDay(daily, 0).maxT, W._wxDay(daily, 1), W._wxDay(daily, 2).maxT], [72, null, 68]);
-  });
-  t("purgeNullWxDays clears 0/0 artifacts and keeps a real cold day", () => {
-    const log = { "2026-01-01": { maxT: 0, minT: 0, code: 0 },      // artifact
-                  "2026-01-02": { maxT: 3, minT: -9, code: 0 },     // genuinely freezing
-                  "2026-01-03": { maxT: 41, minT: 22, code: 0 } };
-    const r = W.purgeNullWxDays(log);
-    return eq([r.n, Object.keys(r.log).sort()], [1, ["2026-01-02", "2026-01-03"]]);
-  });
-  t("a 0/0 artifact can't drag a season band or an item's range", () => {
-    const log = bandLog();
-    const ds = [];
-    for (let k = 1; k <= 6; k++) { const d = `2026-07-${String(20 + k)}`; ds.push(d); log[d] = { maxT: 84, minT: 70, code: 0 }; }
-    const clean = W.seasonBands(log).Summer;
-    log["2026-07-19"] = { maxT: 0, minT: 0, code: 0 };   // artifact inside Summer
-    ds.push("2026-07-19");
-    const withArtifact = W.seasonBands(log).Summer;
-    const savedWears = W.wears;
-    W.wears = ds.map(d => ({ item_id: "x", worn_on: d }));
-    const prof = W.itemWxProfile("x", log);
-    W.wears = savedWears;
-    return eq([clean.p10 === withArtifact.p10, prof.lo >= 80], [true, true]);
-  });
-  t("no flag when the seasons the weather suggests are ALREADY tagged", () => {
-    // Worn on hot July days, tagged Winter AND Summer. Summer is already there,
-    // so there is nothing to propose — and an unactionable warning is noise.
-    const f = auditFix({ season: ["Winter", "Summer"] });
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    return eq(r.flags.length, 0);
-  });
-  t("every flag carries a concrete season to add", () => {
-    const f = auditFix();
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    return eq(r.flags.every(x => x.missing && x.missing.length > 0), true);
+  t("OVERLAP WITH ANY TAGGED SEASON = no flag (the unactionable-flag killer)", () => {
+    // Tagged Winter AND Summer, worn hot. Summer overlaps, so there is nothing
+    // to say — this is the case she reported as "nothing I can do about these".
+    return eq(flagsOf(auditFix({ season: ["Winter", "Summer"] })).length, 0);
   });
   t("a piece worn at the mild end of its own season isn't flagged", () => {
-    // Tagged Winter, worn on the warmer winter days. The old flat 3° margin
-    // called that a contradiction; the season's own spread says it isn't.
+    // Tagged Winter, worn on the warmer winter days. Its common range still
+    // overlaps winter's general range, so no margin tuning is needed at all.
     const log = {};
-    for (let k = 1; k <= 30; k++)                                  // winter spans 10°–50°
+    for (let k = 1; k <= 30; k++)
       log[`2026-01-${String(k).padStart(2, "0")}`] = { maxT: 10 + k + (k % 3) * 3, minT: 0, code: 0 };
     const days = [];
-    for (let k = 24; k <= 30; k++) days.push(`2026-01-${k}`);      // the mild end
+    for (let k = 24; k <= 30; k++) days.push(`2026-01-${k}`);
     const item = { id: "wc", name: "Wool coat", season: ["Winter"], status: "Available", image_path: "" };
-    const rows = days.map(d => ({ item_id: "wc", worn_on: d }));
-    const r = W.buildSeasonWxFlags({ pool: [item], wearRows: rows, log, ranges: [], dismissed: {} });
-    return eq(r.flags.length, 0);
+    const r = W.buildSeasonWxFlags({ pool: [item], wearRows: days.map(d => ({ item_id: "wc", worn_on: d })),
+      log, dismissed: {} });
+    return eq(r.length, 0);
   });
-  t("a flag says what's probably MISSING, not just that something is off", () => {
-    const f = auditFix();   // 8 July days at 82°, tagged Winter
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    const txt = W.wxFlagText(r.flags[0]);
-    return eq([r.flags[0].fit, r.flags[0].missing, /That's Summer weather here/.test(txt)],
-              [["Summer"], ["Summer"], true]);
+  t("a right-season item is left alone", () =>
+    eq(flagsOf(auditFix({ season: ["Summer"] })).length, 0));
+  t("no explicit season = nothing to contradict", () =>
+    eq(flagsOf(auditFix({ season: null })).length, 0));
+  t("under the wear floor it stays quiet", () => {
+    const f = auditFix();
+    return eq(W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 3), log: f.log, dismissed: {} }).length, 0);
   });
-  t("a mis-tagged seasonal item flags the ITEM but invents no trips", () => {
-    /* A winter coat tagged Summer is worn on consecutive cold days, so if a
-       flag's contradicting days fed the trip clusterer its own history would
-       cluster into dense, entirely spurious "were you away?" windows. */
-    const f = realisticYear();
-    const pool = [{ id: "coat", name: "Wool coat", season: ["Summer"], status: "Available", image_path: "" }];
-    const rows = f.rows.filter(r => r.item_id === "coat");
-    const r = W.buildSeasonWxFlags({ pool, wearRows: rows, log: f.log, ranges: [], dismissed: {} });
-    return eq([r.flags.length, r.flags[0].kind, r.tripGuesses.length], [1, "temp", 0]);
+  t("no usable band for any claimed season = no opinion", () => {
+    const f = auditFix();
+    return eq(W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log,
+      bands: { Winter: null, Spring: null, Summer: null, Fall: null }, dismissed: {} }).length, 0);
   });
-  t("buildSeasonWxFlags exposes per-DAY culprits for the day view", () => {
-    const f = stLuciaFix();
-    const pool = [{ id: "sandals", name: "Sandals", season: null, status: "Available", image_path: "" }];
-    const r = W.buildSeasonWxFlags({ pool, wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
-    const day = (r.dayAnomalies || []).find(o => o.d === "2025-12-20");
-    return eq([!!day, day && day.ids, day && day.dir], [true, ["sandals"], "warmer"]);
+  t("no proposable season = no flag", () => {
+    // Claims Winter; only Winter has a usable band, so nothing else can be
+    // proposed even though the piece plainly doesn't fit it.
+    const f = auditFix();
+    const B = W.seasonBands(f.log);
+    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log,
+      bands: { Winter: B.Winter, Spring: null, Summer: null, Fall: null }, dismissed: {} });
+    return eq(r.length, 0);
   });
+  t("dismissal holds until the season is edited", () => {
+    const f = auditFix();
+    const off = flagsOf(f, { dismissed: { w1: JSON.stringify(["Winter"]) } });
+    const back = flagsOf(f, { dismissed: { w1: JSON.stringify(["Fall"]) } });
+    return eq([off.length, back.length], [0, 1]);
+  });
+  t("the flag sentence carries evidence AND the proposal", () => {
+    const txt = W.wxFlagText(flagsOf(auditFix())[0]);
+    return eq([/Commonly worn/.test(txt), /generally runs/.test(txt), /Summer weather here/.test(txt)],
+              [true, true, true]);
+  });
+  t("a piece sitting in the gap between two claimed seasons reads 'between'", () => {
+    // Claims Winter and Summer (cold + hot), but is worn at ~57° — a Spring/Fall
+    // temperature that overlaps neither extreme.
+    const log = bandLog();
+    const days = [];
+    for (let k = 1; k <= 8; k++) { const d = `2026-04-0${k}`; days.push(d); log[d] = { maxT: 57, minT: 44, code: 0 }; }
+    const item = { id: "g1", name: "Trench", season: ["Winter", "Summer"], status: "Available", image_path: "" };
+    const r = W.buildSeasonWxFlags({ pool: [item], wearRows: days.map(d => ({ item_id: "g1", worn_on: d })),
+      log, dismissed: {} });
+    return eq([r.length, r[0].dir, r[0].missing.length > 0], [1, "between", true]);
+  });
+
+  /* ---- Round D.4: derived season available for EVERY item ----
+     Her request: all items get a derived season, and Closet Review compares it
+     against the one she set. derivedSeasonSet ignores the tag entirely, which
+     is what makes the comparison possible at all. */
+  t("derivedSeasonSet ignores an explicit tag and reads the wear history", () => {
+    const log = bandLog();
+    const rows = [];
+    for (let k = 1; k <= 8; k++) rows.push({ item_id: "d1", worn_on: `2026-07-0${k}` });
+    const i = { id: "d1", season: ["Winter"] };            // tagged Winter, worn in July
+    return eq([W.derivedSeasonSet(i, rows, log), W.itemSeasonSet(i, rows, log)],
+              [["Summer"], ["Winter"]]);                    // derived vs effective
+  });
+  t("derivedSeasonSet counts DAYS, not rows, and needs 3 of them", () => {
+    const log = bandLog();
+    const twice = [{ item_id: "d2", worn_on: "2026-07-01" }, { item_id: "d2", worn_on: "2026-07-01" },
+                   { item_id: "d2", worn_on: "2026-07-02" }];
+    const three = [...twice, { item_id: "d2", worn_on: "2026-07-03" }];
+    return eq([W.derivedSeasonSet({ id: "d2" }, twice, log),
+               W.derivedSeasonSet({ id: "d2" }, three, log)], [null, ["Summer"]]);
+  });
+  t("derivedSeasonSet returns canonical order so two answers compare cleanly", () => {
+    const log = bandLog();
+    const rows = [];
+    for (let k = 1; k <= 5; k++) rows.push({ item_id: "d3", worn_on: `2026-07-0${k}` });
+    for (let k = 1; k <= 5; k++) rows.push({ item_id: "d3", worn_on: `2026-01-0${k}` });
+    return eq(W.derivedSeasonSet({ id: "d3" }, rows, log), ["Summer", "Winter"]);
+  });
+  t("seasonCompare flags a real drift and stays quiet when they agree", () => {
+    const savedWears = W.wears, savedKv = W.kvData.get("wxlog");
+    const log = bandLog();
+    const rows = [];
+    for (let k = 1; k <= 8; k++) rows.push({ item_id: "d4", worn_on: `2026-07-0${k}` });
+    W.wears = rows; W.kvData.set("wxlog", log);
+    const drift = W.seasonCompare({ id: "d4", season: ["Winter"] });
+    const agree = W.seasonCompare({ id: "d4", season: ["Summer"] });
+    const untagged = W.seasonCompare({ id: "d4", season: null });
+    W.wears = savedWears;
+    if (savedKv === undefined) W.kvData.delete("wxlog"); else W.kvData.set("wxlog", savedKv);
+    return eq([drift.differs, drift.derived, agree.differs, untagged.differs, untagged.derived],
+              [true, ["Summer"], false, false, ["Summer"]]);
+  });
+  t("the review row offers the derived set as the one-tap answer", () => {
+    const row = W.REVIEW_FIELDS.find(f => f.key === "season_check");
+    return eq([!!row, row.saveKey, typeof row.guess, typeof row.missing, typeof row.note],
+              [true, "season", "function", "function", "function"]);
+  });
+
+  /* ---- Round D.4: a location answer must be reversible ----
+     Deleting a logged trip used to leave its days flagged `away` carrying
+     another climate's temperatures — the correction outliving the answer. */
+  t("reverting an away range restores home weather and drops the away flag", () => {
+    const today = W.todayStr();
+    const d = W.shiftDate(today, -100);
+    const home = { [d]: { maxT: 25, minT: 12, code: 0 } };
+    const away = W.mergeWxDays(home, { [d]: { maxT: 84, minT: 75, code: 0 } },
+      { today, away: true, loc: "Castries" }).log;
+    const back = W.mergeWxDays(away, { [d]: { maxT: 25, minT: 12, code: 0 } }, { today }).log;
+    return eq([away[d].away, away[d].loc, back[d].maxT, back[d].away], [1, "Castries", 25, undefined]);
+  });
+  t("a surviving overlapping range re-applies after a revert", () => {
+    const today = W.todayStr();
+    const d = W.shiftDate(today, -100);
+    let log = { [d]: { maxT: 25, minT: 12, code: 0 } };
+    log = W.mergeWxDays(log, { [d]: { maxT: 84, minT: 75, code: 0 } }, { today, away: true, loc: "A" }).log;
+    log = W.mergeWxDays(log, { [d]: { maxT: 25, minT: 12, code: 0 } }, { today }).log;        // revert
+    log = W.mergeWxDays(log, { [d]: { maxT: 79, minT: 70, code: 0 } }, { today, away: true, loc: "B" }).log;
+    return eq([log[d].maxT, log[d].away, log[d].loc], [79, 1, "B"]);
+  });
+
 
   // ---- Round D: temperature-eligible rescue ----
   t("inSeasonWx rescues an out-of-season piece the forecast actually fits", () => {
