@@ -2,6 +2,43 @@
 
 Guidance for working in this repo. Read alongside `README.md`.
 
+> ## ⚠️ READ FIRST — the product philosophy was re-decided on 2026-07-26
+>
+> A strategy interview that explicitly treated **every "locked" decision in this
+> file as provisional** produced an approved philosophy that supersedes the
+> product framing below wherever they conflict. The engineering content of this
+> file (architecture, gotchas, data model, conventions) is unaffected and still
+> authoritative. **`AUDIT_2026-07-26.md` in the repo root is the companion** —
+> findings, what's fixed, what's open, and a revised rack spec.
+>
+> What changed, in short:
+> - **Identity is mirror-first, and that's stronger than this file implies.**
+>   She opens Stats *daily*, to look rather than to learn, and when offered 12
+>   analytical features to cut she kept 11 (dropped **Mending** — still to be
+>   removed, see the audit's M4). The stats ARE the daily reward.
+> - **The app is over-*presented*, not overbuilt. Compress, don't delete.**
+>   Given one round she chose a coherence pass over new features.
+> - **The rack is approved but NOT built** — a standing ~60-piece derived pool
+>   the suggester draws from by default, stratified by slot + formality +
+>   temperature, **80% recently-reached-for / 20% deliberately cold**. The cold
+>   quota is load-bearing: without it the rack calcifies and shrinks her working
+>   wardrobe, i.e. the mirror would cause the thing it measures. It must read
+>   **forward `dayplan` contexts and trip dates** so declared upcoming events
+>   stock it, rather than guessing levels from history. Her four conditions:
+>   the rack is always a visible screen, the suggester always names its pool
+>   with a count and a one-tap widen, pull-in works from anywhere, and locking a
+>   non-rack piece never fails.
+> - ⚠️ **This conflicts with two entries below** and the conflict is deliberate,
+>   not an oversight: ⑨'s "rescue-only: widens the pool, never narrows it", and
+>   the suggester's "by design there is NO unworn/last-worn weighting". The rack
+>   narrows, and reintroduces recency via pool construction. She approved it
+>   knowingly, on condition the narrowing is visible and reversible.
+> - **Hard NOs, asked directly:** notifications, AI, a second user, shopping,
+>   voice, export-as-a-product. In-app laundry prompts remain fine.
+> - **Sacred two-tap:** "what do I wear today" and "log what I wore".
+> - **She likes building this.** The goal is not to finish — it's an app that
+>   can absorb five more years without getting worse.
+
 **Round D "Where You Were" (2026-07-25, r14 → r21) — SHIPPED, and then largely
 UNBUILT again. Read this whole entry before touching weather/season code; the
 deletions are the most important part.** Selftest 91 → 136 → **124** (the drop
@@ -1104,7 +1141,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-25 r22`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r2`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1143,6 +1180,26 @@ the shared `funnelBtnHtml(id, state)` button+badge.
 
 ## Known gotchas
 
+- **⚠️ A full-width `<button>` needs an explicit `width`. `display:block` is not
+  enough** (2026-07-26). Form controls size to their content regardless of
+  `display`, so `.log-cta` — the app's primary action — rendered as a **181px
+  stub in a 390px column** for months, and `.logged-row` (also the laundry,
+  backup and planned rows) at 259px. Neither rule set `width`. Both now use
+  `width: calc(100% - 32px)`, matching their 16px side margins; that's the idiom
+  `.otd-row` and `.trip-dash .td-laun` already used, and `.btn`/`.btn-sec`/
+  `.sheet-action-btn` set `width:100%`. **Any new full-width BUTTON needs one of
+  those.** A `<div>` in the same position would have been fine, which is exactly
+  why this hid so long. It was invisible to CSS reading and obvious within five
+  seconds of rendering the app — **render the screens and look at them.**
+- **One glyph, one meaning, app-wide** (2026-07-26, user-reported: "the little
+  shuffle button means two different things in two different places"). `↻` had
+  come to mean "wear again" (show me looks I already own) in the calendar
+  footer, "reshuffle" (generate a new combo) in the suggester, and a per-piece
+  swap — two of those are opposites, which makes a one-tap control require
+  recall. **`↻` is retired; `✨` is the single mark for "make something new"**
+  (suggest, reshuffle, re-roll, per-piece swap) and history actions carry a
+  plain word ("Wear again"). Weather refresh is an inline SVG and unaffected.
+  A selftest case fails if `↻` reappears in any `js/` module.
 - **`svgElement.hidden = bool` does not reflect to the DOM attribute** in this
   app's runtime (2026-07-21 r14) — unlike on a div/button, it silently sets a
   same-named JS expando that reads back correctly (`el.hidden === true`) but
@@ -1416,19 +1473,39 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **127/127** (2026-07-25 r22, RUN GREEN; the count DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding). **It is a deploy gate for logic
+passed` — currently **130/130** (2026-07-26 r2, RUN GREEN; the count DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding). **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
 something worth keeping true.** Gotchas baked in: app globals are top-level
 const/let (invisible on `contentWindow` — the harness injects an eval-bridge
 Proxy), and Sets passed into app code must be created in the IFRAME's realm
-(`W.Set`) or `instanceof Set` fails. The iframe src is assigned from JS with a
-timestamp, never hardcoded — a fixed URL let the preview browser's cache score a
-green run against the PREVIOUS deploy's code (fixed 2026-07-25).
+(`W.Set`) or `instanceof Set` fails.
 
-⚠️ **A test that has never been executed is not a test.** The harness sat at
-89/90 for a full round of deploys because cases were being written and never
-run: the r11 `statsNavBack` case drove a real re-render with no data behind it,
-so a working nav path scored red. Write the case AND run it, in the same
-session.
+⚠️⚠️ **THE GATE ITSELF WAS BROKEN FROM THE FILE SPLIT UNTIL 2026-07-26 — read
+this before "improving" the harness's loading.** The 2026-07-25 fix (re-fetch
+every module with `cache:"reload"` so mid-session edits are visible) was
+requesting **`/migration/js/*.js`** — the harness lives at `/migration/`, so
+every one of those 21 relative fetches was a 404. `fetch()` does not throw on
+404, so it looked like it worked, and nothing was ever refreshed. Since
+`index.html`'s tags carry `?v=<APP_VERSION>` and that only changes on deploy,
+**every edit made without a version bump kept the same URL and the iframe
+replayed the cached copy.** Measured: a freshly edited `js/14-calendar.js`,
+correct on disk and on the wire, with the iframe still executing the previous
+copy and 129 cases passing against it. Three things now stop it recurring, and
+all three matter:
+① fetches are **`/`-prefixed** and **throw on `!r.ok`**, so a 404 can never be
+silent again; ② the iframe no longer trusts cache semantics at all — the harness
+rewrites index.html with a **per-run token on every `js/`+`css/` URL** and hands
+it over via **`srcdoc`** plus an injected **`<base href="/">`** (without the
+base, relative URLs resolve against `/migration/` and the app loads nothing); ③
+a case asserts every live function's `toString()` is a substring of the
+freshly-fetched file — divergence means the iframe is stale.
+
+⚠️ **A test that has never been executed is not a test — and a test that
+can't fail is worse, because it reports success.** Two real instances: the
+harness sat at 89/90 for a round of deploys because the r11 `statsNavBack` case
+drove a re-render with no data behind it; and the r1 (2026-07-26) icon and
+sheet-registry cases both passed **vacuously against 404 bodies** for a full
+deploy. When you add a case, run it AND prove it can fail — mutate the thing
+it guards and watch it go red, in the same session.
