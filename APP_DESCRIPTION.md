@@ -7,7 +7,7 @@ away, without needing any other file in this repo.
 
 - **Live:** https://aluke0311.github.io/wardrobe_app/
 - **Repo:** https://github.com/aluke0311/wardrobe_app
-- **Current version:** `2026-07-25 r11`
+- **Current version:** `2026-07-25 r22`
 - **Companion docs:** `USER_MANUAL.md` (how to use it) · `CLAUDE.md` (implementation
   reference) · `ROADMAP.md` (what shipped when, and every locked decision) ·
   `schema.sql` (canonical DB) · `STYLE_MODEL.md` (the formality model)
@@ -99,9 +99,9 @@ Eight tables. `schema.sql` is canonical.
 | `items` | The closet. name, category, subcategory, brand, retailer, color_family, price, purchase_date, acquisition (New/Secondhand/Gift), size, fabric[], season[], **formality smallint[]**, status (Available/Storage/Archive), tags[], notes, url, image_path, last_washed, laundry_state |
 | `wears` | The log. item_id, outfit_id (nullable), worn_on (date), context text[], formality_for (derived at log time) |
 | `outfits` | Saved looks. name, notes, formality_override, **layout** JSONB (the drag-and-drop canvas), **rating** (`1` = liked), archived. Join table `outfit_items` |
-| `capsules` | Named item sets and trips. kind, start_date, end_date, locations JSONB, **plan** JSONB (per-day outfit intentions). Join table `capsule_items(packed bool)` |
+| `capsules` | Named item sets and trips. kind, start_date, end_date, locations JSONB, **plan** JSONB (per-day outfit intentions). Join table `capsule_items(packed bool)`. Archiving a finished trip is a `kv` flag, not a column — it keeps everything and only hides it from the list |
 | `exclusions` | Item pairs that shouldn't be suggested together |
-| `kv` | Small per-user app state as JSONB: day plans, the weather log, milestone bookkeeping, the taxonomy override |
+| `kv` | Small per-user app state as JSONB: day plans, the weather log, milestone bookkeeping, the taxonomy override, **where she's been** (travel ranges), season-flag dismissals, archived capsules |
 
 **Two rules that matter more than they look:**
 
@@ -183,6 +183,14 @@ holding a wear they didn't earn.
 Month grid with outfit collages; day view with swipe copy/move/delete, log pickers
 for clothing or a saved look, a "wear again" chooser, and an "on this day" row.
 
+### Capsules & Trips
+Named sets of pieces. A trip adds dates, a packing checklist, a weather strip, and a
+per-day outfit plan; **trip mode** takes over Home for the duration and scopes the
+closet, suggester and pickers to the suitcase. Finished trips can be **archived** —
+everything is kept (packing list, plans, the locations that keep the weather record
+honest) but they fold into an "🗄 Archived" section instead of sitting at the top of
+the list forever.
+
 ### Stats
 The centerpiece, and the reason the logging matters. Fifteen views:
 
@@ -223,15 +231,44 @@ a discovered formula, or workout mode.
 **Weather memory** is the one that most feels like intelligence and is the simplest
 underneath: the app logs the daily forecast, backfills history from the ERA5 archive
 in a single request, and then — given tomorrow's forecast — finds the past days that
-actually *felt* like this and shows what she wore. It excludes trip days and the
-last two weeks, and if nothing scores close enough it shows nothing at all, because
-a bad match is worse than no match.
+actually *felt* like this and shows what she wore. It skips the last two weeks, and
+if nothing scores close enough it shows nothing at all, because a bad match is worse
+than no match.
+
+**Where she was** is the correction underneath all of that. The backfill can only
+reconstruct weather at *home* coordinates, so before July 2026 every day she spent
+elsewhere was recorded with weather she never experienced — a Christmas in St Lucia
+stored as a Minnesota December. That quietly corrupted each item's temperature
+profile and the seasons derived from it. She now enters past travel by hand in
+Settings → "Where you've been"; those days are re-fetched at their real coordinates
+and marked away, which fixes the seasons, the "usually worn" ranges, precedent
+matching, and warm-destination packing all at once, invisibly. Entries are
+reversible: deleting one puts the home weather back.
+
+⚠️ **The app briefly tried to GUESS her travel from outfit anomalies, and it was a
+mistake worth recording.** It shipped, then needed a patch round per day of real use
+— false windows spanning months, unactionable warnings, archive gaps stored as 0°
+freezes — before she called it: *"this whole feature set feels like a mess."* It was
+deleted wholesale in r19. She had asked to *enter* her travel, not to have it
+inferred, and a wrong guess costs more trust than hand-entry costs taps. The
+surviving parts had needed no patches at all. Do not rebuild the inference.
 
 **Laundry** is derived, never entered. A piece is dirty when the number of distinct
 wear-days since its last wash reaches a per-subcategory tolerance (tees 1, jeans ~5,
 shoes and outerwear never). A null wash date means clean, so tracking opts in by
 behavior rather than by a setup step. Wash loads mirror her real sorting — whites,
 cools, warms — derived from color families.
+
+**Season sanity** is one rule with one fix. Every item gets a season worked out from
+the weather it has actually been worn in, whether or not she's tagged one — so the
+tag and the evidence can be compared. If a piece's *commonly worn* temperature range
+(its middle half) overlaps the *general* range of any season it claims, nothing is
+said. If it overlaps none of them, the item's own page says so in one sentence
+("Commonly worn 76°–89° — your winter generally runs 10°–45°. That's Summer weather
+here.") and offers a one-tap **＋ Add Summer**. Closet Review carries the same
+comparison for batch work. Two rules learned the hard way: **a flag with no
+available fix is never raised**, and the one-tap answer only ever *adds* a season —
+never deletes one she chose.
 
 **Planning** covers a day, a week, and a trip. Day plans support one outfit across
 several contexts *and* several outfits in one day. The week planner pre-fills each
@@ -265,8 +302,11 @@ testing during builds** by explicit preference. Verification is:
   laundry, formality, weather matching, milestones, rhythm, search, palette and
   back-navigation.
 
-⚠️ **The selftest is currently written but unrun.** Treat "shipped" as
-"syntax-verified and reviewed", not "tested", until someone opens it.
+The selftest is a **deploy gate for logic changes** (cosmetic deploys get a
+JavaScriptCore parse check instead) and is run in the browser before shipping.
+It currently stands at **127 cases, green**. ⚠️ The count has gone *down* as well as
+up — r19 deleted 30 cases along with the feature they covered. A shrinking suite can
+be a good sign; say which happened rather than padding the number.
 
 ## 10. History in one paragraph
 
@@ -277,6 +317,10 @@ themed rounds, each planned as a written spec with locked decisions before any c
 the style model and suggestions engine, a unified filter system, hearts, weather,
 report cards, laundry, trip mode, data safety, a full editorial redesign with dark
 mode, planning and "Tomorrow", outfit formulas, and — most recently — weather
-memory, milestones, weekly rhythm, closet search, and the palette and gap pages.
+memory, milestones, weekly rhythm, closet search, the palette and gap pages, and a
+location-corrected weather record. The last of those is also the app's cautionary
+tale: it shipped with an inference layer nobody asked for, was patched four times in
+a day, and was then largely deleted — the round that improved it most removed more
+code than it added.
 `ROADMAP.md` holds every round with its reasoning intact; the decisions in it are
 treated as settled and not re-litigated without new evidence.
