@@ -258,9 +258,18 @@ function openItemDetails(id) {
         </button>
         ${(() => {
           const f = wxFlagFor(i.id);
-          // An audit note, not an alarm — muted, and it sits outside the wears
-          // button so it can't steal that tap.
-          return f ? `<button class="det-sub" id="detWxFlag" style="text-align:left;padding:2px 0 6px;line-height:1.4">⚠ ${esc(wxFlagText(f))}</button>` : "";
+          if (!f) return "";
+          /* The flag IS the fix (Round D.4). It used to be a link into an audit
+             sheet; now the sentence explains and the chip resolves, right here.
+             Muted, and outside the wears button so it can't steal that tap. */
+          return `<div style="padding:2px 0 8px">
+            <div class="det-sub" style="line-height:1.45">⚠ ${esc(wxFlagText(f))}</div>
+            <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+              <button class="cap-chip" id="detWxAdd" style="color:var(--accent);font-weight:600">＋ Add ${esc(f.missing.join(" &amp; "))}</button>
+              <button class="cap-chip" id="detWxEdit">Edit season…</button>
+              <button class="cap-chip" id="detWxOk" style="color:var(--muted)">It's fine</button>
+            </div>
+          </div>`;
         })()}
         ${partnersRowHtml(i.id)}
         ${(() => {
@@ -411,8 +420,19 @@ function openItemDetails(id) {
     el.onclick = () => openItem(el.dataset.partner);
   });
 
-  const wxFlagBtn = $("#detWxFlag");
-  if (wxFlagBtn) wxFlagBtn.onclick = () => openSeasonAuditSheet();
+  const wxAdd = $("#detWxAdd"), wxEdit = $("#detWxEdit"), wxOk = $("#detWxOk");
+  if (wxAdd) wxAdd.onclick = async () => {
+    const f = wxFlagFor(i.id);
+    if (!f) return;
+    wxAdd.disabled = true;
+    await addFlagSeason(i.id, f.missing);
+    if (detailId === i.id && detailView === null) openItem(i.id);
+  };
+  if (wxEdit) wxEdit.onclick = () => openFieldEdit(i.id, "season");
+  if (wxOk) wxOk.onclick = async () => {
+    await dismissWxFlag(i.id);
+    if (detailId === i.id && detailView === null) openItem(i.id);
+  };
 
   $("#detCapsules").onclick = () => {
     openCapsuleAssign(capsulesForItem(i.id), async (ids) => {

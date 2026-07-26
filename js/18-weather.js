@@ -408,17 +408,36 @@ async function _saveWhere() {
   try {
     await kvSet(WHERELOG_KEY, [...wherelog(), entry]);
     renderSettings();
-    toast("Saved");
+    // Undoable both ways: the save corrects the weather, the undo puts it back.
+    toast("Saved", { label: "Undo", fn: () => _undoWhere(entry) });
     correctAwayWeather(entry);            // fire-and-forget; re-renders when done
+  } catch (e) { toast(e.message); }
+}
+
+async function _undoWhere(entry) {
+  const list = wherelog().filter(e =>
+    !(e.from === entry.from && e.to === entry.to && e.name === entry.name));
+  try {
+    await kvSet(WHERELOG_KEY, list);
+    renderSettings();
+    await revertAwayWeather(entry);
+    renderSettings();
+    toast("Removed");
   } catch (e) { toast(e.message); }
 }
 
 async function removeWhereEntry(idx) {
   const list = [...wherelog()];
   if (idx < 0 || idx >= list.length) return;
-  list.splice(idx, 1);
-  try { await kvSet(WHERELOG_KEY, list); renderSettings(); }
-  catch (e) { toast(e.message); }
+  const [gone] = list.splice(idx, 1);
+  try {
+    await kvSet(WHERELOG_KEY, list);
+    renderSettings();
+    // Put home weather back over those days — otherwise the correction
+    // outlives the answer that justified it.
+    await revertAwayWeather(gone);
+    renderSettings();
+  } catch (e) { toast(e.message); }
 }
 
 // Settings list: everywhere the app thinks she was, trips included.

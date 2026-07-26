@@ -179,6 +179,44 @@ async function backfillWxLog() {
   return n;
 }
 
+/* Undo a location answer: put HOME weather back over its span. Without this a
+   correction outlives the answer that justified it — deleting a "Where you've
+   been" entry left its days still flagged `away` with another climate's
+   temperatures, which is worse than never having entered it.
+   ⚠️ Overlaps matter: after reverting we re-apply every REMAINING away range
+   that touches the span, so deleting one of two overlapping answers doesn't
+   silently wipe the survivor. */
+async function revertAwayWeather(r) {
+  if (!r || !r.from || !r.to) return 0;
+  const today = todayStr();
+  const floor = shiftDate(today, -WXLOG_DAYS);
+  const from = r.from > floor ? r.from : floor;
+  const to = r.to < today ? r.to : today;
+  if (from > to) return 0;
+  const home = await getHomeLocation();
+  if (!home) return 0;
+  try {
+    const res = await fetchWeatherRange(home.lat, home.lon, from, to);
+    // away:false, so the rebuilt entries carry no away flag or location.
+    const { log, n } = mergeWxDays(wxLog(), res, { today, floor });
+    let out = log;
+    for (const other of awayRanges()) {
+      if (other.to < from || other.from > to) continue;
+      const oF = other.from > from ? other.from : from;
+      const oT = other.to < to ? other.to : to;
+      if (oF > oT) continue;
+      try {
+        const back = await fetchWeatherRange(other.lat, other.lon, oF, oT);
+        out = mergeWxDays(out, back, { today, away: true, loc: other.name, floor }).log;
+      } catch (e) { /* leave those days as home rather than lose the revert */ }
+    }
+    await kvSet("wxlog", out);
+    _wxAudit = null;
+    _seasonBands = null;
+    return n;
+  } catch (e) { return 0; }
+}
+
 // Correct one newly-added away range on its own — the whole backfill is a lot
 // of network for a range she just typed in.
 async function correctAwayWeather(r) {
@@ -326,285 +364,104 @@ function effectiveSeasonOf(dateStr, log = null, bands = null) {
   return seasonForTemp(e.maxT, bands || seasonBands(log)) || seasonOf(dateStr);
 }
 
-/* ---- SEASON vs WEATHER AUDIT (Round D) -------------------------------------
-   Her ask: flag where a season tag and the weather she actually wore something
-   in disagree — because it might mean the season is wrong, or it might mean
-   she was somewhere else. Both are worth knowing and they want opposite fixes,
-   so the detector tries to tell them apart instead of making her diagnose it:
-   contradicting days that CLUSTER into one date window across several items
-   look like a trip, whereas days scattered over years look like a bad label. */
-const WXA_MIN_DAYS = 6;      // weather-matched wear-days before we'll judge an item
-const WXA_CAL_SHARE = 0.2;   // share of days that must land in the claimed season
-const WXA_TEMP_MARGIN = 3;   // °F of slack before "worn hotter/colder" is claimed
-const WXA_GAP = 3;           // days apart that still count as one trip
-const WXA_RUN_MIN = 2;       // distinct dates before a cluster is worth asking about
-const WXA_OK_KEY = "wxaudit_ok";
-const WXA_HOME_KEY = "wxaudit_home";   // windows she's answered "I was home" for
+/* ---- SEASON vs WEATHER (Round D.4, 2026-07-25) -----------------------------
+   Her ask, finally reduced to it: flag a piece whose season tag disagrees with
+   the weather she actually wears it in, and make the flag its own fix.
 
-/* "I was home" is the other half of the question, and it has to persist or the
-   same window comes back every time she opens the audit. It suppresses the
-   TRIP guess only — never an item flag, because "I was home" is evidence the
-   clothes are mislabeled, which is exactly when the flag is worth keeping. */
-const homeRanges = () => (kvData.get(WXA_HOME_KEY) || []).filter(r => r && r.from && r.to);
-const isMarkedHome = (date, ranges = null) =>
-  (ranges || homeRanges()).some(r => date >= r.from && date <= r.to);
-const WXA_TEMP_MIN_DAYS = 3; // the temp test measures a huge effect, so it needs less
-const WXA_DAY_DELTA = 30;    // °F between a day and a piece's habit before it's odd
-const WXA_DAY_PIECES = 2;    // vote WEIGHT that makes a day odd (see buildDayWxAnomalies)
-/* Days of history that make one piece's vote worth two. Deliberately well
-   above a long trip's length: at 12 the tests caught a piece with 6 home days
-   and 7 uncorrected trip days having its own median dragged onto the wrong
-   value, which then made its REAL summer days look like the anomaly. A habit
-   only outvotes a trip if the trip can't be most of it. */
-const WXA_DAY_STRONG = 20;
+   ⚠️ This replaced a much larger machine. r14–r18 also tried to GUESS where she
+   had been — day-level outfit anomalies, greedy trip clustering, home marks, an
+   audit sheet, a day-by-day view — and that layer generated a patch round per
+   day of real use before she called it: "this whole feature set feels like a
+   mess." It was. She had asked to ENTER her travel, not to have it inferred, so
+   the inference is gone. Do not rebuild it "to help": a wrong guess costs more
+   trust than hand-entry costs taps (locked decision, 2026-07-25).
 
-/* Greedy day clustering, shared by both trip-guess sources.
-   ⚠️ Two guards that are the whole difference between "were you away Dec 20–27"
-   and a useless "were you away March–August". Plain gap-chaining is transitive:
-   days 3 apart link, so scattered anomalies daisy-chain across months. So a
-   window is also capped at WXA_MAX_SPAN, and afterwards must be DENSE — a real
-   trip is a run of days, not two odd days six weeks apart. */
-const WXA_MAX_SPAN = 24;      // days; longer than this isn't one trip
-// Half the window must be flagged days. Anomalies spaced every 3rd day land at
-// ~0.36, a genuine trip at 0.6–1.0, so this is the clean line between them.
-const WXA_MIN_DENSITY = 0.5;
+   THE ONE CRITERION (hers): compare the piece's COMMONLY-WORN range against the
+   GENERAL range of each season it claims. Overlap with any of them = no flag,
+   full stop. This kills unactionable flags structurally rather than by
+   suppression — a piece can't be accused of contradicting a season it plainly
+   gets worn in — and it needs no tuned margins, which is what the previous two
+   constructions kept getting wrong. */
+const WXA_OK_KEY = "wxaudit_ok";    // {itemId: JSON.stringify(items.season)} — dismissals
 
-function _clusterAwayDays(entries) {
-  const out = [];
-  let cur = null;
-  for (const { d, id } of [...entries].sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0))) {
-    const fits = cur && daysBetween(cur.to, d) <= WXA_GAP
-              && daysBetween(cur.from, d) < WXA_MAX_SPAN;
-    if (fits) {
-      if (d > cur.to) cur.to = d;
-      cur.dates.add(d); if (id) cur.itemIds.add(id);
-    } else {
-      if (cur) out.push(cur);
-      cur = { from: d, to: d, dates: new Set([d]), itemIds: new Set(id ? [id] : []) };
-    }
-  }
-  if (cur) out.push(cur);
-  return out.filter(c => c.dates.size / (daysBetween(c.from, c.to) + 1) >= WXA_MIN_DENSITY);
-}
-
-/* The temperature an item habitually goes out in — the MEDIAN, deliberately,
-   not the p10/p90 band `itemWxProfile` reports. Median is what survives the
-   contamination this whole round is about: a handful of uncorrected trip days
-   recorded as home weather sit in the tail, where they'd drag a percentile but
-   can't move the middle. */
-function itemTempCenter(itemId, log = null, dayMapByItem = null) {
+// The middle half of the temperatures a piece actually goes out in. Quartiles,
+// not min/max: one freak day shouldn't define "commonly worn".
+function pieceCommonRange(itemId, log = null, rows = null) {
   const L = log || wxLog();
-  const days = dayMapByItem ? (dayMapByItem.get(itemId) || new Set())
-    : new Set(wears.filter(w => w.item_id === itemId).map(w => w.worn_on));
-  const t = [...days].map(d => L[d]).filter(e => e && e.maxT != null && !isNullWxDay(e))
+  const days = [...new Set((rows || wears).filter(w => w.item_id === itemId).map(w => w.worn_on))];
+  const t = days.map(d => L[d]).filter(e => e && e.maxT != null && !isNullWxDay(e))
     .map(e => e.maxT).sort((a, b) => a - b);
   if (t.length < WX_PROFILE_MIN) return null;
   const at = f => t[Math.min(t.length - 1, Math.max(0, Math.round(f * (t.length - 1))))];
-  // IQR alongside the median: the median says where this piece lives, the IQR
-  // says how PICKY it is. A year-round pair of jeans and a pair of sandals can
-  // share a centre and mean completely different things.
-  return { t: t[Math.floor(t.length / 2)], n: t.length, iqr: Math.max(0, at(0.75) - at(0.25)) };
+  return { lo: at(0.25), hi: at(0.75), n: t.length };
 }
 
-/* Days she dressed for a completely different climate than the one on record.
-   This is the detector that needs NO season tag, and it's the one that finds a
-   trip the app was never told about: on an uncorrected St Lucia day the stored
-   weather (home December) and the calendar AGREE with each other, so nothing
-   about the day looks wrong on its own — but the sandals and the linen dress
-   she wore have summer habits from years of home wears, and two of them
-   disagreeing the same way is the tell. */
-function buildDayWxAnomalies({ wearRows = null, log = null, ranges = null, home = null } = {}) {
-  const L = log || wxLog();
-  const R = ranges || awayRanges();
-  const H = home || homeRanges();
-  const rows = wearRows || wears;
-  const byItem = new Map(), byDay = new Map();
-  for (const w of rows) {
-    if (!w.worn_on || !w.item_id) continue;
-    if (!byItem.has(w.item_id)) byItem.set(w.item_id, new Set());
-    byItem.get(w.item_id).add(w.worn_on);
-    if (!byDay.has(w.worn_on)) byDay.set(w.worn_on, new Set());
-    byDay.get(w.worn_on).add(w.item_id);
-  }
-  const centers = new Map();
-  for (const id of byItem.keys()) centers.set(id, itemTempCenter(id, L, byItem));
-
-  const odd = [];
-  for (const [d, ids] of byDay) {
-    const e = L[d];
-    if (!e || e.maxT == null || isNullWxDay(e)) continue;
-    if (awayRangeFor(d, R)) continue;         // already known — nothing to ask
-    if (isMarkedHome(d, H)) continue;         // already answered "I was home"
-    /* Votes are WEIGHTED by how well-established the habit is, which matters
-       more than it looks. A piece worn only on the trip has a habit computed
-       from the trip's own (wrong) weather, so it agrees with the wrong day
-       trivially and abstains — on a real trip that can be most of the outfit.
-       What's left is the one pair of sandals with years of home summer wears,
-       and a piece that well-established being 50° off IS the evidence. Two
-       lightly-worn pieces agreeing clears the same bar. */
-    let hot = [], cold = [], hotW = 0, coldW = 0;
-    for (const id of ids) {
-      const c = centers.get(id);
-      if (!c) continue;
-      /* Judge each piece against ITS OWN spread, not a fixed number of degrees.
-         Year-round basics sit near the annual mean, so a flat threshold made
-         every genuine cold snap and heat wave look like travel — jeans with a
-         55° median "disagreed" with a real 18° January day, and so did most of
-         the closet, which is how this produced huge swaths of dates. Widening
-         the bar by the piece's own IQR fixes that from both ends: a jeans-like
-         spread can't be surprised, a sandals-like one is surprised easily.
-         Contamination inflates the IQR, which only ever makes a piece abstain —
-         the safe direction to be wrong in. */
-      const bar = Math.max(WXA_DAY_DELTA, 1.5 * c.iqr);
-      const w = c.n >= WXA_DAY_STRONG ? 2 : 1;
-      if (c.t - e.maxT > bar) { hot.push(id); hotW += w; }
-      else if (e.maxT - c.t > bar) { cold.push(id); coldW += w; }
-    }
-    const useHot = hotW >= coldW;
-    if ((useHot ? hotW : coldW) < WXA_DAY_PIECES) continue;
-    odd.push({ d, ids: useHot ? hot : cold, dir: useHot ? "warmer" : "colder", dayT: e.maxT });
-  }
-  return { days: odd, clusters: _clusterAwayDays(odd.flatMap(o => o.ids.map(id => ({ d: o.d, id })))) };
-}
+// A season's general range = the band's p10–p90. Null when the season has too
+// few days on record to have an opinion (seasonBands' own floor).
+const seasonGeneralRange = (s, bands) => (bands[s] ? { lo: bands[s].p10, hi: bands[s].p90 } : null);
+const _rangesOverlap = (a, b) => !!a && !!b && a.lo <= b.hi && b.lo <= a.hi;
 
 function buildSeasonWxFlags({ pool = null, wearRows = null, log = null, bands = null,
-                              ranges = null, dismissed = null, home = null } = {}) {
+                              dismissed = null } = {}) {
   const L = log || wxLog();
   const B = bands || seasonBands(log);
-  const R = ranges || awayRanges();
-  const H = home || homeRanges();
   const OK = dismissed || kvData.get(WXA_OK_KEY) || {};
   const rows = wearRows || wears;
   const list = pool || items.filter(i => itemStatus(i) === "Available");
-
-  // item_id -> Set(worn_on) — one pass; a wear is a DAY, never a row.
-  const daysBy = new Map();
-  for (const w of rows) {
-    if (!w.worn_on) continue;
-    if (!daysBy.has(w.item_id)) daysBy.set(w.item_id, new Set());
-    daysBy.get(w.item_id).add(w.worn_on);
-  }
-
   const flags = [];
-  for (const i of list) {
-    if (!i.season || !i.season.length) continue;      // no claim = nothing to contradict
-    if (OK[i.id] === JSON.stringify(i.season)) continue;
-    const days = [...(daysBy.get(i.id) || [])].filter(d => L[d] && L[d].maxT != null && !isNullWxDay(L[d])).sort();
-    // The two tests need different amounts of evidence: the temp test measures
-    // a huge effect (a whole climate off), the calendar test is a proportion
-    // and needs enough days to be a proportion of.
-    if (days.length < WXA_TEMP_MIN_DAYS) continue;
 
+  for (const i of list) {
+    if (!i.season || !i.season.length) continue;   // no claim = nothing to contradict
+    if (OK[i.id] === JSON.stringify(i.season)) continue;
     const claimed = i.season.filter(s => SEASONS.includes(s));
     if (!claimed.length) continue;
-    const off = days.filter(d => !claimed.includes(effectiveSeasonOf(d, log, B)));
+    const common = pieceCommonRange(i.id, L, rows);
+    if (!common) continue;                          // not worn enough to have a habit
 
-    // Temperature evidence first — it's the stronger claim, and it's the one
-    // that survives her having tagged something for the right months but the
-    // wrong climate.
-    const temps = days.map(d => L[d].maxT).sort((a, b) => a - b);
-    const at = f => temps[Math.min(temps.length - 1, Math.max(0, Math.round(f * (temps.length - 1))))];
-    const lo = at(0.1), hi = at(0.9);
-    const usable = claimed.map(s => B[s]).filter(Boolean);
-    let flag = null, guilty = off;
-    if (usable.length) {
-      const ceil = Math.max(...usable.map(b => b.p90));
-      const floorT = Math.min(...usable.map(b => b.p10));
-      /* Widen the bar by the claimed season's OWN spread, the same correction
-         that fixed the day detector. A season that swings 30° here can't be
-         contradicted by a piece worn 5° outside its 90th percentile — that's a
-         piece worn at the mild end of its season, not a mislabelled one. */
-      const spread = Math.max(...usable.map(b => b.p90 - b.p10));
-      const bar = Math.max(WXA_TEMP_MARGIN, 0.5 * spread);
-      if (lo > ceil + bar) {
-        flag = { kind: "temp", dir: "hot", lo, hi, band: [floorT, ceil] };
-        guilty = days.filter(d => L[d].maxT > ceil + bar);
-      } else if (hi < floorT - bar) {
-        flag = { kind: "temp", dir: "cold", lo, hi, band: [floorT, ceil] };
-        guilty = days.filter(d => L[d].maxT < floorT - bar);
-      }
-    }
-    if (!flag && days.length >= WXA_MIN_DAYS && off.length / days.length > 1 - WXA_CAL_SHARE)
-      flag = { kind: "calendar", inSeason: days.length - off.length, lo, hi };
-    if (!flag) continue;
+    const claimedRanges = claimed.map(s => seasonGeneralRange(s, B)).filter(Boolean);
+    if (!claimedRanges.length) continue;            // no usable band = no opinion
+    if (claimedRanges.some(r => _rangesOverlap(common, r))) continue;   // it fits — done
 
-    /* What the fix probably IS, so the flag isn't just "something's off".
-       ⚠️ Each kind proposes in the SAME currency as its evidence. A temp flag
-       reads the temperatures (its whole point is that a December day can feel
-       like Summer); a calendar flag reads the seasons those days actually fell
-       in — it fires when there are no usable temperature bands, so asking the
-       temperature would leave it with nothing to propose and silently suppress
-       the one flag that had evidence. */
-    const fitSrc = flag.kind === "temp" ? days : guilty;
-    const fitTally = new Map();
-    for (const d of fitSrc) {
-      const s = flag.kind === "temp" ? seasonForTemp(L[d].maxT, B) : effectiveSeasonOf(d, log, B);
-      if (s) fitTally.set(s, (fitTally.get(s) || 0) + 1);
-    }
-    const fit = [...fitTally.entries()].filter(([, n]) => n / Math.max(1, fitSrc.length) >= 0.25)
-      .sort((a, b) => b[1] - a[1]).map(([s]) => s);
+    // It fits none of them. Which seasons DOES it fit? That's the proposal, and
+    // no proposal means no flag (r18's rule, kept: an unactionable warning is
+    // worse than silence).
+    const fit = SEASONS.filter(s => _rangesOverlap(common, seasonGeneralRange(s, B)));
     const missing = fit.filter(s => !claimed.includes(s));
-    /* ⚠️ No proposal, no flag. If the seasons these temperatures resemble are
-       ALREADY on the piece, there is nothing she can do about it — the tag is
-       right and the weather simply varies. Raising it anyway produced a list
-       of unactionable warnings, which is worse than silence (user, 2026-07-25:
-       "there's nothing I can do about a lot of these flags — they already have
-       the season in question on them"). */
     if (!missing.length) continue;
-    flags.push({ ...flag, id: i.id, name: i.name, image_path: i.image_path,
-                 season: claimed, days: days.length, off: guilty, fit, missing });
-  }
 
-  /* Trip guesses come ONLY from day anomalies — never from a flagged item's
-     contradicting days. That seemed reasonable and was badly wrong: for a
-     mis-tagged seasonal piece EVERY wear contradicts, and a winter coat tagged
-     Summer is worn on consecutive cold days, so its own history clusters into a
-     run of dense, entirely spurious "were you away?" windows. The two signals
-     answer different questions and each already has its own fix: a flag means
-     the TAG is suspect (edit the season), an anomaly means the DAY is suspect
-     (log where you were). Mixing them made both worse. */
-  const anom = buildDayWxAnomalies({ wearRows: rows, log, ranges: R, home: H });
-  const tripGuesses = _clusterAwayDays(anom.days.flatMap(o => o.ids.map(id => ({ d: o.d, id }))));
-  return {
-    dayAnomalies: anom.days,   // per-DAY detail, so the day view can name the culprit
-    flags: flags.sort((a, b) => b.days - a.days),
-    tripGuesses: tripGuesses.filter(g => g.dates.size >= WXA_RUN_MIN)
-      .map(g => ({ from: g.from, to: g.to, dates: [...g.dates].sort(), itemIds: [...g.itemIds] }))
-      .sort((a, b) => (a.from < b.from ? 1 : -1)),
-  };
+    const hottest = Math.max(...claimedRanges.map(r => r.hi));
+    const coldest = Math.min(...claimedRanges.map(r => r.lo));
+    const dir = common.lo > hottest ? "hot" : common.hi < coldest ? "cold" : "between";
+    flags.push({
+      id: i.id, name: i.name, image_path: i.image_path, season: claimed,
+      common, band: [coldest, hottest], days: common.n, dir, fit, missing,
+    });
+  }
+  return flags.sort((a, b) => b.days - a.days);
 }
 
-// Session cache. Busted explicitly wherever a season is edited or a flag is
-// dismissed — the stamp alone can't see an in-place season change.
+/* Session cache. ⚠️ The stamp is built from array LENGTHS, which an in-place
+   season edit doesn't change — so `_wxAudit` is nulled explicitly in
+   `saveField` (season), `correctAwayWeather`, `revertAwayWeather`, and both
+   flag resolutions. Four sites; grep `_wxAudit = null`. */
 function wxAuditFlags() {
   const stamp = `${wears.length}:${Object.keys(wxLog()).length}:${items.length}`;
   if (_wxAudit && _wxAudit.stamp === stamp) return _wxAudit.res;
-  const res = dataReady ? buildSeasonWxFlags() : { flags: [], tripGuesses: [] };
+  const res = dataReady ? buildSeasonWxFlags() : [];
   _wxAudit = { stamp, res };
   return res;
 }
-const wxFlagFor = (id) => wxAuditFlags().flags.find(f => f.id === id) || null;
+const wxFlagFor = (id) => wxAuditFlags().find(f => f.id === id) || null;
 
-/* The evidence, then the likely fix. Both halves matter: the first says why
-   the app thinks something is off, the second answers "off HOW — is it missing
-   Winter?", which the evidence alone never told her. */
+// The evidence and the fix in one sentence, both in the same currency.
 function wxFlagText(f) {
   const s = f.season.join("/");
-  let why;
-  if (f.kind === "temp") {
-    why = f.dir === "hot"
-      ? `Tagged ${s}, but you wear it in ${f.lo}°–${f.hi}° — your ${s.toLowerCase()} tops out near ${f.band[1]}°.`
-      : `Tagged ${s}, but you wear it in ${f.lo}°–${f.hi}° — your ${s.toLowerCase()} bottoms out near ${f.band[0]}°.`;
-  } else {
-    why = `Tagged ${s}, but only ${f.inSeason} of ${f.days} days you wore it felt like ${s}.`;
-  }
-  const miss = f.missing || [];
-  return `${why} That's ${miss.join(" / ")} weather here.`;
+  const band = `your ${s.toLowerCase()} generally runs ${f.band[0]}°–${f.band[1]}°`;
+  return `Commonly worn ${f.common.lo}°–${f.common.hi}° — ${band}. That's ${f.missing.join(" / ")} weather here.`;
 }
 
-// One tap: append the season(s) the weather says are missing, keeping whatever
-// is already there. Never removes — the piece may well be right about Winter
-// AND also need Summer.
+// One tap: append the season(s) the weather points to, keeping what's there.
+// Never removes — a piece may be right about Winter and also need Summer.
 async function addFlagSeason(id, seasons) {
   const i = itemById.get(id);
   if (!i || !seasons.length) return;
@@ -614,245 +471,16 @@ async function addFlagSeason(id, seasons) {
   toast(`${i.name || "Item"} is now ${next.join(" + ")}`);
 }
 
-/* "Nothing to show" has several very different causes here, and silence made
-   them indistinguishable — she went looking for the feature, found an empty
-   health check, and reasonably concluded it was broken. Say which gate is
-   closed, in her terms. */
-function wxAuditEmptyHtml() {
-  const L = wxLog(), n = Object.keys(L).length;
-  const avail = items.filter(i => itemStatus(i) === "Available");
-  const tagged = avail.filter(i => i.season && i.season.length).length;
-  const withCentre = new Set(wears.filter(w => L[w.worn_on]).map(w => w.item_id)).size;
-  const why = !n
-    ? `No weather on record yet. Run <b>Look up past weather</b> in Settings first — everything here is built on it.`
-    : !tagged
-      ? `Nothing to contradict yet: no Available piece has a season set by hand. Pieces without one aren't judged — their season is worked out from the weather instead, which fixes itself once trips are logged.`
-      : `${n} days of weather on record, ${tagged} piece${tagged === 1 ? "" : "s"} with a season set by hand, ${withCentre} with enough history to have a temperature habit.`;
-  return `<div class="muted" style="padding:22px 18px;font-size:13px;line-height:1.55;text-align:center">
-    🎉 Nothing disagrees.<div style="margin-top:8px">${why}</div>
-    <div style="margin-top:8px">If you know you were away and it isn't listed, add it under <b>Where you've been</b> — that's always worth doing, flag or no flag.</div>
-  </div>`;
-}
-
-/* The audit sheet. Trip guesses sit ABOVE the item list on purpose: answering
-   one "were you away?" can dissolve a dozen item flags at once, and it's the
-   cheaper question to answer. Nothing here is auto-applied. */
-function openSeasonAuditSheet() {
-  const { flags, tripGuesses } = wxAuditFlags();
-  const fmt = d => new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  const guesses = tripGuesses.map((g, idx) => {
-    // Count everything she actually WORE in the window, not just the pieces
-    // that voted — a trip-only piece abstains (its habit is the wrong weather),
-    // so "1 piece" would badly understate a week of outfits.
-    const worn = new Set(wears.filter(w => w.worn_on >= g.from && w.worn_on <= g.to).map(w => w.item_id)).size;
-    const nDays = g.dates.length;
-    return `<div style="margin:0 16px 8px;padding:11px 13px;background:var(--panel);border:1px solid var(--line);border-radius:14px">
-      <div style="font-size:14px;font-weight:600">Were you away ${esc(fmt(g.from))}${g.from === g.to ? "" : ` – ${esc(fmt(g.to))}`}?</div>
-      <div class="muted" style="font-size:12.5px;line-height:1.45;margin-top:3px">Over ${nDays} day${nDays === 1 ? "" : "s"} you wore ${worn} piece${worn === 1 ? "" : "s"} that don't suit the weather recorded here. If you were somewhere else, say where and the weather gets corrected instead — which fixes the seasons too.</div>
-      <div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">
-        <button class="btn btn-sec" data-wxa-trip="${idx}" style="flex:1;min-width:130px">✈️ I was away</button>
-        <button class="btn btn-sec" data-wxa-home="${idx}" style="flex:1;min-width:130px">🏠 I was home</button>
-      </div>
-      <button class="lnk" data-wxa-days="${idx}" style="margin-top:7px;font-size:12.5px">See these days ›</button>
-    </div>`;
-  }).join("");
-  const rows = flags.map(f => `
-    <div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line)">
-      <div style="width:46px;flex:none">${thumbHtml(f.image_path || "")}</div>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name || "Untitled")}</div>
-        <div class="muted" style="font-size:12px;line-height:1.4">${esc(wxFlagText(f))}</div>
-        <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-          <button class="cap-chip" data-wxa-add="${esc(f.id)}" style="color:var(--accent);font-weight:600">＋ Add ${esc(f.missing.join(" & "))}</button>
-          <button class="cap-chip" data-wxa-edit="${esc(f.id)}">Edit…</button>
-          <button class="cap-chip" data-wxa-ok="${esc(f.id)}" style="color:var(--muted)">It's fine</button>
-        </div>
-      </div>
-    </div>`).join("");
-  $("#wxAuditInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="wxaClose">Done</button>
-      <h2>Season vs weather</h2>
-      <span style="width:54px"></span>
-    </div>
-    <div class="muted" style="font-size:12.5px;padding:4px 18px 10px;line-height:1.5">${
-      flags.length
-        ? "These pieces were worn in weather their season tag doesn't fit. Either the tag is wrong, or you were somewhere warmer or colder than home."
-        : "Some days you dressed for a completely different climate than the one on record here — which usually means you were away."
-    }</div>
-    ${guesses}
-    ${rows || (tripGuesses.length ? "" : wxAuditEmptyHtml())}
-    <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
-  showSheet("wxAuditSheet");
-  hydratePhotos($("#wxAuditInner"));
-  $("#wxaClose").onclick = () => {
-    hideSheet("wxAuditSheet");
-    if (activeTabName() === "settings") { renderSettings(); runDataHealthCheck(); }
-  };
-  $("#wxAuditInner").querySelectorAll("[data-wxa-trip]").forEach(b => {
-    b.onclick = () => {
-      const g = tripGuesses[+b.dataset.wxaTrip];
-      hideSheet("wxAuditSheet");
-      openWhereSheet({ from: g.from, to: g.to });
-    };
-  });
-  $("#wxAuditInner").querySelectorAll("[data-wxa-days]").forEach(b => {
-    b.onclick = () => openWxDaysView(tripGuesses[+b.dataset.wxaDays]);
-  });
-  $("#wxAuditInner").querySelectorAll("[data-wxa-home]").forEach(b => {
-    b.onclick = async () => {
-      const g = tripGuesses[+b.dataset.wxaHome];
-      const list = [...homeRanges(), { from: g.from, to: g.to }];
-      _wxAudit = null;
-      try { await kvSet(WXA_HOME_KEY, list); } catch (e) { toast(e.message); }
-      toast("Noted — those days were at home");
-      openSeasonAuditSheet();
-    };
-  });
-  $("#wxAuditInner").querySelectorAll("[data-wxa-edit]").forEach(b => {
-    b.onclick = () => openWxSeasonEdit(b.dataset.wxaEdit);
-  });
-  $("#wxAuditInner").querySelectorAll("[data-wxa-add]").forEach(b => {
-    b.onclick = async () => {
-      const f = flags.find(x => x.id === b.dataset.wxaAdd);
-      if (!f) return;
-      b.disabled = true;
-      await addFlagSeason(f.id, f.missing);
-      openSeasonAuditSheet();
-    };
-  });
-  $("#wxAuditInner").querySelectorAll("[data-wxa-ok]").forEach(b => {
-    b.onclick = async () => {
-      const i = itemById.get(b.dataset.wxaOk);
-      if (!i) return;
-      const ok = { ...(kvData.get(WXA_OK_KEY) || {}) };
-      ok[i.id] = JSON.stringify(i.season || []);
-      _wxAudit = null;
-      try { await kvSet(WXA_OK_KEY, ok); } catch (e) { toast(e.message); }
-      openSeasonAuditSheet();
-    };
-  });
-}
-
-/* Day-by-day view of one suspect window. The audit's verdicts were unreadable
-   without this: she could see "Dec 20–26 looks odd" but not what she wore, what
-   the weather on record was, or which piece drove it — and the dates themselves
-   may be what's wrong. Everything here is inspectable and fixable in place:
-   edit a piece's season, or jump to that day in the calendar to move the wear. */
-function openWxDaysView(g) {
-  const L = wxLog();
-  const anomDays = new Set(g.dates);
-  // Per-DAY culprits, not a union across the window: she couldn't tell which
-  // piece made a given day suspect when every driver was marked on every day.
-  const anomByDate = new Map((wxAuditFlags().dayAnomalies || []).map(o => [o.d, o]));
-  const rowsByDay = new Map();
-  for (const w of wears) {
-    if (w.worn_on < g.from || w.worn_on > g.to) continue;
-    if (!rowsByDay.has(w.worn_on)) rowsByDay.set(w.worn_on, new Set());
-    rowsByDay.get(w.worn_on).add(w.item_id);
-  }
-  const dates = [];
-  for (let d = g.from; d <= g.to; d = shiftDate(d, 1)) dates.push(d);
-
-  const dayHtml = dates.map(d => {
-    const e = L[d];
-    const ids = [...(rowsByDay.get(d) || [])];
-    const wd = new Date(d + "T00:00:00");
-    const label = wd.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    const loc = e && e.away ? e.loc : null;
-    const an = anomByDate.get(d);
-    const culprits = new Set(an ? an.ids : []);
-    const pieces = ids.map(id => {
-      const i = itemById.get(id);
-      if (!i) return "";
-      const p = itemWxProfile(id);
-      const c = itemTempCenter(id);
-      /* Explicit vs derived, said out loud. A piece with no season isn't
-         season-less — the app works one out from the weather it's been worn in,
-         and that one self-corrects as trips get logged. Setting a season here
-         REPLACES that with a fixed answer, which is worth knowing before you
-         tap it. */
-      const derived = (!i.season || !i.season.length) ? itemSeasonSet(i) : null;
-      const season = (i.season && i.season.length) ? i.season.join(", ")
-        : derived && derived.length ? `${derived.join(", ")} (worked out, not set)`
-        : "no season yet";
-      const isCulprit = culprits.has(id);
-      // Spell out the arithmetic for the piece that actually drove the verdict.
-      const why = isCulprit && c && e && e.maxT != null
-        ? `<div style="font-size:11px;color:var(--accent);margin-top:1px">⚠ flagged this day — usually around ${c.t}°, about ${Math.abs(c.t - e.maxT)}° ${c.t > e.maxT ? "warmer" : "colder"} than this</div>`
-        : "";
-      return `<div style="display:flex;align-items:center;gap:9px;padding:5px 0 5px 10px${isCulprit ? ";background:var(--accent-soft);border-radius:10px" : ""}">
-        <div style="width:34px;flex:none">${thumbHtml(i.image_path || "")}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</div>
-          <div class="muted" style="font-size:11px">${esc(season)}${p ? ` · usually ${p.lo}°–${p.hi}°` : " · not worn enough to have a usual range"}</div>
-          ${why}
-        </div>
-        <button class="cap-chip" data-wxd-season="${esc(id)}" style="flex:none;font-size:11.5px">Season ✎</button>
-      </div>`;
-    }).join("");
-    return `<div style="padding:9px 16px;border-bottom:1px solid var(--line);${anomDays.has(d) ? "background:var(--panel)" : ""}">
-      <div style="display:flex;align-items:baseline;gap:8px">
-        <div style="font-size:13.5px;font-weight:600;flex:1">${esc(label)}${anomDays.has(d) ? " ⚠" : ""}</div>
-        <div class="muted" style="font-size:12px">${e && e.maxT != null && !isNullWxDay(e) ? `${e.maxT}°/${e.minT}°${loc ? ` · ${esc(String(loc).split(",")[0])}` : ""}` : "no weather on record"}</div>
-      </div>
-      ${pieces || `<div class="muted" style="font-size:12px;padding:4px 0 2px 10px">Nothing logged this day.</div>`}
-      <button class="lnk" data-wxd-cal="${esc(d)}" style="font-size:11.5px;padding:4px 0 0 10px;color:var(--muted)">Open in calendar — wrong date? ›</button>
-    </div>`;
-  }).join("");
-
-  $("#wxAuditInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="wxdBack">← Back</button>
-      <h2>These days</h2>
-      <span style="width:54px"></span>
-    </div>
-    <div class="muted" style="font-size:12.5px;padding:4px 18px 10px;line-height:1.5">⚠ marks the days and pieces that look wrong for the weather on record. If a date itself is wrong, open that day in the calendar and move the wear.</div>
-    ${dayHtml}
-    <div style="padding:12px 16px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn" id="wxdAway" style="flex:1;min-width:130px">✈️ I was away</button>
-      <button class="btn btn-sec" id="wxdHome" style="flex:1;min-width:130px">🏠 I was home</button>
-    </div>
-    <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
-  hydratePhotos($("#wxAuditInner"));
-  $("#wxdBack").onclick = () => openSeasonAuditSheet();
-  $("#wxdAway").onclick = () => { hideSheet("wxAuditSheet"); openWhereSheet({ from: g.from, to: g.to }); };
-  $("#wxdHome").onclick = async () => {
-    _wxAudit = null;
-    try { await kvSet(WXA_HOME_KEY, [...homeRanges(), { from: g.from, to: g.to }]); } catch (e) { toast(e.message); }
-    toast("Noted — those days were at home");
-    openSeasonAuditSheet();
-  };
-  $("#wxAuditInner").querySelectorAll("[data-wxd-season]").forEach(b => {
-    b.onclick = () => openWxSeasonEdit(b.dataset.wxdSeason, () => openWxDaysView(g));
-  });
-  $("#wxAuditInner").querySelectorAll("[data-wxd-cal]").forEach(b => {
-    b.onclick = () => {
-      hideSheet("wxAuditSheet");
-      switchTab("calendar");
-      calendarDay = b.dataset.wxdCal;
-      renderCalendarDay($("#calendarBody"));
-    };
-  });
-}
-
-// Season edit routed through the field sheet with a custom save, so the audit
-// list underneath refreshes instead of going stale behind the sheet.
-function openWxSeasonEdit(id, onDone = null) {
+// "It's fine" — keyed on the season signature, so editing the season re-arms it.
+async function dismissWxFlag(id) {
   const i = itemById.get(id);
   if (!i) return;
-  _fieldEditId = null;
-  _fieldEditKey = "season";
-  _fieldPending = i.season;
-  _fieldEditItem = i;
-  _fieldOnSave = async (val) => {
-    await saveField(id, "season", val);
-    _wxAudit = null;
-    if (onDone) onDone(); else openSeasonAuditSheet();
-  };
-  renderFieldSheet(i, "season", FIELD_CONFIGS.season);
-  showSheet("fieldSheet");
+  const ok = { ...(kvData.get(WXA_OK_KEY) || {}) };
+  ok[i.id] = JSON.stringify(i.season || []);
+  _wxAudit = null;
+  try { await kvSet(WXA_OK_KEY, ok); } catch (e) { toast(e.message); }
 }
+
 
 function _wxTileCollage(d) {
   const o = d.outfitId ? outfitById.get(d.outfitId) : null;

@@ -362,16 +362,10 @@ function runDataHealthCheck() {
   const incomplete = outfits.filter(outfitIncomplete);
   checks.push({ label: "Incomplete looks (no dress, no top+bottom pair)", rows: incomplete,
     review: openIncompleteLooksSheet });
-  // Not an integrity problem — a disagreement between what a piece is tagged
-  // for and the weather she actually wore it in. Review-only by construction:
-  // the fix might be the tag, or it might be a trip we don't know about.
-  // Count BOTH sides: a trip guess with no tagged-item flags behind it is the
-  // common case (a trip's worth of untagged pieces), and counting only flags
-  // hid the row exactly when it had the most useful thing to say.
-  const wxa = wxAuditFlags();
-  checks.push({ label: "Season/weather disagreements & unlogged trips",
-    rows: { length: wxa.flags.length + wxa.tripGuesses.length },
-    review: openSeasonAuditSheet });
+  // Season/weather disagreements deliberately do NOT appear here (Round D.4).
+  // They aren't integrity problems, and routing them through a health-check
+  // row built an audit queue she couldn't act on. They live where she already
+  // looks at clothes: the item's own page, and Closet Review.
   // Report-only (could be intentional):
   const emptyLooks = outfits.filter(o => !(outfitItemMap.get(o.id) || []).some(id => itemById.has(id)));
   checks.push({ label: "Looks with no pieces (report only)", rows: emptyLooks });
