@@ -4,164 +4,111 @@
 > Current version: **2026-07-25 r18**. Round D "Where You Were" shipped r14 and
 > was then hardened live against her real data across r15–r18 (see the r15–r18
 > section below — every round was a response to a real failure she reported).
-> ▶ NEXT UP: **Round D.3 "Answer, don't audit" (r19)** — planned by Fable
-> 2026-07-25, her 3 answers folded in, **LOCKED and ready for Opus to build**
-> (steps 1–6 below; step 4b and step 6 came from her answers).
+> ▶ NEXT UP: **Round D.4 "Subtraction" (r19)** — her verdict on the arc was
+> "this whole feature set feels like a mess," and she is right. The guessing
+> layer is DELETED, travel becomes pure hand-entry, flags shrink to one
+> criterion in two places. LOCKED via her three answers; ready for Opus.
+> This round removes more code than it adds — that is the point.
 > The only other carried-over item is the **Formulas remainder**, gated on
 > tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
 
 ---
 
-## ▶ PLANNED — Round D.3 "Answer, don't audit" (r19)
+## ▶ PLANNED — Round D.4 "Subtraction" (r19) — LOCKED, ready for Opus
 
-**Planned by Fable 2026-07-25 after a step-back review of the whole r14→r18
-arc. Two live bugs, one latent bug, and a reframe of the surface. The
-detection MATH stays — it converged through r15–r18 into something defensible
-and 136-case-tested. What keeps failing is the FRAME: this was built as an
-audit (a list of accusations) when the job is answering questions about days.
-Every complaint she filed is a workflow complaint: can't see the days, can't
-fix things from where she's looking, "I was home" dead-ends, buttons buried.**
+**Planned by Fable 2026-07-25 after her verdict on the r14→r18 arc: "this
+whole feature set feels like a mess." She is right, and the diagnosis is
+precise: her ask was (a) log where I was and (b) flag season/weather
+contradictions — and the mess lives almost entirely in a third thing she
+never asked for, the inference engine that GUESSES where she was. Five
+same-day patch rounds, four detector rewrites, and all the ontology (trip
+guesses, day anomalies, home marks, two dismissal stores, a day view) exist
+to serve the guessing layer. The parts she asked for have needed zero
+patches since they shipped. Her decisions, locked via three questions:
+guessing is DELETED entirely (travel is pure hand-entry — she said on day
+one she wanted to enter it), flags live on the item page + Closet Review,
+the "See these days" day view is CUT.**
 
-### The step-back verdict (why not a different system)
+This round REMOVES more code than it adds. That is the point. A prior plan
+("Round D.3 — Answer, don't audit") was superseded before build; see git
+history (982ae9e) if its reasoning is ever wanted.
 
-Considered honestly, because she asked:
-- **Rebuild the detectors?** No. Each patch round fixed a real, named flaw
-  (own-spread bars, span+density clustering, null-day hygiene, signal
-  separation, no-proposal-no-flag) and each is pinned by tests. A rewrite
-  re-earns those lessons from scratch.
-- **A provenance ledger** (every derived value carries evidence + override)?
-  Overkill — the day view + review notes already deliver the visible/revisable
-  part, and the app's derive-first philosophy means most values should stay
-  fluid, not pinned.
-- **The keeper from the "different system" thinking:** the one real unknown is
-  WHERE SHE WAS. Given that, everything else is derivation, not detection. So
-  promote day classification to a first-class three-state — **away / home /
-  unknown** — make it visible, and let "unknown" be an honest answer instead
-  of a presumption of home. The audit's job then shrinks to: surface suspect
-  windows as QUESTIONS, and leave a small residue of one-tap tag fixes.
-  That is a reframe of the existing surface, not a new engine.
-- **Sheet vs full screen:** keep sheets. The stacking bug (below) is a
-  one-line DOM-order fix, and the day view fits a sheet fine. A stats-screen
-  queue is the fallback if sheets keep chafing — not now.
+### DELETE (the guessing layer, wholesale)
 
-### Step 1 — Fix the buried field sheet (her bug 1, root-caused)
+- `buildDayWxAnomalies`, `itemTempCenter`, `_clusterAwayDays`, and constants
+  `WXA_DAY_DELTA`, `WXA_DAY_PIECES`, `WXA_DAY_STRONG`, `WXA_GAP`,
+  `WXA_RUN_MIN`, `WXA_MAX_SPAN`, `WXA_MIN_DENSITY`.
+- `tripGuesses` + `dayAnomalies` from `buildSeasonWxFlags` (returns flags
+  only, as a plain array).
+- Home marks: `WXA_HOME_KEY`, `homeRanges`, `isMarkedHome` and every use.
+  The stored `kv "wxaudit_home"` becomes an unread orphan — harmless; note
+  it in CLAUDE.md rather than migrating.
+- `openSeasonAuditSheet`, `openWxDaysView`, `openWxSeasonEdit` (the review +
+  field sheet cover editing now), the `#wxAuditSheet` wrapper in index.html,
+  its `uiCanRefetch` entry, and the health-check row.
+- The calendar-kind flag (`WXA_CAL_SHARE`, `WXA_MIN_DAYS`): it existed for
+  the no-usable-bands case; with a 1200-day log the bands are usable, and a
+  quiet detector is the honest behavior when they are not. One flag kind,
+  one criterion.
+- Selftest: every trip-guess / anomaly / clustering / home-mark case goes
+  (the `realisticYear` clustering fixtures, the stLucia anomaly fixtures,
+  the margin-based temp-flag cases). Expect the case count to DROP — say so
+  plainly in the summary rather than padding.
 
-Every sheet wrapper is `z-index: 301` (backdrop 300), so **DOM order decides
-the stack**. `#whereSheet` and `#wxAuditSheet` were appended LAST in
-index.html — after `#fieldSheet` — so "Edit season" / "Season ✎" genuinely
-opens the field sheet UNDERNEATH the audit sheet. It has worked all along;
-she just couldn't see it. ("✈️ I was away" worked because that path hides the
-audit sheet first — which is also the diagnostic that confirms this.)
-**Fix:** move the `#whereSheet` + `#wxAuditSheet` wrapper divs ABOVE
-`#fieldSheet` in index.html. Nothing else changes; the `_fieldOnSave`
-callbacks already refresh the audit list underneath.
-**CLAUDE.md gotcha to add:** sheets stack by DOM order; a sheet that must
-open OVER another must be declared LATER in index.html; `#fieldSheet` should
-stay last among sheets that host field edits.
+### KEEP untouched (the part that works, all invisible)
 
-### Step 2 — "I was home" keeps her working (her bug 2)
+`wherelog` + `#whereSheet` editor · `awayRanges`/`awayRangeFor` ·
+`mergeWxDays` + the away backfill pass + `correctAwayWeather` ·
+`purgeNullWxDays`/`_wxDay` null hygiene · `seasonBands` (+ trim) ·
+`effectiveSeasonOf` + fancy `itemSeasonSet` · `similarDays` inclusion rule
+with loc badge · `itemWxProfile` · `inSeasonWx` rescue · review
+`guessSeason`/`seasonGuessWhy` + `season_check` row (+ `saveKey` plumbing).
 
-Both home buttons (trip card + day view) currently persist and bounce back to
-the audit root — a dead end. New flow: persist → toast **with Undo** (removes
-the range) → **stay in / open the day view for that window** in a `home` mode:
-banner "Marked as home ✓ — the weather stands. If a piece's season looks
-wrong below, fix it here." For each piece with an EXPLICIT season and a
-computable proposal (`seasonForTemp` over the window's day temps, minus its
-tags), show the one-tap "＋ Add X" chip beside "Season ✎".
-**Untagged pieces get no chip, deliberately** — their season is derived and
-self-correcting, one odd home day doesn't move a ≥15%-share derivation, and
-setting a season would permanently replace the derivation with a fixed answer
-(the day view already labels these "worked out, not set"). [Q1 below.]
+### BUILD (small)
 
-### Step 3 — Deleting/undoing a location answer must revert the weather
-(latent bug, found while planning)
+1. **Detector v2 — her criterion, one flag kind.** Rewrite
+   `buildSeasonWxFlags`: per Available item with an explicit season and
+   ≥ `WX_PROFILE_MIN`(5) weather-matched wear-days (one floor, shared with
+   the profile): `pieceCommon` = [p25, p75] of worn maxT; each tagged
+   season's **general range** = band [p10, p90]. **Overlap with ANY tagged
+   season → no flag.** Else: `fit` = seasons whose general range overlaps
+   `pieceCommon`; `missing` = fit − claimed; **no missing → no flag**; `dir`
+   = hot (common.lo above every claimed p90) / cold (mirror) / between
+   (sits in a gap between two claimed seasons). Dismissal `kv "wxaudit_ok"`
+   (season-signature keyed) and the `_wxAudit` stamp cache stay; explicit
+   busts stay in `saveField`(season) + `correctAwayWeather` + resolutions.
+   `wxFlagText` v2: "Commonly worn 76°–89° — your winter generally runs
+   10°–45°. That\'s Summer weather here."
+2. **Item-page flag line grows its fix.** `#detWxFlag` keeps the sentence;
+   beside it a one-tap **"＋ Add Summer"** chip (`addFlagSeason`, appends,
+   never replaces) and a muted ✕ ("It\'s fine" → `wxaudit_ok`). Tapping the
+   sentence itself opens `openFieldEdit(id, "season")` for the manual path.
+3. **Location answers become reversible.** `revertAwayWeather(r)`: fetch
+   HOME weather for the span, merge (rebuilt entries drop `away`), then
+   re-run `correctAwayWeather` for any REMAINING away ranges overlapping
+   the span. Called from `removeWhereEntry` and from a new Undo chip on the
+   where-sheet save toast. Fire-and-forget; `_wxAudit = null` after.
+4. **Sheet-order hygiene:** `#whereSheet` moves ABOVE `#fieldSheet` in
+   index.html, and the gotcha is documented in CLAUDE.md: all sheets share
+   z-index 301, DOM order is the stack, a sheet that must open over another
+   must be declared later — this is what buried the season editor for a day.
+5. **Selftest + docs.** New cases: overlap detector (fine / hot / cold /
+   between / no-proposal-no-flag / dismissal / floor) · revert-then-reapply
+   overlap via `mergeWxDays` (away merge → home revert clears the flag →
+   surviving overlap re-applies). CLAUDE.md Round D entry rewritten to the
+   FINAL state (with one line on what was deleted and why), ROADMAP flip,
+   memory per [[close-out-routine]]. WHATS_NEW should say "simplified"
+   honestly — fewer, better flags; travel is yours to enter.
 
-`removeWhereEntry` deletes the range but leaves its days stranded with
-`away:1` + the away location's weather — the correction outlives the answer
-that justified it. **Fix:** `revertAwayWeather(r)` mirroring
-`correctAwayWeather(r)`: fetch HOME weather for the span, merge (rebuilt
-entries carry no `away` flag), then re-run `correctAwayWeather` for any
-REMAINING away ranges that overlap the span (so deleting one of two
-overlapping answers doesn't wipe the survivor). Call it from:
-`removeWhereEntry`, the new home-toast Undo (step 2), and a new Undo chip on
-the where-sheet save toast. Fire-and-forget like its mirror; `_wxAudit = null`
-after each.
+### What she gets at the end
 
-### Step 4 — Make the three-way day state visible (small, no nudges)
-
-- `dayStatus(date, ranges?, home?)` → `"away" | "home" | "unknown"` helper
-  (pure, selftest-facing); day view day-headers show 🏠 on confirmed-home days
-  (away days already show the place).
-- Settings "Where you've been" card gains one muted line: "N worn days still
-  unaccounted for — the health check asks about the suspicious ones." Count =
-  distinct wear-days not inside away ∪ home ranges. Visibility only — no
-  queue, no badge, no Home-screen anything (her no-nudges ethos). [Q2 below.]
-- Docs: the kv key stays `wxaudit_home` (data exists) but is documented as
-  the **homelog** — first-class data consumed by the detectors, not a
-  dismissal list.
-
-### Step 5 — Selftest + docs
-
-Cases: `dayStatus` three states · revert-then-reapply overlap logic via
-`mergeWxDays` (pure: away merge → home revert clears the flag → surviving
-overlap re-applies) · unaccounted-days count · home-mode proposal chips only
-on explicitly-tagged pieces. The sheet-order fix is browser-verified (open
-audit → Edit… → field sheet visibly on top), not selftested. CLAUDE.md gotcha
-+ Round D entry update, ROADMAP flip, memory per [[close-out-routine]].
-
-### Her answers (2026-07-25, plan LOCKED — build all of the below)
-
-1. **No chip for untagged pieces** after "I was home" — as planned (step 2
-   stands as written).
-2. **The unaccounted-days line must be BROWSABLE** — step 4 grows into
-   step 4b below.
-3. **Detector criterion replaced at her direction** — "it needs to be with
-   commonly worn + general ranges for the season its tags are assigned to,
-   to fix the issue with flags that have no solution." That is a better
-   construction than the shipped one; it becomes step 6.
-
-### Step 4b — "Where you were" browse (extends step 4, her call)
-
-Tapping the "N worn days unaccounted for" line in Settings opens a **year
-pixel grid** of day classification — same `.pxgrid` machinery as Year in
-Pixels (fixed 11px cells, sideways scroll, one row block per year of wear
-history, newest first). Cell color by `dayStatus`: away = `var(--accent)` ·
-confirmed-home = soft accent · worn-but-unknown = `var(--panel2)` dot ·
-not-worn = empty `var(--panel)`. A ⚠ tint over days inside a CURRENT suspect
-window. Legend underneath. **Read-only browse**: tapping a day opens the
-calendar day view (same handoff as the audit's "Open in calendar"); answering
-still happens through the audit queue and `#whereSheet` (an "＋ Add
-somewhere" button sits in the sheet header for direct entry). Lives in a
-sheet (`#wherePxSheet` — declared BEFORE `#fieldSheet` per the step-1 gotcha,
-added to `uiCanRefetch`).
-
-### Step 6 — Detector v2: commonly-worn vs the season's general range (her Q3)
-
-Replace the temp-flag test in `buildSeasonWxFlags` (r18's p10/p90 +
-spread-scaled margin construction) with an **overlap test between central
-masses** — one currency for both judgment and proposal, no margins to tune:
-
-- `pieceCommon` = **[p25, p75]** of the item's weather-matched wear temps
-  (post-correction; still ≥ `WXA_TEMP_MIN_DAYS` days). "Commonly worn."
-- A season's **general range** = its band's **[p10, p90]** (already computed
-  by `seasonBands`).
-- **No flag if ANY tagged season's general range overlaps `pieceCommon`.**
-  A piece commonly worn inside any season it claims is fine, full stop —
-  this is what kills the no-solution flags structurally rather than by
-  suppression.
-- Otherwise flag, and in the same currency: `fit` = seasons whose general
-  range overlaps `pieceCommon`; `missing` = fit − claimed; **no-proposal →
-  no flag** (kept from r18). Direction for the sentence: `pieceCommon.lo >`
-  every claimed p90 → "hot"; `hi <` every claimed p10 → "cold"; otherwise it
-  sits in a gap between claimed seasons ("between your winter and summer").
-- `wxFlagText` v2: "Commonly worn 76°–89° — your winter generally runs
-  10°–45°. That's Summer weather here." + the ＋ Add chip as shipped.
-- Calendar flag unchanged (it exists for the no-usable-bands case).
-- Selftest: rewrite the r18 margin cases as overlap cases (mild-end coat
-  passes naturally — its IQR overlaps winter's general range); add a
-  gap-between-seasons fixture; keep both no-flag guards.
+Settings → "Where you\'ve been" (hand-entry, reversible, corrects weather →
+seasons → precedent → packing, silently). Flagged items say one sentence and
+offer one tap, on the item page and in Closet Review. Nothing guesses,
+nothing interrogates, nothing stacks.
 
 ---
+
 
 ## ✅ SHIPPED — Round D hardening against her real data (2026-07-25, r15→r18)
 
