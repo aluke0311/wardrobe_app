@@ -6,13 +6,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r14";
+const APP_VERSION = "2026-07-25 r15";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Settings \u2192 \u201cWhere you\u2019ve been\u201d: log past trips, and those days get the weather you were actually in instead of the weather at home",
-  "New health check: pieces whose season tag disagrees with the weather you wore them in \u2014 and if several disagree about the same week, it just asks whether you were away",
-  "\u201cYou\u2019ve dressed for this before\u201d now counts trip days too, once it knows where you were",
+  "The health check now spots unlogged trips from the outfits themselves \u2014 no season tags needed. If you wore sandals on a 25\u00b0 day, it asks where you were",
+  "Settings \u2192 \u201cWhere you\u2019ve been\u201d: answer that, and those days get the weather you were actually in instead of the weather at home",
+  "Which then fixes the seasons, the \u201cusually worn\u201d ranges, and \u201cyou\u2019ve dressed for this before\u201d",
   "Packing for somewhere warm in winter no longer hides your summer clothes from the suggester",
 ];
 

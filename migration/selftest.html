@@ -1071,10 +1071,18 @@ function run() {
     const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
     return eq(r.flags.length, 0);
   });
-  t("buildSeasonWxFlags: under the day minimum it stays quiet", () => {
+  t("buildSeasonWxFlags: under the temp-test minimum it stays quiet", () => {
     const f = auditFix();
-    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 5), log: f.log, ranges: [], dismissed: {} });
+    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 2), log: f.log, ranges: [], dismissed: {} });
     return eq(r.flags.length, 0);
+  });
+  t("buildSeasonWxFlags: 3 days is enough for the temp test, not the calendar one", () => {
+    const f = auditFix();                       // 8 July days at 82°, tagged Winter
+    const r = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 3), log: f.log, ranges: [], dismissed: {} });
+    // Same 3 days, but with no usable bands the calendar test can't reach its own floor.
+    const cal = W.buildSeasonWxFlags({ pool: [f.item], wearRows: f.rows.slice(0, 3), log: f.log,
+      bands: { Winter: null, Spring: null, Summer: null, Fall: null }, ranges: [], dismissed: {} });
+    return eq([r.flags.length, r.flags[0].kind, cal.flags.length], [1, "temp", 0]);
   });
   t("buildSeasonWxFlags: no explicit season = nothing to contradict", () => {
     const f = auditFix({ season: null });
@@ -1123,6 +1131,91 @@ function run() {
     const r = W.buildSeasonWxFlags({ pool, wearRows: rows, log, ranges: known, dismissed: {} });
     return eq([r.flags.length, r.tripGuesses.length], [1, 0]);
   });
+
+  // ---- Round D r15: the untagged-trip case (her St Lucia dress) ----
+  // A sundress with NO season tag and only trip wears is invisible to the
+  // tagged detector by construction — the stored (home) weather and the
+  // calendar agree with each other. What gives the trip away is the SANDALS:
+  // years of home summer wears, suddenly worn on a "25°" December day.
+  const stLuciaFix = () => {
+    const log = bandLog();
+    const rows = [];
+    for (let k = 1; k <= 20; k++) {                       // sandals: 20 real summer days
+      const d = `2026-07-${String(k).padStart(2, "0")}`;
+      rows.push({ item_id: "sandals", worn_on: d });
+    }
+    const trip = [];
+    for (let k = 20; k <= 26; k++) {                      // the trip, still recorded as HOME winter
+      const d = `2025-12-${k}`;
+      trip.push(d);
+      log[d] = { maxT: 25, minT: 12, code: 0 };
+      rows.push({ item_id: "sandals", worn_on: d });
+      rows.push({ item_id: "sundress", worn_on: d });     // no season tag, no history
+    }
+    return { log, rows, trip };
+  };
+  t("itemTempCenter is the median, so a few trip days can't move it", () => {
+    const f = stLuciaFix();
+    const c = W.itemTempCenter("sandals", f.log,
+      new Map([["sandals", new Set(f.rows.filter(r => r.item_id === "sandals").map(r => r.worn_on))]]));
+    return eq([c.t, c.n], [81, 27]);   // 7 cold trip days in the tail, median unmoved
+  });
+  t("itemTempCenter stays null under the history minimum", () => {
+    const f = stLuciaFix();
+    return eq(W.itemTempCenter("zz", f.log, new Map([["zz", new Set(f.trip.slice(0, 3))]])), null);
+  });
+  t("a trip-only piece abstains — its habit IS the wrong weather", () => {
+    // The sundress's own centre is 25°, computed from the same corrupted days,
+    // so it agrees with them trivially and must not be counted either way.
+    const f = stLuciaFix();
+    const c = W.itemTempCenter("sundress", f.log, new Map([["sundress", new Set(f.trip)]]));
+    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
+    return eq([c.t, r.days[0].ids], [25, ["sandals"]]);
+  });
+  t("buildDayWxAnomalies finds an unlogged trip from the outfit, not the tags", () => {
+    const f = stLuciaFix();
+    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
+    return eq([r.days.length, r.days[0].dir, r.clusters.length,
+               r.clusters[0].from, r.clusters[0].to],
+              [7, "warmer", 1, "2025-12-20", "2025-12-26"]);
+  });
+  t("buildSeasonWxFlags: an untagged trip still raises a trip guess", () => {
+    const f = stLuciaFix();
+    const pool = [{ id: "sundress", name: "Sundress", season: null, status: "Available", image_path: "" },
+                  { id: "sandals", name: "Sandals", season: null, status: "Available", image_path: "" }];
+    const r = W.buildSeasonWxFlags({ pool, wearRows: f.rows, log: f.log, ranges: [], dismissed: {} });
+    return eq([r.flags.length, r.tripGuesses.length,
+               r.tripGuesses[0] && r.tripGuesses[0].from, r.tripGuesses[0] && r.tripGuesses[0].to],
+              [0, 1, "2025-12-20", "2025-12-26"]);
+  });
+  t("a day already inside a known away range is never re-asked", () => {
+    const f = stLuciaFix();
+    const known = [{ from: "2025-12-19", to: "2025-12-28", name: "Castries", lat: 14, lon: -60 }];
+    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: known });
+    return eq([r.days.length, r.clusters.length], [0, 0]);
+  });
+  t("an ordinary home summer day is not an anomaly", () => {
+    const f = stLuciaFix();
+    const r = W.buildDayWxAnomalies({ wearRows: f.rows, log: f.log, ranges: [] });
+    return eq(r.days.some(d => d.d.startsWith("2026-07")), false);
+  });
+  t("one WELL-ESTABLISHED piece is enough; one lightly-worn one is not", () => {
+    const f = stLuciaFix();
+    // Sandals alone (27 days of history) still carry the day…
+    const strong = W.buildDayWxAnomalies({
+      wearRows: f.rows.filter(r => r.item_id !== "sundress"), log: f.log, ranges: [] });
+    // …but a piece with just 6 summer days behind it doesn't, on its own.
+    const log2 = bandLog(); const rows2 = [];
+    for (let k = 1; k <= 6; k++) rows2.push({ item_id: "flip", worn_on: `2026-07-0${k}` });
+    for (let k = 20; k <= 26; k++) {
+      const d = `2025-12-${k}`; log2[d] = { maxT: 25, minT: 12, code: 0 };
+      rows2.push({ item_id: "flip", worn_on: d });
+    }
+    const weak = W.buildDayWxAnomalies({ wearRows: rows2, log: log2, ranges: [] });
+    return eq([strong.days.length > 0, weak.days.length], [true, 0]);
+  });
+  t("the temp flag needs fewer days than the calendar flag", () =>
+    eq(W.WXA_TEMP_MIN_DAYS < W.WXA_MIN_DAYS, true));
 
   // ---- Round D: temperature-eligible rescue ----
   t("inSeasonWx rescues an out-of-season piece the forecast actually fits", () => {

@@ -365,8 +365,12 @@ function runDataHealthCheck() {
   // Not an integrity problem — a disagreement between what a piece is tagged
   // for and the weather she actually wore it in. Review-only by construction:
   // the fix might be the tag, or it might be a trip we don't know about.
+  // Count BOTH sides: a trip guess with no tagged-item flags behind it is the
+  // common case (a trip's worth of untagged pieces), and counting only flags
+  // hid the row exactly when it had the most useful thing to say.
   const wxa = wxAuditFlags();
-  checks.push({ label: "Season tags that disagree with the weather", rows: wxa.flags,
+  checks.push({ label: "Season/weather disagreements & unlogged trips",
+    rows: { length: wxa.flags.length + wxa.tripGuesses.length },
     review: openSeasonAuditSheet });
   // Report-only (could be intentional):
   const emptyLooks = outfits.filter(o => !(outfitItemMap.get(o.id) || []).some(id => itemById.has(id)));
