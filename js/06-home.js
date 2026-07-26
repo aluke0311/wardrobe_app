@@ -765,6 +765,7 @@ function tripOfferHtml() {
   if (tripModeId) return "";
   const today = todayStr();
   const c = capsules.filter(isDatedTrip)
+    .filter(x => !isCapsuleArchived(x.id))   // archiving means "done asking me"
     .filter(x => { const p = tripPhase(x); return p === "trip" || p === "pack"; })
     .sort((a, b) => a.start_date.localeCompare(b.start_date))[0];
   if (!c) return "";

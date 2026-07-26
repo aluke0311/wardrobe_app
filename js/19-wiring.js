@@ -642,6 +642,20 @@ function wireEvents() {
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
     if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);
     if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);
+    if (e.target.closest("[data-cap-archtoggle]")) { _capArchiveOpen = !_capArchiveOpen; return renderCapsules(); }
+    if (e.target.closest("[data-cap-arch]")) {
+      // Capture the id — capsuleId moves when we drop back to the list, and the
+      // Undo closure must still point at the capsule she just archived.
+      const cid = capsuleId;
+      const on = !isCapsuleArchived(cid);
+      const c = capsuleById.get(cid);
+      return setCapsuleArchived(cid, on).then(() => {
+        capsuleView = "list";
+        renderCapsules();
+        toast(on ? `Archived · ${(c && c.name) || "capsule"}` : "Back in the list",
+          on ? { label: "Undo", fn: () => setCapsuleArchived(cid, false).then(() => renderCapsules()) } : undefined);
+      });
+    }
     if (e.target.closest("[data-wx-refresh]")) {
       const c = capsuleById.get(capsuleId);
       if (c) { delete _wxCache[c.id]; const el = $("#wxStrip"); if (el) el.innerHTML = `<div class="wx-loading muted">Refreshing…</div>`; loadTripWeather(c); }

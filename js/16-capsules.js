@@ -14,6 +14,32 @@ let _capUnpackedOnly = false;    // trip detail: show only not-yet-packed items
 let _capPickCat = null;          // picker category filter (null = all)
 let _capPickSub = null;          // picker subcategory filter (null = all within cat)
 let _capPickStatus = "Available"; // picker status lens: "Available" | "Storage" | "All"
+let _capArchiveOpen = false;      // session-only: is the archived section expanded?
+
+/* ---- ARCHIVED CAPSULES (2026-07-25, her request) --------------------------
+   Past trips are worth KEEPING — they carry packing lists, plans, and (for
+   dated ones) the locations that make `awayRanges` work — but a finished trip
+   shouldn't sit at the top of the list forever. Archiving hides it from the
+   main list behind an expander; nothing else about it changes.
+   ⚠️ Rides `kv`, NOT a new `capsules.archived` column, so it ships without a
+   migration (same reasoning as dayplan/wherelog). If a column is ever added,
+   migrate this key rather than running both.
+   ⚠️ An archived TRIP still contributes its locations to `awayRanges()` — the
+   travel happened, and its weather corrections must not silently revert. */
+const CAP_ARCHIVE_KEY = "capsule_archive";
+const archivedCapsuleIds = () => new Set(kvData.get(CAP_ARCHIVE_KEY) || []);
+const isCapsuleArchived = (id) => archivedCapsuleIds().has(id);
+const activeCapsules = () => { const a = archivedCapsuleIds(); return capsules.filter(c => !a.has(c.id)); };
+
+async function setCapsuleArchived(id, on) {
+  const set = archivedCapsuleIds();
+  if (on) set.add(id); else set.delete(id);
+  try { await kvSet(CAP_ARCHIVE_KEY, [...set]); }
+  catch (e) { toast(e.message); return; }
+  // A capsule that's being put away shouldn't keep scoping the closet.
+  if (on && activeCapsuleId === id) activeCapsuleId = null;
+  if (on && tripModeId === id) exitTripMode();
+}
 
 // canonical category order for grouping (packing-friendly)
 const CAP_CAT_ORDER = ["Outerwear", "Tops", "Dresses", "Bottoms", "Shoes", "Workout"];
@@ -106,7 +132,7 @@ function renderCapsuleList() {
       </div>
       <button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
   }
-  const cards = capsules.map(c => {
+  const card = (c) => {
     const n = capsuleItemCount(c.id);
     const dates = capDateLabel(c);
     const bits = [`${n} item${n === 1 ? "" : "s"}`];
@@ -121,9 +147,22 @@ function renderCapsuleList() {
       </div>
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
-  }).join("");
+  };
+  const arch = archivedCapsuleIds();
+  const live = capsules.filter(c => !arch.has(c.id));
+  // Newest trips first among archived — that's how she'll look for one.
+  const put = capsules.filter(c => arch.has(c.id))
+    .sort((a, b) => String(b.start_date || b.created_at || "").localeCompare(String(a.start_date || a.created_at || "")));
+  const archSection = put.length ? `
+    <button class="frow" data-cap-archtoggle style="margin:4px 14px 0;border-radius:14px">
+      <span style="flex:1;text-align:left">🗄 Archived · ${put.length}</span>
+      <svg class="chev" viewBox="0 0 24 24" style="${_capArchiveOpen ? "transform:rotate(90deg)" : ""}"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    ${_capArchiveOpen ? `<div class="cap-list" style="opacity:.72">${put.map(card).join("")}</div>` : ""}` : "";
   return capToolbar("Capsules", false) +
-    `<div class="cap-list">${cards}</div>` +
+    (live.length ? `<div class="cap-list">${live.map(card).join("")}</div>`
+                 : `<div class="placeholder" style="padding:18px 16px;font-size:13px;color:var(--muted)">Everything's archived. Open the section below to bring one back.</div>`) +
+    archSection +
     `<button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
 }
 
@@ -354,6 +393,7 @@ function renderCapsuleDetail() {
         <button class="cap-act2" data-cap-rename>Rename</button>
         <button class="cap-act2" data-cap-dup>Duplicate</button>
         <button class="cap-act2" data-cap-share>Share list</button>
+        <button class="cap-act2" data-cap-arch>${isCapsuleArchived(capsuleId) ? "Unarchive" : "Archive"}</button>
       </div>
       <button class="cap-del" data-cap-del>Delete capsule</button>
     </div>`;
@@ -1083,7 +1123,10 @@ async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
 function openCapsuleAssign(currentIds, onSave) {
   const sel = new Set(currentIds);
   const render = () => {
-    const rows = capsules.map(c => {
+    // Archived capsules stay out of the way here too, unless this item is
+    // already in one — hiding that would make its membership uneditable.
+    const arch = archivedCapsuleIds();
+    const rows = capsules.filter(c => !arch.has(c.id) || sel.has(c.id)).map(c => {
       const on = sel.has(c.id);
       return `<button class="sheet-row" data-cap-tog="${esc(c.id)}">
         <span>${esc(c.name)}</span>

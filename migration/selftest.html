@@ -1257,6 +1257,42 @@ function run() {
               [true, true]);
   });
 
+  /* ---- Archived capsules (2026-07-25) ----
+     Past trips are kept but shouldn't clog the list. The load-bearing part is
+     that archiving changes VISIBILITY only — an archived trip's locations must
+     still drive awayRanges, or its weather corrections would silently revert. */
+  t("archiving hides a capsule from the list but keeps it", () => {
+    const savedCaps = W.capsules, savedKv = W.kvData.get("capsule_archive");
+    W.capsules = [{ id: "c1", name: "Old trip", start_date: "2025-01-01", end_date: "2025-01-05" },
+                  { id: "c2", name: "Work capsule" }];
+    W.kvData.set("capsule_archive", ["c1"]);
+    const active = W.activeCapsules().map(c => c.id);
+    const flags = [W.isCapsuleArchived("c1"), W.isCapsuleArchived("c2"), W.capsules.length];
+    W.capsules = savedCaps;
+    if (savedKv === undefined) W.kvData.delete("capsule_archive"); else W.kvData.set("capsule_archive", savedKv);
+    return eq([active, flags], [["c2"], [true, false, 2]]);
+  });
+  t("an archived TRIP still contributes its away range", () => {
+    // The travel happened. If archiving dropped it from awayRanges, every
+    // weather correction it justified would quietly revert.
+    const caps = [{ id: "c1", name: "Island", start_date: "2025-12-20", end_date: "2025-12-27",
+      locations: [{ name: "Castries", lat: 14, lon: -60, from: null, to: null }] }];
+    const savedKv = W.kvData.get("capsule_archive");
+    W.kvData.set("capsule_archive", ["c1"]);
+    const r = W.awayRanges([], caps);
+    if (savedKv === undefined) W.kvData.delete("capsule_archive"); else W.kvData.set("capsule_archive", savedKv);
+    return eq(r.map(x => [x.name, x.from, x.to]), [["Castries", "2025-12-20", "2025-12-27"]]);
+  });
+  t("archive state round-trips through the kv key", () => {
+    const savedKv = W.kvData.get("capsule_archive");
+    W.kvData.set("capsule_archive", []);
+    const none = W.isCapsuleArchived("zz");
+    W.kvData.set("capsule_archive", ["zz"]);
+    const some = W.isCapsuleArchived("zz");
+    if (savedKv === undefined) W.kvData.delete("capsule_archive"); else W.kvData.set("capsule_archive", savedKv);
+    return eq([none, some], [false, true]);
+  });
+
   // ---- render summary ----
   const ul = document.getElementById("results");
   let pass = 0;

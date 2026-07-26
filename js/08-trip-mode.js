@@ -595,7 +595,8 @@ function renderClosetMend() {
 // Pick a capsule/trip to scope the closet to (reuses the same activeCapsuleId path
 // as "Plan outfits from this"; the banner + ✕ then show across closet + looks).
 function openClosetCapsuleFilter() {
-  const rows = capsules.map(c => {
+  // Same rule as the capsules list: archived sets aren't offered as a scope.
+  const rows = activeCapsules().map(c => {
     const n = capsuleItemCount(c.id);
     const rep = capsuleItems(c.id).find(i => i.image_path);
     return `<button class="frow" data-capfilterpick="${esc(c.id)}">${thumbHtml(rep ? rep.image_path : null)}

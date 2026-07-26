@@ -297,14 +297,16 @@ function openItemDetails(id) {
         <div class="det-divider"></div>
         ${detRow("Season", esc((i.season || []).join(", ")), "season")}
         ${(() => {
-          /* Every item can say what its wear history implies, tagged or not
-             (her request). Shown only when it adds something: an untagged
-             piece's working answer, or a disagreement worth reconciling. */
+          /* "Worn like" always sits under Season (her request) — not only when
+             it disagrees. Seeing it AGREE is information too: it's the app
+             showing its work on a tag she can then trust. */
           const { explicit, derived, differs } = seasonCompare(i);
-          if (!derived) return "";
-          if (!explicit) return `<div class="det-sub" style="padding:0 0 6px">Worn like <b>${esc(derived.join(" + "))}</b> — no season set, so this is what the app uses.</div>`;
-          if (!differs) return "";
-          return `<div class="det-sub" style="padding:0 0 6px">Worn like <b>${esc(derived.join(" + "))}</b> — differs from what you set.</div>`;
+          const wrap = (t) => `<div class="det-sub" style="padding:0 0 6px">${t}</div>`;
+          if (!derived) return wrap(`Worn like — <span style="color:var(--muted)">not worn enough yet to tell</span>`);
+          const worn = `Worn like <b>${esc(derived.join(" + "))}</b>`;
+          if (!explicit) return wrap(`${worn} — nothing set, so this is what the app uses.`);
+          if (!differs) return wrap(`${worn} — matches what you set.`);
+          return wrap(`${worn} — differs from what you set.`);
         })()}
         <div class="det-divider"></div>
         ${detRow("Brand", esc(i.brand || ""), "brand")}
