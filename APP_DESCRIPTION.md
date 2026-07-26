@@ -61,16 +61,32 @@ get flagged rather than quietly built.
    logged. Add a *captured* field only when it can't be derived AND a feature being
    built right now needs it. Capture subjective data at the moment of use, never as
    a per-item chore.
-4. **One `index.html`.** The entire app — HTML, CSS, JavaScript — is a single
-   ~15,900-line file. No build step, no framework, no bundler, no libraries, no CDN
-   scripts. The only approved exceptions are `manifest.json` and two icon PNGs for
-   PWA install. **No service worker, ever** (that would be a real second JS file).
+4. **No build step, and nothing but plain static files.** No framework, no bundler,
+   no libraries, no CDN scripts — what is committed is exactly what runs.
+   `index.html` is ~290 lines of markup plus ordered `<script src>` tags; the code
+   lives in `css/styles.css` and **`js/01-config.js` … `js/20-boot.js`** (~15,300
+   lines across 20 files), loaded as classic scripts. **No service worker, ever** —
+   it would silently serve stale modules, and offline is already covered by the
+   snapshot and photo caches.
+   ⚠️ This app *was* a single 16k-line `index.html` until 2026-07-25 (r13), and
+   older notes may still say so. **The "keep it one file" rule is gone** — it was
+   never a decision, it just happened and then got written down as law. Don't
+   re-consolidate, and don't cite the old rule to refuse a new file.
 5. **Plain `fetch` for everything.** No `supabase-js`, no HTTP wrapper library.
 
 ## 4. Architecture
 
-**Frontend:** one static file, served by GitHub Pages off `origin/main`. Deploying
-is `git push`. Mobile-first; installable to the home screen as a PWA.
+**Frontend:** plain static files served by GitHub Pages off `origin/main` —
+`index.html` + `css/styles.css` + `js/01…20-*.js`, plus `manifest.json` and two icon
+PNGs for PWA install. Deploying is `git push`. Mobile-first; installable to the home
+screen.
+
+⚠️ **Load order is the contract.** Top-level `const`/`let` in classic scripts share
+one global lexical scope, which is why the split needed no code changes — but a file
+can only use a binding from a file loaded *earlier* **at load time**. Function
+bodies are fine (they run after `init()`); top-level statements are not. The numeric
+prefixes exist so the order can't be shuffled by accident, and adding a file means
+inserting its tag in the right place.
 
 **Backend:** Supabase free tier — Auth, PostgREST, and Storage. Every table is
 row-level-security scoped to `auth.uid()`, which is what makes shipping the anon key
@@ -286,27 +302,36 @@ allowed if derived, time-bound and dismissable, but the app never interrupts.
 
 ## 9. Development and deployment
 
-Edit `index.html`. Bump `APP_VERSION` (`YYYY-MM-DD rN`) **and** the matching
-`<meta name="app-version">` tag — they must stay in lockstep or the in-app update
-check misfires. Refresh the `WHATS_NEW` bullets. Commit, push to `origin/main`,
-GitHub Pages rebuilds in a minute or two, hard-refresh to clear its cache.
+Edit the relevant `js/NN-*.js` (or `css/styles.css`). Then bump the version in
+**three** places that must stay in lockstep — miss one and Pages serves a fresh
+`index.html` beside stale modules, which is worse than not updating at all:
 
-Local preview is `python3 -m http.server 4173`, but auth and data only work against
-the real HTTPS deploy, so locally you get the login screen. There is **no browser
-testing during builds** by explicit preference. Verification is:
+1. `APP_VERSION` in `js/01-config.js` (`YYYY-MM-DD rN`) — what the UI prints,
+2. `<meta name="app-version">` in `index.html` — what the in-app update check
+   compares against, and
+3. the **`?v=` on all 21 `js/` and `css/` tags** — the cache bust.
 
-- a syntax check that parses the inline script without executing it (JavaScriptCore
-  is available on macOS even with no Node installed), and
-- `migration/selftest.html`, a harness that loads the app in an iframe and asserts
-  the derivation logic — **90 cases** as of r11, covering trip phases, sort keys,
-  laundry, formality, weather matching, milestones, rhythm, search, palette and
-  back-navigation.
+Refresh the `WHATS_NEW` bullets, commit, push to `origin/main`; Pages rebuilds in a
+minute or two, then hard-refresh. The `deploy-wardrobe` skill does all of this, and
+the selftest pins all three.
 
-The selftest is a **deploy gate for logic changes** (cosmetic deploys get a
-JavaScriptCore parse check instead) and is run in the browser before shipping.
-It currently stands at **127 cases, green**. ⚠️ The count has gone *down* as well as
-up — r19 deleted 30 cases along with the feature they covered. A shrinking suite can
-be a good sign; say which happened rather than padding the number.
+Local preview is `python3 -m http.server 4173` via the preview panel, but auth and
+data only work against the real HTTPS deploy, so locally you get the login screen —
+pure helpers are still fully testable there. Verification is:
+
+- a JavaScriptCore parse check (`new Function(readFile(...))` over each `js/` file —
+  `jsc` ships with macOS even when Node doesn't), and
+- **`migration/selftest.html`**, a harness that loads the app in an iframe and
+  asserts the derivation logic: trip phases, sort keys, laundry, formality, weather
+  matching and season derivation, milestones, rhythm, search, palette, capsule
+  archiving, and back-navigation. It currently stands at **127 cases, green**.
+
+The selftest is a **deploy gate for logic changes**; cosmetic deploys (CSS, copy,
+version-only) get the parse check instead. ⚠️ Two rules paid for in bugs: **a test
+that has never been executed is not a test** (the suite once sat at 89/90 for a
+whole round because cases were written and never run), and **the count can legitimately
+go DOWN** — r19 deleted 30 cases along with the feature they covered. Say which
+happened rather than padding the number.
 
 ## 10. History in one paragraph
 

@@ -1,11 +1,12 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-25 r21**. Round D "Where You Were" shipped r14,
+> Current version: **2026-07-25 r22**. Round D "Where You Were" shipped r14,
 > was hardened live r15–r18, and then **largely UNBUILT in r19–r21 ("Round D.4
 > Subtraction") after her verdict that the whole feature set was a mess.** The
 > guessing layer is gone; travel is hand-entry; one flag criterion, two
-> surfaces. Selftest 136 → **124** — the drop is the deliverable.
+> surfaces. Selftest 136 → **127** — the drop is the deliverable. r22 added
+> capsule archiving and a “worn like” line under every item’s Season.
 > ▶ NEXT UP: nothing scheduled — ask before starting new work.
 > The only carried-over item is the **Formulas remainder**, gated on tuning
 > `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
