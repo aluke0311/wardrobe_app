@@ -505,15 +505,20 @@ function _renderStatsView() {
 // where a funnel that silently changes nothing is worse than no funnel.
 function statsToolbar(title, showBack, showRange, hideFilter = false) {
   const n = hideFilter ? 0 : statsActiveFilterCount();
-  if (hideFilter) return `<div class="cltoolbar">
-    ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
-    <div class="cltitle">${esc(title)}</div>
-    <span style="width:34px"></span>
-  </div>`;
+  // Root drops the duplicated title (see clToolbar). A filter-less root has
+  // nothing left to show, so it renders no row at all.
+  if (hideFilter) {
+    if (!showBack) return "";
+    return `<div class="cltoolbar">
+      <button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cltitle">${esc(title)}</div>
+      <span style="width:34px"></span>
+    </div>`;
+  }
   const rangeLbl = statsDateRange === "all" ? "Range" : dateRangeHuman();
-  return `<div class="cltoolbar">
-    ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>` : `<span style="width:34px"></span>`}
-    <div class="cltitle">${esc(title)}</div>
+  return `<div class="cltoolbar${showBack ? "" : " tb-root"}">
+    ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="cltitle">${esc(title)}</div>` : ""}
     ${showRange ? `<button class="lnk" id="stRange" style="font-size:15px;white-space:nowrap;padding:0 6px">${esc(rangeLbl)}</button>` : ""}
     <button class="clsearch" id="stFilter" style="position:relative" title="Filters">
       <svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></svg>

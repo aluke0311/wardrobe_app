@@ -599,11 +599,12 @@ function looksToolbar(title, showBack, showShuffle, heartId) {
     : heartO
     ? `<button class="clsearch lk-heart-btn${heartO.rating === 1 ? " on" : ""}" id="lookHeartBtn" title="Like this look"><svg viewBox="0 0 24 24">${HEART_SVG}</svg></button>`
     : `<span style="width:34px"></span>`;
-  return `<div class="cltoolbar">
+  // Root drops the duplicated title; drill-in keeps it. See clToolbar.
+  return `<div class="cltoolbar${showBack ? "" : " tb-root"}">
     ${showBack
-      ? `<button class="clback" id="looksBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
-      : `<span style="width:34px"></span>`}
-    <div class="cltitle">${esc(title)}</div>
+      ? `<button class="clback" id="looksBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+         <div class="cltitle">${esc(title)}</div>`
+      : ""}
     ${right}
   </div>`;
 }

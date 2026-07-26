@@ -347,6 +347,15 @@
   .clback, .clsearch { width: 44px; height: 44px; margin: -5px 0; display: flex; align-items: center; justify-content: center; color: var(--ink); }
   .clback svg, .clsearch svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.8; fill: none; }
   .cltitle { flex: 1; font-size: 15px; font-weight: 600; }
+  /* Tab-root toolbar: no back button and no title (the app header already names
+     the screen), so it's a bare action row — push it right. Drill-in toolbars
+     keep the default layout, where .cltitle's flex:1 does the spacing. */
+  .cltoolbar.tb-root { justify-content: flex-end; padding-top: 8px; }
+  /* ⚠️ Do NOT fold the .lens switcher into this row to save vertical space —
+     it was tried and measured on 2026-07-26 and it does not fit: the closet
+     lens needs 279px and the action icons 136px, i.e. 451px in a 390px row, so
+     "All" disappears behind a horizontal scroll (worse with a filter badge and
+     its clear ✕). Hiding a lens option contradicts recognition-over-recall. */
   /* L8: more lenses than fit at flex:1 (Formality/Season/Context/Capsule/Liked/Recent/
      All/Archived) — scroll horizontally instead of shrinking labels. */
   .lens { display: flex; gap: 4px; margin: 2px 14px 8px; background: var(--panel); border-radius: 11px;

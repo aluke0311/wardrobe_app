@@ -297,11 +297,17 @@ function clToolbar(title, showBack, showPlus) {
     ${filterN ? `<button class="cb-x" data-funnel-clear="clSearch" title="Clear filters" style="width:24px;height:24px;color:var(--muted)">✕</button>` : ""}
     ${showPlus ? `<button class="clsearch" id="clPlus" style="font-size:22px;font-weight:300;line-height:1">＋</button>` : ""}
   </div>`;
-  return `<div class="cltoolbar">
+  // At a tab ROOT the toolbar title just repeats the app header — "Closet" over
+  // "Closet" — so it's dropped and the row becomes actions-only (2026-07-26
+  // audit M6; it did this on four of six screens). On a DRILL-IN the title is
+  // the folder/category and carries real information, so it stays. See
+  // .tb-root. NB the element itself must survive at closet root: renderCloset
+  // inserts the capsule scope banner with .cltoolbar + insertAdjacentHTML.
+  return `<div class="cltoolbar${showBack ? "" : " tb-root"}">
     ${showBack
-      ? `<button class="clback" id="clBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
-      : `<span style="width:34px"></span>`}
-    <div class="cltitle">${esc(title)}</div>
+      ? `<button class="clback" id="clBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+         <div class="cltitle">${esc(title)}</div>`
+      : ""}
     ${right}
   </div>`;
 }

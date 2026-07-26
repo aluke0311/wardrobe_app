@@ -113,12 +113,16 @@ function renderCapsules() {
 }
 
 function capToolbar(title, showBack, right = "") {
-  return `<div class="cltoolbar">
+  // Root drops the duplicated title (see clToolbar) — and unlike the other
+  // tabs the capsules root often has no actions either, so the whole row goes
+  // rather than leaving an empty sticky strip.
+  if (!showBack && !right) return "";
+  return `<div class="cltoolbar${showBack ? "" : " tb-root"}">
     ${showBack
-      ? `<button class="clback" id="capBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>`
-      : `<span style="width:34px"></span>`}
-    <div class="cltitle">${esc(title)}</div>
-    ${right || `<span style="width:34px"></span>`}
+      ? `<button class="clback" id="capBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+         <div class="cltitle">${esc(title)}</div>`
+      : ""}
+    ${right}
   </div>`;
 }
 
