@@ -1,23 +1,35 @@
 # ROADMAP — Wardrobe App
 
 > Read `CLAUDE.md` (architecture + conventions) and `schema.sql` (DB) alongside this.
-> Current version: **2026-07-25 r18**. Round D "Where You Were" shipped r14 and
-> was then hardened live against her real data across r15–r18 (see the r15–r18
-> section below — every round was a response to a real failure she reported).
-> ▶ NEXT UP: **Round D.4 "Subtraction" (r19)** — her verdict on the arc was
-> "this whole feature set feels like a mess," and she is right. The guessing
-> layer is DELETED, travel becomes pure hand-entry, flags shrink to one
-> criterion in two places. LOCKED via her three answers; ready for Opus.
-> This round removes more code than it adds — that is the point.
-> The only other carried-over item is the **Formulas remainder**, gated on
-> tuning `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
+> Current version: **2026-07-25 r21**. Round D "Where You Were" shipped r14,
+> was hardened live r15–r18, and then **largely UNBUILT in r19–r21 ("Round D.4
+> Subtraction") after her verdict that the whole feature set was a mess.** The
+> guessing layer is gone; travel is hand-entry; one flag criterion, two
+> surfaces. Selftest 136 → **124** — the drop is the deliverable.
+> ▶ NEXT UP: nothing scheduled — ask before starting new work.
+> The only carried-over item is the **Formulas remainder**, gated on tuning
+> `FORMULA_MIN_LOOKS`/`FORMULA_MIN_WEARS` against her real data first.
 
 ---
 
-## ▶ PLANNED — Round D.4 "Subtraction" (r19) — LOCKED, ready for Opus
+## ✅ SHIPPED — Round D.4 "Subtraction" (2026-07-25, r19→r21)
 
-**Planned by Fable 2026-07-25 after her verdict on the r14→r18 arc: "this
-whole feature set feels like a mess." She is right, and the diagnosis is
+**Planned by Fable and built by Opus the same day, r19→r21. Selftest 136 →
+124 (30 cases for the deleted layer removed, 18 added). Browser-verified: the
+field sheet now stacks correctly, the item-page flag renders with its one-tap
+fix, the review card compares yours-vs-worn.**
+
+**Deviations from the plan, all deliberate:** the "See these days" day view and
+the year-pixel browse (step 4b of the superseded D.3 plan) were both dropped
+with the guessing layer rather than rebuilt · r20 added `derivedSeasonSet` +
+the Closet Review comparison at her request mid-build ("all items to have
+derived season, and wardrobe review to compare between derived and selected")
+· r21 made the review's one-tap answer the UNION rather than the derived set,
+caught in smoke-testing: offering the derivation alone would have silently
+deleted a season she'd chosen.
+
+**Her verdict on the r14→r18 arc: "this whole feature set feels like a mess."
+She was right, and the diagnosis is
 precise: her ask was (a) log where I was and (b) flag season/weather
 contradictions — and the mess lives almost entirely in a third thing she
 never asked for, the inference engine that GUESSES where she was. Five
