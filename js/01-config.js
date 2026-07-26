@@ -6,12 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-25 r13";
+const APP_VERSION = "2026-07-25 r14";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Housekeeping only \u2014 nothing you can see changed. Under the hood the app is now 20 tidy files instead of one enormous one",
-  "Which should mean fewer accidental breakages when the next feature gets built",
+  "Settings \u2192 \u201cWhere you\u2019ve been\u201d: log past trips, and those days get the weather you were actually in instead of the weather at home",
+  "New health check: pieces whose season tag disagrees with the weather you wore them in \u2014 and if several disagree about the same week, it just asks whether you were away",
+  "\u201cYou\u2019ve dressed for this before\u201d now counts trip days too, once it knows where you were",
+  "Packing for somewhere warm in winter no longer hides your summer clothes from the suggester",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

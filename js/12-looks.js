@@ -275,12 +275,18 @@ const currentSeason = () => seasonOf(localISO(new Date()));
 // "when worn" signal) → null = unknown (treated as all-season so a sparse
 // wardrobe is never over-filtered). Year-round basics (jeans, plain tees)
 // naturally span all four seasons via their wear months and stay eligible.
-function itemSeasonSet(i) {
+// Round D: the wear-history branch counts a day as the season it FELT like,
+// not the season the calendar says — so pieces worn on warm-weather trips in
+// December derive as Summer instead of Winter. `effectiveSeasonOf` is a plain
+// lookup for the (overwhelmingly common) home day, and the bands behind it are
+// memoized, so this stays cheap enough for the filter loops that call it.
+function itemSeasonSet(i, wearRows = null, log = null, bands = null) {
   if (i.season && i.season.length) return i.season;
-  const ws = wears.filter(w => w.item_id === i.id && w.worn_on);
+  const ws = (wearRows || wears).filter(w => w.item_id === i.id && w.worn_on);
   if (ws.length >= 3) {
     const counts = new Map();
-    for (const w of ws) { const s = seasonOf(w.worn_on); counts.set(s, (counts.get(s) || 0) + 1); }
+    const b = bands || seasonBands(log);
+    for (const w of ws) { const s = effectiveSeasonOf(w.worn_on, log, b); counts.set(s, (counts.get(s) || 0) + 1); }
     // keep any season accounting for ≥15% of this item's wears
     const keep = [...counts.entries()].filter(([, n]) => n / ws.length >= 0.15).map(([s]) => s);
     if (keep.length) return keep;
@@ -292,6 +298,22 @@ function inSeason(i, season) {
   if (!season) return true;
   const s = itemSeasonSet(i);
   return !s || s.includes(season);
+}
+
+/* Round D. The season filter asks a CALENDAR question, which is the wrong
+   question on a trip: a December week in the Caribbean asked for "Winter" and
+   filtered the sundress out of the pool before scoring ever saw the 84°
+   forecast (the wx term in scoreCombo can only re-rank what survived the
+   filter, never rescue it). When a forecast is in hand, a piece whose observed
+   temperature band contains that forecast is eligible too.
+   RESCUE ONLY — this widens the pool and never narrows it, so an item with no
+   temperature profile behaves exactly as it did before. */
+const WXA_RESCUE_MARGIN = 5;
+function inSeasonWx(i, season, wx) {
+  if (inSeason(i, season)) return true;
+  if (!wx || wx.maxT == null) return false;
+  const p = itemWxProfile(i.id);
+  return !!p && wx.maxT >= p.lo - WXA_RESCUE_MARGIN && wx.maxT <= p.hi + WXA_RESCUE_MARGIN;
 }
 
 // ---- canonical filter predicates (single source of truth for every surface) ----
@@ -987,7 +1009,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     // Season filter (soft): keep only in-season pieces, but fall back to the full
     // slot if that would empty it (e.g. a slot with no seasonal coverage yet).
     if (season) {
-      const inS = pool.filter(i => inSeason(i, season));
+      const inS = pool.filter(i => inSeasonWx(i, season, wx));
       if (inS.length) pool = inS;
     }
     if (targetLevel) {
@@ -1419,7 +1441,7 @@ function swapSuggestionPiece(pieceId) {
     i.image_path && !isNoSuggest(i) && i.id !== pieceId &&
     (!_suggClean() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
-    inSeason(i, _sugg.season) &&
+    inSeasonWx(i, _sugg.season, _suggWx()) &&
     !others.some(o => isExcluded(i.id, o.id)));
   if (_sugg.targetLevel) {
     // hard, matching the engine (2026-07-19) — no silent level fallback
@@ -1498,7 +1520,7 @@ function addSuggestionLayer() {
     !combo.pieces.some(p => p.id === i.id) &&
     (!_suggClean() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === "Outerwear" || (isLayer(i) && i.category === "Tops")) &&
-    inSeason(i, _sugg.season) &&
+    inSeasonWx(i, _sugg.season, _suggWx()) &&
     !combo.pieces.some(p => isExcluded(i.id, p.id)));
   if (_sugg.targetLevel) {
     // hard, matching the engine (2026-07-19) — no silent level fallback

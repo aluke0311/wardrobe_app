@@ -97,6 +97,12 @@ function renderSettings() {
         <button class="btn btn-sec" id="setWxFill">Look up past weather</button>
       </div>
       <div class="card stack">
+        <div><div class="fld">Where you've been</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">Past weather is looked up at home unless you say otherwise. Log a trip here and those days get the weather you were actually in — which is what keeps “usually worn” and your season tags honest.</div></div>
+        <div id="setWhereList">${whereListHtml()}</div>
+        <button class="btn btn-sec" id="setWhereAdd">＋ Add somewhere</button>
+      </div>
+      <div class="card stack">
         <div><div class="fld">Categories</div>
           <div class="muted" style="font-size:13px;line-height:1.5">Rename, add or remove your categories and the types inside them. Renaming moves every item over.</div></div>
         <button class="btn btn-sec" id="setTaxonomy">Edit categories &amp; types</button>
@@ -108,6 +114,9 @@ function renderSettings() {
   $("#setBackup").onclick = downloadBackup;
   $("#setHealth").onclick = () => runDataHealthCheck();
   $("#setTaxonomy").onclick = () => openTaxonomySheet();
+  $("#setWhereAdd").onclick = () => openWhereSheet();
+  $("#setWhereList").querySelectorAll("[data-where-del]").forEach(b =>
+    b.onclick = () => removeWhereEntry(+b.dataset.whereDel));
   $("#setWxFill").onclick = async (e) => {
     const b = e.currentTarget;
     b.disabled = true; b.textContent = "Looking up…";
@@ -353,6 +362,12 @@ function runDataHealthCheck() {
   const incomplete = outfits.filter(outfitIncomplete);
   checks.push({ label: "Incomplete looks (no dress, no top+bottom pair)", rows: incomplete,
     review: openIncompleteLooksSheet });
+  // Not an integrity problem — a disagreement between what a piece is tagged
+  // for and the weather she actually wore it in. Review-only by construction:
+  // the fix might be the tag, or it might be a trip we don't know about.
+  const wxa = wxAuditFlags();
+  checks.push({ label: "Season tags that disagree with the weather", rows: wxa.flags,
+    review: openSeasonAuditSheet });
   // Report-only (could be intentional):
   const emptyLooks = outfits.filter(o => !(outfitItemMap.get(o.id) || []).some(id => itemById.has(id)));
   checks.push({ label: "Looks with no pieces (report only)", rows: emptyLooks });

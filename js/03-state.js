@@ -384,6 +384,10 @@ function daysSince(dateStr) {
   if (!dateStr) return null;
   return Math.floor((Date.now() - new Date(dateStr + "T00:00:00").getTime()) / 86400000);
 }
+// Whole days from a to b (negative if b is earlier). Both are plain YYYY-MM-DD.
+function daysBetween(a, b) {
+  return Math.round((new Date(b + "T00:00:00").getTime() - new Date(a + "T00:00:00").getTime()) / 86400000);
+}
 function outfitCount(itemId) {
   return new Set(wears.filter(w => w.item_id === itemId && w.outfit_id).map(w => w.outfit_id)).size;
 }

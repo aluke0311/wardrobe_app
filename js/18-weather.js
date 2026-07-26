@@ -296,6 +296,130 @@ async function _saveLocation() {
   } catch (e) { toast(e.message); }
 }
 
+/* ---- "Where you've been" sheet (Round D) -----------------------------------
+   Same two-step shape as the trip location sheet above (search a city, then
+   give it dates), but it writes to kv `wherelog` instead of a capsule — these
+   are past trips that never existed as capsules, logged purely so the weather
+   history can be corrected. */
+let _whereSheet = null;  // {step:"search"|"range", searchQ, results, loc, from, to}
+
+function openWhereSheet({ from = "", to = "" } = {}) {
+  _whereSheet = { step: "search", searchQ: "", results: [], loc: null, from, to };
+  _renderWhereSheet();
+  showSheet("whereSheet");
+}
+function closeWhereSheet() { _whereSheet = null; hideSheet("whereSheet"); }
+
+function _renderWhereSheet() {
+  const s = _whereSheet;
+  if (!s) return;
+  if (s.step === "search") {
+    const rows = s.results.map((r, i) => {
+      const sub = [r.admin1, r.country].filter(Boolean).join(", ");
+      return `<div class="loc-result" data-where-idx="${i}">
+        <span class="loc-result-pin">📍</span>
+        <div><div class="loc-result-name">${esc(r.name)}</div>${sub ? `<div class="loc-result-sub">${esc(sub)}</div>` : ""}</div>
+      </div>`;
+    }).join("");
+    $("#whereInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="whereCancel">Cancel</button>
+        <h2>Where were you?</h2>
+        <span style="width:54px"></span>
+      </div>
+      <div class="loc-search-wrap">
+        <input class="inp" id="whereSearchInp" placeholder="Search city…" value="${esc(s.searchQ)}" autocomplete="off">
+      </div>
+      ${rows || (s.searchQ ? `<div style="padding:12px 0;color:var(--muted);font-size:14px">No results found</div>` : "")}`;
+    const inp = $("#whereSearchInp");
+    if (inp) {
+      inp.focus();
+      let timer;
+      inp.oninput = () => {
+        _whereSheet.searchQ = inp.value;
+        clearTimeout(timer);
+        if (!inp.value.trim()) { _whereSheet.results = []; _renderWhereSheet(); return; }
+        timer = setTimeout(async () => {
+          try { _whereSheet.results = await geocodeLocation(inp.value.trim()); } catch (e) { _whereSheet.results = []; }
+          if (_whereSheet && _whereSheet.step === "search") _renderWhereSheet();
+        }, 380);
+      };
+    }
+    $("#whereCancel").onclick = closeWhereSheet;
+    $("#whereInner").querySelectorAll("[data-where-idx]").forEach(el => {
+      el.onclick = () => {
+        const r = _whereSheet.results[+el.dataset.whereIdx];
+        const extra = [r.admin1, r.country].filter(Boolean);
+        _whereSheet.loc = { name: r.name + (extra.length ? `, ${extra[extra.length - 1]}` : ""), lat: r.lat, lon: r.lon };
+        _whereSheet.step = "range";
+        _renderWhereSheet();
+      };
+    });
+  } else {
+    const t = todayStr();
+    $("#whereInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="whereBack">← Back</button>
+        <h2>${esc(s.loc.name.split(",")[0])}</h2>
+        <span style="width:54px"></span>
+      </div>
+      <div style="padding:14px 0 8px">
+        <div style="font-size:15px;font-weight:600;margin-bottom:16px">📍 ${esc(s.loc.name)}</div>
+        <label class="fld">From</label>
+        <input class="inp" type="date" id="whereFrom" value="${esc(s.from)}" max="${esc(t)}">
+        <label class="fld" style="margin-top:12px">To</label>
+        <input class="inp" type="date" id="whereTo" value="${esc(s.to)}" max="${esc(t)}">
+        <div style="font-size:12px;color:var(--muted);margin-top:8px">Anything you wore on these days will be re-checked against the weather there, not here.</div>
+        <button class="btn" id="whereSave" style="margin-top:16px">Save</button>
+      </div>`;
+    $("#whereFrom").onchange = e => { _whereSheet.from = e.target.value; };
+    $("#whereTo").onchange = e => { _whereSheet.to = e.target.value; };
+    $("#whereBack").onclick = () => { _whereSheet.step = "search"; _renderWhereSheet(); };
+    $("#whereSave").onclick = _saveWhere;
+  }
+}
+
+async function _saveWhere() {
+  const s = _whereSheet;
+  if (!s || !s.loc) return;
+  if (!s.from || !s.to) return toast("Pick both dates");
+  if (s.from > s.to) return toast("That range ends before it starts");
+  if (s.to > todayStr()) return toast("That's in the future — log it as a trip instead");
+  const entry = { from: s.from, to: s.to, name: s.loc.name, lat: s.loc.lat, lon: s.loc.lon };
+  closeWhereSheet();
+  try {
+    await kvSet(WHERELOG_KEY, [...wherelog(), entry]);
+    renderSettings();
+    toast("Saved");
+    correctAwayWeather(entry);            // fire-and-forget; re-renders when done
+  } catch (e) { toast(e.message); }
+}
+
+async function removeWhereEntry(idx) {
+  const list = [...wherelog()];
+  if (idx < 0 || idx >= list.length) return;
+  list.splice(idx, 1);
+  try { await kvSet(WHERELOG_KEY, list); renderSettings(); }
+  catch (e) { toast(e.message); }
+}
+
+// Settings list: everywhere the app thinks she was, trips included.
+function whereListHtml() {
+  const fmt = d => new Date(d + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const log = wherelog();
+  const rows = awayRanges().sort((a, b) => (a.from < b.from ? 1 : -1)).map(r => {
+    const idx = r.src === "log" ? log.findIndex(e => e.from === r.from && e.to === r.to && e.name === r.name) : -1;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</div>
+        <div class="muted" style="font-size:11.5px">${esc(fmt(r.from))} – ${esc(fmt(r.to))}${r.src === "trip" ? " · from trip" : ""}</div>
+      </div>
+      ${idx >= 0 ? `<button class="cap-chip" data-where-del="${idx}" style="font-size:12px;flex:none;color:var(--muted)">✕</button>` : ""}
+    </div>`;
+  }).join("");
+  return rows || `<div class="muted" style="font-size:13px;padding:4px 0">Nothing logged yet.</div>`;
+}
+
 async function removeLocation(cid, idx) {
   const c = capsuleById.get(cid);
   if (!c) return;

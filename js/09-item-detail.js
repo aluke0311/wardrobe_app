@@ -256,6 +256,12 @@ function openItemDetails(id) {
           </div>
           ${n ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
         </button>
+        ${(() => {
+          const f = wxFlagFor(i.id);
+          // An audit note, not an alarm — muted, and it sits outside the wears
+          // button so it can't steal that tap.
+          return f ? `<button class="det-sub" id="detWxFlag" style="text-align:left;padding:2px 0 6px;line-height:1.4">⚠ ${esc(wxFlagText(f))}</button>` : "";
+        })()}
         ${partnersRowHtml(i.id)}
         ${(() => {
           const ctx = itemContexts(i.id);
@@ -405,6 +411,9 @@ function openItemDetails(id) {
     el.onclick = () => openItem(el.dataset.partner);
   });
 
+  const wxFlagBtn = $("#detWxFlag");
+  if (wxFlagBtn) wxFlagBtn.onclick = () => openSeasonAuditSheet();
+
   $("#detCapsules").onclick = () => {
     openCapsuleAssign(capsulesForItem(i.id), async (ids) => {
       await saveItemCapsules(i.id, ids);
@@ -542,6 +551,9 @@ async function saveField(id, field, value) {
   if (field === "formality") {
     for (const o of outfits) if ((outfitItemMap.get(o.id) || []).includes(id)) o._bucket = null;
   }
+  // The audit cache is stamped on array LENGTHS, which an in-place season edit
+  // doesn't change — bust it explicitly or a fixed tag keeps its warning.
+  if (field === "season") _wxAudit = null;
   try {
     await rest(`/items?id=eq.${id}`, {
       method: "PATCH",

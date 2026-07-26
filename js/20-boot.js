@@ -50,7 +50,8 @@ function activeTabName() {
 // Safe to swap the data arrays out from under the UI? Anything mid-edit says no.
 function uiCanRefetch() {
   for (const id of ["bulkSheet", "moveSheet", "quickActSheet", "fieldSheet", "logSheet",
-                    "statsFilterSheet", "filterSheet", "statsRangeSheet"])
+                    "statsFilterSheet", "filterSheet", "statsRangeSheet", "whereSheet",
+                    "wxAuditSheet"])
     { const w = document.getElementById(id); if (w && !w.hidden) return false; }
   const tab = activeTabName();
   if (tab === "add" || tab === "builder") return false;
