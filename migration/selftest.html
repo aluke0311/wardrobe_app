@@ -1530,6 +1530,26 @@ async function run() {
       ? true : `pool=${pool.length} rack=${W.rackItems().length}`;
   }));
 
+  /* The 🏋️ Workout chip is an ALIAS for level 1, never a mode again (r14).
+     r13 removed it with activity mode; she asked for it back — she liked the
+     chip, what was broken was that it pooled by tag and wouldn't build. It now
+     carries data-slvl="1", so it shares one handler and one piece of state with
+     "1. Utility" and cannot drift from it the way the old mode did. */
+  t("the 🏋️ Workout chip is level 1, not a mode of its own", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    const doc = document.getElementById("app").contentDocument;
+    const chip = [...doc.querySelectorAll("[data-slvl]")].find(b => /Workout/.test(b.textContent));
+    if (!chip) return "the Workout chip is missing";
+    if (chip.dataset.slvl !== "1") return `chip targets level ${chip.dataset.slvl}, not 1`;
+    chip.click();
+    const level = W._sugg.targetLevel;
+    // both chips must reflect the one piece of state
+    const lit = [...doc.querySelectorAll("[data-slvl].on")].length;
+    chip.click();                       // and it toggles off like any level
+    return level === 1 && lit === 2 && W._sugg.targetLevel === null
+      ? true : `level=${level} lit=${lit} after=${W._sugg.targetLevel}`;
+  }));
+
   t("the suggester offers every context EXCEPT Workout", () => withGearCloset(() => {
     W.wears = W.wears.concat(
       ["Workout", "Errands", "Church"].flatMap((c, k) =>

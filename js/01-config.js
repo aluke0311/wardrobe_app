@@ -6,13 +6,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r13";
+const APP_VERSION = "2026-07-27 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Workout outfits now come from formality — just pick 1. Utility. The separate 🏋️ Workout chip is gone; it needed every piece tagged as gear, which is why a run wouldn't build",
-  "Utility looks at your whole closet (not the rack), and it counts your workout pieces, anything set to Utility, AND gear like running shoes even though you wear those casually too",
-  "Workout is still a context you can log and plan with — a planned workout day asks for Utility on its own. It's just not a second control in the suggester",
+  "🏋️ Workout is back in the formality row where it was — it just means “1. Utility” now, so it actually builds an outfit instead of coming up empty",
+  "Both chips light up together on purpose: they're the same control, not two",
 
 ];
 

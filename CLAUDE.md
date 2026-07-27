@@ -615,6 +615,14 @@ ask.** The 🏋️ chip, `_sugg.activity`, `entryActivity` and `suggestOutfits`'
   other contexts available to select though. just not workout"*.
 - `openGearTagSheet` survives: its "Gear-only" toggle writes formality `[1]`,
   which is now exactly the thing being asked for.
+- ⚠️ **The 🏋️ Workout CHIP is back (2026-07-27 r1) — as an ALIAS, not a mode.**
+  r13 removed it with activity mode and she asked for it back: she liked the
+  chip, what was broken was that it pooled by tag and wouldn't build. It carries
+  **`data-slvl="1"`**, so it shares one handler and one piece of state with
+  "1. Utility" and cannot drift from it the way the old mode did. Both chips
+  light up together on purpose — that reads as "same thing", not as a bug. The
+  ladder keeps the word *Utility* (level 1 is also rain and hiking); the chip
+  keeps *Workout* because that's what she goes looking for. Pinned by a test.
 
 ① **Activity/gear rework** (r1, no migration) — SUPERSEDED, see above: `GEAR_WORKOUT_TAG`/`GEAR_RAIN_TAG`
 sentinel tags (`isWorkoutGear`/`isRainGear`/`setWorkoutGear`/`setRainGear`,
@@ -1252,7 +1260,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r13`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-27 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1592,7 +1600,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **166/166** (2026-07-26 r13, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **167/167** (2026-07-27 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

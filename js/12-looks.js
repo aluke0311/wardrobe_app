@@ -1777,14 +1777,21 @@ function renderSuggestSheet() {
   const combo = res[_sugg.idx];
   const total = res.length;
 
-  // ⚠️ The separate 🏋️ Workout chip was REMOVED in r13. Level 1 (Utility) IS
-  // the ask — "I should just have workout formality and that can fix it" — and
-  // two controls for one intention is exactly the recall tax this round exists
-  // to remove.
+  /* The 🏋️ Workout chip is an ALIAS for level 1, not a mode (r14).
+     r13 removed it along with activity mode and she asked for it back — she
+     liked the chip; what was broken was that it pooled by tag and wouldn't
+     build. So it carries `data-slvl="1"`: literally the same control as the
+     "1. Utility" chip, sharing one handler and one piece of state, which means
+     it cannot drift from it the way the old mode did.
+     Both light up together when level 1 is active. That's deliberate — it says
+     "these are the same thing" rather than hiding one behind the other.
+     The ladder keeps the word Utility because level 1 is also rain and hiking;
+     the chip keeps Workout because that's what she actually goes looking for. */
   const levelChips = OCCASION_LADDER.map((lbl, i) => {
     const lvl = i + 1, on = _sugg.targetLevel === lvl;
     return `<button class="cap-chip${on ? " on" : ""}" data-slvl="${lvl}" style="font-size:13px;text-align:left">${lvl}. ${esc(lbl)}</button>`;
-  }).join("");
+  }).join("")
+    + `<button class="cap-chip${_sugg.targetLevel === 1 ? " on" : ""}" data-slvl="1" style="font-size:13px" title="Runs, lifts, hikes — the same as 1. Utility">🏋️ Workout</button>`;
 
   let preview = "";
   if (combo) {
