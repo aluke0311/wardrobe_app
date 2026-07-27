@@ -522,6 +522,7 @@ function wireEvents() {
       const a = lkact.dataset.lkact;
       if (a === "details")   return openLookDetails(lookId);
       if (a === "folder")    return openLookFormalityEdit(lookId);
+      if (a === "vary")      return openVaryLook(lookId);
       if (a === "duplicate") return duplicateLook(lookId);
       if (a === "calendar")  return openWearLook(lookId);
       if (a === "archive")   return archiveLook(lookId);

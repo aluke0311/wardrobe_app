@@ -6,12 +6,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r4";
+const APP_VERSION = "2026-07-26 r5";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "If you had the app open on your phone and your laptop at once, whichever saved second used to quietly wipe what the first one saved — a day plan, a trip, a milestone. They merge now instead of overwriting",
-  "Nothing to do differently; it just stops losing things behind your back",
+  "New “Vary” button on any saved look. It opens that exact outfit and you tap ✨ on the one piece you want to change — same trousers, same top, different shoes",
+  "It doesn't guess which piece to swap, because you already know. Everything you don't touch stays put",
+  "Wearing the result saves it properly, so “Tuesday's outfit but with the boots” finally becomes something the app can record",
 
 ];
 

@@ -1249,6 +1249,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
   _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
   _sugg.tmPick = null;                // set only by openTomorrowRevise
+  _sugg.varyFrom = null;              // set only by openVaryLook
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
@@ -1434,6 +1435,32 @@ function suggSlotLabel(i) {
 // Swap just ONE piece of the current suggestion, keeping the rest — a targeted
 // re-roll instead of re-rolling the whole outfit. Same filters the engine uses:
 // slot, season, exclusions, target level, and pure-function isolation.
+/* "Vary this" (2026-07-26) — her own request: "I often will change just one piece
+   of an outfit in a day."
+   Deliberately NOT a re-roll. Her words when asked: "I will always know the change
+   I want to make", so the app must not guess which piece; it puts the real outfit
+   on screen and lets her point at the one to replace. That is exactly what the
+   per-piece ✨ already does — it re-rolls one slot and holds everything else — so
+   this is an entry point, not an engine.
+   Pieces are NOT locked: 🔒 disables the per-piece swap, which is the whole
+   feature. Reshuffle is a separate, deliberate tap.
+   Wearing the result routes through the normal saveComboAsOutfit dedup, so a
+   variation either becomes its own look or merges into the identical one that
+   already exists — which is also how "Tuesday's outfit with different shoes"
+   finally becomes recordable, and what buildFormulas feeds on. */
+function openVaryLook(outfitId) {
+  const o = outfitById.get(outfitId);
+  if (!o) return;
+  const pieces = outfitItems(o).filter(i => i && itemStatus(i) !== "Archive");
+  if (pieces.length < 2) return toast("Not enough pieces to vary");
+  openSuggestSheet();
+  _sugg.varyFrom = outfitId;
+  const k = comboKey(pieces);
+  _sugg.results = [{ pieces, score: 0 }, ..._sugg.results.filter(c => comboKey(c.pieces) !== k)];
+  _sugg.idx = 0;
+  renderSuggestSheet();
+}
+
 function swapSuggestionPiece(pieceId) {
   const combo = _sugg.results[_sugg.idx];
   if (!combo) return;
@@ -1637,6 +1664,15 @@ function renderSuggestSheet() {
     </button>
   </div>` : "";
 
+  // Varying names the source look and says which control does the work, because
+  // the answer is "the one you already had in mind" — she shouldn't have to
+  // discover that the per-piece ✨ is the point of this screen.
+  const varyLabel = _sugg.varyFrom ? (() => {
+    const o = outfitById.get(_sugg.varyFrom);
+    return `<div style="font-size:12px;color:var(--muted);text-align:center;padding:0 16px 4px">
+      ${o ? `Starting from <b style="color:var(--accent)">${esc(outfitName(o))}</b>. ` : ""}Tap ✨ on the piece you want to change.
+    </div>`;
+  })() : "";
   const shapeLabel = _sugg.shapeKey
     ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">Formula: ${esc(formulaLabel(_sugg.shapeKey))}</div>` : "";
   const capLabel = _sugg.capsuleId ? (() => {
@@ -1656,9 +1692,10 @@ function renderSuggestSheet() {
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="sgClose">Close</button>
-      <h2>Outfit suggestion</h2>
+      <h2>${_sugg.varyFrom ? "Vary this look" : "Outfit suggestion"}</h2>
       <div style="width:48px"></div>
     </div>
+    ${varyLabel}
     ${shapeLabel}
     ${capLabel}
     ${contextChipsHtml}
@@ -2246,6 +2283,7 @@ function openLook(id) {
     <div class="lk-actbar">
       ${ic('<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>', "Details", "details")}
       ${ic('<path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>', "Formality", "folder")}
+      ${ic('<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><path d="M7.8 7.8l2.1 2.1M14.1 14.1l2.1 2.1M16.2 7.8l-2.1 2.1M9.9 14.1l-2.1 2.1"/>', "Vary", "vary")}
       ${ic('<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', "Duplicate", "duplicate")}
       ${ic('<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v4M10 16h4"/>', "Calendar", "calendar")}
       ${ic('<rect x="2" y="4" width="20" height="5" rx="1"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>', o.archived ? "Unarchive" : "Archive", "archive")}

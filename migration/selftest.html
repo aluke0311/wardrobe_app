@@ -1412,6 +1412,56 @@ async function run() {
     return eq([none, some], [false, true]);
   });
 
+  // ---- "Vary this" (2026-07-26, her own request) ----
+  // The point is that she already knows WHICH piece to change, so this must seed
+  // the real look and leave every piece swappable — locking would disable the
+  // per-piece ✨ that does the actual work.
+  const withMockCloset = (fn) => {
+    const saved = { items: W.items, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    wears: W.wears, exclusions: W.exclusions, sugg: W._sugg,
+                    trip: W.tripModeId, cap: W.activeCapsuleId, ready: W.dataReady };
+    const mk = (id, cat, sub, name) => ({ id, name, category: cat, subcategory: sub, status: "Available",
+      image_path: "p/" + id + ".jpg", color_family: "Blue", formality: [2, 3],
+      season: ["Summer", "Fall", "Winter", "Spring"] });
+    W.items = [mk("t1","Tops","Tee shirts","Tee A"), mk("t2","Tops","Tee shirts","Tee B"),
+               mk("b1","Bottoms","Jeans","Jeans A"), mk("b2","Bottoms","Jeans","Jeans B"),
+               mk("s1","Shoes","Sneakers","Sneaker A"), mk("s2","Shoes","Sneakers","Sneaker B")];
+    W.outfits = [{ id: "o1", name: "Tuesday", rating: null, archived: false, created_at: "2026-01-01" }];
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "t1" }, { outfit_id: "o1", item_id: "b1" }, { outfit_id: "o1", item_id: "s1" }];
+    W.wears = []; W.exclusions = []; W.tripModeId = null; W.activeCapsuleId = null; W.dataReady = true;
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.outfits = saved.outfits; W.outfitLinks = saved.outfitLinks;
+      W.wears = saved.wears; W.exclusions = saved.exclusions; W._sugg = saved.sugg;
+      W.tripModeId = saved.trip; W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  };
+
+  t("openVaryLook starts from the real look and locks nothing", () => withMockCloset(() => {
+    W.openVaryLook("o1");
+    const pieces = W._sugg.results[W._sugg.idx].pieces.map(p => p.id).sort();
+    return eq([pieces, W._sugg.locked.size, W._sugg.varyFrom], [["b1", "s1", "t1"], 0, "o1"]);
+  }));
+
+  t("varying swaps only the piece she points at", () => withMockCloset(() => {
+    W.openVaryLook("o1");
+    W.swapSuggestionPiece("s1");
+    const after = W._sugg.results[W._sugg.idx].pieces.map(p => p.id).sort();
+    // top + bottom held; the shoe is a DIFFERENT shoe, not just absent
+    return after.includes("t1") && after.includes("b1") && after.includes("s2") && after.length === 3
+      ? true : JSON.stringify(after);
+  }));
+
+  t("openVaryLook refuses a look with fewer than 2 wearable pieces", () => withMockCloset(() => {
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "t1" }];
+    W.buildOutfitIndexes();
+    const before = W._sugg.varyFrom;
+    W.openVaryLook("o1");
+    return eq(W._sugg.varyFrom, before);
+  }));
+
   // ---- kv concurrent-write safety (2026-07-26 audit H2) ----
   // Every kv key is one JSONB blob rewritten whole, so a plain last-write-wins
   // upsert silently destroys the other device's edit. kvUpdate re-applies the
