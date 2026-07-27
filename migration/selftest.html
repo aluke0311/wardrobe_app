@@ -442,9 +442,12 @@ async function run() {
     W.items = [{ id: "a", status: "Available" }, { id: "b", status: "Available" }];
     W.itemById = new Map(W.items.map(i => [i.id, i]));
     W._sugg.capsuleId = null;
+    W._sugg.wholeCloset = true;   // the pool defaults to the RACK since r7 — this
+                                  // case is about the ban filter, so widen explicitly
     W._sugg.banned = new (W.Set)(["b"]);
     const ids = W._suggPool().map(i => i.id);
     W._sugg.banned = new (W.Set)();
+    W._sugg.wholeCloset = false;
     return eq(ids, ["a"]);
   });
   t("variety salt is stable within a session and bounded", () => {
@@ -1536,6 +1539,68 @@ async function run() {
     W.kvData.set("rack", { pushed: { A: fresh, B: stale } });
     const set = W.rackPushedSet(today);
     return eq([set.has("A"), set.has("B")], [true, false]);
+  }));
+
+  // ---- the rack as the suggester's default pool (r7) ----
+  // Her four conditions for approving the narrowing, as tests.
+  t("the suggester draws from the rack by default, and one tap widens it", () => withRackCloset(() => {
+    W.openSuggestSheet();
+    const rackIds = new Set(W.rackItems().map(i => i.id));
+    const narrow = W._suggPool();
+    W._sugg.wholeCloset = true;
+    const wide = W._suggPool();
+    W._sugg.wholeCloset = false;
+    return narrow.length === rackIds.size && narrow.every(i => rackIds.has(i.id)) && wide.length > narrow.length
+      ? true : `narrow=${narrow.length} rack=${rackIds.size} wide=${wide.length}`;
+  }));
+
+  t("the pool chip always names the pool and its count", () => withRackCloset(() => {
+    W.openSuggestSheet();
+    const onRack = W.suggestPoolChipHtml();
+    W._sugg.wholeCloset = true;
+    const onAll = W.suggestPoolChipHtml();
+    W._sugg.wholeCloset = false;
+    // never silently narrowed: the chip exists and carries a number in both states
+    return /Rack/.test(onRack) && /\d/.test(onRack) && /Whole closet/.test(onAll) && /\d/.test(onAll)
+      ? true : `${onRack} | ${onAll}`;
+  }));
+
+  // ⚠️ Non-negotiable: she must be able to build around a piece that isn't in
+  // rotation. If this ever fails the rack has become a cage.
+  t("locking an off-rack piece still returns outfits containing it", () => withRackCloset(() => {
+    W.openSuggestSheet();
+    const rackIds = new Set(W.rackItems().map(i => i.id));
+    const off = W.items.find(i => !rackIds.has(i.id) && i.category === "Tops");
+    const locked = new (W.Set)([off.id]);
+    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, locked, false, null, null, null);
+    return res.length > 0 && res.every(c => c.pieces.some(p => p.id === off.id))
+      ? true : `off=${off && off.id} results=${res.length}`;
+  }));
+
+  t("seeding an off-rack piece still returns outfits containing it", () => withRackCloset(() => {
+    W.openSuggestSheet();
+    const rackIds = new Set(W.rackItems().map(i => i.id));
+    const off = W.items.find(i => !rackIds.has(i.id) && i.category === "Tops");
+    const res = W.suggestOutfits(null, off.id, W._suggPool(), W.currentSeason(), null, null, false, null, null, null);
+    return res.length > 0 && res.some(c => c.pieces.some(p => p.id === off.id))
+      ? true : `off=${off && off.id} results=${res.length}`;
+  }));
+
+  // Audit M2: trip mode and the rack must never compose — the intersection of a
+  // suitcase and a rack could be four items.
+  t("during a trip the suitcase is the pool, not the rack", () => withRackCloset(() => {
+    const savedCaps = W.capsules, savedLinks = W.capsuleLinks, savedTrip = W.tripModeId;
+    W.capsules = [{ id: "trip1", name: "Trip", kind: "travel", start_date: today, end_date: W.shiftDate(today, 3) }];
+    W.capsuleLinks = W.items.slice(0, 6).map(i => ({ capsule_id: "trip1", item_id: i.id }));
+    W.buildCapsuleIndexes();
+    W.tripModeId = "trip1";
+    W.openSuggestSheet();
+    const pool = W._suggPool();
+    const chip = W.suggestPoolChipHtml();
+    W.tripModeId = savedTrip; W.capsules = savedCaps; W.capsuleLinks = savedLinks;
+    W.buildCapsuleIndexes();
+    // pool is the suitcase, and the rack chip stays out of the way
+    return pool.length === 6 && chip === "" ? true : `pool=${pool.length} chip=${JSON.stringify(chip)}`;
   }));
 
   t("the rack never offers something the suggester would refuse", () => withRackCloset(() => {

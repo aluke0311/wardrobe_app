@@ -1223,7 +1223,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), activity: null, shapeKey: null };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), activity: null, shapeKey: null, wholeCloset: false };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
@@ -1269,6 +1269,13 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
   _sugg.tmPick = null;                // set only by openTomorrowRevise
   _sugg.varyFrom = null;              // set only by openVaryLook
+  // Default pool is THE RACK (2026-07-26). Her four conditions when she approved
+  // the narrowing: the rack is always a visible screen, the suggester always
+  // names its pool with a count and a one-tap widen, pull-in works from
+  // anywhere, and locking a non-rack piece never fails. This flag is the widen;
+  // it is session-only and resets every open, so the app never quietly stays
+  // narrowed OR quietly stays wide.
+  _sugg.wholeCloset = false;
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
@@ -1299,9 +1306,13 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
 // minus any session-banned pieces ("not this", 2026-07-18). Always returns a
 // real array now (the engine treats it as capsulePool either way).
 function _suggPool() {
+  // Precedence, decided before either could collide (audit M2): during a trip
+  // the SUITCASE is the rack. They never compose — intersecting them could leave
+  // a pool of four items. openSuggestSheet sets capsuleId from tripModeId, so
+  // the capsule branch simply wins here.
   let pool = _sugg.capsuleId
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
-    : items.filter(i => itemStatus(i) === "Available");
+    : (_sugg.wholeCloset ? items.filter(i => itemStatus(i) === "Available") : rackItems());
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
   pool = pool.filter(i => !isMending(i));   // swap/+Layer candidates too
   // Activity/gear filtering lives HERE so swap/+Layer/ban candidates see the
@@ -1329,11 +1340,26 @@ function _saltFor(id) {
 
 // C3 (2026-07-18): when the batch comes back short, say WHICH filter is
 // hiding the most — keeps trust in the engine instead of "it's broken".
+/* The pool label. Non-negotiable: she approved the rack narrowing the suggester
+   ONLY on condition that the narrowing is always named, counted and reversible
+   in one tap. An unlabelled smaller pool is the invisible-filter mistake that
+   burned her in December (a warm-weather trip filtered the sundress out before
+   scoring could see the 84° forecast). Not shown in capsule/trip mode, where
+   the capsule label above already names the pool. */
+function suggestPoolChipHtml() {
+  if (_sugg.capsuleId || _sugg.activity === "workout") return "";
+  const rackN = rackItems().length;
+  const allN = items.filter(i => itemStatus(i) === "Available").length;
+  return _sugg.wholeCloset
+    ? `<button class="cap-chip" data-spool style="font-size:13px" title="Back to the rack">Whole closet · ${allN} \u2192 rack</button>`
+    : `<button class="cap-chip on" data-spool style="font-size:13px" title="Widen to the whole closet">\u{1F455} Rack · ${rackN} \u2192 all ${allN}</button>`;
+}
+
 function suggestStarvationNote() {
   if (!_sugg.results || _sugg.results.length >= 8) return "";
   const base = _sugg.capsuleId
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
-    : items.filter(i => itemStatus(i) === "Available");
+    : (_sugg.wholeCloset ? items.filter(i => itemStatus(i) === "Available") : rackItems());
   const eligible = base.filter(i => i.image_path && !isNoSuggest(i) && !isMending(i));
   const bits = [];
   if (_suggClean() && LAUNDRY_READY()) {
@@ -1347,6 +1373,9 @@ function suggestStarvationNote() {
   }
   if (_sugg.banned && _sugg.banned.size) bits.push(`${_sugg.banned.size} set aside`);
   if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
+  // A thin RACK must say so and point at the way out, or an empty sheet reads as
+  // "the app is broken" rather than "this pool is small".
+  if (!_sugg.capsuleId && !_sugg.wholeCloset) bits.push(`the rack is ${eligible.length} pieces \u2014 tap it above to use the whole closet`);
   if (_sugg.activity === "workout") {
     const gear = eligible.filter(isWorkoutGear).length;
     bits.push(`${gear} piece${gear === 1 ? "" : "s"} tagged as workout gear`);
@@ -1474,6 +1503,11 @@ function openVaryLook(outfitId) {
   if (pieces.length < 2) return toast("Not enough pieces to vary");
   openSuggestSheet();
   _sugg.varyFrom = outfitId;
+  // Varying works from a specific saved outfit, not from "what's in play", so the
+  // swap pool is the whole closet by default — a rack-only swap could refuse the
+  // obvious replacement for a piece that isn't currently in rotation. The pool
+  // chip still shows, so she can narrow it back.
+  _sugg.wholeCloset = true;
   const k = comboKey(pieces);
   _sugg.results = [{ pieces, score: 0 }, ..._sugg.results.filter(c => comboKey(c.pieces) !== k)];
   _sugg.idx = 0;
@@ -1729,6 +1763,7 @@ function renderSuggestSheet() {
         <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
         ${_sugg.wx && _sugg.wx.maxT != null ? `<button class="cap-chip${_sugg.useWx ? " on" : ""}" data-swx style="font-size:13px" title="Weather-aware picks">${wmoEmoji(_sugg.wx.code)} ${_sugg.wx.maxT}°/${_sugg.wx.minT}°</button>` : ""}
         ${(() => { if (!LAUNDRY_READY()) return ""; const n = hamperItems().length; return n ? `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="Skip items in the hamper">🧺 Clean only</button>` : ""; })()}
+        ${suggestPoolChipHtml()}
       </div>
     </div>
     ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}
@@ -1837,6 +1872,8 @@ function renderSuggestSheet() {
 
   const cleanBtn = $("#logInner").querySelector("[data-sclean]");
   if (cleanBtn) cleanBtn.onclick = () => { _sugg.useClean = !_suggClean(); regen(); };
+  const poolBtn = $("#logInner").querySelector("[data-spool]");
+  if (poolBtn) poolBtn.onclick = () => { _sugg.wholeCloset = !_sugg.wholeCloset; regen(); };
 
   const gearBtn = $("#logInner").querySelector("[data-sggear]");
   if (gearBtn) gearBtn.onclick = () => openGearTagSheet();

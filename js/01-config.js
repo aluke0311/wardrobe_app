@@ -6,14 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r6";
+const APP_VERSION = "2026-07-26 r7";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New: The rack. A standing set of about 50 pieces the app keeps for you — what's in season and what you've actually been reaching for. Closet → 👕 The rack",
-  "You never build or maintain it. When you feel like it, open a piece and put it on the rack or take it off; skip a month and nothing breaks",
-  "A fifth of it is deliberately things you HAVEN'T worn lately, so it can't quietly shrink your wardrobe to the same ten pieces",
-  "Plan a Wedding or a Concert in the week ahead and the rack stocks itself for it. Next update, the suggester will use the rack by default",
+  "The suggester now draws from the rack instead of your whole closet — the same small-pool feeling that makes it good in a suitcase",
+  "It always tells you which pool it's using, with a count, and one tap widens it to everything. It will never quietly narrow on you",
+  "Locking or starting from a piece that isn't on the rack still works exactly as before — the rack yields, it doesn't argue",
+  "On a trip your suitcase is the pool, as it always was. The two never combine",
 
 ];
 
