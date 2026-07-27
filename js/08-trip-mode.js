@@ -348,17 +348,11 @@ function renderClosetRoot() {
     return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`
       + (w ? `<button class="cl-capbtn" data-worn>👕 Worn · ${w} item${w === 1 ? "" : "s"}</button>` : "");
   })() : "";
-  // Only shown when something is actually waiting — an always-visible empty
-  // repair pile is just a reproach.
-  const mendRow = (() => {
-    const m = _scopedMending().length;
-    return m ? `<button class="cl-capbtn" data-mend>🪡 Mending · ${m} item${m === 1 ? "" : "s"}</button>` : "";
-  })();
   // The rack is ALWAYS a visible row (her condition when approving it): a pool
   // that quietly narrows the suggester has to be somewhere she can go and look.
   const rackRow = activeCapsuleId ? ""
     : `<button class="cl-capbtn" data-rack>\u{1F455} The rack \u00b7 ${rackItems().length} in play</button>`;
-  return clToolbar("Closet", false, true) + top + capFilter + rackRow + launRow + mendRow + `<div class="frows">${rows}</div>`;
+  return clToolbar("Closet", false, true) + top + capFilter + rackRow + launRow + `<div class="frows">${rows}</div>`;
 }
 
 // ---- laundry sheet ----
@@ -542,14 +536,6 @@ function _scopedWorn(ls) {
   }
   return list;
 }
-function _scopedMending() {
-  let list = items.filter(i => isMending(i) && itemStatus(i) !== "Archive");
-  if (activeCapsuleId) {
-    const set = new Set((capsuleLinkMap.get(activeCapsuleId) || []).map(l => l.item_id));
-    list = list.filter(i => set.has(i.id));
-  }
-  return sortItems(list);
-}
 
 // Full-page hamper — its own closet view (like a subcategory grid), because the
 // closet row promises "Hamper · N" and a tap should SHOW them. The wash flow
@@ -584,20 +570,6 @@ function renderClosetWorn() {
         <div>Pieces land here once you've worn them since their last wash but not enough times to be dirty.</div></div>`;
   return clToolbar(`Worn · ${list.length}`, true, false)
     + `<div class="snote" style="padding:8px 16px 2px">Worn since washing, not dirty yet — the pile on the chair. Tap <b>Select</b> to send several to the hamper at once, or open one piece to do it individually.</div>`
-    + body
-    + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
-}
-
-// The mending pile. Same shape as the Worn tray — the point is that a piece
-// waiting on a button stops being suggested and stops being forgotten.
-function renderClosetMend() {
-  const list = _scopedMending();
-  const body = list.length
-    ? gridHtml(list)
-    : `<div class="placeholder" style="padding:40px 32px"><b>Nothing needs mending</b>
-        <div>Tap 🪡 on a piece when a button goes or a hem drops. It'll wait here, and stay out of suggestions until you clear it.</div></div>`;
-  return clToolbar(`Mending · ${list.length}`, true, false)
-    + `<div class="snote" style="padding:8px 16px 2px">Waiting on a repair — kept out of suggestions. Open a piece and tap 🪡 again once it's fixed.</div>`
     + body
     + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
 }
@@ -715,8 +687,6 @@ function renderCloset() {
     body.innerHTML = renderClosetRack();
   } else if (closetWorn) {
     body.innerHTML = renderClosetWorn();
-  } else if (closetMend) {
-    body.innerHTML = renderClosetMend();
   } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
     body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
@@ -758,7 +728,7 @@ function renderCloset() {
   };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; closetRack = false; navResetScroll("closet"); renderCloset(); scrollToTop(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetRack = false; navResetScroll("closet"); renderCloset(); scrollToTop(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -889,7 +859,6 @@ function closetBack() {
   // is what she can see, so it's what back should close.
   if (closetSearchQ !== null) { closetSearchQ = null; searchResults = null; renderCloset(); navShallower("closet"); return; }
   if (closetHamper) { closetHamper = false; }
-  if (closetMend) { closetMend = false; }
   if (closetRack) { closetRack = false; }
   if (closetWorn) { closetWorn = false; }
   else if (closetSub) { closetSub = null; }

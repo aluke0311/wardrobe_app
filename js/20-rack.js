@@ -126,7 +126,7 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   // offer something the engine would refuse. Laundry is NOT considered — see header.
   const base = (pool || items).filter(i =>
     i && itemStatus(i) === "Available" && i.image_path &&
-    !isNoSuggest(i) && !(typeof isMending === "function" && isMending(i)) &&
+    !isNoSuggest(i) &&
     i.category !== "Workout" && !push.has(i.id));
 
   const eligible = base.filter(i => inSeasonWx(i, seas, wx));

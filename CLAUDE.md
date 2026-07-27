@@ -14,8 +14,8 @@ Guidance for working in this repo. Read alongside `README.md`.
 > What changed, in short:
 > - **Identity is mirror-first, and that's stronger than this file implies.**
 >   She opens Stats *daily*, to look rather than to learn, and when offered 12
->   analytical features to cut she kept 11 (dropped **Mending** — still to be
->   removed, see the audit's M4). The stats ARE the daily reward.
+>   analytical features to cut she kept 11 (dropped **Mending**, removed in r8).
+>   The stats ARE the daily reward.
 > - **The app is over-*presented*, not overbuilt. Compress, don't delete.**
 >   Given one round she chose a coherence pass over new features.
 > - **The rack is BUILT (2026-07-26 r6+r7, `js/20-rack.js`)** — a standing ~46-piece derived pool
@@ -288,13 +288,14 @@ Rides the surviving `searchResults` plumbing; `siblingItems()` walks the results
 `closetBack()` closes the search before unwinding the folder stack. The pickers'
 `_capPickFilter` was repointed at the same matcher.
 
-⑥ **MENDING** — `MEND_TAG`/`isMending`/`setMending` (same sentinel pattern as
-`no-suggest`/`layer`/`tol:`). `mendLineHtml(i)` is one line on the item **photo
-view** — the only entry point, on purpose: the sole moment this gets tagged is when
-the button comes off, and she will never run a mending audit. `_scopedMending()` +
-`renderClosetMend()` + `closetMend` mirror the Worn tray exactly (back / siblings /
-switchTab / capsule scope); the closet-root row **hides at zero**. Excluded from
-`suggestOutfits`' pool, its starvation count, and `_suggPool()` swap candidates.
+⑥ ~~**MENDING**~~ — ⚠️ **REMOVED 2026-07-26 r8.** Offered 12 features to cut she
+kept 11 and dropped this one; the original entry's own reasoning ("she will never
+run a mending audit") turned out to apply to the feature itself. Gone: `MEND_TAG`,
+`isMending`, `setMending`, `mendLineHtml`, `_scopedMending`, `renderClosetMend`,
+`closetMend` and the three suggester exclusions. ⚠️ The **`"mend"` tag may still
+sit on items in the live DB** — an unread orphan, deliberately not migrated off,
+so the data survives if it's ever wanted back. Nothing reads it, so a tagged piece
+is suggestible again; a selftest case pins that this is harmless.
 
 ⑦ **YEAR IN PIXELS** — `statsView "pixels"` / `renderStatsPixelsPage()` /
 `pixelDayLevels(year)` / `statsPixelsYear`. 53×7 `.pxgrid`, each day shaded by

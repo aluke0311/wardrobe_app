@@ -898,22 +898,20 @@ async function run() {
   t("itemMatchesText: survives missing fields", () =>
     eq([W.itemMatchesText({ id: "x" }, "linen"), W.itemMatchesText({ id: "x" }, "")], [false, true]));
 
-  // ---- Round C: mending tag ----
-  t("isMending: reads the sentinel tag, tolerates missing tags", () =>
-    eq([W.isMending({ tags: ["mend"] }), W.isMending({ tags: ["layer"] }),
-        W.isMending({}), W.isMending(null)], [true, false, false, false]));
-  t("mending pieces are kept out of suggestions", () => {
+  // Mending was REMOVED in 2026-07-26 r8 (she dropped it when asked which of 12
+  // features to cut), so its two cases went with it. The "mend" tag may still sit
+  // on items in the live DB as an unread orphan; this asserts that is harmless —
+  // such a piece is simply suggestible again, which is the point of removing it.
+  t("a leftover 'mend' tag no longer hides a piece from suggestions", () => {
     const savedItems = W.items, savedById = W.itemById;
     W.items = [
       { id: "ok", name: "Tee", category: "Tops", subcategory: "Tee shirts", status: "Available", image_path: "a.jpg", tags: [] },
       { id: "torn", name: "Torn tee", category: "Tops", subcategory: "Tee shirts", status: "Available", image_path: "b.jpg", tags: ["mend"] },
     ];
     W.itemById = new Map(W.items.map(i => [i.id, i]));
-    // the engine's own pool filter is what we're checking, so read it back through
-    // the same predicate the suggester uses
-    const pool = W.items.filter(i => i.image_path && !W.isNoSuggest(i) && !W.isMending(i));
+    const pool = W.items.filter(i => i.image_path && !W.isNoSuggest(i));
     W.items = savedItems; W.itemById = savedById;
-    return eq(pool.map(i => i.id), ["ok"]);
+    return eq(pool.map(i => i.id), ["ok", "torn"]);
   });
 
   // ---- Round C: year in pixels ----

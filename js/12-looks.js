@@ -530,18 +530,6 @@ function rackLineHtml(i) {
       </div>`;
 }
 
-function mendLineHtml(i) {
-  if (itemStatus(i) === "Archive") return "";
-  return isMending(i)
-    ? `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:14px;color:var(--accent)">
-        <span>🪡 Waiting on a repair</span>
-        <button class="lnk" data-mend-toggle="0" style="font-size:13px">✓ Mended</button>
-      </div>`
-    : `<div class="item-stat-strip" style="display:flex;justify-content:center">
-        <button class="lnk" data-mend-toggle="1" style="font-size:12px;color:var(--muted)">🪡 Needs mending</button>
-      </div>`;
-}
-
 function relDate(d) {
   const ds = daysSince(d);
   if (ds == null) return "";
@@ -857,12 +845,13 @@ const LAYER_TAG = "layer";  // a top that doubles as a layer (e.g. a button-up o
 // Exclusion from normal days comes from formality [1]-only, never from the tag.
 const GEAR_WORKOUT_TAG = "gear:workout";
 const GEAR_RAIN_TAG = "gear:rain";
-// Mending (Round C, 2026-07-25). A popped button is a real reason a piece isn't
-// wearable, and it used to live only in her head. Behaves like the hamper:
-// derived-adjacent state that pulls the piece out of suggestions until cleared.
-const MEND_TAG = "mend";
+// ⚠️ MENDING WAS REMOVED 2026-07-26 r8. Offered 12 analytical/utility features
+// to cut, she kept 11 and dropped this one — she was never going to run a repair
+// audit. The "mend" tag may STILL EXIST on items in the live DB; it is an unread
+// orphan, deliberately not migrated off, so re-adding the feature later would
+// find its data intact. Nothing reads it now, so a tagged piece is suggestible
+// again — which is the intended consequence of removing the feature.
 function isNoSuggest(i) { return !!i && (i.tags || []).includes(NO_SUGGEST_TAG); }
-function isMending(i) { return !!i && (i.tags || []).includes(MEND_TAG); }
 function isLayer(i) { return !!i && (i.tags || []).includes(LAYER_TAG); }
 function isWorkoutGear(i) { return !!i && (i.tags || []).includes(GEAR_WORKOUT_TAG); }
 function isRainGear(i) { return !!i && (i.tags || []).includes(GEAR_RAIN_TAG); }
@@ -876,7 +865,6 @@ async function setItemTag(id, tag, on) {
   } catch (e) { toast(e.message); }
 }
 async function setNoSuggest(id, on) { return setItemTag(id, NO_SUGGEST_TAG, on); }
-async function setMending(id, on) { return setItemTag(id, MEND_TAG, on); }
 async function setLayer(id, on) { return setItemTag(id, LAYER_TAG, on); }
 async function setWorkoutGear(id, on) { return setItemTag(id, GEAR_WORKOUT_TAG, on); }
 async function setRainGear(id, on) { return setItemTag(id, GEAR_RAIN_TAG, on); }
@@ -995,8 +983,7 @@ function scoreCombo(its, target, season = null, wx = null) {
 
 function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null, lockedRoles = null, shapeKey = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
-  // A piece waiting on a repair isn't wearable — same exclusion as no-suggest.
-  let avail = base.filter(i => i.image_path && !isNoSuggest(i) && !isMending(i));
+  let avail = base.filter(i => i.image_path && !isNoSuggest(i));
   if (activity === "workout") {
     // Activity mode (Round A): pool = tagged gear only; formality is moot
     // (the tag IS the cohesion), so callers pass targetLevel null.
@@ -1314,7 +1301,6 @@ function _suggPool() {
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
     : (_sugg.wholeCloset ? items.filter(i => itemStatus(i) === "Available") : rackItems());
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
-  pool = pool.filter(i => !isMending(i));   // swap/+Layer candidates too
   // Activity/gear filtering lives HERE so swap/+Layer/ban candidates see the
   // same pool as the engine (which re-applies the same rules — harmless).
   if (_sugg.activity === "workout") pool = pool.filter(isWorkoutGear);
@@ -1360,7 +1346,7 @@ function suggestStarvationNote() {
   const base = _sugg.capsuleId
     ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
     : (_sugg.wholeCloset ? items.filter(i => itemStatus(i) === "Available") : rackItems());
-  const eligible = base.filter(i => i.image_path && !isNoSuggest(i) && !isMending(i));
+  const eligible = base.filter(i => i.image_path && !isNoSuggest(i));
   const bits = [];
   if (_suggClean() && LAUNDRY_READY()) {
     const ls = laundryState();

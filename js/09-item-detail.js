@@ -47,7 +47,6 @@ function siblingItems() {
   if (closetHamper) return _scopedHamper();
   if (closetRack) return rackItems();
   if (closetWorn) return _scopedWorn();
-  if (closetMend) return _scopedMending();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
   if (closetCat) return lensItems().filter(i => i.category === closetCat);
   return lensItems();
@@ -109,7 +108,6 @@ function openItem(id) {
     <div class="item-stat-strip">${esc(itemStatLine(i))}</div>
     ${workhorseBadgeHtml(i)}
     ${laundryLineHtml(i)}
-    ${mendLineHtml(i)}
     ${rackLineHtml(i)}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
@@ -145,13 +143,6 @@ function openItem(id) {
   if (rackBtn) rackBtn.onclick = async () => {
     const on = rackBtn.dataset.rackToggle === "1";
     await (on ? pullOntoRack(i.id) : pushOffRack(i.id));
-    openItem(i.id);
-  };
-  const mendBtn = body.querySelector("[data-mend-toggle]");
-  if (mendBtn) mendBtn.onclick = async () => {
-    const on = mendBtn.dataset.mendToggle === "1";
-    await setMending(i.id, on);
-    toast(on ? "Set aside for mending" : "Back in rotation");
     openItem(i.id);
   };
   const dateEdit = body.querySelector("[data-laun-date-edit]");

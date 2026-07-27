@@ -6,14 +6,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r7";
+const APP_VERSION = "2026-07-26 r8";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "The suggester now draws from the rack instead of your whole closet — the same small-pool feeling that makes it good in a suitcase",
-  "It always tells you which pool it's using, with a count, and one tap widens it to everything. It will never quietly narrow on you",
-  "Locking or starting from a piece that isn't on the rack still works exactly as before — the rack yields, it doesn't argue",
-  "On a trip your suitcase is the pool, as it always was. The two never combine",
+  "Mending is gone — you said it was the one feature you wouldn't miss, and you were never going to run a repair audit",
+  "Anything you'd tagged as needing mending is simply back in normal rotation. The tag itself is left alone in your data, so nothing is lost if you ever want it back",
 
 ];
 
