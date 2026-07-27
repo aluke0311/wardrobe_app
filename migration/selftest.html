@@ -1413,6 +1413,67 @@ async function run() {
     return eq([none, some], [false, true]);
   });
 
+  // ---- formula chips in the suggester (2026-07-26 r9) ----
+  // Round B left this unfinished. It matters because a formula IS the "rough
+  // idea" half of how she gets dressed: "I have a rough idea already — the black
+  // pants, probably — and I want to see whether there's a better version".
+  const withFormulaCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, sugg: W._sugg, memo: W._formulaChipMemo,
+                    cap: W.activeCapsuleId, ready: W.dataReady, rack: W.kvData.get("rack") };
+    const mk = (id, c, sub) => ({ id, name: id, category: c, subcategory: sub, status: "Available",
+      image_path: id + ".jpg", color_family: "Blue", formality: [2, 3],
+      season: ["Spring", "Summer", "Fall", "Winter"] });
+    W.items = [];
+    for (let n = 0; n < 6; n++) { W.items.push(mk("sw" + n, "Tops", "Sweaters")); W.items.push(mk("jn" + n, "Bottoms", "Jeans"));
+      W.items.push(mk("bt" + n, "Shoes", "Boots")); W.items.push(mk("te" + n, "Tops", "Tee shirts")); }
+    W.outfits = []; W.outfitLinks = []; W.wears = [];
+    for (let k = 0; k < 3; k++) {                 // 3 distinct looks, one shape, 3 wear-days each
+      const oid = "o" + k;
+      W.outfits.push({ id: oid, name: "Look " + k, rating: null, archived: false, created_at: "2026-01-01" });
+      for (const it of ["sw" + k, "jn" + k, "bt" + k]) W.outfitLinks.push({ outfit_id: oid, item_id: it });
+      for (let d = 0; d < 3; d++) for (const it of ["sw" + k, "jn" + k, "bt" + k])
+        W.wears.push({ id: `f${k}${d}${it}`, item_id: it, worn_on: W.shiftDate(today, -(k * 5 + d + 1)),
+                       outfit_id: oid, context: ["Errands"], formality_for: 3 });
+    }
+    W.exclusions = []; W.activeCapsuleId = null; W.dataReady = true;
+    W._formulaChipMemo = null; W.kvData.delete("rack");
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      try { W.hideSheet("logSheet"); } catch (e) {}
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.exclusions = saved.exclusions; W._sugg = saved.sugg;
+      W._formulaChipMemo = saved.memo; W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  };
+
+  t("topFormulas surfaces her repeated shapes", () => withFormulaCloset(() =>
+    eq(W.topFormulas(3).map(f => [f.label, f.wears, f.looks.length]),
+       [["Sweaters + Jeans + Boots", 9, 3]])));
+
+  t("picking a shape chip holds the silhouette", () => withFormulaCloset(() => {
+    W.openSuggestSheet();
+    W._sugg.shapeKey = W.topFormulas(1)[0].key;
+    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, null, false, null, null, W._sugg.shapeKey);
+    const ok = res.length > 0 && res.every(c => c.pieces.every(p => ["Sweaters", "Jeans", "Boots"].includes(p.subcategory)));
+    return ok ? true : `results=${res.length} ${JSON.stringify((res[0] || {}).pieces && res[0].pieces.map(p => p.subcategory))}`;
+  }));
+
+  t("shape chips stay out of the way in workout and vary modes", () => withFormulaCloset(() => {
+    W.openSuggestSheet();
+    const normal = W.suggestShapeChipsHtml();
+    W._sugg.activity = "workout";
+    const workout = W.suggestShapeChipsHtml();
+    W._sugg.activity = null; W._sugg.varyFrom = "o0";
+    const vary = W.suggestShapeChipsHtml();
+    W._sugg.varyFrom = null;
+    return normal.includes("data-sshape") && workout === "" && vary === ""
+      ? true : `normal=${normal.length} workout=${JSON.stringify(workout)} vary=${JSON.stringify(vary)}`;
+  }));
+
   // ---- THE RACK (2026-07-26) ----
   // Fixture: a closet big enough that the quotas bite, with dressy pieces in all
   // three core slots so the formality top-up has something to find.

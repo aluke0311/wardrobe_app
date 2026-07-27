@@ -1332,6 +1332,35 @@ function _saltFor(id) {
    burned her in December (a warm-weather trip filtered the sundress out before
    scoring could see the 84° forecast). Not shown in capsule/trip mode, where
    the capsule label above already names the pool. */
+/* Round B left "formula chip in the suggester itself" explicitly unfinished, and
+   it's the closest thing in the app to the mornings she actually described:
+   "(b) I have a rough idea already — the black pants, probably — and I want to
+   see whether there's a better version of that idea." A formula IS that rough
+   idea, in her own history's words.
+   Memoised on outfit-count + wear-count: buildFormulas walks every outfit and
+   this renders on every keystroke-ish interaction in the sheet. */
+let _formulaChipMemo = null;
+function topFormulas(limit = 3) {
+  const stamp = `${outfits.length}|${wears.length}`;
+  if (_formulaChipMemo && _formulaChipMemo.stamp === stamp) return _formulaChipMemo.list.slice(0, limit);
+  const list = buildFormulas(activeOutfits());
+  _formulaChipMemo = { stamp, list };
+  return list.slice(0, limit);
+}
+function suggestShapeChipsHtml() {
+  // Not in activity mode (the gear tag is the cohesion) and not while varying a
+  // specific look — both already answer "what shape?" in a stronger way.
+  if (_sugg.activity === "workout" || _sugg.varyFrom) return "";
+  const tops = topFormulas(3);
+  if (!tops.length) return "";
+  return `<div style="padding:2px 16px 0">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Your usual shapes</div>
+    <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
+      ${tops.map(f => `<button class="cap-chip${_sugg.shapeKey === f.key ? " on" : ""}" data-sshape="${esc(f.key)}" style="font-size:13px">${esc(f.label)}</button>`).join("")}
+    </div>
+  </div>`;
+}
+
 function suggestPoolChipHtml() {
   if (_sugg.capsuleId || _sugg.activity === "workout") return "";
   const rackN = rackItems().length;
@@ -1712,7 +1741,10 @@ function renderSuggestSheet() {
       ${o ? `Starting from <b style="color:var(--accent)">${esc(outfitName(o))}</b>. ` : ""}Tap ✨ on the piece you want to change.
     </div>`;
   })() : "";
-  const shapeLabel = _sugg.shapeKey
+  // Only name the shape when a chip isn't already showing it as selected —
+  // otherwise the same fact is on screen twice.
+  const shapeOnAChip = _sugg.shapeKey && topFormulas(3).some(f => f.key === _sugg.shapeKey);
+  const shapeLabel = (_sugg.shapeKey && !shapeOnAChip)
     ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">Formula: ${esc(formulaLabel(_sugg.shapeKey))}</div>` : "";
   const capLabel = _sugg.capsuleId ? (() => {
     const c = capsuleById.get(_sugg.capsuleId);
@@ -1737,6 +1769,7 @@ function renderSuggestSheet() {
     ${varyLabel}
     ${shapeLabel}
     ${capLabel}
+    ${suggestShapeChipsHtml()}
     ${contextChipsHtml}
     <div style="padding:12px 16px 4px">
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
@@ -1858,6 +1891,15 @@ function renderSuggestSheet() {
 
   const cleanBtn = $("#logInner").querySelector("[data-sclean]");
   if (cleanBtn) cleanBtn.onclick = () => { _sugg.useClean = !_suggClean(); regen(); };
+  $("#logInner").querySelectorAll("[data-sshape]").forEach(b => {
+    b.onclick = () => {
+      const k = b.dataset.sshape;
+      // Tapping the active shape clears it — a chip that can only ever be turned
+      // ON is a trap, since the only way back would be closing the sheet.
+      _sugg.shapeKey = _sugg.shapeKey === k ? null : k;
+      regen();
+    };
+  });
   const poolBtn = $("#logInner").querySelector("[data-spool]");
   if (poolBtn) poolBtn.onclick = () => { _sugg.wholeCloset = !_sugg.wholeCloset; regen(); };
 

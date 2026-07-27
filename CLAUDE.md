@@ -558,8 +558,12 @@ formula"** → `openSuggestSheet(null,null,null,shapeKey)`; `suggestOutfits`'
 10th arg `shapeKey` hard-filters each slot's pool to `formulaShapeMap(key)`
 (slots the shape doesn't name go EMPTY so the silhouette holds; a two-top shape
 may fill the layer slot from its own tops), and `swapSuggestionPiece` stays
-inside the shape. ⚠️ Still TODO for Round B: naming/saving formulas to `kv`,
-builder slot-seeding, formula chip in the suggester itself.
+inside the shape. ⚠️ Still TODO for Round B: naming/saving formulas to `kv` and builder
+slot-seeding. **The formula chip in the suggester shipped 2026-07-26 r9** —
+`topFormulas()` (memoised on outfit+wear counts) + `suggestShapeChipsHtml()`;
+tapping the active chip CLEARS it, since a chip that can only be turned on is a
+trap. Hidden in workout and "Vary this" modes, which already answer "what
+shape?" more strongly.
 
 **Round A "Tomorrow" (2026-07-20, r1→r2) is FULLY SHIPPED** (decisions in
 ROADMAP.md's Round A section — do not re-litigate). Three parts:
@@ -1199,7 +1203,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r7`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r9`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1532,7 +1536,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **152/152** (2026-07-26 r7, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **154/154** (2026-07-26 r9, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

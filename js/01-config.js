@@ -6,12 +6,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r8";
+const APP_VERSION = "2026-07-26 r9";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Mending is gone — you said it was the one feature you wouldn't miss, and you were never going to run a repair audit",
-  "Anything you'd tagged as needing mending is simply back in normal rotation. The tag itself is left alone in your data, so nothing is lost if you ever want it back",
+  "Your usual shapes now appear as chips in the suggester — “Sweaters + Jeans + Boots” — so you can say “that idea, but a better version of it” in one tap",
+  "Picking one holds the silhouette and re-fills it with different pieces. Tap it again to let go",
 
 ];
 
