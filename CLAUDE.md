@@ -593,7 +593,30 @@ shape?" more strongly.
 
 **Round A "Tomorrow" (2026-07-20, r1→r2) is FULLY SHIPPED** (decisions in
 ROADMAP.md's Round A section — do not re-litigate). Three parts:
-① **Activity/gear rework** (r1, no migration): `GEAR_WORKOUT_TAG`/`GEAR_RAIN_TAG`
+⚠️ **ACTIVITY MODE WAS REMOVED 2026-07-26 r13 — read this before the entry
+below.** Her call, after a run wouldn't build on a trip: *"I should just have
+workout formality and that can fix it."* **Level 1 (Utility) IS the function-wear
+ask.** The 🏋️ chip, `_sugg.activity`, `entryActivity` and `suggestOutfits`' 8th
+`activity` param are gone. What replaced them:
+- **`isFunctionWear(i)`** — formality contains 1 **OR** category Workout **OR**
+  the `gear:workout` tag. Used by BOTH the level-1 pool filter and the
+  pure-utility isolation in `formalityOk`, so they can never disagree.
+  ⚠️ The tag clause is what makes a real trip work: running shoes are usually
+  subcategory Sneakers at formality `[2,3]` because she wears them casually too,
+  and requiring level 1 on every piece left a Utility ask with no shoes.
+  Rescue-only — it widens level 1 and narrows nothing else.
+- Level 1 draws from the **whole closet, never the rack** (the rack excludes the
+  Workout category on purpose — "those clothes don't really mix"), and is the
+  only level at which the Workout category is visible at all.
+- The **Workout CONTEXT survives** for logging and planning; it reaches the
+  suggester through `CONTEXT_FORMALITY_SEED` (`Workout: 1`) like any other
+  context, so a planned workout day asks for Utility with no special case. It is
+  filtered OUT of the suggester's context chips only — *"I do still want the
+  other contexts available to select though. just not workout"*.
+- `openGearTagSheet` survives: its "Gear-only" toggle writes formality `[1]`,
+  which is now exactly the thing being asked for.
+
+① **Activity/gear rework** (r1, no migration) — SUPERSEDED, see above: `GEAR_WORKOUT_TAG`/`GEAR_RAIN_TAG`
 sentinel tags (`isWorkoutGear`/`isRainGear`/`setWorkoutGear`/`setRainGear`,
 item-detail SUGGESTIONS toggles). `suggestOutfits` gained an 8th arg
 `activity` — `"workout"` filters the pool to `isWorkoutGear` and bypasses
@@ -1229,7 +1252,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r12`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r13`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1569,7 +1592,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **166/166** (2026-07-26 r12, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **166/166** (2026-07-26 r13, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

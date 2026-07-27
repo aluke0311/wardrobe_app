@@ -189,7 +189,6 @@ function entrySuggestLevel(ctxs) {
   return lvls.length ? Math.max(...lvls) : null;
 }
 // The Workout-mapped context runs the suggester in activity mode instead.
-function entryActivity(ctxs) { return (ctxs || []).includes("Workout") ? "workout" : null; }
 // Attach a look to a day plan: fills the targeted entry's outfit slot, or
 // appends a fresh context-less entry when no entry was targeted.
 async function addKvPlanLook(date, outfitId, entryIdx = null) {
@@ -214,7 +213,10 @@ function _dpWx(date) {
 function _dpSuggestCtx(date, entryIdx, ctxs) {
   const wx = _dpWx(date);
   if (wx) _planWx[date] = wx;  // openSuggestSheet reads _planWx[planCtx.date]
-  return { kv: true, date, entryIdx, level: entryActivity(ctxs) ? null : entrySuggestLevel(ctxs), activity: entryActivity(ctxs) };
+  // The Workout CONTEXT survives r13's removal of activity mode: it maps to
+  // formality 1 through CONTEXT_FORMALITY_SEED like every other context, so a
+  // planned workout day asks for Utility without a special case.
+  return { kv: true, date, entryIdx, level: entrySuggestLevel(ctxs) };
 }
 function openDayPlanSheet(date) {
   const entries = dayPlan(date);

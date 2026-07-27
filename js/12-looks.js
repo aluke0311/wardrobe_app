@@ -1017,21 +1017,23 @@ function scoreCombo(its, target, season = null, wx = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, activity = null, lockedRoles = null, shapeKey = null) {
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, lockedRoles = null, shapeKey = null) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   let avail = base.filter(i => i.image_path && !isNoSuggest(i));
-  if (activity === "workout") {
-    // Activity mode (Round A): pool = tagged gear only; formality is moot
-    // (the tag IS the cohesion), so callers pass targetLevel null.
-    avail = avail.filter(isWorkoutGear);
-  } else {
-    // Normal mode: the Workout category never suggests (pre-Round-A behavior,
-    // now explicit since WORKOUT_SLOTS gives those items real slots), and rain
-    // gear only exists when the day is actually wet (locked/seed exempt by
-    // construction — locked pins its slot, the seed is unshifted post-filter).
-    avail = avail.filter(i => i.category !== "Workout");
-    if (!(wx && wmoIsWet(wx.code))) avail = avail.filter(i => !isRainGear(i));
-  }
+  /* ⚠️ Level 1 (Utility) IS the function-wear mode — there is no separate
+     "activity" mode any more (2026-07-26 r13, her call: "I should just have
+     workout formality and that can fix it").
+     The old 🏋️ chip pooled by a `gear:workout` TAG, which meant maintaining a
+     tag; asking for Utility uses something already on the item. The Workout
+     CONTEXT still exists for logging and planning — CONTEXT_FORMALITY_SEED
+     already maps it to 1, so a planned Workout day asks for level 1 by itself.
+     The Workout CATEGORY is hidden from normal suggestions (it always was) but
+     must be visible at level 1, or asking for Utility silently drops the sports
+     bras and workout tops. Rain gear stays gated on actual wet weather even at
+     level 1 — a rain shell is function-wear, but not for a dry-day run. */
+  const utility = targetLevel === 1;
+  if (!utility) avail = avail.filter(i => i.category !== "Workout");
+  if (!(wx && wmoIsWet(wx.code))) avail = avail.filter(i => !isRainGear(i));
   // Laundry: hamper items sit out. Locked pieces bypass via the pinned-slot path
   // and the seed is unshifted after filtering, so both are exempt by construction.
   // Items dirty LAUNDRY_RESUGGEST_DAYS+ re-enter (badged) so an unanswered
@@ -1072,7 +1074,11 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       // capsule) can't cover the level. Fewer/no results + the starvation
       // note beat wrong-level outfits. (Seed/locked stay exempt by
       // construction; the season filter above keeps its soft fallback.)
-      pool = pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
+      // Utility is asked for by level but ANSWERED by isFunctionWear, so gear
+      // that she also wears casually (sneakers at [2,3]) still qualifies.
+      pool = targetLevel === 1
+        ? pool.filter(isFunctionWear)
+        : pool.filter(i => (itemFormalitySet(i) || []).includes(targetLevel));
     }
     if (shape) {
       // HARD, like targetLevel: a formula is a shape request. Slots the shape
@@ -1100,11 +1106,12 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
 
   const exFree = its => !its.some((a, i) => its.some((b, j) => i < j && isExcluded(a.id, b.id)));
   // Pure-utility items (set = [1] only) must never mix with non-utility items.
-  // Activity mode skips the check: the gear tag is the cohesion signal there.
-  const formalityOk = activity ? () => true : its => {
+  // Uses the SAME isFunctionWear predicate as the level-1 filter above, so the
+  // isolation rule can't reject a combo the pool just approved — which is what
+  // left a Utility ask with gear it had itself selected and no way to combine it.
+  const formalityOk = its => {
     const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
-    const hasFunc = its.some(isPureFunc);
-    return !hasFunc || its.every(p => (itemFormalitySet(p) || []).includes(1));
+    return !its.some(isPureFunc) || its.every(isFunctionWear);
   };
 
   const combos = [];
@@ -1246,7 +1253,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), activity: null, shapeKey: null, wholeCloset: false };
+let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
@@ -1303,14 +1310,13 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
   _sugg.useClean = true;
-  _sugg.activity = (planCtx && planCtx.activity) || null;
-  if (_sugg.activity) _sugg.targetLevel = null;  // mutually exclusive asks
+
   // Weather: plan days use the trip's per-day forecast; otherwise home weather
   // (cached per day). If it isn't in memory yet, fetch and fold it in once.
   _sugg.wx = planCtx
     ? (_planWx[planCtx.date] || null)
     : (_homeWx.date === todayStr() ? _homeWx.wx : null);
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity, null, _sugg.shapeKey);
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), null, _sugg.shapeKey);
   renderSuggestSheet();
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -1319,7 +1325,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), _sugg.activity, null, _sugg.shapeKey);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), null, _sugg.shapeKey);
     }
     renderSuggestSheet();
   });
@@ -1346,20 +1352,19 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
    3. Otherwise the rack, unless she's widened it. */
 function _suggBasePool() {
   if (_sugg.capsuleId) return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
-  if (_sugg.activity === "workout" || _sugg.wholeCloset) return items.filter(i => itemStatus(i) === "Available");
+  if (_sugg.targetLevel === 1 || _sugg.wholeCloset) return items.filter(i => itemStatus(i) === "Available");
   return rackItems();
 }
 function _suggPool() {
   let pool = _suggBasePool();
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
-  // Activity/gear filtering lives HERE so swap/+Layer/ban candidates see the
-  // same pool as the engine (which re-applies the same rules — harmless).
-  if (_sugg.activity === "workout") pool = pool.filter(isWorkoutGear);
-  else {
-    pool = pool.filter(i => i.category !== "Workout");
-    const wx = _suggWx();
-    if (!(wx && wmoIsWet(wx.code))) pool = pool.filter(i => !isRainGear(i));
-  }
+  // Mirrors the engine so swap/+Layer/ban candidates see the same pool.
+  // At Utility the pool IS function-wear (see isFunctionWear); at every other
+  // level the Workout category stays hidden as it always has.
+  if (_sugg.targetLevel === 1) pool = pool.filter(isFunctionWear);
+  else pool = pool.filter(i => i.category !== "Workout");
+  const wx = _suggWx();
+  if (!(wx && wmoIsWet(wx.code))) pool = pool.filter(i => !isRainGear(i));
   return pool;
 }
 
@@ -1401,7 +1406,7 @@ function topFormulas(limit = 3) {
 function suggestShapeChipsHtml() {
   // Not in activity mode (the gear tag is the cohesion) and not while varying a
   // specific look — both already answer "what shape?" in a stronger way.
-  if (_sugg.activity === "workout" || _sugg.varyFrom) return "";
+  if (_sugg.targetLevel === 1 || _sugg.varyFrom) return "";
   const tops = topFormulas(3);
   if (!tops.length) return "";
   return `<div style="padding:2px 16px 0">
@@ -1414,11 +1419,11 @@ function suggestShapeChipsHtml() {
 
 function suggestPoolChipHtml() {
   if (_sugg.capsuleId) return "";
-  if (_sugg.activity === "workout") {
-    // Named, but not a button: there's nothing to widen TO — gear already comes
-    // from the whole closet. The naming rule still applies.
-    const n = items.filter(i => itemStatus(i) === "Available" && isWorkoutGear(i)).length;
-    return `<span class="cap-chip" style="font-size:13px;opacity:.7">\u{1F3CB} Workout gear \u00b7 ${n}</span>`;
+  if (_sugg.targetLevel === 1) {
+    // Named, but not a button: Utility already draws from the whole closet, so
+    // there is nothing to widen to. The naming rule still applies.
+    const n = items.filter(i => itemStatus(i) === "Available" && (itemFormalitySet(i) || []).includes(1)).length;
+    return `<span class="cap-chip" style="font-size:13px;opacity:.7">\u{1F3CB} Utility \u00b7 ${n} pieces, whole closet</span>`;
   }
   const rackN = rackItems().length;
   const allN = items.filter(i => itemStatus(i) === "Available").length;
@@ -1445,11 +1450,7 @@ function suggestStarvationNote() {
   if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
   // A thin RACK must say so and point at the way out, or an empty sheet reads as
   // "the app is broken" rather than "this pool is small".
-  if (!_sugg.capsuleId && !_sugg.wholeCloset && _sugg.activity !== "workout") bits.push(`the rack is ${eligible.length} pieces \u2014 tap it above to use the whole closet`);
-  if (_sugg.activity === "workout") {
-    const gear = eligible.filter(isWorkoutGear).length;
-    bits.push(`${gear} piece${gear === 1 ? "" : "s"} tagged as workout gear`);
-  }
+  if (!_sugg.capsuleId && !_sugg.wholeCloset && _sugg.targetLevel !== 1) bits.push(`the rack is ${eligible.length} pieces \u2014 tap it above to use the whole closet`);
   if (!bits.length) return "";
   return `<div class="center muted" style="font-size:12px;padding:4px 12px 0">Pool is tight — ${esc(bits.join(" · "))}</div>`;
 }
@@ -1475,11 +1476,14 @@ function suggestLevelDoorHtml() {
 
 // Zero-state door for activity mode (Round A): an untagged closet isn't a dead
 // end — offer the one-time gear-tagging pass right where the emptiness shows.
+/* Zero-state for Utility. Since r13 the ask is a formality level, not a tag, so
+   the door sets formality rather than tagging: openGearTagSheet's "Gear-only"
+   toggle writes formality [1], which is now exactly the thing being asked for. */
 function suggestGearDoorHtml() {
-  if (_sugg.activity !== "workout" || (_sugg.results && _sugg.results.length)) return "";
+  if (_sugg.targetLevel !== 1 || (_sugg.results && _sugg.results.length)) return "";
   return `<div class="center" style="padding:8px 0">
-    <div class="center muted" style="font-size:12.5px;margin-bottom:8px">Workout outfits come from pieces tagged as gear.</div>
-    <button class="btn btn-sec" data-sggear>🏋️ Tag your workout gear</button>
+    <div class="center muted" style="font-size:12.5px;margin-bottom:8px">Utility outfits come from pieces set to Utility (level 1).</div>
+    <button class="btn btn-sec" data-sggear>🏋️ Mark your workout pieces</button>
   </div>`;
 }
 
@@ -1492,6 +1496,23 @@ async function setGearOnlyFormality(id, on) {
   try {
     await rest(`/items?id=eq.${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ formality: i.formality }) });
   } catch (e) { toast(e.message); }
+}
+/* Is this piece function-wear? Three independent, honest ways to say yes, any
+   of which is enough (2026-07-26 r13):
+     · its formality set contains 1 (Utility) — she said so directly
+     · it's in the Workout category — that's what the category means
+     · it carries the gear tag — for pieces filed elsewhere, i.e. running shoes
+   ⚠️ The third is what makes a real trip work. Running shoes are usually
+   subcategory Sneakers with formality [2,3] because she also wears them
+   casually; requiring level 1 on EVERY piece dropped them and left a Utility
+   ask with no shoes and therefore no outfit — the reported bug ("not enough
+   items in capsule to suggest an outfit" with workout clothes in the trip).
+   This WIDENS the level-1 pool and never narrows any other level, the same
+   rescue-only shape as inSeasonWx. */
+function isFunctionWear(i) {
+  if (!i) return false;
+  if ((itemFormalitySet(i) || []).includes(1)) return true;
+  return i.category === "Workout" || isWorkoutGear(i);
 }
 const isGearOnly = i => !!i && Array.isArray(i.formality) && i.formality.length === 1 && i.formality[0] === 1;
 
@@ -1525,7 +1546,7 @@ function openGearTagSheet() {
   hydratePhotos($("#logInner"));
   $("#gearDone").onclick = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   };
   const flip = (b, on) => b.classList.toggle("on", on);
@@ -1615,7 +1636,7 @@ function swapSuggestionPiece(pieceId) {
     const subs = shape.get(slot) || (slot === "Outerwear" ? shape.get("Tops") : null);
     if (subs) cands = cands.filter(i => subs.has(i.subcategory));
   }
-  if (!_sugg.activity) cands = cands.filter(i => {  // activity mode: tag = cohesion
+  cands = cands.filter(i => {   // pure-utility isolation, always
     const test = [...others, i];
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
@@ -1666,7 +1687,7 @@ function banSuggestionPiece(pieceId) {
       return renderSuggestSheet();
     }
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   }
 }
@@ -1688,7 +1709,7 @@ function addSuggestionLayer() {
     // hard, matching the engine (2026-07-19) — no silent level fallback
     cands = cands.filter(i => (itemFormalitySet(i) || []).includes(_sugg.targetLevel));
   }
-  if (!_sugg.activity) cands = cands.filter(i => {  // activity mode: tag = cohesion
+  cands = cands.filter(i => {   // pure-utility isolation, always
     const test = [...combo.pieces, i];
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
@@ -1756,12 +1777,14 @@ function renderSuggestSheet() {
   const combo = res[_sugg.idx];
   const total = res.length;
 
+  // ⚠️ The separate 🏋️ Workout chip was REMOVED in r13. Level 1 (Utility) IS
+  // the ask — "I should just have workout formality and that can fix it" — and
+  // two controls for one intention is exactly the recall tax this round exists
+  // to remove.
   const levelChips = OCCASION_LADDER.map((lbl, i) => {
-    const lvl = i + 1, on = !_sugg.activity && _sugg.targetLevel === lvl;
+    const lvl = i + 1, on = _sugg.targetLevel === lvl;
     return `<button class="cap-chip${on ? " on" : ""}" data-slvl="${lvl}" style="font-size:13px;text-align:left">${lvl}. ${esc(lbl)}</button>`;
-  }).join("")
-    // Activity mode (Round A): gear-pool outfits, orthogonal to formality.
-    + `<button class="cap-chip${_sugg.activity === "workout" ? " on" : ""}" data-sact="workout" style="font-size:13px" title="Runs, lifts, hikes — tagged gear only">🏋️ Workout</button>`;
+  }).join("");
 
   let preview = "";
   if (combo) {
@@ -1808,7 +1831,14 @@ function renderSuggestSheet() {
 
   // C1: her top contexts by wear count, above the formality chips. Picking one sets
   // the target formality level from empirical wear data (or the seed fallback).
-  const topContexts = topContextsByWearCount(6);
+  /* Every context she actually wears EXCEPT Workout. The Workout context is
+     still real everywhere else — she stamps it on wears and plans days with it —
+     but in the SUGGESTER it would be a second control for something formality
+     level 1 (Utility) already says, which is the duplication r13 removed
+     (her call: "I do still want the other contexts available to select though.
+     just not workout"). A planned Workout day still asks for level 1 by itself,
+     via CONTEXT_FORMALITY_SEED. */
+  const topContexts = topContextsByWearCount(8).filter(c => c !== "Workout").slice(0, 6);
   const contextChipsHtml = topContexts.length ? `<div style="padding:12px 16px 4px">
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Context</div>
     <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${topContexts.map(c =>
@@ -1894,7 +1924,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   };
 
@@ -1903,19 +1933,6 @@ function renderSuggestSheet() {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
       _sugg.activeContext = null; // manual formality pick supersedes a context chip
-      _sugg.activity = null;      // …and exits activity mode
-      regen();
-    };
-  });
-
-  // Activity chip: mutually exclusive with formality/context asks. Locks and
-  // bans don't survive the mode flip — the pools don't overlap.
-  $("#logInner").querySelectorAll("[data-sact]").forEach(b => {
-    b.onclick = () => {
-      _sugg.activity = _sugg.activity === b.dataset.sact ? null : b.dataset.sact;
-      _sugg.targetLevel = null;
-      _sugg.activeContext = null;
-      _sugg.locked = new Set();
       regen();
     };
   });
@@ -1929,7 +1946,6 @@ function renderSuggestSheet() {
         const lvl = contextFormalityLevel(c);
         if (lvl) _sugg.targetLevel = lvl;
       }
-      _sugg.activity = null;
       regen();
     };
   });
@@ -2005,7 +2021,7 @@ function renderSuggestSheet() {
       // Locks must apply to the WHOLE batch, not just the combo on screen —
       // browsing to the next outfit used to drop them (2026-07-21). Regenerate,
       // then keep the current combo in front so the view doesn't jump.
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
       _sugg.idx = 0;
       if (cur && [..._sugg.locked].every(lid => cur.pieces.some(p => p.id === lid))) {
         const k = comboKey(cur.pieces);
@@ -2145,7 +2161,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -2226,7 +2242,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.activity, _sugg.lockedRoles, _sugg.shapeKey);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }

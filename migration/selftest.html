@@ -527,7 +527,7 @@ async function run() {
                W.isGearOnly(run), W.isGearOnly(dual)],
               [true, false, true, true, false]);
   });
-  t("engine: workout mode pools gear only; normal mode excludes Workout cat + dry-day rain gear", () => {
+  t("engine: Utility sees the Workout category; other levels hide it; rain gear needs wet weather", () => {
     const mk = (id, cat, sub, tags, fml) => ({ id, name: id, category: cat, subcategory: sub, tags, formality: fml, status: "Available", image_path: "x.jpg", color_family: "Black" });
     const pool = [
       mk("rt", "Workout", "Workout tops", ["gear:workout"], [1]),
@@ -540,13 +540,16 @@ async function run() {
     ];
     W.itemById = new Map(pool.map(i => [i.id, i]));
     W._excludeSet = new (W.Set)();
-    const act = W.suggestOutfits(null, null, pool, null, null, null, false, "workout");
-    const actIds = new (W.Set)(act.flatMap(c => c.pieces.map(p => p.id)));
-    const dry = W.suggestOutfits(null, null, pool, null, { maxT: 70, minT: 50, code: 0 }, null, false, null);
+    // Level 1 (Utility) IS the function-wear ask since r13 — there is no
+    // separate activity mode. It must SEE the Workout category (which normal
+    // levels hide) and must not drag in non-utility pieces.
+    const util = W.suggestOutfits(1, null, pool, null, null, null, false);
+    const utilIds = new (W.Set)(util.flatMap(c => c.pieces.map(p => p.id)));
+    const dry = W.suggestOutfits(null, null, pool, null, { maxT: 70, minT: 50, code: 0 }, null, false);
     const dryIds = new (W.Set)(dry.flatMap(c => c.pieces.map(p => p.id)));
-    const wet = W.suggestOutfits(null, null, pool, null, { maxT: 60, minT: 45, code: 61 }, null, false, null);
+    const wet = W.suggestOutfits(null, null, pool, null, { maxT: 60, minT: 45, code: 61 }, null, false);
     const wetIds = new (W.Set)(wet.flatMap(c => c.pieces.map(p => p.id)));
-    return eq([act.length > 0, actIds.has("tee"), actIds.has("rt"), dryIds.has("rj"), dryIds.has("rt"), wetIds.has("rj")],
+    return eq([util.length > 0, utilIds.has("tee"), utilIds.has("rt"), dryIds.has("rj"), dryIds.has("rt"), wetIds.has("rj")],
               [true, false, true, false, false, true]);
   });
   t("pruneDayPlan: rolling window, empty days dropped", () => {
@@ -560,11 +563,14 @@ async function run() {
     const out = W.pruneDayPlan(JSON.parse(JSON.stringify(all)), today);
     return eq(Object.keys(out).sort(), [W.shiftDate(today, -3), W.shiftDate(today, 5)].sort());
   });
-  t("entrySuggestLevel: dressier context wins; entryActivity keys on Workout", () => {
+  t("entrySuggestLevel: dressier context wins; a Workout day asks for Utility", () => {
     W.wears = [];  // force seed fallback in contextFormalityLevel
+    // r13 removed activity mode. The Workout CONTEXT survives and reaches the
+    // suggester the same way every other context does — through the formality
+    // seed, which maps it to 1 — so no special case is needed anywhere.
     return eq([W.entrySuggestLevel(["Errands", "Work"]), W.entrySuggestLevel([]),
-               W.entryActivity(["Workout", "Errands"]), W.entryActivity(["Work"])],
-              [5, null, "workout", null]);
+               W.entrySuggestLevel(["Workout"])],
+              [5, null, 1]);
   });
 
   // ---- Round B: formulas (2026-07-21) ----
@@ -1485,43 +1491,56 @@ async function run() {
   t("the rack keeps workout gear out (it doesn't mix with the rest)", () => withGearCloset(() =>
     eq(W.rackItems().some(i => i.category === "Workout"), false)));
 
-  t("workout mode draws from the whole closet's gear, never the rack", () => withGearCloset(() => {
+  t("Utility is drawn from the whole closet, not the rack", () => withGearCloset(() => {
     W.openSuggestSheet();
-    W._sugg.activity = "workout";
+    W._sugg.targetLevel = 1;
+    const all = W.items.filter(i => W.itemStatus(i) === "Available");
+    const base = W._suggBasePool();
     const pool = W._suggPool();
-    const allGear = W.items.filter(i => W.itemStatus(i) === "Available" && W.isWorkoutGear(i));
-    // the pre-fix pool was rack ∩ gear, which is only the gear-tagged SHOES
-    const rackIntersect = W.rackItems().filter(W.isWorkoutGear);
-    return pool.length === allGear.length && pool.every(i => W.isWorkoutGear(i)) && pool.length > rackIntersect.length
-      ? true : `pool=${pool.length} allGear=${allGear.length} rack∩gear=${rackIntersect.length}`;
+    // The BASE is the whole closet (the rack excludes the Workout category
+    // entirely, which is what made a run un-buildable); the POOL is then that
+    // base narrowed to function-wear, so it is naturally smaller than the rack.
+    return base.length === all.length
+      && pool.every(i => W.isFunctionWear(i))
+      && pool.some(i => i.category === "Workout")
+      && !W.rackItems().some(i => i.category === "Workout")
+      ? true : `base=${base.length} all=${all.length} pool=${pool.length}`;
   }));
 
-  t("a workout outfit actually builds", () => withGearCloset(() => {
-    W.openSuggestSheet();
-    W._sugg.activity = "workout"; W._sugg.targetLevel = null;
-    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, null, false, "workout", null, null);
-    return res.length > 0 && res[0].pieces.length >= 2 && res[0].pieces.every(p => W.isWorkoutGear(p))
-      ? true : `results=${res.length}`;
-  }));
-
-  t("normal mode still uses the rack and still excludes gear", () => withGearCloset(() => {
-    W.openSuggestSheet();
-    W._sugg.activity = null;
-    const pool = W._suggPool();
-    return pool.length === W.rackItems().length && !pool.some(i => i.category === "Workout")
-      ? true : `pool=${pool.length} rack=${W.rackItems().length}`;
-  }));
-
-  // On a trip you only have what you packed — the suitcase outranks even gear.
-  t("a trip suitcase still outranks the workout pool", () => withGearCloset(() => {
+  // The original report: "not enough items in capsule to suggest an outfit" for
+  // a run, with workout clothes actually in the trip.
+  t("a Utility outfit builds from a small trip capsule", () => withGearCloset(() => {
     W.capsules = [{ id: "t1", name: "Trip", kind: "travel", start_date: today, end_date: W.shiftDate(today, 3) }];
     W.capsuleLinks = ["wt0", "ws0", "rs0"].map(id => ({ capsule_id: "t1", item_id: id }));
     W.buildCapsuleIndexes();
     W.tripModeId = "t1";
     W.openSuggestSheet();
-    W._sugg.activity = "workout";
+    W._sugg.targetLevel = 1;
     const pool = W._suggPool();
-    return pool.length === 3 ? true : `pool=${pool.length}`;
+    const res = W.suggestOutfits(1, null, pool, W.currentSeason(), null, null, false);
+    return pool.length === 3 && res.length > 0 && res[0].pieces.length >= 2
+      ? true : `pool=${pool.length} results=${res.length}`;
+  }));
+
+  t("normal levels still use the rack and still hide the Workout category", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    W._sugg.targetLevel = null;
+    const pool = W._suggPool();
+    return pool.length === W.rackItems().length && !pool.some(i => i.category === "Workout")
+      ? true : `pool=${pool.length} rack=${W.rackItems().length}`;
+  }));
+
+  t("the suggester offers every context EXCEPT Workout", () => withGearCloset(() => {
+    W.wears = W.wears.concat(
+      ["Workout", "Errands", "Church"].flatMap((c, k) =>
+        [0, 1, 2].map(d => ({ id: `cx${k}${d}`, item_id: "tp0", worn_on: W.shiftDate(today, -(20 + k * 3 + d)),
+                              outfit_id: null, context: [c], formality_for: 3 }))));
+    W.openSuggestSheet();
+    const html = document.getElementById("app").contentDocument.getElementById("logInner").innerHTML;
+    const chips = [...html.matchAll(/data-sctx="([^"]+)"/g)].map(m => m[1]);
+    // Workout is still a real context for logging and planning — just not a
+    // second way to ask the suggester for what level 1 already says.
+    return chips.length > 0 && !chips.includes("Workout") ? true : JSON.stringify(chips);
   }));
 
   // ---- "Things you might be wrong about" (2026-07-26 r10) ----
@@ -1614,21 +1633,21 @@ async function run() {
   t("picking a shape chip holds the silhouette", () => withFormulaCloset(() => {
     W.openSuggestSheet();
     W._sugg.shapeKey = W.topFormulas(1)[0].key;
-    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, null, false, null, null, W._sugg.shapeKey);
+    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, null, false, null, W._sugg.shapeKey);
     const ok = res.length > 0 && res.every(c => c.pieces.every(p => ["Sweaters", "Jeans", "Boots"].includes(p.subcategory)));
     return ok ? true : `results=${res.length} ${JSON.stringify((res[0] || {}).pieces && res[0].pieces.map(p => p.subcategory))}`;
   }));
 
-  t("shape chips stay out of the way in workout and vary modes", () => withFormulaCloset(() => {
+  t("shape chips stay out of the way at Utility and while varying", () => withFormulaCloset(() => {
     W.openSuggestSheet();
     const normal = W.suggestShapeChipsHtml();
-    W._sugg.activity = "workout";
-    const workout = W.suggestShapeChipsHtml();
-    W._sugg.activity = null; W._sugg.varyFrom = "o0";
+    W._sugg.targetLevel = 1;
+    const utility = W.suggestShapeChipsHtml();
+    W._sugg.targetLevel = null; W._sugg.varyFrom = "o0";
     const vary = W.suggestShapeChipsHtml();
     W._sugg.varyFrom = null;
-    return normal.includes("data-sshape") && workout === "" && vary === ""
-      ? true : `normal=${normal.length} workout=${JSON.stringify(workout)} vary=${JSON.stringify(vary)}`;
+    return normal.includes("data-sshape") && utility === "" && vary === ""
+      ? true : `normal=${normal.length} utility=${JSON.stringify(utility)} vary=${JSON.stringify(vary)}`;
   }));
 
   // ---- THE RACK (2026-07-26) ----
@@ -1788,7 +1807,7 @@ async function run() {
     const rackIds = new Set(W.rackItems().map(i => i.id));
     const off = W.items.find(i => !rackIds.has(i.id) && i.category === "Tops");
     const locked = new (W.Set)([off.id]);
-    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, locked, false, null, null, null);
+    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, locked, false);
     return res.length > 0 && res.every(c => c.pieces.some(p => p.id === off.id))
       ? true : `off=${off && off.id} results=${res.length}`;
   }));
@@ -1797,7 +1816,7 @@ async function run() {
     W.openSuggestSheet();
     const rackIds = new Set(W.rackItems().map(i => i.id));
     const off = W.items.find(i => !rackIds.has(i.id) && i.category === "Tops");
-    const res = W.suggestOutfits(null, off.id, W._suggPool(), W.currentSeason(), null, null, false, null, null, null);
+    const res = W.suggestOutfits(null, off.id, W._suggPool(), W.currentSeason(), null, null, false);
     return res.length > 0 && res.some(c => c.pieces.some(p => p.id === off.id))
       ? true : `off=${off && off.id} results=${res.length}`;
   }));

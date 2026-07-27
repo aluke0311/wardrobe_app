@@ -814,8 +814,7 @@ function tmPickSet(date, idx, pieces) {
 }
 function tomorrowGenPieces(date, entry, pool = null, idx = 0, force = false) {
   if (!force) { const saved = tmPickGet(date, idx); if (saved) return saved; }
-  const act = entryActivity(entry.contexts);
-  const res = suggestOutfits(act ? null : entrySuggestLevel(entry.contexts), null, pool, seasonOf(date), _dpWx(date), null, true, act);
+  const res = suggestOutfits(entrySuggestLevel(entry.contexts), null, pool, seasonOf(date), _dpWx(date), null, true);
   const pieces = res.length ? res[0].pieces : null;
   if (pieces) tmPickSet(date, idx, pieces);
   return pieces;
