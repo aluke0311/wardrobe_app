@@ -18,7 +18,7 @@ Guidance for working in this repo. Read alongside `README.md`.
 >   removed, see the audit's M4). The stats ARE the daily reward.
 > - **The app is over-*presented*, not overbuilt. Compress, don't delete.**
 >   Given one round she chose a coherence pass over new features.
-> - **The rack is approved but NOT built** — a standing ~60-piece derived pool
+> - **The rack is BUILT (2026-07-26 r6+r7, `js/20-rack.js`)** — a standing ~46-piece derived pool
 >   the suggester draws from by default, stratified by slot + formality +
 >   temperature, **80% recently-reached-for / 20% deliberately cold**. The cold
 >   quota is load-bearing: without it the rack calcifies and shrinks her working
@@ -27,7 +27,8 @@ Guidance for working in this repo. Read alongside `README.md`.
 >   stock it, rather than guessing levels from history. Her four conditions:
 >   the rack is always a visible screen, the suggester always names its pool
 >   with a count and a one-tap widen, pull-in works from anywhere, and locking a
->   non-rack piece never fails.
+>   non-rack piece never fails. **All four are enforced and pinned by tests** —
+>   see the RACK entry below.
 > - ⚠️ **This conflicts with two entries below** and the conflict is deliberate,
 >   not an oversight: ⑨'s "rescue-only: widens the pool, never narrows it", and
 >   the suggester's "by design there is NO unworn/last-worn weighting". The rack
@@ -38,6 +39,55 @@ Guidance for working in this repo. Read alongside `README.md`.
 > - **Sacred two-tap:** "what do I wear today" and "log what I wore".
 > - **She likes building this.** The goal is not to finish — it's an app that
 >   can absorb five more years without getting worse.
+
+**THE RACK (2026-07-26, r6 + r7) — SHIPPED.** `js/20-rack.js` (boot renumbered
+to `21-boot.js`; index.html now has **22** cache-busted tags). A standing derived
+pool — "what's in play right now" — that the suggester draws from by default.
+It exists because the suggester is good in a capsule and a slot machine over 476
+items: the fix was the POOL, not the algorithm.
+
+- **`buildRack({pool, wearRows, today, season, wx, plans, pinned, pushed})`** is
+  injectable and deterministic — same inputs, same rack — because **stability is
+  the feature**; a rack that reshuffles every open is a random sample with extra
+  steps. Stratified, NOT a top-N: `RACK_SLOT_QUOTA` (Tops 16 · Bottoms 11 ·
+  Dresses 5 · Shoes 9 · Outerwear 5), because a 60-piece rack that happens to be
+  45 tops cannot build an outfit.
+- ⚠️ **`RACK_COLD_SHARE` (20% of every slot) is LOAD-BEARING, not a nicety.**
+  Without it the rack calcifies — worn → on the rack → suggested → worn — and
+  over five years shrinks her working wardrobe, i.e. the mirror would cause the
+  thing it measures. It's also the nicest part (the rack screen leads with "N you
+  haven't reached for lately"), and a selftest case goes red if it's relaxed —
+  verified by zeroing it. **Do not "optimise" it away.**
+- **`rackNeededLevels()` reads FORWARD `dayplan` contexts** (her ask: "can set
+  events for future so the rack knows"), with her habitual levels as the floor.
+  ⚠️ Load-bearing too: `targetLevel` is a HARD filter in `suggestOutfits`, so a
+  rack that can't cover a declared level returns an **empty sheet** — the
+  2026-07-19 capsule bug arriving via a smaller pool instead of a smaller capsule.
+- **Laundry is deliberately ignored here.** Dirty pieces falling off would churn
+  the rack daily and stop it being recognisable; the suggester's own `cleanOnly`
+  still applies on top.
+- **Nudges, never upkeep:** `pullOntoRack` / `pushOffRack` from any item photo
+  view. Pins persist; **push-outs EXPIRE after `RACK_PUSH_DAYS` (42)** so a
+  summer "not now" can't haunt October. She said she wouldn't reliably curate but
+  might sometimes — so the app keeps it and she nudges it.
+- **Pool precedence (audit M2):** during a trip the **suitcase IS the rack**.
+  They never compose — the intersection could be four items. `openSuggestSheet`
+  sets `capsuleId` from `tripModeId`, so the capsule branch wins in `_suggPool()`
+  and the rack chip hides. Pinned by a test.
+- **`_sugg.wholeCloset`** is the widen; session-only, resets every open, so the
+  app never quietly stays narrowed OR quietly stays wide.
+  `suggestPoolChipHtml()` always names the pool and its count.
+- ⚠️ **Locking or seeding an off-rack piece must never fail.** Holds by
+  construction (`slot()` returns locked pieces directly; the seed is unshifted
+  after filtering) and is pinned by two tests. This is the line between a tool
+  and a cage.
+- **"Vary this" opens on the whole closet** on purpose — it works from one saved
+  outfit, not from "what's in play".
+- Surfaces: closet-root row (always visible, `data-rack`) → `renderClosetRack`
+  (`closetRack` flag, same shape as Worn/Hamper — ⚠️ **every shelf flag must be
+  cleared together** in `switchTab`, `closetBack`, `clRootJump` and each shelf
+  handler, or two shelves fight) · the pool chip in the suggester · the pull/push
+  line on the item photo view.
 
 **Round D "Where You Were" (2026-07-25, r14 → r21) — SHIPPED, and then largely
 UNBUILT again. Read this whole entry before touching weather/season code; the
@@ -141,7 +191,10 @@ optional **`saveKey`** so a row can edit a column it isn't named after.
 ⑨ **TEMPERATURE-ELIGIBLE SUGGESTIONS** — `inSeasonWx(i, season, wx)` +
 `WXA_RESCUE_MARGIN`(5) in `js/12-looks.js`, used by `suggestOutfits`' slot
 pool, `swapSuggestionPiece`, `addSuggestionLayer`. **Rescue-only: widens the
-pool, never narrows it.** Fixes a real pre-existing flaw — a December trip
+pool, never narrows it.** ⚠️ Still true of `inSeasonWx` itself, but NO LONGER
+true of the suggester overall — the rack (2026-07-26 r7) narrows the default
+pool. Approved knowingly; what makes it different from the December bug below is
+that the rack is labelled, counted, and one tap from being widened. Fixes a real pre-existing flaw — a December trip
 somewhere warm asked for "Winter" and filtered the sundress out *before*
 scoring could see the 84° forecast.
 
@@ -839,7 +892,10 @@ Top-of-`<script>` config, then logically grouped sections:
   is SET NULL so history survives). Sheet skipped in trip-plan (`planCtx`) saves.
 - **OUTFIT SUGGESTIONS** — `suggestOutfits(targetLevel?, seedItemId?, capsulePool?,
   season?, wx?, lockedIds?)`. Slot-filling engine (Top/Dress + Bottom + Shoes +
-  optional Outerwear). **By design there is NO unworn/last-worn weighting** — slots
+  optional Outerwear). **By design there is NO unworn/last-worn weighting** in
+  SCORING — ⚠️ but since 2026-07-26 r7 the default POOL is the rack, which is
+  built partly from recency, so recency now enters through pool construction.
+  That is deliberate and approved; see the RACK entry. Slots
   random-sample and scoring is only "match" signals: formality cohesion (hard filter
   via `formalityOk`), exclusions (hard), loud-color penalty, pattern-clash penalty
   (`isPatterned`), and a capped SOFT boost for color-pair + item-pair affinity learned
@@ -1142,7 +1198,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r2`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r7`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1475,11 +1531,16 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **131/131** (2026-07-26 r2, RUN GREEN; the count DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding). **It is a deploy gate for logic
+passed` — currently **152/152** (2026-07-26 r7, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
-something worth keeping true.** Gotchas baked in: app globals are top-level
+something worth keeping true.** ⚠️ `ta(name, asyncFn)` is the async variant
+(added 2026-07-26 for the kv conflict cases); `run()` awaits every pending one
+before rendering, since an assertion landing after the summary is drawn would be
+silently dropped. **Async cases that stub a global (e.g. `rest`) MUST be
+`await`ed one at a time** — run concurrently they observe each other's stubs,
+which is exactly how the first three failed. Gotchas baked in: app globals are top-level
 const/let (invisible on `contentWindow` — the harness injects an eval-bridge
 Proxy), and Sets passed into app code must be created in the IFRAME's realm
 (`W.Set`) or `instanceof Set` fails. The iframe is parked **off-screen**, not
