@@ -47,11 +47,13 @@ async function loadHomeWeather() {
   // Quietly log today's weather (kv "wxlog", ≤1 write/day) — the history behind
   // "what did I wear last time it was like this" (see WEATHER MEMORY below).
   if (wx && session?.user && !(kvData.get("wxlog") || {})[today]) {
-    const log = { ...(kvData.get("wxlog") || {}) };
-    log[today] = { maxT: wx.maxT, minT: wx.minT, code: wx.code };
-    const cut = shiftDate(today, -WXLOG_DAYS);
-    for (const d of Object.keys(log)) if (d < cut) delete log[d];
-    kvSet("wxlog", log);  // fire-and-forget
+    kvUpdate("wxlog", prev => {                       // fire-and-forget
+      const log = { ...(prev || {}) };
+      log[today] = { maxT: wx.maxT, minT: wx.minT, code: wx.code };
+      const cut = shiftDate(today, -WXLOG_DAYS);
+      for (const d of Object.keys(log)) if (d < cut) delete log[d];
+      return log;
+    });
   }
   return wx;
 }
@@ -174,8 +176,10 @@ async function backfillWxLog() {
       log = m.log; n += m.n;
     } catch (e) { /* one unreachable place shouldn't lose the whole backfill */ }
   }
-  await kvSet("wxlog", log);
-  await kvSet(WX_BACKFILL_KEY, today);
+  // Per-DAY merge, not a clobber: keep any day another device logged while
+  // this backfill was running, and let our computed days win where both exist.
+  await kvUpdate("wxlog", prev => ({ ...(prev || {}), ...log }));
+  await kvSet(WX_BACKFILL_KEY, today);   // a plain date marker — no prior state to lose
   return n;
 }
 
@@ -210,7 +214,7 @@ async function revertAwayWeather(r) {
         out = mergeWxDays(out, back, { today, away: true, loc: other.name, floor }).log;
       } catch (e) { /* leave those days as home rather than lose the revert */ }
     }
-    await kvSet("wxlog", out);
+    await kvUpdate("wxlog", prev => ({ ...(prev || {}), ...out }));
     _wxAudit = null;
     _seasonBands = null;
     return n;
@@ -229,7 +233,7 @@ async function correctAwayWeather(r) {
   try {
     const res = await fetchWeatherRange(r.lat, r.lon, from, to);
     const { log, n } = mergeWxDays(wxLog(), res, { today, away: true, loc: r.name, floor });
-    await kvSet("wxlog", log);
+    await kvUpdate("wxlog", prev => ({ ...(prev || {}), ...log }));
     if (n) {
       _wxAudit = null;
       toast(`Weather corrected for ${n} day${n === 1 ? "" : "s"}`);
@@ -475,10 +479,10 @@ async function addFlagSeason(id, seasons) {
 async function dismissWxFlag(id) {
   const i = itemById.get(id);
   if (!i) return;
-  const ok = { ...(kvData.get(WXA_OK_KEY) || {}) };
-  ok[i.id] = JSON.stringify(i.season || []);
   _wxAudit = null;
-  try { await kvSet(WXA_OK_KEY, ok); } catch (e) { toast(e.message); }
+  try {
+    await kvUpdate(WXA_OK_KEY, prev => ({ ...(prev || {}), [i.id]: JSON.stringify(i.season || []) }));
+  } catch (e) { toast(e.message); }
 }
 
 
@@ -800,11 +804,13 @@ function tmPickGet(date, idx) {
   return pieces.length >= 2 ? pieces : null;   // a deleted piece invalidates it
 }
 function tmPickSet(date, idx, pieces) {
-  const all = JSON.parse(JSON.stringify(tmPickAll()));
   const today = todayStr();
-  for (const d of Object.keys(all)) if (d < today) delete all[d];
-  (all[date] = all[date] || {})[String(idx)] = pieces.map(p => p.id);
-  kvSet(TM_PICK_KEY, all);   // fire-and-forget; kvData updates synchronously
+  kvUpdate(TM_PICK_KEY, prev => {   // fire-and-forget; kvData updates synchronously
+    const all = JSON.parse(JSON.stringify(prev && typeof prev === "object" ? prev : {}));
+    for (const d of Object.keys(all)) if (d < today) delete all[d];
+    (all[date] = all[date] || {})[String(idx)] = pieces.map(p => p.id);
+    return all;
+  });
 }
 function tomorrowGenPieces(date, entry, pool = null, idx = 0, force = false) {
   if (!force) { const saved = tmPickGet(date, idx); if (saved) return saved; }

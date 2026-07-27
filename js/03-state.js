@@ -73,17 +73,65 @@ async function loadData() {
 /* ---- kv store (Round A "Tomorrow", 2026-07-20) ----
    Tiny per-user key/value rows (migration/kv_store.sql) for small app state
    that isn't item/wear/outfit shaped. Loaded with everything else; writes are
-   optimistic upserts. Current keys: "dayplan". */
+   optimistic upserts. Keys: dayplan · wxlog · wherelog · taxonomy · milestones ·
+   tmpick · wxaudit_ok · beststreak · capsarchive · wxbackfill.
+
+   ⚠️ Each key is ONE JSONB blob that gets rewritten whole, so a bare kvSet is
+   last-write-wins ACROSS DEVICES — and silently. Phone and laptop both load
+   {A}; phone writes {A,B}; laptop writes {A,C} and B is gone, with no error
+   anywhere (2026-07-26 audit H2). She uses both, and the snapshot cache makes
+   it likelier still: a tab can hydrate a week-old snapshot and write it back.
+
+   So: kvSet ONLY for values that don't depend on what's already stored (a date
+   marker, a flag). Anything that reads-then-writes must use kvUpdate. */
 async function kvSet(key, value) {
   kvData.set(key, value);  // optimistic
   try {
-    await rest("/kv", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
-      body: JSON.stringify([{ user_id: session.user.id, key, value }]),
-    });
+    await kvPost(key, value);
     saveDataSnapshot();
   } catch (e) { toast(e.message); }
+}
+async function kvPost(key, value) {
+  return rest("/kv", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([{ user_id: session.user.id, key, value }]),
+  });
+}
+/* Read-modify-write for one kv key, safe against a concurrent writer.
+   `mutate(current) -> next` must be re-runnable: it is applied once optimistically
+   (so the UI can render straight away) and, if the server turns out to have moved
+   on since we loaded, applied a SECOND time on top of the server's value instead
+   of overwriting it. Additive edits — add a plan, stamp a milestone, log a day's
+   weather — therefore survive on both devices.
+
+   The kv table has no version column and adding one needs a migration she'd have
+   to run, so the freshness check is a re-read of the row. If that read fails
+   (offline) we keep the optimistic value and write it: the old behaviour, which
+   is the right fallback since the alternative is losing her edit outright. */
+async function kvUpdate(key, mutate) {
+  const base = kvData.get(key);
+  let next = mutate(base);
+  kvData.set(key, next);  // optimistic
+  try {
+    let remote = null;
+    try {
+      const rows = await rest(`/kv?select=value&key=eq.${encodeURIComponent(key)}`);
+      remote = { value: Array.isArray(rows) && rows.length ? rows[0].value : undefined };
+    } catch (e) { /* offline / unreachable — fall through with the optimistic value */ }
+    if (remote && !kvSameValue(remote.value, base)) {
+      next = mutate(remote.value);
+      kvData.set(key, next);
+    }
+    await kvPost(key, next);
+    saveDataSnapshot();
+  } catch (e) { toast(e.message); }
+  return next;
+}
+// Structural equality over kv blobs. Key order is stable here because every
+// value is either built by object spread from the previous one or is an array.
+function kvSameValue(a, b) {
+  return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
 }
 
 /* ---- editable taxonomy (2026-07-21) ----
@@ -103,8 +151,9 @@ function applyTaxonomyOverride() {
   }
 }
 async function saveTaxonomy(cats, meta) {
-  const prev = kvData.get(TAXONOMY_KEY) || {};
-  await kvSet(TAXONOMY_KEY, { cats, meta: { ...(prev.meta || {}), ...(meta || {}) } });
+  await kvUpdate(TAXONOMY_KEY, prev => ({
+    cats, meta: { ...(((prev || {}).meta) || {}), ...(meta || {}) },
+  }));
   applyTaxonomyOverride();
 }
 
@@ -124,9 +173,13 @@ function pruneDayPlan(all, today) {
   return all;
 }
 async function saveDayPlan(date, entries) {
-  const all = JSON.parse(JSON.stringify(dayPlanAll()));
-  all[date] = entries || [];
-  await kvSet(DAYPLAN_KEY, pruneDayPlan(all, todayStr()));
+  // Only THIS date is being set — a plan made on the phone for another day must
+  // survive (see kvUpdate).
+  await kvUpdate(DAYPLAN_KEY, prev => {
+    const all = JSON.parse(JSON.stringify(prev && typeof prev === "object" ? prev : {}));
+    all[date] = entries || [];
+    return pruneDayPlan(all, todayStr());
+  });
 }
 // Suggest level for a multi-context entry: every context's usual level when
 // they agree; the dressier one when they don't (safer to be the overdressed

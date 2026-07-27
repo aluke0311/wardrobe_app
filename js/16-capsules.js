@@ -32,10 +32,13 @@ const isCapsuleArchived = (id) => archivedCapsuleIds().has(id);
 const activeCapsules = () => { const a = archivedCapsuleIds(); return capsules.filter(c => !a.has(c.id)); };
 
 async function setCapsuleArchived(id, on) {
-  const set = archivedCapsuleIds();
-  if (on) set.add(id); else set.delete(id);
-  try { await kvSet(CAP_ARCHIVE_KEY, [...set]); }
-  catch (e) { toast(e.message); return; }
+  try {
+    await kvUpdate(CAP_ARCHIVE_KEY, prev => {
+      const set = new Set(Array.isArray(prev) ? prev : []);
+      if (on) set.add(id); else set.delete(id);
+      return [...set];
+    });
+  } catch (e) { toast(e.message); return; }
   // A capsule that's being put away shouldn't keep scoping the closet.
   if (on && activeCapsuleId === id) activeCapsuleId = null;
   if (on && tripModeId === id) exitTripMode();

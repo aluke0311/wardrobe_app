@@ -406,7 +406,7 @@ async function _saveWhere() {
   const entry = { from: s.from, to: s.to, name: s.loc.name, lat: s.loc.lat, lon: s.loc.lon };
   closeWhereSheet();
   try {
-    await kvSet(WHERELOG_KEY, [...wherelog(), entry]);
+    await kvUpdate(WHERELOG_KEY, prev => [...(Array.isArray(prev) ? prev : []), entry]);
     renderSettings();
     // Undoable both ways: the save corrects the weather, the undo puts it back.
     toast("Saved", { label: "Undo", fn: () => _undoWhere(entry) });
@@ -415,10 +415,9 @@ async function _saveWhere() {
 }
 
 async function _undoWhere(entry) {
-  const list = wherelog().filter(e =>
-    !(e.from === entry.from && e.to === entry.to && e.name === entry.name));
+  const same = e => e.from === entry.from && e.to === entry.to && e.name === entry.name;
   try {
-    await kvSet(WHERELOG_KEY, list);
+    await kvUpdate(WHERELOG_KEY, prev => (Array.isArray(prev) ? prev : []).filter(e => !same(e)));
     renderSettings();
     await revertAwayWeather(entry);
     renderSettings();
@@ -427,11 +426,24 @@ async function _undoWhere(entry) {
 }
 
 async function removeWhereEntry(idx) {
-  const list = [...wherelog()];
+  const list = wherelog();
   if (idx < 0 || idx >= list.length) return;
-  const [gone] = list.splice(idx, 1);
+  const gone = list[idx];
+  // Remove by VALUE, not by index: the index is only meaningful against the
+  // list this device rendered, and kvUpdate may re-apply this on a list the
+  // other device has already changed.
+  const same = e => e.from === gone.from && e.to === gone.to && e.name === gone.name;
   try {
-    await kvSet(WHERELOG_KEY, list);
+    await kvUpdate(WHERELOG_KEY, prev => {
+      // `seen` MUST be declared inside the mutator: kvUpdate re-runs this on the
+      // server's value when another device has written, and a flag hoisted out
+      // of here would still be true on the second pass and remove nothing.
+      let seen = false;
+      return (Array.isArray(prev) ? prev : []).filter(e => {
+        if (!seen && same(e)) { seen = true; return false; }   // drop the first match only
+        return true;
+      });
+    });
     renderSettings();
     // Put home weather back over those days — otherwise the correction
     // outlives the answer that justified it.

@@ -41,6 +41,20 @@ function t(name, fn) {
   }
 }
 function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b) ? true : `${JSON.stringify(a)} ≠ ${JSON.stringify(b)}`; }
+// Async variant of t(). Returns the promise so run() can await them all before
+// rendering — an async assertion that lands after the summary is drawn would be
+// silently dropped, which is the "test that can't fail" trap all over again.
+const pending = [];
+function ta(name, fn) {
+  const p = (async () => {
+    try {
+      const r = await fn();
+      results.push(r === true ? { name, ok: true } : { name, ok: false, msg: JSON.stringify(r) });
+    } catch (e) { results.push({ name, ok: false, msg: e.message }); }
+  })();
+  pending.push(p);
+  return p;
+}
 
 // The iframe src is set here, with a cache-bust, rather than in the markup:
 // the preview server's browser caches index.html hard, and a fixed
@@ -98,7 +112,7 @@ frameEl.addEventListener("load", () => setTimeout(run, 300));
   }
 })();
 
-function run() {
+async function run() {
   const frame = document.getElementById("app");
   // The app's globals are top-level const/let — lexical bindings, NOT
   // contentWindow properties. Inject a classic script (shares the page's
@@ -1398,7 +1412,76 @@ function run() {
     return eq([none, some], [false, true]);
   });
 
+  // ---- kv concurrent-write safety (2026-07-26 audit H2) ----
+  // Every kv key is one JSONB blob rewritten whole, so a plain last-write-wins
+  // upsert silently destroys the other device's edit. kvUpdate re-applies the
+  // caller's mutation on top of the server's value when they've diverged.
+  // These stub rest() so no network is touched.
+  // ⚠️ These MUST be awaited one at a time (note the `await ta(...)` below):
+  // they all replace the same global rest(), so running them concurrently makes
+  // each one observe the others' stubs. First written without it and all three
+  // failed with cross-talk (calls=4 for a two-call test).
+  const withStubbedRest = async (serverValue, fn) => {
+    const realRest = W.rest, realSession = W.session, realSnap = W.saveDataSnapshot;
+    let posted;
+    W.session = { user: { id: "u" } };
+    W.saveDataSnapshot = () => {};
+    W.rest = async (path, opts) => {
+      if (!opts || !opts.method) return serverValue === undefined ? [] : [{ value: serverValue }];
+      posted = JSON.parse(opts.body)[0].value;   // the upsert
+      return null;
+    };
+    try { await fn(); } finally { W.rest = realRest; W.session = realSession; W.saveDataSnapshot = realSnap; }
+    return posted;
+  };
+
+  await ta("kvUpdate merges a concurrent writer instead of clobbering", async () => {
+    const saved = W.kvData.get("dayplan");
+    W.kvData.set("dayplan", { "2026-01-01": ["mine-base"] });          // what THIS device loaded
+    // meanwhile the other device added a different day and wrote it
+    const server = { "2026-01-01": ["mine-base"], "2026-01-02": ["theirs"] };
+    const posted = await withStubbedRest(server, () =>
+      W.kvUpdate("dayplan", prev => ({ ...(prev || {}), "2026-01-03": ["mine-new"] })));
+    if (saved === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved);
+    return eq(Object.keys(posted || {}).sort(), ["2026-01-01", "2026-01-02", "2026-01-03"]);
+  });
+
+  await ta("kvUpdate writes the plain value when the server matches", async () => {
+    const saved = W.kvData.get("dayplan");
+    W.kvData.set("dayplan", { a: 1 });
+    const posted = await withStubbedRest({ a: 1 }, () =>
+      W.kvUpdate("dayplan", prev => ({ ...(prev || {}), b: 2 })));
+    if (saved === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved);
+    return eq(posted, { a: 1, b: 2 });
+  });
+
+  await ta("kvUpdate keeps the optimistic value when the freshness read fails", async () => {
+    // Offline is not a reason to drop her edit — the pre-2026-07-26 behaviour is
+    // the right fallback here.
+    const saved = W.kvData.get("dayplan");
+    const realRest = W.rest, realSession = W.session, realSnap = W.saveDataSnapshot;
+    let posted, calls = 0;
+    W.session = { user: { id: "u" } }; W.saveDataSnapshot = () => {};
+    W.rest = async (path, opts) => {
+      calls++;
+      if (!opts || !opts.method) throw new Error("offline");
+      posted = JSON.parse(opts.body)[0].value;
+      return null;
+    };
+    W.kvData.set("dayplan", { a: 1 });
+    try { await W.kvUpdate("dayplan", prev => ({ ...(prev || {}), b: 2 })); }
+    finally { W.rest = realRest; W.session = realSession; W.saveDataSnapshot = realSnap; }
+    if (saved === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved);
+    return calls === 2 && JSON.stringify(posted) === JSON.stringify({ a: 1, b: 2 })
+      ? true : `calls=${calls} posted=${JSON.stringify(posted)}`;
+  });
+
+  await ta("kvSameValue treats absent and null as the same", async () =>
+    eq([W.kvSameValue(undefined, null), W.kvSameValue({ a: 1 }, { a: 1 }), W.kvSameValue({ a: 1 }, { a: 2 })],
+       [true, true, false]));
+
   // ---- render summary ----
+  await Promise.all(pending);
   const ul = document.getElementById("results");
   let pass = 0;
   for (const r of results) {

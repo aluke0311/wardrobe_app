@@ -1136,9 +1136,9 @@ let _pendingMilestone = null;
 
 const milestoneSeen = key => !!(kvData.get(MILESTONES_KEY) || {})[key];
 function markMilestone(key) {
-  const m = { ...(kvData.get(MILESTONES_KEY) || {}) };
-  m[key] = todayStr();
-  kvSet(MILESTONES_KEY, m);   // fire-and-forget
+  // Once-ever rungs: a milestone earned on the other device must not be undone
+  // by this write (see kvUpdate).
+  kvUpdate(MILESTONES_KEY, prev => ({ ...(prev || {}), [key]: todayStr() }));  // fire-and-forget
 }
 
 // Rows are already in `wears` by the time this runs (every call site pushes
@@ -1193,7 +1193,7 @@ function milestoneFor(rows) {
   const streak = calStreak();
   const best = kvData.get(BEST_STREAK_KEY) || 0;
   if (streak > best && streak >= 5) {
-    kvSet(BEST_STREAK_KEY, streak);
+    kvUpdate(BEST_STREAK_KEY, prev => Math.max(+prev || 0, streak));
     hit = pick(`streak:${streak}`, `🔥 Longest logging streak yet — ${streak} days.`);
     if (hit) return hit;
   }
@@ -1216,10 +1216,9 @@ function flushMilestone() { const t = _pendingMilestone; _pendingMilestone = nul
 let _lastMilestoneKey = null;
 function unmarkLastMilestone() {
   if (!_lastMilestoneKey) return;
-  const m = { ...(kvData.get(MILESTONES_KEY) || {}) };
-  delete m[_lastMilestoneKey];
+  const undo = _lastMilestoneKey;
   _lastMilestoneKey = null;
-  kvSet(MILESTONES_KEY, m);
+  kvUpdate(MILESTONES_KEY, prev => { const m = { ...(prev || {}) }; delete m[undo]; return m; });
 }
 
 // ---- Post-log sheet: context capture (A2) ----

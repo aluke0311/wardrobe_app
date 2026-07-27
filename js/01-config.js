@@ -6,17 +6,13 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r3";
+const APP_VERSION = "2026-07-26 r4";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "“What should I wear?” is now its own button on Home, and it stays there all day — including after you’ve logged, which is exactly when you’d want to swap one piece. It used to be three taps inside “Log today’s wear”",
-  "Logging moved to the quiet row underneath it. Still one tap — it just isn’t the loudest thing on the screen any more, because deciding comes before recording",
-  "The little shuffle arrow is gone. It meant “show me looks I already own” in one place and “build me a new outfit” in another — two opposite things wearing the same icon. ✨ now always means make something new",
-  "Tapping a day on the calendar opens that day, instead of first asking which of three things you meant",
-  "The big buttons on Home are actually full-width now — they'd been quietly shrink-wrapping to their own text this whole time",
-  "“On this day” moved to the bottom of the day view and lost its box. It's a memory, and it was sitting between your outfits and your plan looking like a button",
-  "Closet, Looks, Stats and Capsules were each printing their own name twice — once in the header and again right underneath. The second one is gone",
+  "If you had the app open on your phone and your laptop at once, whichever saved second used to quietly wipe what the first one saved — a day plan, a trip, a milestone. They merge now instead of overwriting",
+  "Nothing to do differently; it just stops losing things behind your back",
+
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
