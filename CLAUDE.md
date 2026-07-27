@@ -40,6 +40,22 @@ Guidance for working in this repo. Read alongside `README.md`.
 > - **She likes building this.** The goal is not to finish — it's an app that
 >   can absorb five more years without getting worse.
 
+**"THINGS YOU MIGHT BE WRONG ABOUT" (2026-07-26 r10) — SHIPPED.** Audit B3, and
+the clearest expression of the mirror-first identity: the app knows things about
+the wardrobe that disagree with what she TOLD it, and the disagreement is more
+interesting than either number alone. `buildMisfits(pool?, wearRows?)` +
+`renderStatsMisfitPage()` + `statsView "misfit"`, row in Clothing Stats.
+Per Available piece with an EXPLICIT `items.formality` and ≥`MISFIT_MIN_DAYS`(5)
+levelled wear-DAYS: if ≥`MISFIT_SHARE`(70%) of those days sit at a level the
+claim doesn't contain, it's flagged. `addMisfitLevel` **appends, never replaces**
+(same rule as the season flag) and clears every `o._bucket`.
+⚠️ **Explicit formality only** — `itemFormalitySet()` imputes a set when none is
+stored, and flagging an imputed value would be the app arguing with itself.
+⚠️ Not circular with the piece's own tag: `wears.formality_for` is derived from
+the WHOLE outfit (`deriveWearFormality`), so a blazer tagged Dressed Up that
+keeps going out with jeans records genuinely lower days. A solo-logged piece
+derives its level from itself alone and so can never disagree — harmless.
+
 **THE RACK (2026-07-26, r6 + r7) — SHIPPED.** `js/20-rack.js` (boot renumbered
 to `21-boot.js`; index.html now has **22** cache-busted tags). A standing derived
 pool — "what's in play right now" — that the suggester draws from by default.
@@ -1203,7 +1219,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r9`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r10`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1536,7 +1552,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **154/154** (2026-07-26 r9, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **159/159** (2026-07-26 r10, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

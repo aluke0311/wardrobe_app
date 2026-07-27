@@ -493,6 +493,7 @@ function _renderStatsView() {
   if (statsView === "pixels")      { renderStatsPixelsPage();  return; }
   if (statsView === "palette")     { renderStatsPalettePage(); return; }
   if (statsView === "missing")     { renderStatsMissingPage(); return; }
+  if (statsView === "misfit")      { renderStatsMisfitPage();  return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -906,6 +907,12 @@ function renderStatsMain() {
           ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
           ${row("Palette", "Your closet's color mix vs the mix you actually wear", "palette")}
           ${row("What's missing", "Thin spots in the closet, and what's done the most work", "missing")}
+          ${(() => {
+            const n = buildMisfits(statsPool()).length;
+            return row("Things you might be wrong about",
+              n ? `${n} piece${n === 1 ? "" : "s"} you wear differently than you tagged` : "Nothing's arguing with you",
+              "misfit");
+          })()}
         </div>
       </div>
 
@@ -995,6 +1002,9 @@ function renderStatsMain() {
       }
       if (action === "missing") {
         statsView = "missing"; renderStats(); return;
+      }
+      if (action === "misfit") {
+        statsView = "misfit"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -1358,6 +1368,102 @@ function buildMileage(pool = null) {
     })
     .filter(r => r.days >= MILEAGE_MIN_DAYS)
     .sort((a, b) => b.days - a.days);
+}
+
+/* ---- "Things you might be wrong about" (2026-07-26 r10) -------------------
+   The mirror being honest. The app knows things about the wardrobe that
+   disagree with what she TOLD it, and that disagreement is more interesting
+   than either number alone.
+
+   Formality is the useful case. `wears.formality_for` is derived at log time
+   from the WHOLE outfit (deriveWearFormality — the level all pieces share, else
+   the rounded average of their minimums), so it is not circular with the
+   piece's own tag: a blazer tagged "Dressed Up" that keeps going out with jeans
+   and sneakers records days at a much lower level. That's a real fact about how
+   she wears it, not a tautology. (A solo-logged piece derives its level from
+   itself alone and so can never disagree — harmless, it just never appears.)
+
+   ⚠️ Only pieces with an EXPLICIT `items.formality` qualify. itemFormalitySet()
+   imputes a set when none is stored, and an imputed value is not something she
+   told the app, so flagging it would be the app arguing with itself.
+   ⚠️ Counts wear DAYS, never rows. */
+const MISFIT_MIN_DAYS = 5;    // below this it's an anecdote
+const MISFIT_SHARE = 0.7;     // it has to be the RULE, not a couple of odd days
+function buildMisfits(pool = null, wearRows = null) {
+  const rows = wearRows || wears;
+  const list = pool || items.filter(i => itemStatus(i) === "Available");
+  const byItem = new Map();   // item_id -> Map(level -> Set(dates))
+  for (const w of rows) {
+    if (!w.item_id || !w.formality_for || !w.worn_on) continue;
+    let m = byItem.get(w.item_id); if (!m) byItem.set(w.item_id, m = new Map());
+    let s = m.get(w.formality_for); if (!s) m.set(w.formality_for, s = new Set());
+    s.add(w.worn_on);
+  }
+  const out = [];
+  for (const i of list) {
+    const claimed = (i.formality && i.formality.length) ? i.formality : null;
+    if (!claimed) continue;
+    const m = byItem.get(i.id);
+    if (!m) continue;
+    let total = 0;
+    const counts = [];
+    for (const [lv, set] of m) { counts.push([lv, set.size]); total += set.size; }
+    if (total < MISFIT_MIN_DAYS) continue;
+    const outside = counts.filter(([lv]) => !claimed.includes(lv)).sort((a, b) => b[1] - a[1]);
+    const outN = outside.reduce((a, [, n]) => a + n, 0);
+    if (!outN || outN / total < MISFIT_SHARE) continue;
+    out.push({ item: i, claimed: [...claimed].sort((a, b) => a - b), observed: outside[0][0],
+               days: total, outsideDays: outN, share: outN / total });
+  }
+  return out.sort((a, b) => b.share - a.share || b.days - a.days);
+}
+// Append the observed level rather than replacing the claim — she may well wear
+// it both ways, and silently deleting a level she chose is the mistake the
+// season flag was careful to avoid (CLAUDE.md ⑧: "appends, never replaces").
+async function addMisfitLevel(id, lv) {
+  const i = itemById.get(id);
+  if (!i || !lv) return;
+  const next = [...new Set([...(i.formality || []), lv])].sort((a, b) => a - b);
+  await saveField(id, "formality", next);
+  outfits.forEach(o => { o._bucket = null; });   // looks must re-derive their bucket
+  toast(`${i.name || "Item"} now covers ${next.map(occLabel).join(" + ")}`);
+  renderStats();
+}
+
+function renderStatsMisfitPage() {
+  const list = buildMisfits(statsPool());
+  const rows = list.map(r => `
+    <div style="padding:11px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start">
+      <button data-misfit-item="${esc(r.item.id)}" style="width:52px;flex:none">${thumbHtml(r.item.image_path)}</button>
+      <div style="flex:1;min-width:0">
+        <button data-misfit-item="${esc(r.item.id)}" style="display:block;text-align:left;font-size:14.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%">${esc(r.item.name || "Untitled")}</button>
+        <div style="font-size:13px;line-height:1.5;padding-top:2px">
+          You call it <b>${esc(r.claimed.map(occLabel).join(" + "))}</b>.
+          You wear it in outfits that read as <b style="color:var(--accent)">${esc(occLabel(r.observed))}</b>
+          — ${r.outsideDays} of ${r.days} days.
+        </div>
+        <div style="padding-top:6px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="cap-chip" data-misfit-add="${esc(r.item.id)}:${r.observed}" style="font-size:12.5px">＋ Add ${esc(occLabel(r.observed))}</button>
+          <button class="cap-chip" data-misfit-edit="${esc(r.item.id)}" style="font-size:12.5px">Edit…</button>
+        </div>
+      </div>
+    </div>`).join("");
+
+  $("#statsBody").innerHTML = statsToolbar("Might be wrong", true, false) + `
+    <div style="padding-bottom:32px">
+      <div class="snote" style="padding:10px 16px 2px">Pieces whose history disagrees with what you told the app. Nothing here is necessarily wrong — it's just worth a look.</div>
+      ${list.length ? `<div class="stats-sec"><div class="stats-sec-body">${rows}</div></div>`
+        : `<div class="placeholder" style="padding:40px 32px"><b>Nothing's arguing with you</b>
+            <div>Every piece with a formality you've set is being worn the way you said. This needs ${MISFIT_MIN_DAYS}+ days of history per piece.</div></div>`}
+    </div>`;
+  wireStatsToolbar();
+  hydratePhotos($("#statsBody"));
+  $("#statsBody").querySelectorAll("[data-misfit-item]").forEach(b =>
+    b.onclick = () => openItemFromStats(b.dataset.misfitItem));
+  $("#statsBody").querySelectorAll("[data-misfit-add]").forEach(b =>
+    b.onclick = () => { const [id, lv] = b.dataset.misfitAdd.split(":"); addMisfitLevel(id, +lv); });
+  $("#statsBody").querySelectorAll("[data-misfit-edit]").forEach(b =>
+    b.onclick = () => openOccasionEdit(b.dataset.misfitEdit, () => renderStats()));
 }
 
 function renderStatsMissingPage() {

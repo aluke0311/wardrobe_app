@@ -1413,6 +1413,52 @@ async function run() {
     return eq([none, some], [false, true]);
   });
 
+  // ---- "Things you might be wrong about" (2026-07-26 r10) ----
+  const withMisfitCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, ready: W.dataReady, cap: W.activeCapsuleId };
+    W.items = [
+      { id: "blz", name: "Blazer", category: "Outerwear", subcategory: "Blazers", status: "Available", image_path: "b.jpg", formality: [6] },
+      { id: "tee", name: "Tee", category: "Tops", subcategory: "Tee shirts", status: "Available", image_path: "t.jpg", formality: [2, 3] },
+      { id: "imp", name: "Untagged", category: "Tops", subcategory: "Blouses", status: "Available", image_path: "m.jpg" },
+      { id: "thin", name: "Thin", category: "Tops", subcategory: "Blouses", status: "Available", image_path: "h.jpg", formality: [6] },
+    ];
+    W.wears = [];
+    for (let d = 0; d < 9; d++) for (const id of ["blz", "tee", "imp"])
+      W.wears.push({ id: `mw${id}${d}`, item_id: id, worn_on: W.shiftDate(today, -d), outfit_id: "o" + d, formality_for: 3, context: ["Errands"] });
+    for (let d = 0; d < 3; d++)
+      W.wears.push({ id: "mwthin" + d, item_id: "thin", worn_on: W.shiftDate(today, -d), outfit_id: "o" + d, formality_for: 3, context: ["Errands"] });
+    W.dataReady = true; W.activeCapsuleId = null;
+    W.buildOutfitIndexes();
+    try { return fn(); }
+    finally { W.items = saved.items; W.wears = saved.wears; W.dataReady = saved.ready;
+              W.activeCapsuleId = saved.cap; W.buildOutfitIndexes(); }
+  };
+
+  t("buildMisfits flags a piece worn against its own tag", () => withMisfitCloset(() => {
+    const m = W.buildMisfits();
+    return eq(m.map(r => [r.item.id, r.claimed, r.observed, r.days, r.outsideDays]),
+              [["blz", [6], 3, 9, 9]]);
+  }));
+
+  // ⚠️ itemFormalitySet() IMPUTES a set when none is stored. Flagging an imputed
+  // value would be the app arguing with itself, not with her.
+  t("buildMisfits ignores pieces whose formality was never set", () => withMisfitCloset(() =>
+    eq(W.buildMisfits().some(r => r.item.id === "imp"), false)));
+
+  t("buildMisfits needs real history, not an anecdote", () => withMisfitCloset(() =>
+    eq(W.buildMisfits().some(r => r.item.id === "thin"), false)));
+
+  t("buildMisfits leaves agreeing pieces alone", () => withMisfitCloset(() =>
+    eq(W.buildMisfits().some(r => r.item.id === "tee"), false)));
+
+  // A wear is a DAY: one outfit logged once writes a row per piece, so counting
+  // rows would inflate every number on this page.
+  t("buildMisfits counts wear DAYS, not rows", () => withMisfitCloset(() => {
+    W.wears.push({ id: "dupe", item_id: "blz", worn_on: W.wears[0].worn_on, outfit_id: "oX", formality_for: 3, context: ["Errands"] });
+    const r = W.buildMisfits().find(x => x.item.id === "blz");
+    return eq(r.days, 9);
+  }));
+
   // ---- formula chips in the suggester (2026-07-26 r9) ----
   // Round B left this unfinished. It matters because a formula IS the "rough
   // idea" half of how she gets dressed: "I have a rough idea already — the black
