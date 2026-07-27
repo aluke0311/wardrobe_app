@@ -1328,14 +1328,29 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
 // Effective suggestion pool: capsule members or the whole Available closet,
 // minus any session-banned pieces ("not this", 2026-07-18). Always returns a
 // real array now (the engine treats it as capsulePool either way).
+/* The pool BEFORE activity/gear filtering. Shared with suggestStarvationNote so
+   the note can never describe a different pool than the one that was searched.
+
+   Precedence, in order:
+   1. A capsule/trip scope wins outright (audit M2) — during a trip the SUITCASE
+      is the rack. They never compose; intersecting them could leave four items.
+   2. ⚠️ WORKOUT NEVER USES THE RACK (2026-07-26 r12, user-reported the day the
+      rack shipped: "if i want to go on a run, that doesn't build"). buildRack
+      excludes the Workout category on purpose — her words, "those clothes don't
+      really mix with the rest of my clothing" — so filtering the rack by
+      isWorkoutGear was guaranteed to return NOTHING. Gear is its own pool drawn
+      from the whole closet. There is deliberately no second "workout rack": a
+      rack exists to shrink 476 pieces to ~46, and the gear set is already small,
+      so one would add a concept and shrink nothing. Revisit only if generating a
+      workout outfit ever starts to feel like a slot machine.
+   3. Otherwise the rack, unless she's widened it. */
+function _suggBasePool() {
+  if (_sugg.capsuleId) return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
+  if (_sugg.activity === "workout" || _sugg.wholeCloset) return items.filter(i => itemStatus(i) === "Available");
+  return rackItems();
+}
 function _suggPool() {
-  // Precedence, decided before either could collide (audit M2): during a trip
-  // the SUITCASE is the rack. They never compose — intersecting them could leave
-  // a pool of four items. openSuggestSheet sets capsuleId from tripModeId, so
-  // the capsule branch simply wins here.
-  let pool = _sugg.capsuleId
-    ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
-    : (_sugg.wholeCloset ? items.filter(i => itemStatus(i) === "Available") : rackItems());
+  let pool = _suggBasePool();
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
   // Activity/gear filtering lives HERE so swap/+Layer/ban candidates see the
   // same pool as the engine (which re-applies the same rules — harmless).
@@ -1398,7 +1413,13 @@ function suggestShapeChipsHtml() {
 }
 
 function suggestPoolChipHtml() {
-  if (_sugg.capsuleId || _sugg.activity === "workout") return "";
+  if (_sugg.capsuleId) return "";
+  if (_sugg.activity === "workout") {
+    // Named, but not a button: there's nothing to widen TO — gear already comes
+    // from the whole closet. The naming rule still applies.
+    const n = items.filter(i => itemStatus(i) === "Available" && isWorkoutGear(i)).length;
+    return `<span class="cap-chip" style="font-size:13px;opacity:.7">\u{1F3CB} Workout gear \u00b7 ${n}</span>`;
+  }
   const rackN = rackItems().length;
   const allN = items.filter(i => itemStatus(i) === "Available").length;
   return _sugg.wholeCloset
@@ -1408,9 +1429,7 @@ function suggestPoolChipHtml() {
 
 function suggestStarvationNote() {
   if (!_sugg.results || _sugg.results.length >= 8) return "";
-  const base = _sugg.capsuleId
-    ? capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available")
-    : (_sugg.wholeCloset ? items.filter(i => itemStatus(i) === "Available") : rackItems());
+  const base = _suggBasePool();
   const eligible = base.filter(i => i.image_path && !isNoSuggest(i));
   const bits = [];
   if (_suggClean() && LAUNDRY_READY()) {
@@ -1426,7 +1445,7 @@ function suggestStarvationNote() {
   if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
   // A thin RACK must say so and point at the way out, or an empty sheet reads as
   // "the app is broken" rather than "this pool is small".
-  if (!_sugg.capsuleId && !_sugg.wholeCloset) bits.push(`the rack is ${eligible.length} pieces \u2014 tap it above to use the whole closet`);
+  if (!_sugg.capsuleId && !_sugg.wholeCloset && _sugg.activity !== "workout") bits.push(`the rack is ${eligible.length} pieces \u2014 tap it above to use the whole closet`);
   if (_sugg.activity === "workout") {
     const gear = eligible.filter(isWorkoutGear).length;
     bits.push(`${gear} piece${gear === 1 ? "" : "s"} tagged as workout gear`);

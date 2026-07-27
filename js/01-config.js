@@ -6,13 +6,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r11";
+const APP_VERSION = "2026-07-26 r12";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New in Stats: “Things you might be wrong about”. Pieces whose history disagrees with what you told the app — you call it Dressed Up, you wear it in outfits that read Casual",
-  "One tap adds the level you actually wear it at. It appends, so a piece you genuinely wear both ways keeps both",
-  "Only counts pieces where you set the formality yourself, and only when it's the rule rather than a couple of odd days",
+  "Fixed: asking for a workout outfit built nothing. The rack deliberately leaves your workout clothes out — they don't mix with the rest — but 🏋️ Workout was then looking inside the rack for them",
+  "Workout now draws from all your gear, whole closet, never the rack. On a trip it still uses what you packed",
 
 ];
 

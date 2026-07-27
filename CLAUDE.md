@@ -86,6 +86,16 @@ items: the fix was the POOL, not the algorithm.
   view. Pins persist; **push-outs EXPIRE after `RACK_PUSH_DAYS` (42)** so a
   summer "not now" can't haunt October. She said she wouldn't reliably curate but
   might sometimes — so the app keeps it and she nudges it.
+- ⚠️ **WORKOUT NEVER USES THE RACK** (r12, reported the day the rack shipped:
+  *"if i want to go on a run, that doesn't build"*). `buildRack` excludes the
+  Workout category deliberately — her words, *"those clothes don't really mix
+  with the rest of my clothing"* — so filtering the rack by `isWorkoutGear` left
+  only gear-tagged pieces living OUTSIDE that category (running shoes), i.e. a
+  pool that can never form an outfit. Worse than empty, because it looked like a
+  partial result. `_suggBasePool()` now owns the precedence and gear comes from
+  the whole closet. **There is deliberately no second "workout rack"** — a rack
+  exists to shrink 476 pieces to ~46 and the gear set is already small, so one
+  would add a concept and shrink nothing.
 - **Pool precedence (audit M2):** during a trip the **suitcase IS the rack**.
   They never compose — the intersection could be four items. `openSuggestSheet`
   sets `capsuleId` from `tripModeId`, so the capsule branch wins in `_suggPool()`
@@ -1219,7 +1229,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r11`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r12`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1559,7 +1569,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **161/161** (2026-07-26 r11, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **166/166** (2026-07-26 r12, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

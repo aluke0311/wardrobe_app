@@ -1444,6 +1444,86 @@ async function run() {
     return eq(v, true);
   });
 
+  // ---- workout never uses the rack (2026-07-26 r12, user-reported) ----
+  // "if i want to go on a run, that doesn't build". buildRack excludes the
+  // Workout category on purpose ("those clothes don't really mix with the rest
+  // of my clothing"), so filtering the rack by isWorkoutGear left only whatever
+  // gear-tagged pieces happen to live OUTSIDE that category — running shoes —
+  // i.e. a pool that can never form an outfit.
+  const withGearCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    sugg: W._sugg, cap: W.activeCapsuleId, trip: W.tripModeId, ready: W.dataReady,
+                    caps: W.capsules, links: W.capsuleLinks, rack: W.kvData.get("rack") };
+    const mk = (id, c, sub, tags) => ({ id, name: id, category: c, subcategory: sub, status: "Available",
+      image_path: id + ".jpg", color_family: "Blue", formality: c === "Workout" ? [1] : [2, 3],
+      season: ["Spring", "Summer", "Fall", "Winter"], tags: tags || [] });
+    W.items = [];
+    for (let n = 0; n < 30; n++) { W.items.push(mk("tp" + n, "Tops", "Tee shirts"));
+      W.items.push(mk("bt" + n, "Bottoms", "Jeans")); W.items.push(mk("sh" + n, "Shoes", "Sneakers")); }
+    for (let n = 0; n < 5; n++) { W.items.push(mk("wt" + n, "Workout", "Workout tops", ["gear:workout"]));
+      W.items.push(mk("ws" + n, "Workout", "Active shorts", ["gear:workout"])); }
+    for (let n = 0; n < 3; n++) W.items.push(mk("rs" + n, "Shoes", "Sneakers", ["gear:workout"]));
+    W.wears = [];
+    for (let n = 0; n < 12; n++) W.wears.push({ id: "gw" + n, item_id: "tp" + n,
+      worn_on: W.shiftDate(today, -(n + 1)), outfit_id: null, context: ["Errands"], formality_for: 3 });
+    W.outfits = []; W.outfitLinks = []; W.capsules = []; W.capsuleLinks = [];
+    W.activeCapsuleId = null; W.tripModeId = null; W.dataReady = true;
+    W.kvData.delete("rack");
+    W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      try { W.hideSheet("logSheet"); } catch (e) {}
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W._sugg = saved.sugg; W.activeCapsuleId = saved.cap;
+      W.tripModeId = saved.trip; W.dataReady = saved.ready; W.capsules = saved.caps;
+      W.capsuleLinks = saved.links;
+      if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
+      W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildSuggestIndexes();
+    }
+  };
+
+  t("the rack keeps workout gear out (it doesn't mix with the rest)", () => withGearCloset(() =>
+    eq(W.rackItems().some(i => i.category === "Workout"), false)));
+
+  t("workout mode draws from the whole closet's gear, never the rack", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    W._sugg.activity = "workout";
+    const pool = W._suggPool();
+    const allGear = W.items.filter(i => W.itemStatus(i) === "Available" && W.isWorkoutGear(i));
+    // the pre-fix pool was rack ∩ gear, which is only the gear-tagged SHOES
+    const rackIntersect = W.rackItems().filter(W.isWorkoutGear);
+    return pool.length === allGear.length && pool.every(i => W.isWorkoutGear(i)) && pool.length > rackIntersect.length
+      ? true : `pool=${pool.length} allGear=${allGear.length} rack∩gear=${rackIntersect.length}`;
+  }));
+
+  t("a workout outfit actually builds", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    W._sugg.activity = "workout"; W._sugg.targetLevel = null;
+    const res = W.suggestOutfits(null, null, W._suggPool(), W.currentSeason(), null, null, false, "workout", null, null);
+    return res.length > 0 && res[0].pieces.length >= 2 && res[0].pieces.every(p => W.isWorkoutGear(p))
+      ? true : `results=${res.length}`;
+  }));
+
+  t("normal mode still uses the rack and still excludes gear", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    W._sugg.activity = null;
+    const pool = W._suggPool();
+    return pool.length === W.rackItems().length && !pool.some(i => i.category === "Workout")
+      ? true : `pool=${pool.length} rack=${W.rackItems().length}`;
+  }));
+
+  // On a trip you only have what you packed — the suitcase outranks even gear.
+  t("a trip suitcase still outranks the workout pool", () => withGearCloset(() => {
+    W.capsules = [{ id: "t1", name: "Trip", kind: "travel", start_date: today, end_date: W.shiftDate(today, 3) }];
+    W.capsuleLinks = ["wt0", "ws0", "rs0"].map(id => ({ capsule_id: "t1", item_id: id }));
+    W.buildCapsuleIndexes();
+    W.tripModeId = "t1";
+    W.openSuggestSheet();
+    W._sugg.activity = "workout";
+    const pool = W._suggPool();
+    return pool.length === 3 ? true : `pool=${pool.length}`;
+  }));
+
   // ---- "Things you might be wrong about" (2026-07-26 r10) ----
   const withMisfitCloset = (fn) => {
     const saved = { items: W.items, wears: W.wears, ready: W.dataReady, cap: W.activeCapsuleId };
