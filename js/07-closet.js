@@ -29,6 +29,7 @@ function closetSearchMatches(q) {
 }
 let closetHamper = false; // true = full-page hamper contents (its own closet view, like a subcategory)
 let closetWorn = false;   // true = full-page "worn since washing, not yet dirty" tray
+let closetRack = false;   // true = full-page "the rack" (js/20-rack.js)
 let closetMend = false;   // true = full-page "needs mending" tray (Round C)
 let detailId = null;      // item id currently shown in detail (null = none)
 let detailView = null;    // null = photo view | "details" = details view

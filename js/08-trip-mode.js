@@ -354,7 +354,11 @@ function renderClosetRoot() {
     const m = _scopedMending().length;
     return m ? `<button class="cl-capbtn" data-mend>🪡 Mending · ${m} item${m === 1 ? "" : "s"}</button>` : "";
   })();
-  return clToolbar("Closet", false, true) + top + capFilter + launRow + mendRow + `<div class="frows">${rows}</div>`;
+  // The rack is ALWAYS a visible row (her condition when approving it): a pool
+  // that quietly narrows the suggester has to be somewhere she can go and look.
+  const rackRow = activeCapsuleId ? ""
+    : `<button class="cl-capbtn" data-rack>\u{1F455} The rack \u00b7 ${rackItems().length} in play</button>`;
+  return clToolbar("Closet", false, true) + top + capFilter + rackRow + launRow + mendRow + `<div class="frows">${rows}</div>`;
 }
 
 // ---- laundry sheet ----
@@ -707,6 +711,8 @@ function renderCloset() {
   }
   if (closetHamper) {
     body.innerHTML = renderClosetHamper();
+  } else if (closetRack) {
+    body.innerHTML = renderClosetRack();
   } else if (closetWorn) {
     body.innerHTML = renderClosetWorn();
   } else if (closetMend) {
@@ -741,9 +747,18 @@ function renderCloset() {
     };
     switchTab("add");
   };
+  // Manual rebuild. The rack keeps itself up to date on its own cadence; this is
+  // the escape hatch for "I've changed what I'm wearing and want it to catch up
+  // now", not a maintenance chore.
+  const rackBtn = $("#rackRebuild");
+  if (rackBtn) rackBtn.onclick = async () => {
+    rackBtn.disabled = true; rackBtn.textContent = "Rebuilding…";
+    await rackEnsure({ force: true });
+    if (closetRack) renderCloset();
+  };
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
-  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; navResetScroll("closet"); renderCloset(); scrollToTop(); };
+  if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; closetRack = false; navResetScroll("closet"); renderCloset(); scrollToTop(); };
 }
 
 // Snapshot the screen currently showing so back can return there. null when we're
@@ -875,6 +890,7 @@ function closetBack() {
   if (closetSearchQ !== null) { closetSearchQ = null; searchResults = null; renderCloset(); navShallower("closet"); return; }
   if (closetHamper) { closetHamper = false; }
   if (closetMend) { closetMend = false; }
+  if (closetRack) { closetRack = false; }
   if (closetWorn) { closetWorn = false; }
   else if (closetSub) { closetSub = null; }
   else if (closetCat) { closetCat = null; }

@@ -11,7 +11,7 @@ const TAB_TITLES = {
 // not resume a deep subpage left over from last visit. (Programmatic switchTab
 // calls that pre-set folder state and then openItem() don't go through here.)
 function resetTabRoot(name) {
-  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; }
+  if (name === "closet") { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetMend = false; closetRack = false; }
   else if (name === "looks") { looksFolder = null; lookId = null; looksSearchQ = null; looksItemFilter = null; }
   else if (name === "calendar") { calendarDay = null; }
 }
@@ -479,9 +479,10 @@ function wireEvents() {
       // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
       return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
     }
-    if (e.target.closest("[data-mend]")) { navDeeper("closet"); closetMend = true; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
-    if (e.target.closest("[data-laundry]")) { navDeeper("closet"); closetHamper = true; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
-    if (e.target.closest("[data-worn]")) { navDeeper("closet"); closetWorn = true; closetHamper = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-rack]")) { navDeeper("closet"); closetRack = true; closetHamper = false; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; rackEnsure().then(() => { if (closetRack) renderCloset(); }); return renderCloset(); }
+    if (e.target.closest("[data-mend]")) { navDeeper("closet"); closetMend = true; closetHamper = false; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-laundry]")) { navDeeper("closet"); closetHamper = true; closetWorn = false; closetMend = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-worn]")) { navDeeper("closet"); closetWorn = true; closetHamper = false; closetMend = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; navResetScroll("closet"); scrollToTop(); return renderCloset(); }
     const cat = e.target.closest("[data-cat]");

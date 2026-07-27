@@ -1412,6 +1412,144 @@ async function run() {
     return eq([none, some], [false, true]);
   });
 
+  // ---- THE RACK (2026-07-26) ----
+  // Fixture: a closet big enough that the quotas bite, with dressy pieces in all
+  // three core slots so the formality top-up has something to find.
+  const withRackCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, cap: W.activeCapsuleId, ready: W.dataReady,
+                    rack: W.kvData.get("rack"), plan: W.kvData.get("dayplan") };
+    const slots = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"],
+                   ["Dresses","Short"],["Outerwear","Jackets"]];
+    W.items = [];
+    for (let s = 0; s < slots.length; s++) {
+      for (let n = 0; n < 40; n++) {
+        const id = `${slots[s][0]}_${n}`;
+        W.items.push({ id, name: id, category: slots[s][0], subcategory: slots[s][1],
+          status: "Available", image_path: id + ".jpg", color_family: "Blue",
+          // every 10th piece is dressy, in EVERY slot
+          formality: n % 10 === 0 ? [6] : [2, 3],
+          season: ["Spring", "Summer", "Fall", "Winter"] });
+      }
+    }
+    // the first 12 of each slot are "warm" (worn inside RACK_WARM_DAYS)
+    W.wears = [];
+    for (let s = 0; s < slots.length; s++)
+      for (let n = 0; n < 12; n++)
+        W.wears.push({ id: `w${s}_${n}`, item_id: `${slots[s][0]}_${n}`,
+          worn_on: W.shiftDate(today, -(n + 1)), outfit_id: null, context: ["Errands"], formality_for: 3 });
+    W.outfits = []; W.outfitLinks = []; W.exclusions = [];
+    W.activeCapsuleId = null; W.dataReady = true;
+    W.kvData.delete("rack"); W.kvData.delete("dayplan");
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.exclusions = saved.exclusions;
+      W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  };
+  const rackSlotCounts = (r) => {
+    const out = {};
+    for (const id of r.ids) { const i = W.itemById.get(id); const s = i ? W.suggestSlot(i) : "?"; out[s] = (out[s] || 0) + 1; }
+    return out;
+  };
+
+  t("buildRack fills every slot to its quota", () => withRackCloset(() => {
+    const r = W.buildRack({ today });
+    return eq(rackSlotCounts(r), W.RACK_SLOT_QUOTA);
+  }));
+
+  // ⚠️ The cold quota is what stops the rack calcifying: worn → on the rack →
+  // suggested → worn, which over years would shrink her working wardrobe, i.e.
+  // the mirror would cause the thing it measures. If this test starts failing,
+  // do not relax it.
+  t("buildRack reserves the cold quota in every slot", () => withRackCloset(() => {
+    const r = W.buildRack({ today });
+    const cold = new Set(r.cold);
+    const perSlot = {};
+    for (const id of cold) { const i = W.itemById.get(id); perSlot[W.suggestSlot(i)] = (perSlot[W.suggestSlot(i)] || 0) + 1; }
+    const everySlotHasCold = Object.keys(W.RACK_SLOT_QUOTA).every(s => (perSlot[s] || 0) >= 1);
+    const share = cold.size / r.ids.length;
+    return everySlotHasCold && share >= 0.15 && share <= 0.30
+      ? true : `perSlot=${JSON.stringify(perSlot)} share=${share.toFixed(2)}`;
+  }));
+
+  t("cold pieces really are the ones she hasn't reached for", () => withRackCloset(() => {
+    const r = W.buildRack({ today });
+    const warmIds = new Set(W.wears.map(w => w.item_id));
+    const bad = r.cold.filter(id => warmIds.has(id));
+    return bad.length ? `cold but recently worn: ${JSON.stringify(bad)}` : true;
+  }));
+
+  t("the rack is deterministic — same inputs, same rack", () => withRackCloset(() => {
+    const a = W.buildRack({ today }), b = W.buildRack({ today });
+    return eq(a.ids, b.ids);
+  }));
+
+  // Her ask, verbatim: "can set events for future so the rack knows".
+  t("a declared upcoming context stocks the rack for that level", () => withRackCloset(() => {
+    const lvl = W.contextFormalityLevel("Wedding", W.wears);   // 6 from the seed
+    const plans = { [W.shiftDate(today, 5)]: [{ contexts: ["Wedding"], outfit: null }] };
+    const covers = (r) => {
+      const bySlot = {};
+      for (const id of r.ids) {
+        const i = W.itemById.get(id);
+        if (i && (W.itemFormalitySet(i) || []).includes(lvl)) bySlot[W.suggestSlot(i)] = (bySlot[W.suggestSlot(i)] || 0) + 1;
+      }
+      return bySlot;
+    };
+    const after = covers(W.buildRack({ today, plans }));
+    // ⚠️ targetLevel is a HARD filter in suggestOutfits, so a rack that can't
+    // cover a declared level returns an EMPTY sheet — the 2026-07-19 capsule bug
+    // from a smaller pool instead of a smaller capsule.
+    const ok = ["Tops", "Bottoms", "Shoes"].every(sl => (after[sl] || 0) >= W.RACK_LEVEL_MIN);
+    return ok ? true : `coverage at level ${lvl}: ${JSON.stringify(after)}`;
+  }));
+
+  t("rackNeededLevels reads forward plans, not past ones", () => withRackCloset(() => {
+    const future = { [W.shiftDate(today, 3)]: [{ contexts: ["Wedding"], outfit: null }] };
+    const past = { [W.shiftDate(today, -3)]: [{ contexts: ["Wedding"], outfit: null }] };
+    const far = { [W.shiftDate(today, 60)]: [{ contexts: ["Wedding"], outfit: null }] };
+    return eq([W.rackNeededLevels(today, future, W.wears).includes(6),
+               W.rackNeededLevels(today, past, W.wears).includes(6),
+               W.rackNeededLevels(today, far, W.wears).includes(6)],
+              [true, false, false]);
+  }));
+
+  t("a pushed-out piece leaves the rack; a pinned one is always on it", () => withRackCloset(() => {
+    const plain = W.buildRack({ today });
+    const victim = plain.ids[0];
+    const pushedOut = W.buildRack({ today, pushed: new Set([victim]) });
+    // pick something the quotas would never reach on its own
+    const outsider = "Tops_39";
+    const pinnedIn = W.buildRack({ today, pinned: new Set([outsider]) });
+    return eq([pushedOut.ids.includes(victim), plain.ids.includes(outsider), pinnedIn.ids.includes(outsider)],
+              [false, false, true]);
+  }));
+
+  t("a push-out expires rather than narrowing the rack forever", () => withRackCloset(() => {
+    const fresh = W.shiftDate(today, -1), stale = W.shiftDate(today, -(W.RACK_PUSH_DAYS + 1));
+    W.kvData.set("rack", { pushed: { A: fresh, B: stale } });
+    const set = W.rackPushedSet(today);
+    return eq([set.has("A"), set.has("B")], [true, false]);
+  }));
+
+  t("the rack never offers something the suggester would refuse", () => withRackCloset(() => {
+    W.items.push({ id: "no1", name: "No", category: "Tops", subcategory: "Tee shirts", status: "Available",
+                   image_path: "n.jpg", tags: ["no-suggest"], formality: [2], season: ["Summer"] });
+    W.items.push({ id: "arch1", name: "Arch", category: "Tops", subcategory: "Tee shirts", status: "Archive",
+                   image_path: "a.jpg", formality: [2], season: ["Summer"] });
+    W.items.push({ id: "wk1", name: "Gym", category: "Workout", subcategory: "Workout tops", status: "Available",
+                   image_path: "g.jpg", formality: [1], season: ["Summer"] });
+    W.buildOutfitIndexes();
+    const ids = new Set(W.buildRack({ today }).ids);
+    return eq([ids.has("no1"), ids.has("arch1"), ids.has("wk1")], [false, false, false]);
+  }));
+
   // ---- "Vary this" (2026-07-26, her own request) ----
   // The point is that she already knows WHICH piece to change, so this must seed
   // the real look and leave every piece swappable — locking would disable the
@@ -1432,6 +1570,9 @@ async function run() {
     W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
     try { return fn(); }
     finally {
+      // openVaryLook opens the shared sheet; leave it up and the harness (and any
+      // screenshot taken after a run) shows a stray modal over the app.
+      try { W.hideSheet("logSheet"); } catch (e) {}
       W.items = saved.items; W.outfits = saved.outfits; W.outfitLinks = saved.outfitLinks;
       W.wears = saved.wears; W.exclusions = saved.exclusions; W._sugg = saved.sugg;
       W.tripModeId = saved.trip; W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;

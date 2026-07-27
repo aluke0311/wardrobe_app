@@ -6,13 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-26 r5";
+const APP_VERSION = "2026-07-26 r6";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "New “Vary” button on any saved look. It opens that exact outfit and you tap ✨ on the one piece you want to change — same trousers, same top, different shoes",
-  "It doesn't guess which piece to swap, because you already know. Everything you don't touch stays put",
-  "Wearing the result saves it properly, so “Tuesday's outfit but with the boots” finally becomes something the app can record",
+  "New: The rack. A standing set of about 50 pieces the app keeps for you — what's in season and what you've actually been reaching for. Closet → 👕 The rack",
+  "You never build or maintain it. When you feel like it, open a piece and put it on the rack or take it off; skip a month and nothing breaks",
+  "A fifth of it is deliberately things you HAVEN'T worn lately, so it can't quietly shrink your wardrobe to the same ten pieces",
+  "Plan a Wedding or a Concert in the week ahead and the rack stocks itself for it. Next update, the suggester will use the rack by default",
 
 ];
 

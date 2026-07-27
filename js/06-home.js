@@ -1215,7 +1215,7 @@ function wireTripDash(tc) {
   on("[data-td-build]", () => openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET }));
   on("[data-td-laundry]", () => {
     switchTab("closet");
-    closetHamper = true; closetWorn = false; closetMend = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
+    closetHamper = true; closetWorn = false; closetMend = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
     renderCloset();
   });
   on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });

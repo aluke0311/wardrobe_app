@@ -373,7 +373,8 @@ naming or ordering changed. ~14,600 lines of JS across 20 files:
 | `js/17-builder.js` | 692 | Build-a-Look canvas |
 | `js/18-weather.js` | 311 | Open-Meteo, geocoding, `_wxCache` |
 | `js/19-wiring.js` | 798 | `switchTab`, `wireEvents`, delegation |
-| `js/20-boot.js` | 183 | snapshot, freshness, auth, `init()` |
+| `js/20-rack.js` | 300 | **the rack** — derivation, nudges, rack screen |
+| `js/21-boot.js` | 183 | snapshot, freshness, auth, `init()` |
 
 **Load order is the contract.** Top-level `const`/`let` in classic scripts share
 one global lexical scope, which is why the split needed zero code changes — but
@@ -1147,7 +1148,8 @@ writes a new column/table before its migration is confirmed.**
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
      which Range-fetches the first 2KB of the deployed page — a mismatch means a
      phantom "Update available" toast, or never seeing a real one);
-  3. the **`?v=` on all 21 `js/`+`css/` tags** (since r13). Miss one and Pages
+  3. the **`?v=` on all 22 `js/`+`css/` tags** (21 until 2026-07-26 r6 added
+     `js/20-rack.js` and renumbered boot to `21-boot.js`). Miss one and Pages
      serves a fresh `index.html` beside a stale module — a half-updated app,
      which is worse than an un-updated one.
 - Comment non-obvious logic only — match the surrounding density.

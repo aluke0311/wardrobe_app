@@ -511,6 +511,25 @@ function laundryLineHtml(i) {
 // One quiet line on the photo view. It has to be reachable in a single tap from
 // the piece itself, because the only moment she'll ever tag this is the moment
 // the button comes off — there is no world in which she does a mending audit.
+/* Pull-in / push-out, on the item photo view.
+   Her condition when approving the rack: "ways to both see the rack and work
+   outside it" — a piece can be put in play from ANYWHERE she happens to be
+   looking at it, not only from the rack screen. Hidden while a capsule scopes
+   the closet, where the capsule is the pool and the rack isn't in charge. */
+function rackLineHtml(i) {
+  if (itemStatus(i) !== "Available" || activeCapsuleId) return "";
+  const on = isOnRack(i.id);
+  const pinned = rackPinnedSet().has(i.id);
+  return on
+    ? `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:14px">
+        <span style="color:var(--accent)">\u{1F455} On the rack${pinned ? " · kept" : ""}</span>
+        <button class="lnk" data-rack-toggle="0" style="font-size:13px;color:var(--muted)">Not right now</button>
+      </div>`
+    : `<div class="item-stat-strip" style="display:flex;justify-content:center">
+        <button class="lnk" data-rack-toggle="1" style="font-size:12px;color:var(--muted)">\u{1F455} Put on the rack</button>
+      </div>`;
+}
+
 function mendLineHtml(i) {
   if (itemStatus(i) === "Archive") return "";
   return isMending(i)

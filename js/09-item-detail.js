@@ -45,6 +45,7 @@ function siblingItems() {
   if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
   if (closetSearchQ !== null && searchResults) return searchResults;
   if (closetHamper) return _scopedHamper();
+  if (closetRack) return rackItems();
   if (closetWorn) return _scopedWorn();
   if (closetMend) return _scopedMending();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);
@@ -109,6 +110,7 @@ function openItem(id) {
     ${workhorseBadgeHtml(i)}
     ${laundryLineHtml(i)}
     ${mendLineHtml(i)}
+    ${rackLineHtml(i)}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#c9beae;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -139,6 +141,12 @@ function openItem(id) {
       openItem(i.id);  // refresh the status line
     };
   });
+  const rackBtn = body.querySelector("[data-rack-toggle]");
+  if (rackBtn) rackBtn.onclick = async () => {
+    const on = rackBtn.dataset.rackToggle === "1";
+    await (on ? pullOntoRack(i.id) : pushOffRack(i.id));
+    openItem(i.id);
+  };
   const mendBtn = body.querySelector("[data-mend-toggle]");
   if (mendBtn) mendBtn.onclick = async () => {
     const on = mendBtn.dataset.mendToggle === "1";
