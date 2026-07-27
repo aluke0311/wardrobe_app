@@ -409,6 +409,7 @@ function buildOutfitIndexes() {
   outfits.slice()
     .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
     .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; });
+  invalidateArchivedCache();
   buildOutfitWearMap();
 }
 function buildOutfitWearMap() {

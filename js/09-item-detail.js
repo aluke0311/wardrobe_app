@@ -585,6 +585,9 @@ async function saveField(id, field, value) {
   // The audit cache is stamped on array LENGTHS, which an in-place season edit
   // doesn't change — bust it explicitly or a fixed tag keeps its warning.
   if (field === "season") _wxAudit = null;
+  // effectiveArchived() is memoised per look; a piece moving to or from Archive
+  // silently changes the answer for every look containing it.
+  if (field === "status") invalidateArchivedCache();
   try {
     await rest(`/items?id=eq.${id}`, {
       method: "PATCH",

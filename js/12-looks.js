@@ -80,7 +80,23 @@ function outfitsForItem(itemId) {
 // piece is effectively archived too, with no cascade PATCH and no new column.
 // o.archived stays the source of truth for the manual Archive/Unarchive button;
 // this only affects what browse/pickers show.
-function effectiveArchived(o) { return o.archived || outfitItems(o).some(i => itemStatus(i) === "Archive"); }
+/* DERIVED archived: the flag she set, OR any piece having been archived.
+   Memoised per outfit id, because this walks every piece of every look and is
+   called from activeOutfits() on every Looks render, every look picker and
+   several stats paths — items × looks, the same shape as the
+   wearCountInRange-in-a-comparator trap in Known gotchas. The map is rebuilt
+   wholesale by buildOutfitIndexes(), so anything that changes an item's status
+   or a look's membership already invalidates it. */
+let _archMemo = new Map();
+const invalidateArchivedCache = () => { _archMemo = new Map(); };
+function effectiveArchived(o) {
+  if (!o) return false;
+  const hit = _archMemo.get(o.id);
+  if (hit !== undefined) return hit;
+  const v = !!o.archived || outfitItems(o).some(i => itemStatus(i) === "Archive");
+  _archMemo.set(o.id, v);
+  return v;
+}
 function activeOutfits() { return displayOutfits().filter(o => !effectiveArchived(o)); }
 function archivedOutfits() { return displayOutfits().filter(o => effectiveArchived(o)); }
 // Looks pool, scoped to the active capsule when planning: only looks wearable
@@ -300,6 +316,26 @@ function derivedSeasonSet(i, wearRows = null, log = null, bands = null) {
   return keep.length ? SEASONS.filter(s => keep.includes(s)) : null;
 }
 
+/* ---- WHICH SEASON FUNCTION ANSWERS WHICH QUESTION (2026-07-26, audit H5) ----
+   Six related derivations, each correct in isolation, with genuinely different
+   meanings for "unknown". Read this before adding a seventh.
+
+     itemSeasonSet(i)      "what seasons is this piece FOR?"  Explicit tag wins;
+                           falls back to derivedSeasonSet. THE default reader.
+     derivedSeasonSet(i)   "what does its HISTORY say?"  Ignores the explicit tag
+                           on purpose — that's what lets a piece be asked what
+                           its evidence shows, and what the season flag compares
+                           the claim against.
+     effectiveSeasonOf(d)  "what season did that DAY feel like?"  An away day
+                           counts as the home season its temperature resembles.
+     inSeason(i, s)        FILTER predicate for suggestions. ⚠️ unknown = ELIGIBLE.
+     matchesSeason(i, s)   FILTER predicate for the funnel. ⚠️ unknown = NO MATCH.
+     inSeasonWx(i, s, wx)  inSeason widened by observed temperature. Rescue-only.
+
+   ⚠️ The two filter predicates disagree about unknown, and that is deliberate:
+   a suggester that hid every untagged piece would be useless, while a funnel
+   that showed them would be lying about what it filtered. Don't "harmonise"
+   them — check which question you're asking. */
 function itemSeasonSet(i, wearRows = null, log = null, bands = null) {
   if (i.season && i.season.length) return i.season;
   return derivedSeasonSet(i, wearRows, log, bands);
@@ -2624,13 +2660,14 @@ async function archiveLook(id) {
   const o = outfitById.get(id); if (!o) return;
   const next = !o.archived;
   o.archived = next;  // optimistic
+  invalidateArchivedCache();
   try {
     await rest(`/outfits?id=eq.${id}`, {
       method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
       body: JSON.stringify({ archived: next }),
     });
     toast(next ? "Look archived" : "Look unarchived");
-  } catch (e) { o.archived = !next; toast(e.message); }
+  } catch (e) { o.archived = !next; invalidateArchivedCache(); toast(e.message); }
   if (o.archived) leaveLook();  // leave the now-hidden look
   else openLook(id);
 }

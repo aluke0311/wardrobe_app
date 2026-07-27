@@ -1219,7 +1219,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-26 r10`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-26 r11`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1343,6 +1343,13 @@ the shared `funnelBtnHtml(id, state)` button+badge.
   `main`. A new drill-in that sets only its own flag lands correctly but leaves the
   others stale for the NEXT drill-in — so every grid entry must set its own flag
   true and the rest false. There are four such sites; grep `statsView = "grid"`.
+- **`effectiveArchived` is memoised** (2026-07-26 r11) — it walks every piece of
+  every look and runs from `activeOutfits()` on every Looks render, every look
+  picker and several stats paths. `buildOutfitIndexes()` clears the map, so
+  anything reloading data is safe; the two OPTIMISTIC mutations that don't go
+  through it — `archiveLook` (incl. its rollback) and `saveField(id,"status")` —
+  call `invalidateArchivedCache()` explicitly. Any new path that flips
+  `o.archived` or an item's status must too.
 - **Never call `wearCountInRange` inside a sort comparator** (2026-07-21 r11) —
   it filters the whole `wears` array per call, so a comparator makes it
   items × wears × log(items) (~34M row reads on the real closet, ~1s of frozen
@@ -1552,7 +1559,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **159/159** (2026-07-26 r10, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **161/161** (2026-07-26 r11, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

@@ -1413,6 +1413,37 @@ async function run() {
     return eq([none, some], [false, true]);
   });
 
+  // ---- memoised effectiveArchived (2026-07-26 r11) ----
+  // The memo is only safe if every optimistic mutation invalidates it. These
+  // pin the two that don't go through buildOutfitIndexes().
+  t("effectiveArchived: derived from pieces, and the memo tracks a status change", () => {
+    const saved = { items: W.items, outfits: W.outfits, outfitLinks: W.outfitLinks };
+    W.items = [{ id: "p1", status: "Available" }, { id: "p2", status: "Available" }];
+    W.outfits = [{ id: "oa", archived: false }];
+    W.outfitLinks = [{ outfit_id: "oa", item_id: "p1" }, { outfit_id: "oa", item_id: "p2" }];
+    W.buildOutfitIndexes();
+    const before = W.effectiveArchived(W.outfitById.get("oa"));
+    W.itemById.get("p2").status = "Archive";
+    const stale = W.effectiveArchived(W.outfitById.get("oa"));   // memoised, still false
+    W.invalidateArchivedCache();
+    const after = W.effectiveArchived(W.outfitById.get("oa"));
+    W.items = saved.items; W.outfits = saved.outfits; W.outfitLinks = saved.outfitLinks;
+    W.buildOutfitIndexes();
+    return eq([before, stale, after], [false, false, true]);
+  });
+
+  t("effectiveArchived reads the manual flag too", () => {
+    const saved = { items: W.items, outfits: W.outfits, outfitLinks: W.outfitLinks };
+    W.items = [{ id: "p1", status: "Available" }];
+    W.outfits = [{ id: "ob", archived: true }];
+    W.outfitLinks = [{ outfit_id: "ob", item_id: "p1" }];
+    W.buildOutfitIndexes();
+    const v = W.effectiveArchived(W.outfitById.get("ob"));
+    W.items = saved.items; W.outfits = saved.outfits; W.outfitLinks = saved.outfitLinks;
+    W.buildOutfitIndexes();
+    return eq(v, true);
+  });
+
   // ---- "Things you might be wrong about" (2026-07-26 r10) ----
   const withMisfitCloset = (fn) => {
     const saved = { items: W.items, wears: W.wears, ready: W.dataReady, cap: W.activeCapsuleId };
