@@ -494,6 +494,7 @@ function _renderStatsView() {
   if (statsView === "palette")     { renderStatsPalettePage(); return; }
   if (statsView === "missing")     { renderStatsMissingPage(); return; }
   if (statsView === "misfit")      { renderStatsMisfitPage();  return; }
+  if (statsView === "travel")      { renderStatsTravelPage();  return; }
   if (statsView === "context-detail") { renderStatsContextDetailPage(); return; }
   if (statsView === "report")        { renderStatsReportPage();       return; }
   if (statsView === "report-detail") { renderStatsReportDetailPage(); return; }
@@ -889,6 +890,10 @@ function renderStatsMain() {
           ${row("Best Potential Improvement","One more wear → biggest CPW drop",                  "list:best-potential")}
           ${row("Workhorses",                "Your highest-performing pieces",                    "list:workhorses")}
           ${row("Declutter Candidates",      declutterCount ? `${declutterCount} removal candidate${declutterCount === 1 ? "" : "s"}` : "Nothing to remove right now", "list:declutter")}
+          ${(() => {
+            const t = completedTrips().length;
+            return row("Travel", t ? `What you pack vs what you wear · ${t} trip${t === 1 ? "" : "s"}` : "What you pack vs what you actually wear", "travel");
+          })()}
         </div>
         <div class="stats-note">Total Closet Value and Item Count exclude archived items.</div>
       </div>
@@ -1005,6 +1010,9 @@ function renderStatsMain() {
       }
       if (action === "misfit") {
         statsView = "misfit"; renderStats(); return;
+      }
+      if (action === "travel") {
+        statsView = "travel"; renderStats(); return;
       }
       if (action.startsWith("list:")) {
         const key = action.slice(5);
@@ -1464,6 +1472,80 @@ function renderStatsMisfitPage() {
     b.onclick = () => { const [id, lv] = b.dataset.misfitAdd.split(":"); addMisfitLevel(id, +lv); });
   $("#statsBody").querySelectorAll("[data-misfit-edit]").forEach(b =>
     b.onclick = () => openOccasionEdit(b.dataset.misfitEdit, () => renderStats()));
+}
+
+/* Travel (2026-07-29). One trip is an anecdote; four are a fact about how you
+   pack, and that fact is the whole reason the recap is worth reading twice.
+   Whole-wardrobe page, so it passes NO pool and hides the funnel — the two are
+   one decision (see the stats-funnel gotcha in CLAUDE.md). */
+function renderStatsTravelPage() {
+  const st = buildTravelStats();
+  const proven = travelProven(st);
+  const unused = travelUnused(st);
+  const over = st.totPacked - st.totWorn;
+
+  const tripRows = st.trips.slice().reverse().map(t => {
+    const pct = t.packed ? Math.round((t.worn / t.packed) * 100) : 0;
+    return `<button data-travel-trip="${esc(t.c.id)}" style="display:block;width:100%;text-align:left;padding:11px 18px;border-bottom:1px solid var(--line)">
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <span style="font-size:14.5px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.c.name)}</span>
+        <span style="font-size:11.5px;color:var(--muted)">${esc(fmtDate(t.c.start_date))} · ${t.days} day${t.days === 1 ? "" : "s"}</span>
+      </div>
+      <div style="height:8px;border-radius:4px;background:var(--panel);overflow:hidden;margin:6px 0 4px">
+        <div style="height:100%;width:${pct}%;background:var(--accent)"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">${t.worn} of ${t.packed} packed pieces worn${t.r.unpacked.length ? ` · ${t.r.unpacked.length} worn but not packed` : ""}</div>
+    </button>`;
+  }).join("");
+
+  const itemRow = (e, note) => `
+    <button data-travel-item="${esc(e.item.id)}" style="display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:9px 18px;border-bottom:1px solid var(--line)">
+      <span style="width:46px;flex:none">${thumbHtml(e.item.image_path)}</span>
+      <span style="flex:1;min-width:0">
+        <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.item.name || "Untitled")}</span>
+        <span style="display:block;font-size:11.5px;color:var(--muted)">${esc(note)}</span>
+      </span>
+      <svg class="chev" viewBox="0 0 24 24" style="flex:none"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+
+  const body = !st.trips.length
+    ? `<div class="placeholder" style="padding:40px 32px"><b>No finished trips yet</b>
+        <div>Give a capsule a start and end date and use it as a trip — once it's over, it shows up here.</div></div>`
+    : `
+      <div class="stats-sec">
+        <div class="stats-sec-body">
+          <div class="kpi-row">
+            <div class="kpi-cell"><div class="kpi-val">${st.totPacked}</div><div class="kpi-lbl">pieces packed</div></div>
+            <div class="kpi-cell"><div class="kpi-val">${st.totWorn}</div><div class="kpi-lbl">actually worn</div></div>
+          </div>
+          ${over > 0 ? `<div class="stats-note" style="border:0">Across ${st.trips.length} trip${st.trips.length === 1 ? "" : "s"} you've carried <b>${over}</b> piece-slot${over === 1 ? "" : "s"} you didn't wear — about ${Math.round(over / st.trips.length)} per trip.</div>` : ""}
+        </div>
+      </div>
+      <div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Every trip</div><div class="s">Tap one for its recap</div></div>
+        <div class="stats-sec-body">${tripRows}</div>
+      </div>
+      ${proven.length ? `<div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Always earns its spot</div><div class="s">Packed more than once, worn every time</div></div>
+        <div class="stats-sec-body">${proven.slice(0, 15).map(e => itemRow(e, `packed ${e.packed}× · worn ${e.worn}×`)).join("")}</div>
+      </div>` : ""}
+      ${unused.length ? `<div class="stats-sec">
+        <div class="stats-sec-hdr"><div class="t">Packed, never worn</div><div class="s">On ${TRIP_MEMORY_MIN}+ trips</div></div>
+        <div class="stats-sec-body">${unused.slice(0, 15).map(e => itemRow(e, `packed ${e.packed}× · worn 0×`)).join("")}</div>
+        <div class="stats-note">Not a verdict. A piece you pack every time and never wear may be the just-in-case option, doing exactly its job.</div>
+      </div>` : ""}`;
+
+  $("#statsBody").innerHTML = statsToolbar("Travel", true, false, true) + `
+    <div style="padding-bottom:32px">
+      <div class="snote" style="padding:10px 16px 2px">Every dated capsule whose end date has passed. Nothing here is stored — it's read back out of what you logged.</div>
+      ${body}
+    </div>`;
+  wireStatsToolbar();
+  hydratePhotos($("#statsBody"));
+  $("#statsBody").querySelectorAll("[data-travel-trip]").forEach(b =>
+    b.onclick = () => openTripRecap(b.dataset.travelTrip));
+  $("#statsBody").querySelectorAll("[data-travel-item]").forEach(b =>
+    b.onclick = () => openItemFromStats(b.dataset.travelItem));
 }
 
 function renderStatsMissingPage() {

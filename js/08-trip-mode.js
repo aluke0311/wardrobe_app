@@ -83,25 +83,150 @@ function tripMissingPieces(itemIds) {
 // ---- Unpack + recap (step D) ----
 // Pure derivation from wears in the trip's date range vs capsule members —
 // nothing stored, so the recap works retroactively for any past dated trip.
-function tripRecapData(c) {
-  const members = capsuleItems(c.id);
-  const wearDays = new Map();  // item_id → Set(dates)
-  const lookDays = new Map();  // outfit_id → Set(dates)
-  for (const w of wears) {
-    if (w.worn_on < c.start_date || w.worn_on > c.end_date) continue;
-    if (w.item_id) { let s = wearDays.get(w.item_id); if (!s) wearDays.set(w.item_id, s = new Set()); s.add(w.worn_on); }
+/* ⚠️ ONE derivation, TWO surfaces (2026-07-29). `through` bounds the window at a
+   date inside the trip, which is what makes the mid-trip "still in the suitcase"
+   row and the end-of-trip recap the same function. A second walk over `wears`
+   for the live case would have been free to drift from this one; it isn't worth
+   the two lines it would have saved.
+   opts: { through, wearRows, members } — the last two exist so the travel
+   derivations below are injectable and therefore testable. */
+function tripRecapData(c, opts = {}) {
+  const through = opts.through && opts.through < c.end_date ? opts.through : c.end_date;
+  const rows = opts.wearRows || wears;
+  const members = opts.members || capsuleItems(c.id);
+  const memberIds = new Set(members.map(i => i.id));
+  const wearDays = new Map();    // item_id → Set(dates), packed pieces
+  const outsideDays = new Map(); // item_id → Set(dates), worn but NOT packed
+  const lookDays = new Map();    // outfit_id → Set(dates)
+  for (const w of rows) {
+    if (w.worn_on < c.start_date || w.worn_on > through) continue;
+    if (w.item_id) {
+      const m = memberIds.has(w.item_id) ? wearDays : outsideDays;
+      let s = m.get(w.item_id); if (!s) m.set(w.item_id, s = new Set()); s.add(w.worn_on);
+    }
     if (w.outfit_id) { let s = lookDays.get(w.outfit_id); if (!s) lookDays.set(w.outfit_id, s = new Set()); s.add(w.worn_on); }
   }
-  const worn = members.filter(i => wearDays.has(i.id));
+  const daysOf = (i) => (wearDays.get(i.id) || { size: 0 }).size;
+  const worn = members.filter(i => wearDays.has(i.id)).sort((a, b) => daysOf(b) - daysOf(a));
   const dead = members.filter(i => !wearDays.has(i.id));
-  let mostWorn = null, mostN = 0;
-  for (const i of worn) { const n = wearDays.get(i.id).size; if (n > mostN) { mostN = n; mostWorn = i; } }
+  // Days ELAPSED, not the whole trip — mid-trip the two differ, and "earned its
+  // weight" has to be measured against the days that have actually happened.
+  const all = tripDates(c);
+  const elapsed = all.filter(d => d <= through).length || 1;
+  // A workhorse pulled its weight on a meaningful share of the days. Min 2 so a
+  // one-day trip can't crown everything you wore.
+  const workMin = Math.max(2, Math.ceil(TRIP_WORKHORSE_SHARE * elapsed));
+  const workhorses = worn.filter(i => daysOf(i) >= workMin);
+  const once = worn.filter(i => daysOf(i) < workMin);
+  // Worn on the trip but never on the packing list. ⚠️ Accepting the in-trip
+  // "add to this trip?" offer makes a piece a member, so what survives here is
+  // specifically what she DECLINED to call a trip piece — which is the more
+  // interesting set anyway.
+  const unpacked = [...outsideDays.keys()].map(id => itemById.get(id)).filter(Boolean)
+    .sort((a, b) => outsideDays.get(b.id).size - outsideDays.get(a.id).size);
+  let mostWorn = worn[0] || null, mostN = mostWorn ? daysOf(mostWorn) : 0;
   let topLook = null, topLookN = 0;
   for (const [oid, s] of lookDays) {
     const o = outfitById.get(oid);
     if (o && s.size > topLookN) { topLookN = s.size; topLook = o; }
   }
-  return { members, worn, dead, mostWorn, mostN, topLook, topLookN, days: tripDates(c).length };
+  return {
+    members, worn, dead, wearDays, outsideDays, unpacked, workhorses, once,
+    mostWorn, mostN, topLook, topLookN, outfitCount: lookDays.size,
+    days: all.length, elapsed, through,
+  };
+}
+const TRIP_WORKHORSE_SHARE = 0.4;  // share of elapsed trip days that "earned its spot"
+const TRIP_UNWORN_MIN_DONE = 2;    // completed days before the app mentions unworn pieces
+const TRIP_UNWORN_MIN_LEFT = 2;    // days still to come — below this it isn't actionable
+
+/* Mid-trip: what's still in the suitcase, while there's time to do something
+   about it. Returns null rather than an empty shape whenever it shouldn't be
+   spoken about — on day 1 every piece is unworn and the number is noise, and
+   after the last day the recap owns the question. A weekend trip never
+   qualifies, which is correct. */
+function tripUnwornNow(c, today = todayStr()) {
+  if (!isDatedTrip(c)) return null;
+  if (today < c.start_date || today > c.end_date) return null;
+  const dates = tripDates(c);
+  const done = dates.filter(d => d < today).length;
+  const left = dates.filter(d => d > today).length;
+  if (done < TRIP_UNWORN_MIN_DONE || left < TRIP_UNWORN_MIN_LEFT) return null;
+  const r = tripRecapData(c, { through: today });
+  const unworn = r.dead.filter(i => itemStatus(i) === "Available");
+  if (!unworn.length) return null;
+  return { unworn, left, done, packed: r.members.filter(i => itemStatus(i) === "Available").length };
+}
+
+/* Pool for "build from these": the unworn pieces, PLUS whatever the unworn set
+   can't dress. ⚠️ This is the r12 workout bug waiting to happen — a pool that
+   cannot form an outfit is worse than an empty one, because it looks like a
+   partial result. Six unworn tops don't make an outfit. So the narrowing is
+   rescue-shaped, exactly like inSeasonWx: it starts from unworn and only ever
+   widens, per missing slot, from the rest of the suitcase. The count of rescued
+   pieces is returned so the pool chip can say so out loud. */
+const TRIP_CORE_SLOTS = ["Tops", "Bottoms", "Shoes"];
+function tripUnwornPool(c, today = todayStr()) {
+  const suitcase = capsuleItems(c.id).filter(i => itemStatus(i) === "Available");
+  const dead = new Set(tripRecapData(c, { through: today }).dead.map(i => i.id));
+  const pool = suitcase.filter(i => dead.has(i.id));
+  const have = new Set(pool.map(suggestSlot).filter(Boolean));
+  // A dress covers Tops+Bottoms on its own; otherwise all three core slots.
+  const need = have.has("Dresses") ? ["Shoes"] : TRIP_CORE_SLOTS;
+  const rescued = [];
+  for (const slot of need) {
+    if (have.has(slot)) continue;
+    for (const i of suitcase) if (!dead.has(i.id) && suggestSlot(i) === slot) rescued.push(i);
+  }
+  return { pool: pool.concat(rescued), unworn: pool.length, rescued: rescued.length };
+}
+
+/* ---- Cross-trip memory (2026-07-29) ----
+   The part that makes a recap worth reading twice: one trip is an anecdote,
+   four are a fact about how you pack. Every completed dated capsule counts —
+   `kind` isn't consulted, because dates are what trip mode already keys on
+   everywhere else and an undated capsule has no trip to have been on. */
+const TRIP_MEMORY_MIN = 2;  // trips of evidence before a piece's record says anything
+function completedTrips(caps = null, today = null) {
+  const t = today || todayStr();
+  return (caps || capsules).filter(c => isDatedTrip(c) && c.end_date < t)
+    .sort((a, b) => a.start_date.localeCompare(b.start_date));
+}
+function buildTravelStats(caps = null, wearRows = null, membersFor = null, today = null) {
+  const trips = completedTrips(caps, today).map(c => {
+    const members = membersFor ? membersFor(c) : null;
+    const r = tripRecapData(c, { wearRows, members });
+    return {
+      c, r, packed: r.members.length, worn: r.worn.length, days: r.days,
+      wornIds: new Set(r.worn.map(i => i.id)),
+    };
+  });
+  // Per-piece travel record. Deliberately just two counts — see the note in the
+  // Travel page: a piece packed three times and never worn may be the emergency
+  // option, doing exactly its job. The app reports; it doesn't rule.
+  const rec = new Map();  // item_id → {item, packed, worn}
+  for (const t of trips) {
+    for (const i of t.r.members) {
+      let e = rec.get(i.id);
+      if (!e) rec.set(i.id, e = { item: i, packed: 0, worn: 0 });
+      e.packed++;
+      if (t.wornIds.has(i.id)) e.worn++;
+    }
+  }
+  const totPacked = trips.reduce((s, t) => s + t.packed, 0);
+  const totWorn = trips.reduce((s, t) => s + t.worn, 0);
+  return { trips, rec, totPacked, totWorn };
+}
+// Pieces with enough history to be worth showing on a packing list.
+function travelProven(stats) {
+  return [...stats.rec.values()]
+    .filter(e => e.packed >= TRIP_MEMORY_MIN && e.worn === e.packed)
+    .sort((a, b) => b.packed - a.packed);
+}
+function travelUnused(stats) {
+  return [...stats.rec.values()]
+    .filter(e => e.packed >= TRIP_MEMORY_MIN && e.worn === 0)
+    .sort((a, b) => b.packed - a.packed);
 }
 
 // Unpack sheet: recap + (when unpacking a live trip) send worn pieces to the
@@ -114,10 +239,29 @@ function openTripRecap(cid, { unpack = false } = {}) {
     ${thumbHtml(i.image_path || null)}
     <div class="wa-name">${esc(i.name || "Untitled")}</div>
   </button>`;
+  const dayN = (i) => (r.wearDays.get(i.id) || { size: 0 }).size;
+  const strip = (label, list, sub = null) => list.length ? `
+    <div class="td-plan-lbl" style="margin:16px 0 6px">${label}</div>
+    ${sub ? `<div class="muted" style="font-size:11.5px;margin:-4px 0 6px">${esc(sub)}</div>` : ""}
+    <div class="wa-strip" style="padding:0">${list.map(tile).join("")}</div>` : "";
+
+  // "Earned its weight" is wear-DAYS, not a boolean: a piece worn four days and
+  // one worn once both used a suitcase slot, and only one of them paid for it.
+  const workHtml = strip(
+    `⭐ Earned its spot · ${r.workhorses.length} piece${r.workhorses.length === 1 ? "" : "s"}`,
+    r.workhorses, r.workhorses.length ? r.workhorses.map(i => `${i.name || "Untitled"} ${dayN(i)}d`).join(" · ") : null);
+  // ⚠️ "but only just" is a COMPARISON — it needs a top tier to be compared
+  // against. With no workhorses it reads as a dig at everything she wore.
+  const onceHtml = strip(
+    r.workhorses.length ? `Worn, but only just · ${r.once.length}` : `Worn · ${r.once.length}`, r.once);
   const deadHtml = r.dead.length
-    ? `<div class="td-plan-lbl" style="margin:16px 0 6px">🧳 Dead weight · ${r.dead.length} piece${r.dead.length === 1 ? "" : "s"} never left the suitcase</div>
-       <div class="wa-strip" style="padding:0">${r.dead.map(tile).join("")}</div>`
+    ? strip(`🧳 Dead weight · ${r.dead.length} piece${r.dead.length === 1 ? "" : "s"} never left the suitcase`, r.dead)
     : `<div style="margin-top:16px;font-size:14px">🎉 Every packed piece got worn — perfect packing.</div>`;
+  // The most useful packing signal there is: what you reached for that wasn't
+  // on the list. Next time, it goes on the list.
+  const unpackedHtml = strip(
+    `＋ Wore it, didn't pack it · ${r.unpacked.length}`, r.unpacked,
+    "These weren't on the packing list — worth adding before the next trip.");
   const canHamper = unpack && LAUNDRY_READY() && r.worn.length;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
@@ -130,10 +274,14 @@ function openTripRecap(cid, { unpack = false } = {}) {
       <div class="muted" style="font-size:13px;margin-bottom:12px">${esc(fmtDate(c.start_date))} – ${esc(fmtDate(c.end_date))} · ${r.days} day${r.days === 1 ? "" : "s"}</div>
       <div style="font-size:14px;line-height:1.6">
         <b>${r.worn.length} of ${r.members.length}</b> packed pieces worn
+        ${r.outfitCount ? `<br><b>${r.outfitCount}</b> distinct look${r.outfitCount === 1 ? "" : "s"} out of ${r.members.length} pieces` : ""}
         ${r.mostWorn ? `<br>Most worn: <b>${esc(r.mostWorn.name || "Untitled")}</b> · ${r.mostN} day${r.mostN === 1 ? "" : "s"}` : ""}
         ${r.topLook && r.topLookN > 1 ? `<br>Repeated look: <b>${esc(outfitName(r.topLook))}</b> · ${r.topLookN} days` : ""}
       </div>
+      ${workHtml}
+      ${onceHtml}
       ${deadHtml}
+      ${unpackedHtml}
       ${canHamper ? `<button class="btn" id="unpHamper" style="margin-top:20px">🧺 Send ${r.worn.length} worn piece${r.worn.length === 1 ? "" : "s"} to the hamper</button>` : ""}
       ${unpack ? `<button class="btn${canHamper ? " btn-sec" : ""}" id="unpEnd" style="margin-top:10px">End trip mode</button>` : ""}
     </div>`;

@@ -1306,6 +1306,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   // it is session-only and resets every open, so the app never quietly stays
   // narrowed OR quietly stays wide.
   _sugg.wholeCloset = false;
+  _sugg.unworn = null;           // set only by openTripUnwornSuggest; same widen rules
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
@@ -1351,6 +1352,9 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
       workout outfit ever starts to feel like a slot machine.
    3. Otherwise the rack, unless she's widened it. */
 function _suggBasePool() {
+  // Inside a trip, "build from what's still in the bag" narrows one step further
+  // than the suitcase. Same deal as the rack: named, counted, one tap to widen.
+  if (_sugg.unworn) return _sugg.unworn.pool;
   if (_sugg.capsuleId) return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
   if (_sugg.targetLevel === 1 || _sugg.wholeCloset) return items.filter(i => itemStatus(i) === "Available");
   return rackItems();
@@ -1418,6 +1422,13 @@ function suggestShapeChipsHtml() {
 }
 
 function suggestPoolChipHtml() {
+  // The one case where a capsule-scoped sheet still needs a pool chip: the pool
+  // is NARROWER than the capsule label above claims, so the label alone lies.
+  if (_sugg.unworn) {
+    const u = _sugg.unworn;
+    const extra = u.rescued ? ` + ${u.rescued} to dress it` : "";
+    return `<button class="cap-chip on" data-spool style="font-size:13px" title="Use the whole suitcase">\u{1F9F3} Unworn · ${u.unworn}${extra} → whole suitcase</button>`;
+  }
   if (_sugg.capsuleId) return "";
   if (_sugg.targetLevel === 1) {
     // Named, but not a button: Utility already draws from the whole closet, so
@@ -1447,7 +1458,8 @@ function suggestStarvationNote() {
     if (off) bits.push(`${off} don't cover ${occLabel(_sugg.targetLevel)}`);
   }
   if (_sugg.banned && _sugg.banned.size) bits.push(`${_sugg.banned.size} set aside`);
-  if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
+  if (_sugg.unworn) bits.push(`only ${eligible.length} unworn pieces — tap the chip above for the whole suitcase`);
+  else if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
   // A thin RACK must say so and point at the way out, or an empty sheet reads as
   // "the app is broken" rather than "this pool is small".
   if (!_sugg.capsuleId && !_sugg.wholeCloset && _sugg.targetLevel !== 1) bits.push(`the rack is ${eligible.length} pieces \u2014 tap it above to use the whole closet`);
@@ -1601,6 +1613,21 @@ function openVaryLook(outfitId) {
   _sugg.wholeCloset = true;
   const k = comboKey(pieces);
   _sugg.results = [{ pieces, score: 0 }, ..._sugg.results.filter(c => comboKey(c.pieces) !== k)];
+  _sugg.idx = 0;
+  renderSuggestSheet();
+}
+
+/* "Build from these" off the mid-trip unworn list. Same shape as openVaryLook:
+   open the sheet normally, then narrow and re-roll once — cheaper than threading
+   a sixth parameter through openSuggestSheet's signature for one caller. */
+function openTripUnwornSuggest(cid) {
+  const c = capsuleById.get(cid);
+  if (!c || !isDatedTrip(c)) return;
+  const u = tripUnwornPool(c);
+  if (!u.pool.length) return toast("Nothing unworn left to build from");
+  openSuggestSheet(null, cid);
+  _sugg.unworn = u;
+  _sugg.results = suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), null, _sugg.shapeKey);
   _sugg.idx = 0;
   renderSuggestSheet();
 }
@@ -1979,7 +2006,13 @@ function renderSuggestSheet() {
     };
   });
   const poolBtn = $("#logInner").querySelector("[data-spool]");
-  if (poolBtn) poolBtn.onclick = () => { _sugg.wholeCloset = !_sugg.wholeCloset; regen(); };
+  // One chip, one widen: from the unworn pool the step out is the whole
+  // suitcase; everywhere else it's the rack ↔ whole closet toggle.
+  if (poolBtn) poolBtn.onclick = () => {
+    if (_sugg.unworn) _sugg.unworn = null;
+    else _sugg.wholeCloset = !_sugg.wholeCloset;
+    regen();
+  };
 
   const gearBtn = $("#logInner").querySelector("[data-sggear]");
   if (gearBtn) gearBtn.onclick = () => openGearTagSheet();

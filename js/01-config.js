@@ -6,13 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-27 r1";
+const APP_VERSION = "2026-07-29 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "🏋️ Workout is back in the formality row where it was — it just means “1. Utility” now, so it actually builds an outfit instead of coming up empty",
-  "Both chips light up together on purpose: they're the same control, not two",
-
+  "🧳 Partway through a trip, the dash tells you what's still sitting in the suitcase — and can build an outfit out of it",
+  "The trip recap now says what earned its spot (by how many days you wore it), and what you wore that you never packed",
+  "New Stats → Travel: every finished trip, what you packed vs what you actually wore, and the pieces that always get worn",
+  "Building a packing list now leads with the pieces that have earned their place on past trips",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

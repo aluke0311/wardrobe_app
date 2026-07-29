@@ -703,6 +703,18 @@ function tripDashHtml(c) {
     </div>`;
   }
 
+  // Mid-trip: what's still in the suitcase, while there are days left to wear
+  // it. tripUnwornNow owns the "should this be said at all" decision — on day 1
+  // it's noise, on the last day it's a scold. Inventory, not a prompt: there's
+  // deliberately no dismiss, because it goes away on its own.
+  let unwornHtml = "";
+  const un = phase === "trip" ? tripUnwornNow(c, today) : null;
+  if (un) {
+    unwornHtml = `<button class="td-laun" data-td-unworn>🧳
+      <span style="flex:1">${un.unworn.length} of ${un.packed} still in the suitcase · ${un.left} day${un.left === 1 ? "" : "s"} left</span>
+      <span style="color:var(--accent);font-weight:600">›</span></button>`;
+  }
+
   // Suitcase hamper (works for every phase, incl. capsule mode).
   let launHtml = "";
   if (LAUNDRY_READY()) {
@@ -757,6 +769,7 @@ function tripDashHtml(c) {
     </div>
     ${planHtml}
     ${unpackHtml}
+    ${unwornHtml}
     ${launHtml}
     <div class="td-chips">${chips}</div>
     ${daysHtml}
@@ -1216,6 +1229,12 @@ function wireTripDash(tc) {
     switchTab("closet");
     closetHamper = true; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
     renderCloset();
+  });
+  on("[data-td-unworn]", () => {
+    switchTab("capsules");
+    capsuleId = tc.id; capsuleView = "detail";
+    _capUnpackedOnly = false; _capUnwornOnly = true;
+    renderCapsules();
   });
   on("[data-td-plans]", () => { switchTab("capsules"); openTripPlan(tc.id); });
   on("[data-td-cap]", () => { switchTab("capsules"); capsuleId = tc.id; capsuleView = "detail"; renderCapsules(); });

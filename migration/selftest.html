@@ -412,6 +412,118 @@ async function run() {
               [["a", "b"], ["c"], "a", 2, "o1", 2, 7]);
   });
 
+  // ---- trip retrospective + mid-trip unworn (2026-07-29) ----
+  // Shared fixture: a 7-day trip that started 3 days ago and has 3 days left.
+  const liveTrip = () => {
+    const c = { id: "c9", name: "Live", start_date: D(-3), end_date: D(3) };
+    W.capsuleById = new Map([["c9", c]]);
+    const mk = (id, cat, sub) => ({ id, name: id, category: cat, subcategory: sub, status: "Available", tags: [] });
+    W.items = [mk("t1", "Tops", "Blouses"), mk("t2", "Tops", "Tee shirts"), mk("b1", "Bottoms", "Jeans"),
+               mk("s1", "Shoes", "Flats"), mk("x1", "Tops", "Sweaters")];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.capsuleLinkMap = new Map([["c9", ["t1", "t2", "b1", "s1"].map(id => ({ capsule_id: "c9", item_id: id }))]]);
+    W.outfits = []; W.outfitById = new Map();
+    W.wears = [
+      { item_id: "t1", worn_on: D(-3) }, { item_id: "b1", worn_on: D(-3) },
+      { item_id: "t1", worn_on: D(-2) }, { item_id: "b1", worn_on: D(-2) },
+      { item_id: "t1", worn_on: D(-1) },
+      { item_id: "x1", worn_on: D(-1) },  // worn, never packed
+    ];
+    return c;
+  };
+
+  t("tripRecapData: `through` bounds the window (mid-trip ≠ whole trip)", () => {
+    const c = liveTrip();
+    W.wears.push({ item_id: "t2", worn_on: D(2) });   // a FUTURE day inside the trip
+    const mid = W.tripRecapData(c, { through: today });
+    const all = W.tripRecapData(c);
+    return eq([mid.dead.map(i => i.id).includes("t2"), all.dead.map(i => i.id).includes("t2")], [true, false]);
+  });
+  t("tripRecapData: worn-but-not-packed is reported separately from members", () => {
+    const c = liveTrip();
+    const r = W.tripRecapData(c, { through: today });
+    return eq([r.unpacked.map(i => i.id), r.worn.map(i => i.id).includes("x1")], [["x1"], false]);
+  });
+  t("tripRecapData: workhorse tier is wear-DAYS against elapsed days, not a boolean", () => {
+    const c = liveTrip();
+    const r = W.tripRecapData(c, { through: today });
+    // 4 days elapsed → workMin = max(2, ceil(.4*4)) = 2. t1 worn 3 days, b1 2, s1 never.
+    return eq([r.workhorses.map(i => i.id), r.once.map(i => i.id), r.dead.map(i => i.id), r.elapsed],
+              [["t1", "b1"], [], ["t2", "s1"], 4]);
+  });
+  t("tripUnwornNow: silent on day 1 and on the last day, speaks in the middle", () => {
+    const c = liveTrip();
+    const day1 = W.tripUnwornNow(c, D(-3));
+    const mid = W.tripUnwornNow(c, today);
+    const last = W.tripUnwornNow(c, D(3));
+    return eq([day1, mid && mid.unworn.map(i => i.id), mid && mid.left, last],
+              [null, ["t2", "s1"], 3, null]);
+  });
+  t("tripUnwornNow: null once every packed piece has been worn", () => {
+    const c = liveTrip();
+    W.wears.push({ item_id: "t2", worn_on: D(-1) }, { item_id: "s1", worn_on: D(-1) });
+    return eq(W.tripUnwornNow(c, today), null);
+  });
+  // ⚠️ The r12 guard: a pool that cannot form an outfit is worse than an empty
+  // one. Unworn here is tops+shoes with no bottom — the bottom must be rescued.
+  t("tripUnwornPool: rescues the slots the unworn set can't fill", () => {
+    const c = liveTrip();
+    const u = W.tripUnwornPool(c, today);
+    const ids = u.pool.map(i => i.id).sort();
+    return eq([ids, u.unworn, u.rescued], [["b1", "s1", "t2"], 2, 1]);
+  });
+  t("tripUnwornPool: no rescue when the unworn set already dresses itself", () => {
+    const c = liveTrip();
+    W.wears = [{ item_id: "t1", worn_on: D(-3) }];   // only t1 worn; t2/b1/s1 unworn
+    const u = W.tripUnwornPool(c, today);
+    return eq([u.unworn, u.rescued], [3, 0]);
+  });
+  t("_suggBasePool: an unworn pool overrides the capsule pool, and clearing it widens back", () => {
+    const c = liveTrip();
+    W._sugg.capsuleId = "c9";
+    W._sugg.unworn = W.tripUnwornPool(c, today);
+    const narrow = W._suggBasePool().length;
+    W._sugg.unworn = null;
+    const wide = W._suggBasePool().length;
+    W._sugg.capsuleId = null;
+    return eq([narrow, wide], [3, 4]);
+  });
+
+  // ---- cross-trip memory ----
+  t("buildTravelStats: only trips that have ENDED, oldest first, with per-piece record", () => {
+    const mk = (id) => ({ id, name: id, status: "Available", tags: [] });
+    W.items = [mk("p"), mk("q"), mk("r")];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.outfits = []; W.outfitById = new Map();
+    const caps = [
+      { id: "t1", name: "One", start_date: D(-40), end_date: D(-36) },
+      { id: "t2", name: "Two", start_date: D(-20), end_date: D(-16) },
+      { id: "t3", name: "Live", start_date: D(-1), end_date: D(5) },   // not finished
+      { id: "t4", name: "Home", start_date: null, end_date: null },    // undated capsule
+    ];
+    const members = { t1: ["p", "q"], t2: ["p", "q", "r"], t3: ["p"], t4: ["r"] };
+    W.wears = [
+      { item_id: "p", worn_on: D(-38) }, { item_id: "p", worn_on: D(-18) },
+      { item_id: "r", worn_on: D(-17) },
+    ];
+    const st = W.buildTravelStats(caps, W.wears, (c) => (members[c.id] || []).map(id => W.itemById.get(id)));
+    const rec = (id) => { const e = st.rec.get(id); return [e.packed, e.worn]; };
+    return eq([st.trips.map(t => t.c.id), rec("p"), rec("q"), rec("r"), st.totPacked, st.totWorn],
+              [["t1", "t2"], [2, 2], [2, 0], [1, 1], 5, 3]);
+  });
+  t("travelProven / travelUnused need TRIP_MEMORY_MIN trips of evidence", () => {
+    const st = {
+      rec: new Map([
+        ["p", { item: { id: "p" }, packed: 2, worn: 2 }],   // proven
+        ["q", { item: { id: "q" }, packed: 2, worn: 0 }],   // unused
+        ["r", { item: { id: "r" }, packed: 1, worn: 1 }],   // one trip — neither
+        ["s", { item: { id: "s" }, packed: 3, worn: 1 }],   // mixed — neither
+      ]),
+    };
+    return eq([W.travelProven(st).map(e => e.item.id), W.travelUnused(st).map(e => e.item.id)],
+              [["p"], ["q"]]);
+  });
+
   // ---- exclusions ----
   t("isExcluded normalizes pair order", () => {
     W.exclusions = [{ item_a: "a", item_b: "b" }];

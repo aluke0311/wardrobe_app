@@ -667,7 +667,10 @@ function wireEvents() {
     if (locDel) { e.stopPropagation(); return removeLocation(capsuleId, parseInt(locDel.dataset.locDel)); }
     const sortBtn = e.target.closest("[data-capsort]");
     if (sortBtn) { _capSort = sortBtn.dataset.capsort; return renderCapsules(); }
-    if (e.target.closest("[data-cap-unpacked]")) { _capUnpackedOnly = !_capUnpackedOnly; return renderCapsules(); }
+    // The two grid narrowings answer different questions; only one at a time.
+    if (e.target.closest("[data-cap-unpacked]")) { _capUnpackedOnly = !_capUnpackedOnly; _capUnwornOnly = false; return renderCapsules(); }
+    if (e.target.closest("[data-cap-unworn]")) { _capUnwornOnly = !_capUnwornOnly; _capUnpackedOnly = false; return renderCapsules(); }
+    if (e.target.closest("[data-cap-unworn-suggest]")) return openTripUnwornSuggest(capsuleId);
     const pickCat = e.target.closest("[data-pickcat]");
     if (pickCat) { _capPickCat = pickCat.dataset.pickcat === "__all__" ? null : pickCat.dataset.pickcat; _capPickSub = null; return renderPickerGrid(); }
     const pickSub = e.target.closest("[data-picksub]");

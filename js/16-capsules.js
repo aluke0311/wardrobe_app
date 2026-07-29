@@ -11,6 +11,7 @@ let _pendingAddIds = null;       // items to fold into a capsule right after cre
 let _capNotesTimer = null;
 let _capSort = "category";       // detail grid grouping: "category" | "formality"
 let _capUnpackedOnly = false;    // trip detail: show only not-yet-packed items
+let _capUnwornOnly = false;      // trip detail: show only what hasn't been worn yet ON the trip
 let _capPickCat = null;          // picker category filter (null = all)
 let _capPickSub = null;          // picker subcategory filter (null = all within cat)
 let _capPickStatus = "Available"; // picker status lens: "Available" | "Storage" | "All"
@@ -249,6 +250,7 @@ function openCapsule(id) {
   capsuleId = id;
   capsuleView = "detail";
   _capUnpackedOnly = false;
+  _capUnwornOnly = false;
   renderCapsules();
 }
 
@@ -325,20 +327,34 @@ function renderCapsuleDetail() {
   }
 
   const packedSet = new Set((capsuleLinkMap.get(capsuleId) || []).filter(l => l.packed).map(l => l.item_id));
+  // "Unworn only" is offered once the trip has started — before that everything
+  // is unworn and the chip is a no-op. It shares the grid with "Unpacked only";
+  // the two answer different questions, so turning one on turns the other off.
+  const started = isDatedTrip(c) && c.start_date <= todayStr();
+  const unwornSet = started
+    ? new Set(tripRecapData(c, { through: todayStr() }).dead.map(i => i.id)) : null;
   let gridList = list;
   if (trip && _capUnpackedOnly) gridList = list.filter(i => !packedSet.has(i.id));
+  else if (unwornSet && _capUnwornOnly) gridList = list.filter(i => unwornSet.has(i.id));
   let grid;
   if (trip && _capUnpackedOnly && !gridList.length && list.length) {
     grid = `<div class="placeholder" style="padding:40px 32px"><b>All packed 🎉</b><div>Every item is checked off.</div></div>`;
+  } else if (unwornSet && _capUnwornOnly && !gridList.length && list.length) {
+    grid = `<div class="placeholder" style="padding:40px 32px"><b>Nothing left in the bag 🎉</b><div>Every piece you packed has been worn.</div></div>`;
   } else {
     grid = capGroupsHtml(gridList, trip, packedSet);
   }
+  // The payoff for looking at the unworn list: build something out of it. Not a
+  // hard filter on the pool — see tripUnwornPool for why.
+  const unwornBuild = (unwornSet && _capUnwornOnly && gridList.length)
+    ? `<button class="cap-chip on" data-cap-unworn-suggest style="margin:0 14px 8px;font-size:13px">✨ Build from these</button>` : "";
   const orgBar = list.length > 1 ? `<div class="cap-orgbar">
     <div class="cap-seg">
       <button data-capsort="category" class="${_capSort === "category" ? "on" : ""}">By category</button>
       <button data-capsort="formality" class="${_capSort === "formality" ? "on" : ""}">By formality</button>
     </div>
     ${trip ? `<button class="cap-chip${_capUnpackedOnly ? " on" : ""}" data-cap-unpacked>Unpacked only</button>` : ""}
+    ${unwornSet ? `<button class="cap-chip${_capUnwornOnly ? " on" : ""}" data-cap-unworn>Unworn only</button>` : ""}
   </div>` : "";
 
   return capToolbar(c.name, true) + `
@@ -393,6 +409,7 @@ function renderCapsuleDetail() {
     <textarea class="inp" id="capDetNotes" rows="2" style="margin:16px 14px 0;width:calc(100% - 28px)" placeholder="Notes…">${esc(c.notes || "")}</textarea>
     <div class="cap-secrow"><div class="t">Items</div><button class="a" data-cap-add>＋ Add items</button></div>
     ${orgBar}
+    ${unwornBuild}
     ${grid}
     ${renderCapsuleLooksSection(capsuleId)}
     <div class="cap-footer">
@@ -1044,22 +1061,41 @@ function pickerGridHtml(pool) {
 // "★ Suggested" strip at the top of the capsule picker: in-season workhorses
 // (high wear index vs similar items) not yet picked. Hidden while searching or
 // drilled into a category. Trip capsules use the trip's start-date season.
+/* For a DATED capsule this becomes travel-aware (2026-07-29): pieces that have
+   gone on ${TRIP_MEMORY_MIN}+ trips and been worn on every one lead the strip,
+   because the highest-leverage moment for what past trips taught is the moment
+   the packing list is being built. Proven travellers are prepended, not
+   substituted — a first trip has no record and must still get the workhorses. */
 function capsulePickSuggestHtml() {
   if (_capPickFilter.trim() || _capPickCat) return "";
   const c = capsuleById.get(capsuleId);
   const season = (c && c.start_date) ? seasonOf(c.start_date) : currentSeason();
   const per = buildItemPerf(items);
-  const sugg = items.filter(i => {
-    if (itemStatus(i) !== "Available") return false;
+  const eligible = (i) => itemStatus(i) === "Available" && inSeason(i, season);
+  let proven = [];
+  if (isDatedTrip(c)) {
+    // Exclude this trip itself — it isn't finished, and its own membership
+    // shouldn't recommend the pieces already in it.
+    proven = travelProven(buildTravelStats(capsules.filter(x => x.id !== c.id)))
+      .map(e => e.item).filter(i => itemById.has(i.id) && eligible(itemById.get(i.id)))
+      .map(i => itemById.get(i.id)).slice(0, 6);
+  }
+  const provenIds = new Set(proven.map(i => i.id));
+  const work = items.filter(i => {
+    if (!eligible(i) || provenIds.has(i.id)) return false;
     const p = per.get(i.id);
-    return p && p.count >= 3 && p.idx != null && p.idx >= 1.2 && inSeason(i, season);
-  }).sort((a, b) => per.get(b.id).idx - per.get(a.id).idx).slice(0, 12);
+    return p && p.count >= 3 && p.idx != null && p.idx >= 1.2;
+  }).sort((a, b) => per.get(b.id).idx - per.get(a.id).idx);
+  const sugg = proven.concat(work).slice(0, 12);
   if (!sugg.length) return "";
   const tile = (i) => `<button class="gtile cap-sug-tile${_capPick.has(i.id) ? " selected" : ""}" data-pick="${esc(i.id)}">
     <div class="sel-dot${_capPick.has(i.id) ? " on" : ""}"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>
     ${thumbHtml(i.image_path, "gphoto")}<div class="gname">${esc(i.name || "Untitled")}</div>
   </button>`;
-  return `<div class="sf-label" style="padding:8px 14px 2px">★ Suggested · ${esc(season)} workhorses</div>
+  const label = proven.length
+    ? `★ Suggested · ${proven.length} that always get worn on trips`
+    : `★ Suggested · ${season} workhorses`;
+  return `<div class="sf-label" style="padding:8px 14px 2px">${esc(label)}</div>
     <div class="cap-sug-strip">${sugg.map(tile).join("")}</div>`;
 }
 
