@@ -56,6 +56,61 @@ the WHOLE outfit (`deriveWearFormality`), so a blazer tagged Dressed Up that
 keeps going out with jeans records genuinely lower days. A solo-logged piece
 derives its level from itself alone and so can never disagree — harmless.
 
+**TRIP RETROSPECTIVE + TRAVEL MEMORY (2026-07-29 r1) — SHIPPED.** Her ask: "what
+haven't I worn" + "what earned its weight". Trip mode had a beginning and an end
+but nothing carried forward, so the recap was an autopsy. Selftest 167 → **177**,
+run green, all 10 new cases mutation-checked red in the same session. No schema
+change — every number derives from `wears` + `capsule_items` + capsule dates.
+
+- ⚠️ **`tripRecapData(c, opts)` is now ONE derivation with TWO surfaces.**
+  `opts.through` bounds the window at a date inside the trip; mid-trip passes
+  today, the recap passes nothing. A second walk over `wears` for the live case
+  would have been free to drift. `opts.wearRows`/`opts.members` exist so the
+  travel derivations are injectable. Returns wear-days, tiers, `unpacked`,
+  `outfitCount`, `elapsed`.
+- **`tripUnwornNow(c, today)` owns whether to speak at all** — null on day 1
+  (everything is unworn; the number is noise) and on the last day (the recap owns
+  it). `TRIP_UNWORN_MIN_DONE`(2) completed + `TRIP_UNWORN_MIN_LEFT`(2) remaining,
+  so a weekend trip never sees it. **Deliberately no dismiss** — it's inventory,
+  not a prompt, and it goes away by itself. Surfaces as a `.td-laun` dash row
+  (same shape as the hamper row) → capsule detail with a new **`_capUnwornOnly`**
+  chip. ⚠️ **No fourth closet shelf flag on purpose** — the capsule screen already
+  IS the suitcase, and `_capUnpackedOnly` was the precedent; the two chips answer
+  different questions so each clears the other.
+- ⚠️ **`tripUnwornPool` does NOT hard-filter, and must not be "simplified" into
+  one.** Six unworn tops don't make an outfit — that's the r12 workout bug in a
+  new costume, worse than empty because it looks like a partial result. It's
+  rescue-shaped like `inSeasonWx`: starts at unworn, widens per missing core slot
+  (`TRIP_CORE_SLOTS`; a Dress covers Tops+Bottoms) from the rest of the suitcase,
+  and returns `rescued` so the chip says so. `_sugg.unworn` beats `_sugg.capsuleId`
+  in `_suggBasePool`; the pool chip names and counts it and the one-tap widen
+  clears it — the rack conditions apply here too. Entry: `openTripUnwornSuggest`.
+- **Recap tiers are wear-DAYS against ELAPSED days**, not a boolean:
+  `TRIP_WORKHORSE_SHARE`(0.4), min 2. ⚠️ The "worn, but only just" label falls back
+  to plain "Worn" when there are no workhorses — it's a comparison, and with no
+  top tier it reads as a dig at everything she wore.
+- ⚠️ **`unpacked` ("wore it, didn't pack it") is polluted by design.** Accepting
+  the in-trip `tripMissingPieces` offer makes a piece a member, so what lands here
+  is what she DECLINED to call a trip piece. Known and accepted — arguably the
+  more interesting set.
+- **Cross-trip: `buildTravelStats` / `travelProven` / `travelUnused`** over
+  `completedTrips()` = every **dated** capsule whose `end_date` has passed
+  (`kind` is deliberately not consulted — dates are what trip mode keys on
+  everywhere else). `TRIP_MEMORY_MIN`(2) trips before a piece's record says
+  anything. Two surfaces: `statsView "travel"` (**whole-wardrobe page → no pool
+  AND `hideFilter=true`**, per the funnel rule) and a trip-aware
+  `capsulePickSuggestHtml` that leads with proven travellers — the packing list
+  is the moment past trips are worth something. It **prepends, never substitutes**,
+  so a first trip still gets the workhorse strip, and it excludes the open trip
+  itself.
+- ⚠️ **"Packed, never worn" is a fact, never advice.** A piece packed three times
+  and never worn may be the just-in-case option doing exactly its job. The page
+  says `packed 3× · worn 0×` and carries an explicit "not a verdict" note. Do not
+  turn it into a "stop packing this" recommendation.
+- **Rejected in the same conversation:** a weather-vs-packing retrospective ("you
+  packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
+  trap in a new hat — an insight nobody acts on.
+
 **THE RACK (2026-07-26, r6 + r7) — SHIPPED.** `js/20-rack.js` (boot renumbered
 to `21-boot.js`; index.html now has **22** cache-busted tags). A standing derived
 pool — "what's in play right now" — that the suggester draws from by default.
@@ -1260,7 +1315,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-27 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-29 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1600,7 +1655,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **167/167** (2026-07-27 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **177/177** (2026-07-29 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
