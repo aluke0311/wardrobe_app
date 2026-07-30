@@ -6,11 +6,15 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-30 r2";
+const APP_VERSION = "2026-07-30 r3";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
-// Empty on purpose for r2: the items-first pack engine has no screen yet.
-const WHATS_NEW = [];
+const WHATS_NEW = [
+  "🧳 The pack now starts with clothes, not outfits: a count per slot that the app suggests and you adjust, with Keep and Swap on every piece",
+  "Tap a slot to break it down by type — 3 tee shirts, 2 blouses — and set those numbers directly",
+  "One line tells you whether every occasion can still be dressed, and names the day and the missing slot when it can't",
+  "Outfits moved to their own tab, built from what you're actually packing",
+];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 // Editable in-app since 2026-07-21: this is the DEFAULT shape; a saved

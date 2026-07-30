@@ -2787,6 +2787,45 @@ async function run() {
       ? true : `tops=${JSON.stringify(tops.map(i => i.subcategory))}`;
   }));
 
+  /* ⚠️ Found by clicking the button and reading the result, not by a test.
+     "✨ Different bottoms" on a closet whose only Very Casual bottoms are two
+     pairs of shorts threw BOTH away and returned a pack that couldn't dress
+     three of five days — a strictly worse answer to a request for variety. A
+     piece that is the sole cover for a demanded level is now held back even
+     when she hasn't kept it, and the toast says so. */
+  t("a reroll never discards the only piece covering a level", () => withPackCloset(() => {
+    const c = W.capsuleById.get("stl2");
+    W.capsuleId = c.id;
+    W.kvData.delete("pack:" + c.id);
+    const st = W.packLoadState(c.id);
+    // Demand set explicitly: depending on packSlate's guesses made this case
+    // assert against levels the trip didn't actually contain.
+    st.demand = [
+      { id: "a", date: D(3), level: 2, context: "Errands", contexts: ["Errands"] },
+      { id: "b", date: D(4), level: 2, context: "Errands", contexts: ["Errands"] },
+      { id: "c", date: D(5), level: 5, context: "Work", contexts: ["Work"] },
+    ];
+    st.targets.Bottoms = 3;
+    st.pack = ["sho0", "sho1", "pnt0", "tee0", "tee1", "snk0", "fla0"];
+    W.packRegroup(st);
+    const unique = W.packUniqueCoverIds(st, "Bottoms");
+    // Two shorts both reach level 2, so neither is individually load-bearing;
+    // pnt0 is the sole cover for level 5 and must survive a reroll.
+    return unique.has("pnt0") && !unique.has("sho0") && !unique.has("sho1")
+      ? true : `unique=${JSON.stringify([...unique])} demandLevels=${JSON.stringify(st.demand.map(o => o.level))}`;
+  }, {
+    capsules: [{ id: "stl2", name: "T", kind: "packing", start_date: D(3), end_date: D(7), locations: [], plan: {} }],
+    replace: (add) => {
+      add("sho0", "Bottoms", "Shorts", [2, 3]);
+      add("sho1", "Bottoms", "Shorts", [2, 3]);
+      add("pnt0", "Bottoms", "Pants", [5]);
+      add("tee0", "Tops", "Tee shirts", [2, 3]);
+      add("tee1", "Tops", "Blouses", [5]);
+      add("snk0", "Shoes", "Sneakers", [2, 3]);
+      add("fla0", "Shoes", "Flats", [5]);
+    },
+  }));
+
   /* ---- mid-trip wash plan (r4) ----
      Turns "6 things are dirty" into "wash these six, the back half needs them".
      ⚠️ Like tripUnwornNow, the derivation owns whether to speak at all — a
@@ -2942,19 +2981,21 @@ async function run() {
     return eq(Object.keys(all), []);
   });
 
-  t("the pack screen reuses the stored solve instead of re-solving", () => withPackCloset(() => {
-    // Inversion ③: reopening a trip must not hand her a different pack. The
-    // record is the source of truth; only an explicit re-solve calls packSolve.
+  t("reopening a trip returns the stored pack, and doesn't solve to do it", () => withPackCloset(() => {
+    /* Inversion ③: reopening must not hand her a different pack. Since the
+       items-first redesign the pack lives on st.pack and the SOLVE is lazy —
+       opening the items screen must not run packSolve at all, which is also why
+       st.res starts null. */
     const c = packTrip(5);
     W.capsules = [c]; W.buildCapsuleIndexes();
-    const first = solveFor(c);
-    const assign = {};
-    for (const [k, cd] of first.res.assign) assign[k] = cd.ids;
-    W.kvData.set("pack:" + c.id, { built: today, K: 2, pieces: first.res.pack, assign, unmet: [], locked: [], pinned: [] });
+    const stored = ["tee0", "jea0", "snk0", "blo0", "skt0"];
+    W.kvData.set("pack:" + c.id, { built: today, K: 2, pieces: stored, targets: null, unmet: [], locked: [], pinned: [] });
     W.capsuleId = c.id;
     const st = W.packLoadState(c.id);
     W.kvData.delete("pack:" + c.id);
-    return st && eq(st.res.pack.slice().sort(), first.res.pack.slice().sort());
+    const same = st && eq(st.pack.slice().sort(), stored.slice().sort()) === true;
+    const lazy = st && st.res === null;
+    return same && lazy ? true : `pack=${JSON.stringify(st && st.pack)} resWasComputed=${st && st.res !== null}`;
   }));
 
   t("dropping a piece breaks its days instead of silently re-solving", () => withPackCloset(() => {

@@ -619,8 +619,48 @@ function wireEvents() {
     if (e.target.closest("[data-cap-pack]")) {
       return packHasPlan(capsuleId) ? openPackPlan(capsuleId) : openPackBuildSheet(capsuleId);
     }
-    const packView = e.target.closest("[data-packview]");
-    if (packView) { _packView = packView.dataset.packview; return renderCapsules(); }
+    // ---- items-first pack screen (2026-07-30) ----
+    const packMode = e.target.closest("[data-packmode]");
+    if (packMode) { _packMode = packMode.dataset.packmode; return renderCapsules(); }
+    const packInc = e.target.closest("[data-pack-inc]");
+    if (packInc) { const s = packInc.dataset.packInc; return packSetTarget(s, (_packState.targets[s] || 0) + 1); }
+    const packDec = e.target.closest("[data-pack-dec]");
+    if (packDec) { const s = packDec.dataset.packDec; return packSetTarget(s, (_packState.targets[s] || 0) - 1); }
+    const packExpand = e.target.closest("[data-pack-expand]");
+    if (packExpand) {
+      const s = packExpand.dataset.packExpand;
+      if (_packOpen.has(s)) _packOpen.delete(s); else _packOpen.add(s);
+      return renderCapsules();
+    }
+    const subInc = e.target.closest("[data-pack-subinc]");
+    if (subInc) {
+      const s = subInc.dataset.packSubinc, sub = subInc.dataset.packSub;
+      const cur = (_packState.subTargets && _packState.subTargets[s] && _packState.subTargets[s][sub]) || 0;
+      return packSetSubTarget(s, sub, cur + 1);
+    }
+    const subDec = e.target.closest("[data-pack-subdec]");
+    if (subDec) {
+      const s = subDec.dataset.packSubdec, sub = subDec.dataset.packSub;
+      const shown = (_packState.subTargets && _packState.subTargets[s])
+        || packSubCounts(s, _packState.targets[s] || 0, { character: packCharacter(_packState.cid) });
+      return packSetSubTarget(s, sub, Math.max(0, (shown[sub] || 0) - 1));
+    }
+    const packKeep = e.target.closest("[data-pack-keep]");
+    if (packKeep) { e.stopPropagation(); return packToggleKeep(packKeep.dataset.packKeep); }
+    const packSwap1 = e.target.closest("[data-pack-swap1]");
+    if (packSwap1) { e.stopPropagation(); return packSwapOne(packSwap1.dataset.packSwap1); }
+    const packRerollSlotBtn = e.target.closest("[data-pack-rerollslot]");
+    if (packRerollSlotBtn) return packRerollSlot(packRerollSlotBtn.dataset.packRerollslot);
+    const packSel = e.target.closest("[data-pack-sel]");
+    if (packSel) {
+      e.stopPropagation();
+      const id = packSel.dataset.packSel;
+      if (_packSel.has(id)) _packSel.delete(id); else _packSel.add(id);
+      return renderCapsules();
+    }
+    if (e.target.closest("[data-pack-swapsel]")) return packSwapSelected();
+    if (e.target.closest("[data-pack-selclear]")) { _packSel.clear(); return renderCapsules(); }
+    if (e.target.closest("[data-pack-rebuild]")) return packRebuildFromProposal();
     if (e.target.closest("[data-pack-resolve]")) return packResolveUnlocked();
     if (e.target.closest("[data-pack-toplan]")) return packSendToPlan();
     if (e.target.closest("[data-pack-tight]")) return openPackTightSheet();
