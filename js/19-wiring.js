@@ -615,6 +615,44 @@ function wireEvents() {
       else enterTripMode(capsuleId);
       return;
     }
+    // ---- trip builder / pack plan ----
+    if (e.target.closest("[data-cap-pack]")) {
+      return packHasPlan(capsuleId) ? openPackPlan(capsuleId) : openPackBuildSheet(capsuleId);
+    }
+    const packView = e.target.closest("[data-packview]");
+    if (packView) { _packView = packView.dataset.packview; return renderCapsules(); }
+    if (e.target.closest("[data-pack-resolve]")) return packResolveUnlocked();
+    if (e.target.closest("[data-pack-toplan]")) return packSendToPlan();
+    if (e.target.closest("[data-pack-tight]")) return openPackTightSheet();
+    if (e.target.closest("[data-pack-addany]")) return openPackAddSheet();
+    const packSwap = e.target.closest("[data-pack-swap]");
+    if (packSwap) return openPackSwapSheet(packSwap.dataset.packOcc, packSwap.dataset.packSwap);
+    const packRerollBtn = e.target.closest("[data-pack-reroll]");
+    if (packRerollBtn) return packReroll(packRerollBtn.dataset.packReroll);
+    const packOpts = e.target.closest("[data-pack-options]");
+    if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
+    const packLock = e.target.closest("[data-pack-lock]");
+    if (packLock) return packToggleLock(packLock.dataset.packLock);
+    const packTick = e.target.closest("[data-pack-tick]");
+    if (packTick) { e.stopPropagation(); return togglePack(packTick.dataset.packTick).then(() => renderCapsules()); }
+    const packDrop = e.target.closest("[data-pack-drop]");
+    if (packDrop) { e.stopPropagation(); return packDropPiece(packDrop.dataset.packDrop); }
+    const packAdd = e.target.closest("[data-pack-add]");
+    if (packAdd) return packAddPiece(packAdd.dataset.packAdd);
+    // create-form capture (character chip + fixed events)
+    const capChar = e.target.closest("[data-capchar]");
+    if (capChar) {
+      syncCapForm();
+      _capForm.character = _capForm.character === capChar.dataset.capchar ? null : capChar.dataset.capchar;
+      return renderCapsules();
+    }
+    if (e.target.closest("[data-capanchor-add]")) { syncCapForm(); return openCapAnchorSheet(); }
+    const capAnchDel = e.target.closest("[data-capanchor-del]");
+    if (capAnchDel) {
+      syncCapForm();
+      _capForm.anchors.splice(parseInt(capAnchDel.dataset.capanchorDel), 1);
+      return renderCapsules();
+    }
     if (e.target.closest("[data-cap-byday]")) return openTripPlan(capsuleId);
     if (e.target.closest("[data-cap-recap]")) return openTripRecap(capsuleId);
     if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);

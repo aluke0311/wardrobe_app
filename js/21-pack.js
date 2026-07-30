@@ -215,7 +215,23 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
     }
   }
 
-  // ② her weekday rhythm, for days she didn't declare
+  /* ② Travel days, claimed BEFORE the guesses. ⚠️ Ordering is load-bearing: with
+     the travel stamp last, the departure day collected a rhythm occasion AND a
+     character occasion AND then Travel — three occasions on the day she's on a
+     plane. Claiming it first means the later passes see it as taken.
+     This is also what enforces the travel-home reserve: because the return day
+     always carries an occasion, the ordinary schedule walk detects a trip that
+     burns its last clean bottoms on day 8. No special case, which is why there
+     is no PACK_HOME_RESERVE constant. */
+  for (const d of [dates[0], dates[dates.length - 1]]) {
+    const s = byDate.get(d);
+    if (!s) continue;
+    if (!s.occasions.some(o => (o.contexts || []).includes(TRIP_CONTEXT))) {
+      s.occasions.push({ context: TRIP_CONTEXT, contexts: [TRIP_CONTEXT], level: lvlOf(TRIP_CONTEXT), placed: true, source: "travel" });
+    }
+  }
+
+  // ③ her weekday rhythm, for days she didn't declare
   for (const s of slate) {
     if (s.occasions.length) continue;
     const r = rhythmFor(s.date, rhy);
@@ -224,7 +240,7 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
     s.occasions.push({ context: ctxs[0], contexts: ctxs, level: lvlOf(ctxs[0]), placed: false, source: "rhythm" });
   }
 
-  /* ③ the character mix, as a TARGET COUNT across the trip.
+  /* ④ the character mix, as a TARGET COUNT across the trip.
      ⚠️ NOT merely a filler for empty days. Her weekday rhythm covers almost
      every day with one ordinary context, so filler-only meant a character
      carrying "two dressy evenings" produced NO dressy occasion at all and the
@@ -238,9 +254,14 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
   for (const e of targets) {
     const has = (s) => s.occasions.some(o => (o.contexts || []).includes(e.context));
     let need = e.n - slate.reduce((n, s) => n + (has(s) ? 1 : 0), 0);
-    for (const s of slate) {
+    /* Still clustered (earliest days first, the worst case for laundry) but it
+       skips days that are already carrying two occasions. Plain first-fit piled
+       three occasions onto the departure day, which is neither realistic nor a
+       worse laundry case — just a worse-looking one. */
+    const order = slate.slice().sort((a, b) => a.occasions.length - b.occasions.length);
+    for (const s of order) {
       if (need <= 0) break;
-      if (has(s)) continue;
+      if (has(s) || s.occasions.length >= 2) continue;
       s.occasions.push({ context: e.context, contexts: [e.context], level: lvlOf(e.context), placed: false, source: "character" });
       need--;
     }
@@ -252,17 +273,6 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
     s.occasions.push({ context: null, contexts: [], level: floor, placed: false, source: "floor" });
   }
 
-  /* Travel days. ⚠️ This is also what enforces the travel-home reserve: because
-     the return day always carries an occasion, the ordinary schedule walk
-     detects a trip that burns its last clean bottoms on day 8. No special case
-     needed — that is why there is no PACK_HOME_RESERVE constant. */
-  for (const d of [dates[0], dates[dates.length - 1]]) {
-    const s = byDate.get(d);
-    if (!s) continue;
-    if (!s.occasions.some(o => (o.contexts || []).includes(TRIP_CONTEXT))) {
-      s.occasions.push({ context: TRIP_CONTEXT, contexts: [TRIP_CONTEXT], level: lvlOf(TRIP_CONTEXT), placed: true, source: "travel" });
-    }
-  }
   return slate;
 }
 // The level she actually lives at — the fallback when nothing else says.
@@ -750,4 +760,940 @@ function packGrade(c, { wearRows = null, members = null } = {}) {
     hitRate: mem.size ? worn.length / mem.size : null,
     loggedDays,
   };
+}
+
+/* ===================================================================
+   PERSISTENCE — inversion ③ in practice.
+
+   The solve's result is STATE, not a derivation. It lives in two places:
+     kv "pack:<capsuleId>"  — the record: assignments, locks, pins, drops,
+                              the seed, and the slate hash used for diffing
+     capsule_items          — the pack itself (packed=false → the checklist)
+
+   ⚠️ capsules.plan is written only by an EXPLICIT "send to trip plan" action,
+   never automatically. Materialising ~14 combos as real looks on every solve
+   would flood her Looks list with auto-created records she never asked for, and
+   the spec calls that pass optional for exactly that reason.
+   =================================================================== */
+function packRecord(cid) {
+  const v = kvData.get(PACK_KEY_PREFIX + cid);
+  return v && typeof v === "object" ? v : {};
+}
+function packHasPlan(cid) { return !!(packRecord(cid).built); }
+async function savePackRecord(cid, patch) {
+  await kvUpdate(PACK_KEY_PREFIX + cid, prev => ({ ...(prev && typeof prev === "object" ? prev : {}), ...patch }));
+}
+// A stamp over everything a solve depended on, so re-entry can say what moved.
+function packSlateHash(demand) {
+  return packHash((demand || []).map(o => `${o.id}:${o.level}:${o.context || ""}`).join("|"));
+}
+// Rehydrate the stored assignment into the {ids, pieces, score} shape the rest
+// of the module speaks. Drops pieces that no longer exist.
+function packAssignFromRecord(cid) {
+  const rec = packRecord(cid);
+  const out = new Map();
+  for (const [occId, ids] of Object.entries(rec.assign || {})) {
+    const pieces = (ids || []).map(id => itemById.get(id)).filter(Boolean);
+    if (pieces.length) out.set(occId, { ids: pieces.map(p => p.id).sort(), pieces, score: 0 });
+  }
+  return out;
+}
+function packLockedFromRecord(cid) {
+  const rec = packRecord(cid);
+  const out = new Map();
+  for (const occId of (rec.locked || [])) {
+    const cd = packAssignFromRecord(cid).get(occId);
+    if (cd) out.set(occId, cd);
+  }
+  return out;
+}
+
+/* ===================================================================
+   THE PACK SCREEN  (capsuleView "pack")
+   Days is primary — arriving somewhere with plans is the point; the bag list is
+   the consequence. Bag groups by subcategory with the count in the header (D1),
+   because that is both the "how many of each" answer she asked for and the order
+   she actually packs in.
+   =================================================================== */
+let _packView = "days";      // "days" | "bag"
+let _packState = null;       // { cid, slate, demand, rack, res } for the open screen
+let _packBusy = false;
+
+// Rebuild the derivations for the open capsule, reusing the stored solve.
+function packLoadState(cid, { resolve = false, K = null } = {}) {
+  const c = capsuleById.get(cid);
+  if (!c) return null;
+  const rec = packRecord(cid);
+  const character = packCharacter(cid);
+  const slate = packSlate(c, { character });
+  const demand = packDemand(slate);
+  const rack = packRack(c, slate, { wxFor: packWxFor(c) });
+  const kk = K != null ? K : (rec.K || PACK_OPTIONS.normal);
+  let res;
+  if (!resolve && rec.built && Object.keys(rec.assign || {}).length) {
+    // Reuse the stored pack — the solve is an event. Options and the schedule
+    // are recomputed because they're cheap and depend on current laundry.
+    const assign = packAssignFromRecord(cid);
+    const pack = new Set(rec.pieces || []);
+    const options = new Map();
+    for (const occ of demand) options.set(occ.id, packOptionCount(occ, pack, { wxFor: packWxFor(c) }));
+    const sched = packSchedule(assignOf(demand, assign), { dates: tripDates(c), washDays: packWashDays(c) });
+    res = { pack: [...pack], assign, options, unmet: rec.unmet || [], violations: sched.violations,
+            stats: { pieces: pack.size, outfits: packOutfitCount(pack, demand), legs: rack.legs } };
+  } else {
+    res = packSolve({ c, demand, rack, wxFor: packWxFor(c), K: kk,
+                      washDays: packWashDays(c), pinned: rec.pinned, locked: packLockedFromRecord(cid) });
+  }
+  _packState = { cid, c, slate, demand, rack, res, K: kk };
+  return _packState;
+}
+// Weather lookup for a trip, from whatever the plan view already loaded. Null
+// when nothing is loaded — the solve still runs on season alone and says so.
+function packWxFor(c) {
+  if (!c || _planWxLoadedFor !== c.id) return null;
+  return (date) => _planWx[date] || null;
+}
+function packWashDays(c) {
+  return tripDates(c).filter(d => planLaundryDay(c, d));
+}
+
+async function openPackPlan(cid, { resolve = false } = {}) {
+  capsuleId = cid;
+  capsuleView = "pack";
+  _packView = "days";
+  navDeeper("capsules");
+  const c = capsuleById.get(cid);
+  // Weather first when we have locations: a pack solved without it is solved on
+  // season alone, and for a warm-destination winter trip that is the December
+  // bug all over again.
+  if (c && (c.locations || []).length && _planWxLoadedFor !== c.id) {
+    renderCapsules();
+    try { await loadPlanWeather(c); } catch (e) { /* solve on season alone */ }
+  }
+  packLoadState(cid, { resolve });
+  if (resolve) await packPersist(cid);
+  renderCapsules();
+}
+
+// Commit the open solve: the record, then capsule_items.
+async function packPersist(cid) {
+  const st = _packState;
+  if (!st || st.cid !== cid) return;
+  const assign = {};
+  for (const [occId, cd] of st.res.assign) assign[occId] = cd.ids;
+  const rec = packRecord(cid);
+  await savePackRecord(cid, {
+    built: todayStr(), K: st.K, seed: st.res.stats.seed || rec.seed || null,
+    slateHash: packSlateHash(st.demand), pieces: st.res.pack, assign,
+    unmet: st.res.unmet, locked: [...(packLockedFromRecord(cid).keys())],
+    pinned: rec.pinned || [], character: packCharacter(cid) || null,
+  });
+  await packSyncMembers(cid, st.res.pack);
+}
+/* Make capsule_items match the pack. ⚠️ Never removes a piece she has already
+   ticked as packed — it's physically in the bag, and un-adding it because the
+   optimiser changed its mind would be the app arguing with the suitcase. */
+async function packSyncMembers(cid, pack) {
+  const want = new Set(pack || []);
+  const links = capsuleLinkMap.get(cid) || [];
+  const have = new Set(links.map(l => l.item_id));
+  const packedAlready = new Set(links.filter(l => l.packed).map(l => l.item_id));
+  const add = [...want].filter(id => !have.has(id));
+  const drop = [...have].filter(id => !want.has(id) && !packedAlready.has(id));
+  if (add.length) await addItemsToCapsule(cid, add);
+  if (drop.length) {
+    const inList = `(${drop.map(id => `"${id}"`).join(",")})`;
+    await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=in.${inList}`, { method: "DELETE" });
+    capsuleLinks = capsuleLinks.filter(l => !(l.capsule_id === cid && drop.includes(l.item_id)));
+    buildCapsuleIndexes();
+  }
+}
+
+function renderCapsulePack() {
+  const st = _packState && _packState.cid === capsuleId ? _packState : packLoadState(capsuleId);
+  const c = capsuleById.get(capsuleId);
+  if (!st || !c) return capToolbar("Pack", true) + `<div class="placeholder"><b>No trip</b></div>`;
+  const { demand, res, rack } = st;
+  const kName = Object.entries(PACK_OPTIONS).find(([, v]) => v === st.K);
+
+  const legNote = res.stats.legs > 1 ? ` · ${res.stats.legs} legs` : "";
+  const wxNote = packWxFor(c) ? "" : ` · no weather loaded`;
+  const head = `<div class="cap-insight">
+    <div class="kpi-row">
+      <div class="kpi-cell"><div class="kpi-val">${res.stats.pieces}</div><div class="kpi-lbl">pieces</div></div>
+      <div class="kpi-cell"><div class="kpi-val">${res.stats.outfits}</div><div class="kpi-lbl">outfits they make</div></div>
+    </div>
+    <div class="cap-cov-lbl" style="margin-top:10px">${demand.length} occasion${demand.length === 1 ? "" : "s"} over ${tripDates(c).length} day${tripDates(c).length === 1 ? "" : "s"}${legNote}${wxNote}</div>
+  </div>`;
+
+  // ⚠️ Honest partial (TRIP_BUILDER.md §9): a pack that covers 8 of 10 must SAY
+  // so, with dates and reasons. Silently returning the smaller pack is the r12
+  // "looked like a partial result" bug in a new feature.
+  const gaps = packGaps(demand, rack.ids, { wxFor: packWxFor(c) });
+  const unmetHtml = res.unmet.length ? `<div class="pack-warn">
+    <b>${demand.length - res.unmet.length} of ${demand.length} occasions covered.</b>
+    ${res.unmet.map(u => {
+      const g = gaps.find(x => x.occId === u.occId);
+      const near = g && g.nearest ? ` — nearest you can dress is ${OCCASION_LADDER[g.nearest - 1]}` : "";
+      const occ = demand.find(o => o.id === u.occId);
+      return `<div>${esc(planDayLabel(u.date))}${occ && occ.context ? ` · ${esc(occ.context)}` : ""} (${esc(OCCASION_LADDER[(u.level || 1) - 1] || "level " + u.level)})${esc(near)}</div>`;
+    }).join("")}
+    <div class="pack-warn-note">Reported, not fixed — nothing here is a suggestion to buy anything.</div>
+  </div>` : "";
+
+  const violHtml = res.violations.length ? `<div class="pack-warn soft">
+    ${res.violations.slice(0, 4).map(v => `<div>🧺 ${esc(planDayLabel(v.date))} — ${esc(v.name)} would be its ${ordinal(v.nth)} wear (washes every ${v.tol})</div>`).join("")}
+    ${res.violations.length > 4 ? `<div>…and ${res.violations.length - 4} more</div>` : ""}
+    <div class="pack-warn-note">Set a laundry day on the by-day planner, or add a piece.</div>
+  </div>` : "";
+
+  const wash = packWashPlan(res.pack, { startDate: c.start_date });
+  const washHtml = (wash.hamper.length || wash.underTol.length) ? `<div class="pack-warn soft">
+    ${wash.hamper.length ? `<div>🧺 <b>${wash.hamper.length} in the hamper</b> — ${esc(wash.hamper.slice(0, 3).map(i => i.name || "Untitled").join(", "))}${wash.hamper.length > 3 ? "…" : ""}</div>` : ""}
+    ${wash.underTol.length ? `<div>${wash.underTol.length} piece${wash.underTol.length === 1 ? " is" : "s are"} one wear from the hamper</div>` : ""}
+    ${wash.lastUsefulWashDay ? `<div class="pack-warn-note">Last wash that still helps: ${esc(fmtDate(wash.lastUsefulWashDay))}</div>` : ""}
+  </div>` : "";
+
+  const bulky = packBulkyAdvice(res.pack);
+  const bulkyHtml = bulky.length ? `<div class="pack-tip">👞 Wear the ${esc(bulky.map(i => i.name || i.subcategory).join(" / "))} rather than packing ${bulky.length === 1 ? "it" : "them"}.</div>` : "";
+
+  const tabs = `<div class="cap-orgbar">
+    <div class="cap-seg">
+      <button data-packview="days" class="${_packView === "days" ? "on" : ""}">Days</button>
+      <button data-packview="bag" class="${_packView === "bag" ? "on" : ""}">Bag</button>
+    </div>
+    <button class="cap-chip" data-pack-tight>${kName ? kName[0] : "normal"} ✎</button>
+  </div>`;
+
+  const body = _packView === "days" ? packDaysHtml(st) : packBagHtml(st);
+
+  return capToolbar(c.name + " · Pack", true) + `
+    <div class="cap-hdr">
+      <div class="ch-name">The pack</div>
+      <div class="ch-sub">${esc(capDateLabel(c) || "no dates")}${packCharacter(capsuleId) ? " · " + esc(packCharacter(capsuleId)) : ""}</div>
+    </div>
+    ${head}${unmetHtml}${violHtml}${washHtml}${bulkyHtml}${tabs}${body}
+    <div class="pack-footer">
+      <button class="cap-plan" data-pack-resolve style="background:var(--accent)">
+        <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+        ✨ Re-solve the unlocked days
+      </button>
+      <button class="cap-plan sec" data-pack-toplan style="margin-top:8px">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+        Send these to the by-day plan
+      </button>
+      <div class="pack-warn-note" style="padding:8px 16px 30px">Editing never re-solves anything you didn't ask it to. Whatever you touch is locked.</div>
+    </div>`;
+}
+
+function packDaysHtml(st) {
+  const { c, slate, demand, res } = st;
+  const rec = packRecord(st.cid);
+  const lockedSet = new Set(rec.locked || []);
+  return slate.map(s => {
+    const all = demand.filter(o => o.date === s.date);
+    /* ⚠️ Two occasions on one day that end up in the SAME clothes are one
+       outfit, not two — dayplan already says so ("one outfit across contexts =
+       one multi-context entry"). Rendering them as separate identical cards
+       reads as a bug even though the underlying demand is right, so merge for
+       display only. The laundry and options math still sees both. */
+    const seen = new Map();
+    const occs = [];
+    for (const o of all) {
+      const cd = res.assign.get(o.id);
+      const key = cd ? cd.ids.join(",") : "gap:" + o.id;
+      if (seen.has(key)) { seen.get(key).alsoFor.push(o); continue; }
+      const merged = { ...o, alsoFor: [] };
+      seen.set(key, merged);
+      occs.push(merged);
+    }
+    const isLaun = planLaundryDay(c, s.date);
+    const cards = occs.map(occ => {
+      const cd = res.assign.get(occ.id);
+      const opts = res.options.get(occ.id) || 0;
+      const unmet = res.unmet.some(u => u.occId === occ.id);
+      const labels = [occ.context, ...(occ.alsoFor || []).map(o => o.context)].filter(Boolean);
+      const label = labels.length ? labels.join(" + ") : (OCCASION_LADDER[(occ.level || 1) - 1] || "Something");
+      // Merged contexts can sit at different levels; name the dressiest, since
+      // that's the one the outfit had to clear.
+      const topLvl = Math.max(occ.level || 1, ...(occ.alsoFor || []).map(o => o.level || 1));
+      const lvl = OCCASION_LADDER[topLvl - 1] || "";
+      if (unmet || !cd) {
+        return `<div class="pack-occ gap">
+          <div class="pack-occ-hd"><b>${esc(label)}</b><span>${esc(lvl)}</span></div>
+          <div class="pack-occ-gap">Nothing available covers this.</div>
+        </div>`;
+      }
+      const pieces = cd.pieces.length ? cd.pieces : cd.ids.map(id => itemById.get(id)).filter(Boolean);
+      return `<div class="pack-occ${lockedSet.has(occ.id) ? " locked" : ""}">
+        <div class="pack-occ-hd">
+          <b>${esc(label)}</b>
+          <span>${esc(lvl)}${packOptLabel(opts)}${lockedSet.has(occ.id) ? " · 🔒" : ""}</span>
+        </div>
+        <div class="pack-pieces">
+          ${pieces.map(i => `<button class="pack-piece" data-pack-swap="${esc(i.id)}" data-pack-occ="${esc(occ.id)}">
+            ${thumbHtml(i.image_path, "pack-pthumb")}
+            <div class="pack-pname">${esc(i.name || "Untitled")}</div>
+          </button>`).join("")}
+        </div>
+        <div class="pack-occ-acts">
+          <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
+          ${opts > 1 ? `<button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>` : ""}
+          <button class="plan-act" data-pack-lock="${esc(occ.id)}">${lockedSet.has(occ.id) ? "Unlock" : "🔒 Lock"}</button>
+        </div>
+      </div>`;
+    }).join("");
+    return `<div class="plan-day">
+      <div class="plan-day-hd">
+        <div class="plan-day-date">${esc(planDayLabel(s.date))}<small>${esc(s.date)}${s.leg && s.leg.loc ? " · " + esc(s.leg.loc.name) : ""}</small></div>
+        ${planDayWxHtml(s.date)}
+      </div>
+      ${isLaun ? `<div class="plan-launday">🧺 Laundry day — rewear counts reset</div>` : ""}
+      ${cards}
+    </div>`;
+  }).join("");
+}
+
+function packBagHtml(st) {
+  const { res, demand, c } = st;
+  const links = capsuleLinkMap.get(st.cid) || [];
+  const packedSet = new Set(links.filter(l => l.packed).map(l => l.item_id));
+  const list = res.pack.map(id => itemById.get(id)).filter(Boolean);
+  // Grouped by subcategory in taxonomy order — the order she packs in, and the
+  // "how many of each" answer she originally asked for (D1).
+  const order = [];
+  for (const cat of CATEGORIES) for (const sub of (TAXONOMY[cat] || [])) order.push(cat + "/" + sub);
+  const groups = new Map();
+  for (const i of list) {
+    const k = (i.category || "?") + "/" + (i.subcategory || "Other");
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(i);
+  }
+  const keys = [...groups.keys()].sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
+  /* ⚠️ DAYS and labels, tracked separately. Counting occasions here said
+     "needs a wash mid-trip" for a tee used twice on ONE day, while the schedule
+     — which counts (item, day) — correctly found no violation. The bag line and
+     the schedule must never disagree; that is the countByDay rule again. */
+  const usedBy = new Map();   // itemId → {days:Set<date>, labels:Set<string>}
+  for (const occ of demand) {
+    const cd = res.assign.get(occ.id);
+    if (!cd) continue;
+    for (const id of cd.ids) {
+      let u = usedBy.get(id);
+      if (!u) usedBy.set(id, u = { days: new Set(), labels: new Set() });
+      if (occ.date) u.days.add(occ.date);
+      u.labels.add(occ.context || OCCASION_LADDER[(occ.level || 1) - 1] || "day");
+    }
+  }
+  const body = keys.map(k => {
+    const arr = groups.get(k);
+    const sub = k.split("/")[1];
+    return `<div class="pack-grp">
+      <div class="pack-grp-hd"><div class="t">${esc(sub)}</div><div class="n">${arr.length}</div></div>
+      ${arr.map(i => {
+        const on = packedSet.has(i.id);
+        const why = packWhyLine(i, usedBy.get(i.id), c);
+        return `<div class="pack-bagrow${on ? " on" : ""}">
+          <button class="pack-tick" data-pack-tick="${esc(i.id)}" aria-label="Packed">${on ? "✓" : ""}</button>
+          ${thumbHtml(i.image_path, "pack-pthumb")}
+          <div class="pack-baginfo">
+            <div class="pack-bagname">${esc(i.name || "Untitled")}</div>
+            <div class="pack-bagwhy">${esc(why)}</div>
+          </div>
+          <button class="pack-drop" data-pack-drop="${esc(i.id)}" aria-label="Remove from pack">×</button>
+        </div>`;
+      }).join("")}
+    </div>`;
+  }).join("");
+  const leftOut = packLeftOut(c, res.pack);
+  const leftHtml = leftOut.length ? `<div class="pack-grp">
+    <div class="pack-grp-hd"><div class="t">Left out</div><div class="n">${leftOut.length}</div></div>
+    ${leftOut.slice(0, 5).map(e => `<div class="pack-bagrow muted">
+      ${thumbHtml(e.item.image_path, "pack-pthumb")}
+      <div class="pack-baginfo">
+        <div class="pack-bagname">${esc(e.item.name || "Untitled")}</div>
+        <div class="pack-bagwhy">packed ${e.packed}× · worn ${e.worn}×</div>
+      </div>
+      <button class="plan-act" data-pack-add="${esc(e.item.id)}">Bring it</button>
+    </div>`).join("")}
+    <div class="pack-warn-note">A record, not a verdict — the just-in-case piece may be doing its job.</div>
+  </div>` : "";
+  return `<div class="pack-bag">${body}${leftHtml}
+    <button class="cap-plan sec" data-pack-addany style="margin-top:10px">＋ Bring something else</button></div>`;
+}
+
+/* The "why is this here" line. This is where the old max(laundry, coverage)
+   formula lives — as an explanation, which is all it was ever good enough for. */
+function packWhyLine(i, use, c) {
+  const tol = wearTolerance(i);
+  const days = use && use.days ? use.days.size : 0;
+  const labels = use && use.labels ? [...use.labels] : [];
+  const bits = [];
+  if (labels.length === 1) bits.push(`for ${labels[0]}`);
+  else if (labels.length > 1) bits.push(`covers ${labels.length} kinds of day`);
+  else bits.push("another option");
+  // Only speak about laundry when it actually binds — "1 of 1 wears" on every
+  // tee is noise that trains her to stop reading the line.
+  if (tol !== Infinity && days > tol) bits.push(`${days} wear-days · needs a wash mid-trip (every ${tol})`);
+  else if (tol !== Infinity && days > 1) bits.push(`${days} of ${tol} wears`);
+  return bits.join(" · ");
+}
+
+/* ===================================================================
+   REVISION — every edit is LOCAL. Nothing here calls packSolve except
+   packResolveUnlocked, which she has to ask for by name.
+
+   Locks are the load-bearing primitive: whatever she touches is locked, so
+   revising compounds instead of fighting her. That is what makes "✨ Re-solve"
+   safe to put on the screen rather than hide.
+   =================================================================== */
+function packMarkLocked(cid, occId) {
+  const rec = packRecord(cid);
+  const set = new Set(rec.locked || []);
+  set.add(occId);
+  return [...set];
+}
+// Recompute consequences after a local edit. LINEAR — no solver, no spinner.
+function packConsequences(st) {
+  const { c, demand, res } = st;
+  const pack = new Set(res.pack);
+  const used = new Set();
+  for (const cd of res.assign.values()) for (const id of cd.ids) used.add(id);
+  const broken = demand.filter(o => {
+    const cd = res.assign.get(o.id);
+    return !cd || !cd.ids.every(id => pack.has(id));
+  }).map(o => ({ occId: o.id, date: o.date, level: o.level }));
+  const sched = packSchedule(assignOf(demand, res.assign), { dates: tripDates(c), washDays: packWashDays(c) });
+  return { broken, violations: sched.violations, orphans: [...pack].filter(id => !used.has(id)) };
+}
+// Re-derive options + violations in place after an edit, without re-solving.
+function packRefresh(st) {
+  const { c, demand, res } = st;
+  const pack = new Set(res.pack);
+  const wxFor = packWxFor(c);
+  const byKey = new Map();
+  for (const occ of demand) {
+    const k = `${occ.level}`;
+    if (!byKey.has(k)) byKey.set(k, packOptionCount(occ, pack, { wxFor }));
+    res.options.set(occ.id, byKey.get(k));
+  }
+  const cons = packConsequences(st);
+  res.violations = cons.violations;
+  res.stats.pieces = pack.size;
+  res.stats.outfits = packOutfitCount(pack, demand, { wxFor });
+  return cons;
+}
+function packRepack(st) {
+  const pack = new Set(packRecord(st.cid).pinned || []);
+  for (const cd of st.res.assign.values()) for (const id of cd.ids) pack.add(id);
+  for (const id of (st.res.extras || [])) pack.add(id);
+  st.res.pack = [...pack];
+}
+
+/* Alternates for ONE hole. Not "browse your closet": pieces that fit this slot,
+   this level, this weather, not excluded against the rest of the outfit — the
+   same filter swapSuggestionPiece applies in the sheet, pooled on rack ∪ pack. */
+function packSwapCandidates(st, occ, cd, pieceId) {
+  const old = itemById.get(pieceId);
+  if (!old) return [];
+  const others = cd.pieces.length ? cd.pieces.filter(p => p.id !== pieceId)
+                                  : cd.ids.filter(id => id !== pieceId).map(id => itemById.get(id)).filter(Boolean);
+  const layerPc = comboLayerPiece({ pieces: cd.pieces.length ? cd.pieces : cd.ids.map(id => itemById.get(id)).filter(Boolean) });
+  const asLayer = !!layerPc && layerPc.id === pieceId;
+  const slot = asLayer ? "Outerwear" : suggestSlot(old);
+  const wx = packWxFor(st.c) ? packWxFor(st.c)(occ.date) : null;
+  const season = seasonOf(occ.date || st.c.start_date);
+  const pool = new Set([...(st.rack.ids || []), ...st.res.pack]);
+  return [...pool].map(id => itemById.get(id)).filter(i =>
+    i && i.id !== pieceId && itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i) &&
+    (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
+    (occ.level === 1 ? isFunctionWear(i) : (itemFormalitySet(i) || []).includes(occ.level)) &&
+    inSeasonWx(i, season, wx) &&
+    !others.some(o => isExcluded(i.id, o.id)))
+    .sort((a, b) => rackWarmth(b.id) - rackWarmth(a.id) || (a.id < b.id ? -1 : 1))
+    .slice(0, 18);
+}
+
+function openPackSwapSheet(occId, pieceId) {
+  const st = _packState;
+  if (!st) return;
+  const occ = st.demand.find(o => o.id === occId);
+  const cd = st.res.assign.get(occId);
+  if (!occ || !cd) return;
+  const cands = packSwapCandidates(st, occ, cd, pieceId);
+  const old = itemById.get(pieceId);
+  const grid = cands.length
+    ? `<div class="ogrid">${cands.map(i => `<button class="otile" data-packswap-to="${esc(i.id)}">
+        ${thumbHtml(i.image_path, "pack-pthumb")}<div class="oname">${esc(i.name || "Untitled")}</div></button>`).join("")}</div>`
+    : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">Nothing else in the pool fits this slot at ${esc(OCCASION_LADDER[(occ.level || 1) - 1] || "")}.</div>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packSwapCancel">Cancel</button>
+      <h2>Swap ${esc(old ? (old.name || "piece") : "piece")}</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 16px 0;font-size:13px;color:var(--muted)">Fits this slot, this level and the forecast. Picking one locks this day.</div>
+    <div style="padding:6px 0 30px">${grid}</div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#packSwapCancel").onclick = () => hideSheet("logSheet");
+  $("#logInner").querySelectorAll("[data-packswap-to]").forEach(b => {
+    b.onclick = () => packApplySwap(occId, pieceId, b.dataset.packswapTo);
+  });
+}
+
+async function packApplySwap(occId, fromId, toId) {
+  const st = _packState;
+  if (!st) return;
+  const cd = st.res.assign.get(occId);
+  if (!cd) return;
+  const ids = cd.ids.filter(id => id !== fromId).concat([toId]).sort();
+  const pieces = ids.map(id => itemById.get(id)).filter(Boolean);
+  st.res.assign.set(occId, { ids, pieces, score: cd.score });
+  packRepack(st);
+  const cons = packRefresh(st);
+  await savePackRecord(st.cid, { locked: packMarkLocked(st.cid, occId) });
+  await packPersist(st.cid);
+  hideSheet("logSheet");
+  renderCapsules();
+  /* ⚠️ Offer, never automatic. A piece no longer in any outfit may still be a
+     spare she wants — dropping it for her is the app arguing with the suitcase. */
+  const stillUsed = [...st.res.assign.values()].some(x => x.ids.includes(fromId));
+  const old = itemById.get(fromId);
+  if (!stillUsed && old) {
+    toast(`Swapped · ${old.name || "piece"} isn't in any outfit now`,
+      { label: "Drop it", fn: () => packDropPiece(fromId) });
+  } else {
+    toast(cons.violations.length ? "Swapped · check the laundry note" : "Swapped");
+  }
+}
+
+// "✨ Another" — a different outfit for THIS occasion only.
+async function packReroll(occId) {
+  const st = _packState;
+  if (!st || _packBusy) return;
+  const occ = st.demand.find(o => o.id === occId);
+  if (!occ) return;
+  const cur = st.res.assign.get(occId);
+  const inPack = new Set(st.res.pack);
+  const wxFor = packWxFor(st.c);
+  // Prefer another outfit the pack can already make — a re-roll shouldn't grow
+  // the bag unless it has to.
+  const inside = packCandidates(occ, st.res.pack, { wxFor, all: true })
+    .filter(x => x.ids.every(id => inPack.has(id)) && (!cur || packDistinct(x, cur)));
+  const pick = inside.length ? inside[0]
+    : packCandidates(occ, st.rack.ids, { wxFor, all: true }).find(x => !cur || packDistinct(x, cur));
+  if (!pick) { toast("No other outfit fits this one"); return; }
+  st.res.assign.set(occId, pick);
+  packRepack(st);
+  packRefresh(st);
+  await savePackRecord(st.cid, { locked: packMarkLocked(st.cid, occId) });
+  await packPersist(st.cid);
+  renderCapsules();
+  toast(inside.length ? "Another one from the same bag" : "Another one — added a piece");
+}
+
+// "See N" — the other outfits this pack can make for one occasion.
+function openPackOptionsSheet(occId) {
+  const st = _packState;
+  if (!st) return;
+  const occ = st.demand.find(o => o.id === occId);
+  if (!occ) return;
+  const inPack = new Set(st.res.pack);
+  const cur = st.res.assign.get(occId);
+  const list = packCandidates(occ, st.res.pack, { wxFor: packWxFor(st.c), all: true })
+    .filter(x => x.ids.every(id => inPack.has(id))).slice(0, 12);
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packOptCancel">Close</button>
+      <h2>${esc(occ.context || OCCASION_LADDER[(occ.level || 1) - 1] || "Options")}</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:6px 16px 0;font-size:13px;color:var(--muted)">Everything here is already in the bag — no extra weight.</div>
+    <div style="padding:6px 0 30px">${list.map(x => {
+      const on = cur && !packDistinct(x, cur);
+      return `<button class="pack-optrow${on ? " on" : ""}" data-packopt="${esc(x.ids.join(","))}">
+        <div class="pack-pieces">${x.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "pack-pthumb")).join("")}</div>
+        ${on ? `<div class="pack-bagwhy">Current pick</div>` : ""}
+      </button>`;
+    }).join("")}</div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#packOptCancel").onclick = () => hideSheet("logSheet");
+  $("#logInner").querySelectorAll("[data-packopt]").forEach(b => {
+    b.onclick = async () => {
+      const ids = b.dataset.packopt.split(",");
+      st.res.assign.set(occId, { ids: ids.slice().sort(), pieces: ids.map(id => itemById.get(id)).filter(Boolean), score: 0 });
+      packRepack(st); packRefresh(st);
+      await savePackRecord(st.cid, { locked: packMarkLocked(st.cid, occId) });
+      await packPersist(st.cid);
+      hideSheet("logSheet"); renderCapsules(); toast("Set");
+    };
+  });
+}
+
+async function packToggleLock(occId) {
+  const st = _packState;
+  if (!st) return;
+  const rec = packRecord(st.cid);
+  const set = new Set(rec.locked || []);
+  if (set.has(occId)) set.delete(occId); else set.add(occId);
+  await savePackRecord(st.cid, { locked: [...set] });
+  renderCapsules();
+}
+
+/* Remove a piece. Days that depended on it BREAK and are flagged with dates —
+   the app never silently re-solves around her edit. */
+async function packDropPiece(itemId) {
+  const st = _packState;
+  if (!st) return;
+  const it = itemById.get(itemId);
+  st.res.pack = st.res.pack.filter(id => id !== itemId);
+  st.res.extras = (st.res.extras || []).filter(id => id !== itemId);
+  const rec = packRecord(st.cid);
+  await savePackRecord(st.cid, { pinned: (rec.pinned || []).filter(id => id !== itemId) });
+  const broken = st.demand.filter(o => {
+    const cd = st.res.assign.get(o.id);
+    return cd && cd.ids.includes(itemId);
+  });
+  for (const o of broken) st.res.assign.delete(o.id);
+  packRefresh(st);
+  await packPersist(st.cid);
+  renderCapsules();
+  if (broken.length) {
+    toast(`Dropped · ${broken.length} day${broken.length === 1 ? "" : "s"} need a new outfit`,
+      { label: "Fix them", fn: () => packFixBroken() });
+  } else {
+    toast(`Dropped ${it ? (it.name || "piece") : "piece"}`, { label: "Undo", fn: () => packAddPiece(itemId) });
+  }
+}
+// Re-solve ONLY the occasions with no outfit, holding everything else still.
+async function packFixBroken() {
+  const st = _packState;
+  if (!st) return;
+  const wxFor = packWxFor(st.c);
+  let fixed = 0;
+  for (const occ of st.demand) {
+    if (st.res.assign.has(occ.id)) continue;
+    const inPack = new Set(st.res.pack);
+    const inside = packCandidates(occ, st.res.pack, { wxFor, all: true }).find(x => x.ids.every(id => inPack.has(id)));
+    const pick = inside || packCandidates(occ, st.rack.ids, { wxFor, all: true })[0];
+    if (pick) { st.res.assign.set(occ.id, pick); fixed++; }
+  }
+  packRepack(st); packRefresh(st);
+  await packPersist(st.cid);
+  renderCapsules();
+  toast(fixed ? `Filled ${fixed} day${fixed === 1 ? "" : "s"}` : "Nothing available fits those days");
+}
+
+// Bring something along. Pinned, so it survives every re-solve.
+async function packAddPiece(itemId) {
+  const st = _packState;
+  if (!st) return;
+  const it = itemById.get(itemId);
+  if (!it) return;
+  if (!st.res.pack.includes(itemId)) st.res.pack = st.res.pack.concat([itemId]);
+  st.res.extras = (st.res.extras || []).concat([itemId]);
+  const rec = packRecord(st.cid);
+  await savePackRecord(st.cid, { pinned: [...new Set((rec.pinned || []).concat([itemId]))] });
+  packRefresh(st);
+  await packPersist(st.cid);
+  renderCapsules();
+  toast(`${it.name || "Piece"} is in the bag`);
+}
+
+function openPackAddSheet() {
+  const st = _packState;
+  if (!st) return;
+  const inPack = new Set(st.res.pack);
+  const pool = items.filter(i => itemStatus(i) === "Available" && !inPack.has(i.id));
+  let q = "";
+  const render = () => {
+    const list = (q.trim() ? pool.filter(i => itemMatchesText(i, q)) : pool.slice(0, 60));
+    $("#packAddResults").innerHTML = list.length
+      ? `<div class="ogrid">${list.map(i => `<button class="otile" data-packadd="${esc(i.id)}">
+          ${thumbHtml(i.image_path, "pack-pthumb")}<div class="oname">${esc(i.name || "Untitled")}</div></button>`).join("")}</div>`
+      : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">Nothing matches.</div>`;
+    hydratePhotos($("#logInner"));
+    $("#logInner").querySelectorAll("[data-packadd]").forEach(b => {
+      b.onclick = () => { hideSheet("logSheet"); packAddPiece(b.dataset.packadd); };
+    });
+  };
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packAddCancel">Cancel</button>
+      <h2>Bring something</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:8px 16px"><input class="inp" id="packAddQ" placeholder="Search your closet…"></div>
+    <div id="packAddResults" style="padding:0 0 30px"></div>`;
+  showSheet("logSheet");
+  render();
+  $("#packAddCancel").onclick = () => hideSheet("logSheet");
+  $("#packAddQ").oninput = (e) => { q = e.target.value; render(); };
+}
+
+// ✨ Re-solve, scoped: pins and locks are held, everything else may move.
+async function packResolveUnlocked() {
+  if (_packBusy) return;
+  _packBusy = true;
+  try {
+    const cid = capsuleId;
+    packLoadState(cid, { resolve: true });
+    await packPersist(cid);
+    renderCapsules();
+    const st = _packState;
+    toast(st && st.res.unmet.length ? `Re-solved · ${st.res.unmet.length} occasion${st.res.unmet.length === 1 ? "" : "s"} still uncovered` : "Re-solved");
+  } finally { _packBusy = false; }
+}
+
+function openPackTightSheet() {
+  const st = _packState;
+  if (!st) return;
+  const rows = Object.entries(PACK_OPTIONS).map(([name, v]) => `<button class="sheet-row" data-packk="${v}">
+    <span>${esc(name[0].toUpperCase() + name.slice(1))}</span>
+    <span class="rt" style="color:${st.K === v ? "var(--accent)" : "var(--muted)"};font-weight:${st.K === v ? "700" : "400"}">${v} option${v === 1 ? "" : "s"} per occasion${st.K === v ? " ✓" : ""}</span>
+  </button>`).join("");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packKCancel">Cancel</button>
+      <h2>How much to bring</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="sheet-note">Options per occasion, not spare pieces — a second choice for a day is what actually makes a bag feel roomy.</div>
+    ${rows}`;
+  showSheet("moveSheet");
+  $("#packKCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-packk]").forEach(b => {
+    b.onclick = async () => {
+      hideSheet("moveSheet");
+      _packBusy = true;
+      try {
+        const cid = capsuleId;
+        await savePackRecord(cid, { K: +b.dataset.packk });
+        packLoadState(cid, { resolve: true, K: +b.dataset.packk });
+        await packPersist(cid);
+        renderCapsules();
+        toast(`${_packState.res.stats.pieces} pieces → ${_packState.res.stats.outfits} outfits`);
+      } finally { _packBusy = false; }
+    };
+  });
+}
+
+/* Materialise the assignments as real looks in capsules.plan, so trip mode opens
+   ready. Explicit, because it creates outfit records. */
+async function packSendToPlan() {
+  const st = _packState;
+  if (!st || _packBusy) return;
+  if (!confirm(`Save ${st.res.assign.size} outfits to the by-day plan? They become real looks you can wear-log.`)) return;
+  _packBusy = true;
+  try {
+    let n = 0;
+    for (const occ of st.demand) {
+      const cd = st.res.assign.get(occ.id);
+      if (!cd || !occ.date) continue;
+      const pieces = cd.ids.map(id => itemById.get(id)).filter(Boolean);
+      if (pieces.length < 2) continue;
+      const oid = await saveComboAsOutfit(pieces);
+      if (oid) { await addPlanLook(st.cid, occ.date, oid); n++; }
+    }
+    toast(`${n} outfit${n === 1 ? "" : "s"} in the by-day plan`);
+  } catch (e) { toast(e.message); }
+  finally { _packBusy = false; }
+}
+
+/* ===================================================================
+   RE-ENTRY — the diff is the artifact (TRIP_BUILDER.md §8).
+   The second and third visits are the common case, not the first.
+   =================================================================== */
+function packDiff(cid) {
+  const rec = packRecord(cid);
+  if (!rec.built) return null;
+  const c = capsuleById.get(cid);
+  if (!c) return null;
+  const slate = packSlate(c, { character: packCharacter(cid) });
+  const demand = packDemand(slate);
+  const reasons = [];
+  if (packSlateHash(demand) !== rec.slateHash) reasons.push("the plan for the days changed");
+  const ls = laundryState();
+  const nowDirty = (rec.pieces || []).filter(id => {
+    const i = itemById.get(id);
+    return i && isDirty(i, ls);
+  });
+  if (nowDirty.length) reasons.push(`${nowDirty.length} packed piece${nowDirty.length === 1 ? " is" : "s are"} in the hamper`);
+  const gone = (rec.pieces || []).filter(id => {
+    const i = itemById.get(id);
+    return !i || itemStatus(i) !== "Available";
+  });
+  if (gone.length) reasons.push(`${gone.length} piece${gone.length === 1 ? "" : "s"} no longer available`);
+  return { reasons, nowDirty, gone, built: rec.built, changed: reasons.length };
+}
+
+/* ===================================================================
+   CAPTURE (D4) — the character chip + fixed events, at booking.
+   ⚠️ The build sheet opens ALREADY ANSWERED. A form is the opposite of magic:
+   the slate pre-fills from dates + weekday rhythm + declared events, and the
+   three questions are chips she taps only when the guess is wrong.
+   =================================================================== */
+function packCharChipsHtml(cid) {
+  const cur = packCharacter(cid);
+  return `<div class="pack-chiprow">${PACK_CHARACTERS.map(ch =>
+    `<button class="cap-chip${cur === ch ? " on" : ""}" data-packchar="${esc(ch)}">${esc(ch)}</button>`).join("")}</div>`;
+}
+
+function openPackBuildSheet(cid) {
+  const c = capsuleById.get(cid);
+  if (!c) return;
+  const character = packCharacter(cid);
+  const seed = packOccasionSeed(character, {});
+  const slate = packSlate(c, { character });
+  const demand = packDemand(slate);
+  const rec = packRecord(cid);
+  const K = rec.K || PACK_OPTIONS.normal;
+  const washDays = packWashDays(c);
+  const guessNote = seed.source === "history"
+    ? `From your last ${seed.trips} ${esc(character || "")} trip${seed.trips === 1 ? "" : "s"}.`
+    : seed.source === "seed"
+      ? `A starting guess for a ${esc(character || "trip")} — correct it on the by-day planner.`
+      : `Built from your weekday habits — set a character to sharpen it.`;
+  const byCtx = new Map();
+  for (const o of demand) {
+    const k = o.context || (OCCASION_LADDER[(o.level || 1) - 1] || "day");
+    byCtx.set(k, (byCtx.get(k) || 0) + 1);
+  }
+  const mixRows = [...byCtx.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+    `<div class="pack-mixrow"><span>${esc(k)}</span><b>×${n}</b></div>`).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packBuildCancel">Cancel</button>
+      <h2>Build the pack</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div style="padding:4px 16px 0">
+      <div class="fld">What kind of trip</div>
+      ${packCharChipsHtml(cid)}
+      <div class="fld" style="margin-top:14px">What's happening · ${demand.length} occasion${demand.length === 1 ? "" : "s"}</div>
+      <div class="pack-mix">${mixRows}</div>
+      <div class="pack-warn-note" style="padding:6px 0">${guessNote} Days you've declared events for win.</div>
+      <div class="fld" style="margin-top:14px">Laundry</div>
+      <div class="pack-warn-note" style="padding:2px 0 6px">${washDays.length
+        ? `Washing on ${esc(washDays.map(d => fmtDate(d)).join(", "))} — set on the by-day planner.`
+        : `No wash planned. Set a laundry day on the by-day planner if you'll have one.`}</div>
+      <div class="fld" style="margin-top:8px">How much to bring</div>
+      <div class="pack-chiprow">${Object.entries(PACK_OPTIONS).map(([name, v]) =>
+        `<button class="cap-chip${K === v ? " on" : ""}" data-packbk="${v}">${esc(name)}</button>`).join("")}</div>
+      <button class="btn" id="packBuildGo" style="margin:18px 0 8px">✨ Build the pack</button>
+      <div class="pack-warn-note" style="padding:0 0 24px">${(c.locations || []).length
+        ? `Weather comes from your locations — beyond about two weeks out it's a typical-for-the-date average, not a forecast.`
+        : `⚠️ No locations set, so this will pack for the season only. Add one on the trip page for real weather.`}</div>
+    </div>`;
+  showSheet("logSheet");
+  $("#packBuildCancel").onclick = () => hideSheet("logSheet");
+  $("#logInner").querySelectorAll("[data-packchar]").forEach(b => {
+    b.onclick = async () => { await setPackCharacter(cid, b.dataset.packchar === packCharacter(cid) ? null : b.dataset.packchar); openPackBuildSheet(cid); };
+  });
+  $("#logInner").querySelectorAll("[data-packbk]").forEach(b => {
+    b.onclick = async () => { await savePackRecord(cid, { K: +b.dataset.packbk }); openPackBuildSheet(cid); };
+  });
+  $("#packBuildGo").onclick = async () => {
+    hideSheet("logSheet");
+    await openPackPlan(cid, { resolve: true });
+    const st = _packState;
+    if (st) toast(`${st.res.stats.pieces} pieces → ${st.res.stats.outfits} outfits`);
+  };
+}
+
+/* "Same as last time" — start from a finished trip's pack. The most direct use
+   of past trips there is, and it sidesteps the capture entirely. */
+function openPackTemplateSheet(cid) {
+  const c = capsuleById.get(cid);
+  const past = completedTrips().filter(x => x.id !== cid && capsuleItems(x.id).length);
+  if (!past.length) { toast("No finished trips to copy from yet"); return; }
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packTplCancel">Cancel</button>
+      <h2>Same as last time</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="sheet-note">Copies that trip's pieces in, then adjusts for this trip's weather and days.</div>
+    ${past.slice(0, 12).map(x => `<button class="sheet-row" data-packtpl="${esc(x.id)}">
+      <span>${esc(x.name)}</span>
+      <span class="rt">${capsuleItems(x.id).length} pieces · ${esc(fmtDate(x.start_date))}</span>
+    </button>`).join("")}`;
+  showSheet("moveSheet");
+  $("#packTplCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-packtpl]").forEach(b => {
+    b.onclick = async () => {
+      hideSheet("moveSheet");
+      const fromIds = capsuleItems(b.dataset.packtpl).filter(i => itemStatus(i) === "Available").map(i => i.id);
+      const rec = packRecord(cid);
+      await savePackRecord(cid, { pinned: [...new Set((rec.pinned || []).concat(fromIds))] });
+      await openPackPlan(cid, { resolve: true });
+      toast(`Started from ${fromIds.length} pieces — adjusted for this trip`);
+    };
+  });
+}
+
+/* The fixed-event capture on the create form. Date + context, nothing else —
+   she's booking a trip, not planning outfits. */
+function openCapAnchorSheet() {
+  const opts = contextOptions();
+  let date = _capForm && _capForm.start_date ? _capForm.start_date : todayStr();
+  const render = () => {
+    $("#moveInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="capAnchCancel">Cancel</button>
+        <h2>Fixed event</h2>
+        <span style="width:54px"></span>
+      </div>
+      <div style="padding:8px 16px">
+        <label class="fld">Date</label>
+        <input class="inp" type="date" id="capAnchDate" value="${esc(date)}">
+        <label class="fld" style="margin-top:12px">What is it</label>
+      </div>
+      ${opts.map(o => `<button class="sheet-row" data-capanch="${esc(o)}">
+        <span>${esc(o)}</span>
+        <span class="rt">${esc(OCCASION_LADDER[(contextFormalityLevel(o) || CONTEXT_FORMALITY_SEED[o] || 3) - 1] || "")}</span>
+      </button>`).join("")}`;
+    $("#capAnchCancel").onclick = () => hideSheet("moveSheet");
+    const di = $("#capAnchDate"); if (di) di.onchange = () => { date = di.value; };
+    $("#moveInner").querySelectorAll("[data-capanch]").forEach(b => {
+      b.onclick = () => {
+        const d = $("#capAnchDate");
+        const useDate = (d && d.value) || date;
+        if (!useDate) { toast("Pick a date"); return; }
+        _capForm.anchors = (_capForm.anchors || []).concat([{ date: useDate, context: b.dataset.capanch }]);
+        hideSheet("moveSheet");
+        renderCapsules();
+      };
+    });
+  };
+  render();
+  showSheet("moveSheet");
+}
+
+/* ===================================================================
+   THE BUILDER GRADES ITSELF — surfaced on the trip recap.
+   An engine that reports its own hit rate is one she can calibrate against.
+   =================================================================== */
+function packGradeRowHtml(c) {
+  const g = packGrade(c);
+  if (!g) return "";
+  const pct = g.hitRate == null ? null : Math.round(g.hitRate * 100);
+  return `<div class="pack-grade">
+    <div class="pack-grade-hd">How the pack did</div>
+    <div>Packed ${g.suggested} · wore ${g.worn}${pct != null ? ` (${pct}%)` : ""}</div>
+    ${g.unpacked ? `<div>Wore ${g.unpacked} thing${g.unpacked === 1 ? "" : "s"} you didn't pack: ${esc(g.unpackedItems.slice(0, 3).map(i => i.name || "Untitled").join(", "))}${g.unpacked > 3 ? "…" : ""}</div>` : ""}
+    <div class="pack-warn-note">Over ${g.loggedDays} logged day${g.loggedDays === 1 ? "" : "s"}. Not a score — it's what to correct next time.</div>
+  </div>`;
+}
+
+/* Options count, as text. Capped on purpose: past a handful the exact number is
+   noise, and "20 options" next to a "See 20" button is worse than no number. */
+function packOptLabel(n) {
+  if (!n || n < 2) return "";
+  return n > 8 ? " · plenty of options" : ` · ${n} options`;
 }

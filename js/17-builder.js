@@ -647,6 +647,7 @@ function finishBuilder(id, msg) {
 }
 
 function capsuleBack() {
+  if (capsuleView === "pack") { capsuleView = "detail"; _packState = null; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "plan") { capsuleView = "detail"; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pick") { capsuleView = "detail"; return renderCapsules(); }
   if (capsuleView === "form") { _capForm = null; _pendingAddIds = null; capsuleView = capsuleId ? "detail" : "list"; return renderCapsules(); }

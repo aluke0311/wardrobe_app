@@ -2484,6 +2484,231 @@ async function run() {
     wears: (ws) => ws.push({ id: "g1", item_id: "tee0", worn_on: "2026-05-02", context: ["Errands"], formality_for: 3 }),
   }));
 
+  /* ---- pack plan: persistence, consequences, capture (phases 2–4) ---- */
+  t("pruneDayPlan keeps dates inside a dated capsule past the 30-day window", () => {
+    // A September trip planned in July must survive. Without the exemption the
+    // slate — and any fixed event she declared at booking — is silently deleted.
+    const far = D(90), near = D(5), old = D(-40);
+    const caps = [{ id: "t", start_date: D(88), end_date: D(95) }];
+    const all = { [far]: [{ contexts: ["Wedding"] }], [near]: [{ contexts: ["Work"] }],
+                  [old]: [{ contexts: ["Work"] }], [D(200)]: [{ contexts: ["Work"] }] };
+    W.pruneDayPlan(all, today, caps);
+    return eq(Object.keys(all).sort(), [near, far].sort());
+  });
+
+  t("a trip-window date is dropped once no capsule covers it", () => {
+    const far = D(90);
+    const all = { [far]: [{ contexts: ["Wedding"] }] };
+    W.pruneDayPlan(all, today, []);
+    return eq(Object.keys(all), []);
+  });
+
+  t("the pack screen reuses the stored solve instead of re-solving", () => withPackCloset(() => {
+    // Inversion ③: reopening a trip must not hand her a different pack. The
+    // record is the source of truth; only an explicit re-solve calls packSolve.
+    const c = packTrip(5);
+    W.capsules = [c]; W.buildCapsuleIndexes();
+    const first = solveFor(c);
+    const assign = {};
+    for (const [k, cd] of first.res.assign) assign[k] = cd.ids;
+    W.kvData.set("pack:" + c.id, { built: today, K: 2, pieces: first.res.pack, assign, unmet: [], locked: [], pinned: [] });
+    W.capsuleId = c.id;
+    const st = W.packLoadState(c.id);
+    W.kvData.delete("pack:" + c.id);
+    return st && eq(st.res.pack.slice().sort(), first.res.pack.slice().sort());
+  }));
+
+  t("dropping a piece breaks its days instead of silently re-solving", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const { demand, res } = solveFor(c);
+    const victim = res.pack.find(id => [...res.assign.values()].some(cd => cd.ids.includes(id)));
+    const before = [...res.assign.keys()].length;
+    // Simulate the drop the way packDropPiece does, then ask for consequences.
+    const st = { cid: c.id, c, demand, res, rack: null, K: 2 };
+    res.pack = res.pack.filter(id => id !== victim);
+    const broken = demand.filter(o => { const cd = res.assign.get(o.id); return cd && cd.ids.includes(victim); });
+    for (const o of broken) res.assign.delete(o.id);
+    const cons = W.packConsequences(st);
+    return broken.length > 0 && [...res.assign.keys()].length === before - broken.length
+        && cons.broken.length === broken.length
+      ? true : `broken=${broken.length} cons=${cons.broken.length}`;
+  }));
+
+  t("swap candidates only offer pieces that fit the slot and the level", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const st = solveFor(c);
+    const full = { cid: c.id, c, demand: st.demand, res: st.res, rack: st.rack, K: 2 };
+    const occ = st.demand.find(o => st.res.assign.has(o.id) && o.level >= 4) || st.demand[0];
+    const cd = st.res.assign.get(occ.id);
+    if (!cd) return "no assignment to swap";
+    const piece = cd.ids[0];
+    const cands = W.packSwapCandidates(full, occ, cd, piece);
+    const oldSlot = W.suggestSlot(W.itemById.get(piece));
+    const bad = cands.filter(i => W.suggestSlot(i) !== oldSlot && !(oldSlot === "Outerwear" && W.isLayer(i)));
+    const wrongLevel = cands.filter(i => !(W.itemFormalitySet(i) || []).includes(occ.level));
+    return !bad.length && !wrongLevel.length && !cands.some(i => i.id === piece)
+      ? true : `n=${cands.length} wrongSlot=${bad.length} wrongLevel=${wrongLevel.length}`;
+  }));
+
+  t("packSyncMembers never un-packs something already ticked", () => withPackCloset(() => {
+    // It's physically in the bag. Removing it because the optimiser changed its
+    // mind would be the app arguing with the suitcase.
+    const c = packTrip(4);
+    W.capsules = [c];
+    W.capsuleLinks = [{ capsule_id: c.id, item_id: "ckt0", packed: true },
+                      { capsule_id: c.id, item_id: "tee0", packed: false }];
+    W.buildCapsuleIndexes();
+    const links = W.capsuleLinkMap.get(c.id) || [];
+    const packedAlready = new Set(links.filter(l => l.packed).map(l => l.item_id));
+    const want = new Set(["tee1"]);
+    const drop = links.map(l => l.item_id).filter(id => !want.has(id) && !packedAlready.has(id));
+    return eq(drop, ["tee0"]);
+  }));
+
+  t("the character chip changes the occasion mix the slate is built from", () => withPackCloset(() => {
+    const c = packTrip(7);
+    const work = W.packOccasionSeed("work trip", {});
+    const beach = W.packOccasionSeed("beach week", {});
+    const wk = work.mix.map(e => e.context).join(",");
+    const bk = beach.mix.map(e => e.context).join(",");
+    return work.source === "seed" && wk !== bk ? true : `work=${wk} beach=${bk}`;
+  }));
+
+  t("packOccasionSeed prefers real trips once there are enough of them", () => withPackCloset(() => {
+    const kinds = new Map([["old1", "work trip"], ["old2", "work trip"]]);
+    const s = W.packOccasionSeed("work trip", { kinds, today });
+    return s.source === "history" && s.trips === 2 && s.mix.some(e => e.context === "Symphony")
+      ? true : `${JSON.stringify(s)}`;
+  }, {
+    capsules: [
+      { id: "old1", name: "T1", kind: "packing", start_date: "2026-05-01", end_date: "2026-05-04", locations: [] },
+      { id: "old2", name: "T2", kind: "packing", start_date: "2026-06-01", end_date: "2026-06-04", locations: [] },
+    ],
+    wears: (ws) => {
+      for (const d of ["2026-05-01", "2026-05-02", "2026-06-01", "2026-06-02"])
+        ws.push({ id: "h" + d, item_id: "blo0", worn_on: d, context: ["Symphony"], formality_for: 4 });
+    },
+  }));
+
+  t("packDiff reports what moved since the pack was built", () => withPackCloset(() => {
+    const c = packTrip(5);
+    W.capsules = [c]; W.buildCapsuleIndexes();
+    const b = W.itemById.get("blo0");
+    b.last_washed = D(-9); b.laundry_state = "hamper";
+    W.kvData.set("pack:" + c.id, { built: D(-2), K: 2, pieces: ["blo0", "jea0"], assign: {}, slateHash: 0 });
+    const df = W.packDiff(c.id);
+    W.kvData.delete("pack:" + c.id);
+    return df && df.changed > 0 && df.nowDirty.includes("blo0")
+      ? true : `${JSON.stringify(df)}`;
+  }));
+
+  t("packGrade counts what was worn against what was packed", () => withPackCloset(() => {
+    const c = { id: "old1", name: "T1", kind: "packing", start_date: "2026-05-01", end_date: "2026-05-05", locations: [] };
+    const g = W.packGrade(c);
+    return g && g.suggested === 2 && g.worn === 1 && g.unpacked === 1 && g.loggedDays === 3
+      ? true : `${JSON.stringify(g && { s: g.suggested, w: g.worn, u: g.unpacked, d: g.loggedDays })}`;
+  }, {
+    capsules: [{ id: "old1", name: "T1", kind: "packing", start_date: "2026-05-01", end_date: "2026-05-05", locations: [] }],
+    capsuleLinks: [{ capsule_id: "old1", item_id: "tee0" }, { capsule_id: "old1", item_id: "ckt0" }],
+    wears: (ws) => {
+      ws.push({ id: "q1", item_id: "tee0", worn_on: "2026-05-01", context: ["Errands"], formality_for: 3 });
+      ws.push({ id: "q2", item_id: "tee0", worn_on: "2026-05-02", context: ["Errands"], formality_for: 3 });
+      ws.push({ id: "q3", item_id: "jea2", worn_on: "2026-05-03", context: ["Errands"], formality_for: 3 });
+    },
+  }));
+
+  /* ⚠️ Found by rendering the screen and reading it: the bag line said "needs a
+     wash mid-trip" for a tee used in two outfits on ONE day, while the schedule
+     correctly reported no violation. A line that contradicts the warning above it
+     is worse than no line. Both must count (item, DAY). */
+  t("the why-line counts wear-DAYS, so it can't contradict the schedule", () => withPackCloset(() => {
+    const tee = W.itemById.get("tee0");   // tolerance 1
+    const oneDayTwice = { days: new Set([D(1)]), labels: new Set(["Friends", "Date Night"]) };
+    const twoDays = { days: new Set([D(1), D(2)]), labels: new Set(["Friends"]) };
+    const a = W.packWhyLine(tee, oneDayTwice, null);
+    const b = W.packWhyLine(tee, twoDays, null);
+    // And the schedule must agree with each.
+    const sA = W.packSchedule([{ date: D(1), ids: ["tee0"] }, { date: D(1), ids: ["tee0"] }], { dates: [D(1)] });
+    const sB = W.packSchedule([{ date: D(1), ids: ["tee0"] }, { date: D(2), ids: ["tee0"] }], { dates: [D(1), D(2)] });
+    return !/wash/.test(a) && sA.violations.length === 0
+        && /wash/.test(b) && sB.violations.length === 1
+      ? true : `oneDay="${a}" (${sA.violations.length}) twoDays="${b}" (${sB.violations.length})`;
+  }));
+
+  t("the why-line stays quiet about laundry when it doesn't bind", () => withPackCloset(() => {
+    const jean = W.itemById.get("jea0");  // tolerance 5
+    const l = W.packWhyLine(jean, { days: new Set([D(1)]), labels: new Set(["Friends"]) }, null);
+    return !/wash/.test(l) && !/of 5/.test(l) ? true : `"${l}"`;
+  }));
+
+  t("the character mix never stacks three occasions onto the travel day", () => withPackCloset(() => {
+    const c = packTrip(8);
+    const slate = W.packSlate(c, { mix: [{ context: "Friends", per: 0.4 }, { context: "Date Night", per: 0.2 }] });
+    const worst = Math.max(...slate.map(s => s.occasions.length));
+    return worst <= 2 ? true : `busiest day has ${worst} occasions: ${JSON.stringify(slate.map(s => s.occasions.length))}`;
+  }));
+
+  /* ⚠️ Also found by looking at the screen: Travel and Friends on the same day
+     came out in the same clothes and rendered as two identical cards, which
+     reads as a bug. dayplan already settles the semantics — "one outfit across
+     contexts = one multi-context entry" — so they merge for display while the
+     laundry and options math still sees both occasions. */
+  const packDayFixture = (sameOutfit) => {
+    const c = packTrip(3);
+    const slate = [{ date: D(1), leg: null, occasions: [
+      { context: "Travel", contexts: ["Travel"], level: 3, placed: true, source: "travel" },
+      { context: "Friends", contexts: ["Friends"], level: 2, placed: false, source: "rhythm" }] }];
+    const demand = W.packDemand(slate);
+    const a = ["tee0", "jea0", "snk0"].sort();
+    const b = ["tee1", "jea1", "snk1"].sort();
+    const assign = new W.Map();
+    demand.forEach((o, k) => {
+      const ids = (sameOutfit || k === 0) ? a : b;
+      assign.set(o.id, { ids, pieces: ids.map(x => W.itemById.get(x)).filter(Boolean), score: 0 });
+    });
+    const options = new W.Map();
+    for (const o of demand) options.set(o.id, 3);
+    return { cid: c.id, c, slate, demand, rack: { ids: [] }, K: 2,
+             res: { pack: a.concat(b), assign, options, unmet: [], violations: [], stats: {} } };
+  };
+
+  t("same-day occasions in the same clothes render as ONE card, named for both", () => withPackCloset(() => {
+    const html = W.packDaysHtml(packDayFixture(true));
+    const cards = (html.match(/data-pack-reroll=/g) || []).length;
+    return cards === 1 && /Travel \+ Friends/.test(html)
+      ? true : `cards=${cards} labelled=${/Travel \+ Friends/.test(html)}`;
+  }));
+
+  t("same-day occasions in different clothes stay two cards", () => withPackCloset(() => {
+    const html = W.packDaysHtml(packDayFixture(false));
+    const cards = (html.match(/data-pack-reroll=/g) || []).length;
+    return cards === 2 ? true : `cards=${cards}`;
+  }));
+
+  t("a merged card names the dressiest level it had to clear", () => withPackCloset(() => {
+    // Travel is Casual (3), Friends Very Casual (2) — the outfit had to clear 3.
+    const html = W.packDaysHtml(packDayFixture(true));
+    return /Casual/.test(html) && !/Very Casual/.test(html)
+      ? true : html.slice(html.indexOf("pack-occ-hd"), html.indexOf("pack-occ-hd") + 220);
+  }));
+
+  t("the options label is capped rather than printing a big number", () => {
+    return eq([W.packOptLabel(0), W.packOptLabel(1), W.packOptLabel(3), W.packOptLabel(20)],
+              ["", "", " · 3 options", " · plenty of options"]);
+  });
+
+  t("no js/ module reintroduces a hardcoded white", () => {
+    // The redesign routed every literal through a token; a new #fff looks fine
+    // while you're building and then glows on a dark screen.
+    const src = window.__src || {};
+    const bad = [];
+    for (const path of Object.keys(src).filter(p => p.startsWith("js/21-pack"))) {
+      const hits = [...src[path].matchAll(/#(?:fff|ffffff|f4f4f7|faf9f8)\b/gi)].map(m => m[0]);
+      if (hits.length) bad.push(`${path}: ${hits.join(",")}`);
+    }
+    return !bad.length ? true : bad.join(" | ");
+  });
+
   // ---- render summary ----
   await Promise.all(pending);
   const ul = document.getElementById("results");

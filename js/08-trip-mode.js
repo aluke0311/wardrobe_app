@@ -282,6 +282,7 @@ function openTripRecap(cid, { unpack = false } = {}) {
       ${onceHtml}
       ${deadHtml}
       ${unpackedHtml}
+      ${typeof packGradeRowHtml === "function" && packHasPlan(cid) ? packGradeRowHtml(c) : ""}
       ${canHamper ? `<button class="btn" id="unpHamper" style="margin-top:20px">🧺 Send ${r.worn.length} worn piece${r.worn.length === 1 ? "" : "s"} to the hamper</button>` : ""}
       ${unpack ? `<button class="btn${canHamper ? " btn-sec" : ""}" id="unpEnd" style="margin-top:10px">End trip mode</button>` : ""}
     </div>`;

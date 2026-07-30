@@ -6,13 +6,15 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-29 r2";
+const APP_VERSION = "2026-07-29 r3";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
-// Empty on purpose for r2: the trip-builder engine (js/21-pack.js) has no UI
-// yet, so there is nothing to announce. maybeShowWhatsNew suppresses the toast
-// on an empty list rather than re-showing last round's bullets.
-const WHATS_NEW = [];
+const WHATS_NEW = [
+  "🧳 New: Build the pack. Open a trip with dates and it plans an outfit for every day, then the suitcase list is just what those outfits need",
+  "It works out laundry properly — how many wears each thing gets before washing, and which day would leave you with nothing clean",
+  "Swap any piece, bring something extra, or lock a day you like. Nothing you touch gets re-shuffled underneath you",
+  "Tells you honestly when it can't cover a day, with the date and the reason — and never suggests buying anything",
+];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 // Editable in-app since 2026-07-21: this is the DEFAULT shape; a saved

@@ -166,10 +166,24 @@ const DAYPLAN_KEY = "dayplan";
 const DAYPLAN_KEEP_PAST = 7, DAYPLAN_KEEP_FUTURE = 30;
 function dayPlanAll() { const v = kvData.get(DAYPLAN_KEY); return v && typeof v === "object" ? v : {}; }
 function dayPlan(date) { const v = dayPlanAll()[date]; return Array.isArray(v) ? v : []; }
-// Pure so the selftest can cover the prune window (today injectable).
-function pruneDayPlan(all, today) {
+/* Pure so the selftest can cover the prune window (today + trips injectable).
+   ⚠️ Dates inside a DATED CAPSULE are exempt from the 30-day future window.
+   Trips get booked months out, and the trip builder puts the day slate here — so
+   without this, declaring "wedding, Sept 14" in July silently deleted it on the
+   next save. It also fixed a latent bug: planning a far-out trip in the week
+   planner lost the plan for the same reason. Growth stays bounded because the
+   exemption is scoped to real capsule date ranges. */
+function pruneDayPlan(all, today, caps = null) {
   const lo = shiftDate(today, -DAYPLAN_KEEP_PAST), hi = shiftDate(today, DAYPLAN_KEEP_FUTURE);
-  for (const d of Object.keys(all)) if (d < lo || d > hi || !(all[d] || []).length) delete all[d];
+  const keep = [];
+  for (const c of (caps || (typeof capsules !== "undefined" ? capsules : []) || [])) {
+    if (c && c.start_date && c.end_date) keep.push([c.start_date, c.end_date]);
+  }
+  const inTrip = (d) => keep.some(([a, b]) => d >= a && d <= b);
+  for (const d of Object.keys(all)) {
+    if (!(all[d] || []).length) { delete all[d]; continue; }
+    if ((d < lo || d > hi) && !inTrip(d)) delete all[d];
+  }
   return all;
 }
 async function saveDayPlan(date, entries) {

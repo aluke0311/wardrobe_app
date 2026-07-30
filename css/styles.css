@@ -1126,3 +1126,65 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
   }
+
+  /* ---- trip builder / pack plan (2026-07-29) ------------------------------
+     Tokens only — a literal light colour here glows on a dark screen, and
+     anything on var(--accent) uses var(--on-accent) because the accent
+     LIGHTENS in dark mode. Full-width buttons carry an explicit width: form
+     controls size to their content regardless of display. */
+  .pack-warn { margin: 10px 14px 0; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.55;
+    background: var(--accent-soft); border: 1px solid var(--accent); color: var(--ink); }
+  .pack-warn.soft { background: var(--bg2); border-color: var(--line); }
+  .pack-warn div { margin-top: 2px; }
+  .pack-warn-note { font-size: var(--fs-xs); color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .pack-tip { margin: 10px 14px 0; padding: 9px 12px; border-radius: 12px; font-size: 13px;
+    background: var(--gold-soft); border: 1px solid var(--gold); color: var(--ink); }
+
+  .pack-occ { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface);
+    border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+  .pack-occ.locked { border-color: var(--accent); }
+  .pack-occ.gap { background: var(--bg2); }
+  .pack-occ-hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .pack-occ-hd b { font-size: var(--fs-base); }
+  .pack-occ-hd span { font-size: var(--fs-xs); color: var(--muted); text-align: right; }
+  .pack-occ-gap { font-size: 13px; color: var(--muted); }
+  .pack-occ-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+  .pack-pieces { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pack-piece { background: none; border: 0; padding: 0; width: 62px; text-align: center; }
+  .pack-pthumb { width: 62px; height: 62px; border-radius: 10px; background-color: var(--panel);
+    background-size: contain; background-position: center; background-repeat: no-repeat; }
+  .pack-pname { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.25;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pack-bag { padding: 0 14px; }
+  .pack-grp { margin-top: 14px; }
+  .pack-grp-hd { display: flex; justify-content: space-between; align-items: baseline;
+    padding: 6px 2px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .pack-grp-hd .t { font-family: var(--serif); font-size: var(--fs-md); }
+  .pack-grp-hd .n { font-size: var(--fs-sm); color: var(--muted); font-weight: 700; }
+  .pack-bagrow { display: flex; align-items: center; gap: 10px; padding: 7px 2px; }
+  .pack-bagrow.on { opacity: .55; }
+  .pack-bagrow.muted .pack-bagname { color: var(--muted); }
+  .pack-tick { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%; border: 1.5px solid var(--line);
+    background: var(--surface); color: var(--accent); font-size: 14px; font-weight: 700; line-height: 1; }
+  .pack-bagrow.on .pack-tick { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+  .pack-baginfo { flex: 1; min-width: 0; }
+  .pack-bagname { font-size: var(--fs-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pack-bagwhy { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; }
+  .pack-drop { width: 28px; height: 28px; flex: 0 0 28px; border: 0; background: none;
+    color: var(--muted); font-size: 19px; line-height: 1; }
+
+  .pack-footer { padding: 18px 0 0; }
+  .pack-chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pack-mix { background: var(--bg2); border-radius: 12px; padding: 4px 10px; }
+  .pack-mixrow { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; }
+  .pack-mixrow + .pack-mixrow { border-top: 1px solid var(--line); }
+  .pack-anchor { display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; margin-bottom: 6px; background: var(--bg2); border-radius: 10px; font-size: 13px; }
+  .pack-optrow { display: block; width: 100%; text-align: left; padding: 8px 14px; background: none;
+    border: 0; border-bottom: 1px solid var(--line); }
+  .pack-optrow.on { background: var(--accent-soft); }
+  .pack-grade { margin: 12px 14px; padding: 12px; border-radius: 12px; background: var(--surface2);
+    border: 1px solid var(--line); font-size: 13px; line-height: 1.6; }
+  .pack-grade-hd { font-family: var(--serif); font-size: var(--fs-md); margin-bottom: 4px; }

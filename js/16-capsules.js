@@ -2,7 +2,7 @@
    CAPSULES + TRIPS  (named item sets; trips add dates + packing checklist)
    =================================================================== */
 let capsuleId = null;            // detail / picker target
-let capsuleView = "list";        // "list" | "detail" | "form" | "pick"
+let capsuleView = "list";        // "list" | "detail" | "form" | "pick" | "plan" | "pack"
 let _capForm = null;             // {name, kind, start_date, end_date, notes} during create
 let _capPick = new Set();        // selected item ids in the add-items picker
 let _capPickFilter = "";         // keyword filter in the picker
@@ -94,6 +94,7 @@ function renderCapsules() {
   clearInterval(_wxAutoTimer); _wxAutoTimer = null;  // any prior trip-detail auto-refresh
   if (capsuleView === "form")      body.innerHTML = renderCapsuleForm();
   else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
+  else if (capsuleView === "pack" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePack();
   else if (capsuleView === "plan" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePlan();
   else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
   else { capsuleView = "list"; body.innerHTML = renderCapsuleList(); }
@@ -176,7 +177,7 @@ function renderCapsuleList() {
 
 // ---- create form ----
 function openCapsuleNew() {
-  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "" };
+  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "", character: null, anchors: [] };
   capsuleView = "form";
   renderCapsules();
 }
@@ -200,6 +201,21 @@ function renderCapsuleForm() {
       ${trip ? `<div class="cap-dates">
         <div><label class="fld">Start</label><input class="inp" type="date" id="capStart" value="${esc(f.start_date)}"></div>
         <div><label class="fld">End</label><input class="inp" type="date" id="capEnd" value="${esc(f.end_date)}"></div>
+      </div>
+      <div>
+        <label class="fld">What kind of trip (optional)</label>
+        <div class="pack-chiprow">${PACK_CHARACTERS.map(ch =>
+          `<button class="cap-chip${f.character === ch ? " on" : ""}" data-capchar="${esc(ch)}">${esc(ch)}</button>`).join("")}</div>
+        <div class="pack-warn-note" style="padding:4px 0 0">Lets the pack builder start from your own past trips of this kind.</div>
+      </div>
+      <div>
+        <label class="fld">Anything already fixed? (optional)</label>
+        ${(f.anchors || []).map((a, idx) => `<div class="pack-anchor">
+          <span>${esc(a.context)} · ${esc(fmtDate(a.date))}</span>
+          <button class="pack-drop" data-capanchor-del="${idx}" aria-label="Remove">×</button>
+        </div>`).join("")}
+        <button class="cap-chip" data-capanchor-add>＋ Add an event</button>
+        <div class="pack-warn-note" style="padding:4px 0 0">A wedding or a concert. Saying so now is what lets the app warn you in time to do something about it.</div>
       </div>` : ""}
       <div>
         <label class="fld">Notes (optional)</label>
@@ -226,6 +242,17 @@ async function saveNewCapsule() {
     if (_pendingAddIds && _pendingAddIds.length) {
       await addItemsToCapsule(c.id, _pendingAddIds);
       _pendingAddIds = null;
+    }
+    /* Booking-time capture (TRIP_BUILDER.md D4). Character is one kv string;
+       an anchor event IS a named context on a date, so it goes straight into
+       dayplan — which also means rackNeededLevels stocks the home rack for it
+       automatically, bounded by RACK_LOOKAHEAD_DAYS. */
+    if (f.character) { try { await setPackCharacter(c.id, f.character); } catch (err) { /* non-fatal */ } }
+    for (const a of (f.anchors || [])) {
+      try {
+        const existing = dayPlan(a.date);
+        await saveDayPlan(a.date, existing.concat([{ contexts: [a.context], outfit: null }]));
+      } catch (err) { /* non-fatal */ }
     }
     _capForm = null;
     capsuleId = c.id;
@@ -387,6 +414,21 @@ function renderCapsuleDetail() {
       ${tripModeId === c.id ? (isDatedTrip(c) ? "End trip mode" : "Exit capsule mode")
         : (isDatedTrip(c) ? "✈️ Start trip mode" : "Enter capsule mode")}
     </button>
+    ${(() => {
+      // The pack builder. Reachable the moment a trip has dates — NOT gated
+      // behind the 3-day pack phase, because the whole value of an early gap
+      // flag is that she can still do something about it.
+      if (!isDatedTrip(c)) return "";
+      const df = packDiff(capsuleId);
+      const label = !df ? "✨ Build the pack"
+        : df.changed ? `✨ Rebuild · ${df.reasons.length} thing${df.reasons.length === 1 ? "" : "s"} changed`
+        : "The pack";
+      return `<button class="cap-plan" data-cap-pack style="background:var(--accent);margin-bottom:8px">
+        <svg viewBox="0 0 24 24"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/></svg>
+        ${label}
+      </button>
+      ${df && df.changed ? `<div class="pack-tip" style="margin:-4px 14px 8px">Since ${esc(fmtDate(df.built))}: ${esc(df.reasons.join("; "))}. Anything you've ticked as packed stays.</div>` : ""}`;
+    })()}
     ${trip && c.start_date && c.end_date ? `<button class="cap-plan" data-cap-byday>
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
       Plan outfits by day
