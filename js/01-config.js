@@ -6,14 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-29 r3";
+const APP_VERSION = "2026-07-29 r4";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "🧳 New: Build the pack. Open a trip with dates and it plans an outfit for every day, then the suitcase list is just what those outfits need",
-  "It works out laundry properly — how many wears each thing gets before washing, and which day would leave you with nothing clean",
-  "Swap any piece, bring something extra, or lock a day you like. Nothing you touch gets re-shuffled underneath you",
-  "Tells you honestly when it can't cover a day, with the date and the reason — and never suggests buying anything",
+  "🧼 Mid-trip, the dash now says which pieces to wash for the rest of the trip — not just that something's dirty",
+  "Pack plans no longer repeat the same outfit two days running, and spread your tops across the trip",
+  "Lean / normal / cushion now changes how repetitive a trip is allowed to be, not just how many spare options you get",
+  "Every line in the bag list says what a piece is actually there for, and a far-out trip says it packed for typical weather rather than a forecast",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

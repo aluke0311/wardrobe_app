@@ -66,6 +66,33 @@ const PACK_CHAR_SEED = {
   "event trip":   [{ context: "Friends", per: 0.5 }, { context: "Errands", per: 0.35 }, { context: "Wedding", per: 0.15 }],
 };
 
+/* ---- repetition penalties (2026-07-29 r4) --------------------------------
+   ⚠️ FOUND BY RENDERING THE SCREEN, not by a test. A 5-day trip came back with
+   Thursday and Friday as the IDENTICAL outfit and one sweater going out on 4 of
+   5 days at exactly its tolerance ceiling. Zero violations, minimum pieces —
+   "correct", and it reads as the app failing.
+   The laundry counter only stops a piece exceeding its tolerance; it says
+   nothing about a trip that LOOKS the same every day, and shoes (Infinity) and
+   sweaters (4) sail straight through it. K guards how many options EXIST in the
+   pack, not whether consecutive days differ — that is a real gap in D5's
+   mechanism, so the cost function has to close it.
+   Weighted so reuse of bottoms and shoes stays free (packing light is the whole
+   point) and repetition is charged on the VISIBLE half: same outfit twice
+   running is worth ~3 extra pieces, the same top on a third day about a
+   quarter of one. */
+const PACK_REPEAT_DAY = 1500;   // identical outfit on consecutive days (~1.5 pieces)
+const PACK_REPEAT_ANY = 400;    // identical outfit again later in the trip
+const PACK_REPEAT_TOP = 150;    // per earlier DAY this top/dress already went out
+/* ⚠️ The suggester's own combo score spreads only about 2.5–5.5 points
+   (measured), so against cost terms of 1000–5000 it was pure rounding error —
+   the engine's formality cohesion, colour-pair and item-pair affinity were
+   being thrown away. Scaling it up makes quality a real tie-breaker between
+   options with the same piece count (a full spread ≈ half a piece) without
+   letting it override the objective. Same reason PACK_PROVEN_W isn't 20 any
+   more. Re-measure these if scoreCombo's range ever changes. */
+const PACK_SCORE_W = 150;       // weight on the suggester's own combo score
+const PACK_PROVEN_W = 60;       // per piece proven on past trips
+
 const PACK_BULKY_SUBCATS = ["Coats", "Boots"];   // wear-don't-pack advice (D9)
 const PACK_GRADE_MIN_DAYS = 3;                   // logged days before self-grading speaks
 
@@ -515,6 +542,16 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
   const rnd = packRng(sd);
   let best = null;
 
+  /* The tightness dial governs REPETITION, not only option counts. D5 gave K the
+     job of carrying variety, but K only guarantees options EXIST in the pack —
+     it says nothing about whether consecutive days look different, which is the
+     thing she'd actually notice. At Lean, wearing one sweater four days out of
+     six is exactly right; at Cushion it is the whole complaint.
+     ⚠️ PACK_REPEAT_DAY is deliberately NOT scaled: the identical outfit two days
+     running is the worst-looking failure the solver can produce, so that floor
+     holds at every tightness. */
+  const repW = K <= PACK_OPTIONS.lean ? 0.5 : (K >= PACK_OPTIONS.cushion ? 2 : 1);
+
   /* Occasions grouped by date, in order. ⚠️ The greedy walks the trip in DATE
      ORDER carrying a running wear counter, because tolerance has to DRIVE
      selection rather than be repaired after it. An earlier version scored only
@@ -543,10 +580,16 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
     const counts = new Map();
     let washed = false;
     const seedOf = (id, it) => counts.has(id) ? counts.get(id) : (washed ? 0 : packWearSeed(it, lst));
+    // Repetition state (see PACK_REPEAT_* above).
+    const usedCombos = new Set();     // id-key → already worn on an earlier day
+    const dayWorn = new Map();        // itemId → earlier DAYS it went out this trip
+    let prevDayCombos = new Set();    // id-keys chosen yesterday
+    let repeatTally = 0;
 
     for (const [date, occs] of grouped) {
       if (washSet.has(date)) { counts.clear(); washed = true; }
       const usedToday = new Set();
+      const todayCombos = new Set();
       // Scarcest first within a day — a dressy evening has fewer options than an
       // ordinary afternoon and should claim its pieces before the easy case does.
       const ord = occs.slice().sort((a, b) =>
@@ -566,35 +609,62 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
         }
         let pick = null, bestCost = Infinity;
         for (const cd of list) {
-          let added = 0, over = 0, prov = 0;
+          let added = 0, over = 0, prov = 0, topRepeat = 0;
           for (const id of cd.ids) {
             if (!pack.has(id)) added++;
             if (proven.has(id)) prov++;
             const it = itemById.get(id);
-            const tol = it ? wearTolerance(it) : Infinity;
+            if (!it) continue;
+            // Repetition is charged on the visible half only — reusing the same
+            // jeans and shoes all week is the point of packing light.
+            const slot = suggestSlot(it);
+            if (slot === "Tops" || slot === "Dresses") topRepeat += (dayWorn.get(id) || 0);
+            const tol = wearTolerance(it);
             // usedToday: the same piece in two of today's outfits is ONE wear-day.
             if (tol === Infinity || usedToday.has(id)) continue;
             if (seedOf(id, it) + 1 > tol) over++;
           }
+          const key = cd.ids.join(",");
           // A violation outweighs several new pieces: packing one more tee beats
           // wearing a dirty one, which is the whole reason she asked for this.
-          const cost = over * 5000 + added * 1000 - prov * 20 - cd.score + rnd() * 0.5;
+          const cost = over * 5000
+            + (prevDayCombos.has(key) ? PACK_REPEAT_DAY : 0)
+            + (usedCombos.has(key) ? PACK_REPEAT_ANY * repW : 0)
+            + topRepeat * PACK_REPEAT_TOP * repW
+            + added * 1000
+            - prov * PACK_PROVEN_W
+            - cd.score * PACK_SCORE_W
+            + rnd() * 0.5;
           if (cost < bestCost) { bestCost = cost; pick = cd; }
         }
         chosen.set(occ.id, pick);
+        const pickKey = pick.ids.join(",");
+        if (prevDayCombos.has(pickKey)) repeatTally += 150;
+        else if (usedCombos.has(pickKey)) repeatTally += 40;
+        todayCombos.add(pickKey);
         for (const id of pick.ids) { pack.add(id); usedToday.add(id); }
       }
 
       // Commit the day: one wear-day per distinct piece, however many outfits.
       for (const id of usedToday) {
         const it = itemById.get(id);
-        if (!it || wearTolerance(it) === Infinity) continue;
+        if (!it) continue;
+        const slot = suggestSlot(it);
+        if (slot === "Tops" || slot === "Dresses") {
+          repeatTally += (dayWorn.get(id) || 0) * 8;
+          dayWorn.set(id, (dayWorn.get(id) || 0) + 1);
+        }
+        if (wearTolerance(it) === Infinity) continue;
         counts.set(id, seedOf(id, it) + 1);
       }
+      for (const k of todayCombos) usedCombos.add(k);
+      prevDayCombos = todayCombos;
     }
 
     const sched = packSchedule(assignOf(dem, chosen), { dates: days, ls: lst, washDays });
-    const scoreOf = unmet.length * 1e6 + sched.violations.length * 1e4 + pack.size;
+    // Pieces stay primary (100 each) so the pack still minimises; repetition
+    // breaks ties between restarts and is worth ~1.5 pieces per identical day.
+    const scoreOf = unmet.length * 1e6 + sched.violations.length * 1e4 + pack.size * 100 + repeatTally;
     if (!best || scoreOf < best.scoreOf) best = { pack, chosen, unmet, sched, scoreOf };
   }
 
@@ -714,6 +784,71 @@ function packWashPlan(pack, { ls = null, today = null, startDate = null } = {}) 
   // The last day a wash still helps: the day before departure.
   const lastUseful = startDate ? shiftDate(startDate, -1) : null;
   return { hamper, underTol, lastUsefulWashDay: lastUseful && lastUseful >= t ? lastUseful : null };
+}
+
+/* ---- mid-trip: "wash these six" ----------------------------------------
+   The pack was solved before departure against the laundry plan she declared.
+   Once she's there and actually logging wears, the schedule can be re-run
+   FORWARD from real state over the days that are left — which turns the vague
+   "do laundry at some point" into the only version that's actionable: the
+   specific pieces the back half of the trip needs.
+
+   ⚠️ Same discipline as tripUnwornNow: this decides whether to speak at all.
+   Null on the last day (nothing left to plan for) and null when nothing would
+   actually run out, because a laundry row that always shows is a row she stops
+   reading. It is inventory, not a nudge — no dismiss, it goes away by itself.
+
+   ⚠️ Reads the BY-DAY PLAN first and the solve record only as a fallback. By
+   mid-trip the plan is what she's been living from (planWoreIt writes to it),
+   so the solver's original assignment may be several revisions stale. */
+function packMidTripWash(c, today = todayStr(), { ls = null, wearRows = null } = {}) {
+  if (!isDatedTrip(c) || tripPhase(c, today) !== "trip") return null;
+  const rest = tripDates(c).filter(d => d >= today);
+  if (rest.length < 2) return null;                 // last day — the recap owns it
+  const lst = ls || laundryState();
+
+  // What she plans to wear on each remaining day: the by-day plan if it has
+  // looks, else the pack's own assignment for that date.
+  const assign = [];
+  const rec = packRecord(c.id);
+  const fromRec = packAssignFromRecord(c.id);
+  const slate = packSlate(c, { character: packCharacter(c.id), wearRows });
+  const demand = packDemand(slate);
+  for (const d of rest) {
+    const looks = planActiveLooks(c, d);
+    if (looks.length) {
+      const ids = new Set();
+      for (const oid of looks) {
+        const o = outfitById.get(oid);
+        if (o) for (const it of outfitItems(o)) ids.add(it.id);
+      }
+      if (ids.size) { assign.push({ date: d, ids: [...ids] }); continue; }
+    }
+    for (const occ of demand.filter(o => o.date === d)) {
+      const cd = fromRec.get(occ.id);
+      if (cd) assign.push({ date: d, ids: cd.ids });
+    }
+  }
+  if (!assign.length) return null;
+
+  const sched = packSchedule(assign, { dates: rest, ls: lst, washDays: packWashDays(c) });
+  // A piece is "needed washed" if it's already dirty and still due to go out, or
+  // if the remaining days would push it past tolerance.
+  const needed = new Map();
+  for (const v of sched.violations) {
+    if (!needed.has(v.itemId)) needed.set(v.itemId, { item: itemById.get(v.itemId), date: v.date, tol: v.tol });
+  }
+  for (const a of assign) {
+    for (const id of a.ids) {
+      const it = itemById.get(id);
+      if (!it || needed.has(id)) continue;
+      if (isDirty(it, lst)) needed.set(id, { item: it, date: a.date, tol: wearTolerance(it) });
+    }
+  }
+  const list = [...needed.values()].filter(e => e.item);
+  if (!list.length) return null;
+  list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  return { list, items: list.map(e => e.item), daysLeft: rest.length, firstDate: list[0].date };
 }
 
 /* ---- what it left out, and why -----------------------------------------
@@ -918,12 +1053,29 @@ function renderCapsulePack() {
 
   const legNote = res.stats.legs > 1 ? ` · ${res.stats.legs} legs` : "";
   const wxNote = packWxFor(c) ? "" : ` · no weather loaded`;
+  /* ⚠️ Say ONCE, plainly, that a far-out trip was packed against climatology
+     rather than a forecast. The per-day chip already carries a terse "avg", but
+     for a September trip planned in July EVERY day says it, and a label repeated
+     fifteen times is a label she stops seeing. The r19 lesson is that the guess
+     itself is fine and an unlabelled guess is not — so name it where she reads
+     the summary, in the spec's own words ("typical for", never "forecast"). */
+  const histNote = (() => {
+    const wxFor = packWxFor(c);
+    if (!wxFor) return "";
+    const days = tripDates(c).map(d => wxFor(d)).filter(w => w && w.maxT != null);
+    if (!days.length || !days.every(w => w.hist)) return "";
+    const mid = tripDates(c)[Math.floor(tripDates(c).length / 2)];
+    const month = new Date(mid + "T00:00:00").toLocaleDateString(undefined, { month: "long" });
+    const half = +mid.slice(8) <= 15 ? "early" : "mid-to-late";
+    return `<div class="pack-warn-note" style="margin-top:8px">🌡 Packed for weather <b>typical for ${esc(half)} ${esc(month)}</b> — this trip is beyond the forecast range, so these are normals, not a forecast.</div>`;
+  })();
   const head = `<div class="cap-insight">
     <div class="kpi-row">
       <div class="kpi-cell"><div class="kpi-val">${res.stats.pieces}</div><div class="kpi-lbl">pieces</div></div>
       <div class="kpi-cell"><div class="kpi-val">${res.stats.outfits}</div><div class="kpi-lbl">outfits they make</div></div>
     </div>
     <div class="cap-cov-lbl" style="margin-top:10px">${demand.length} occasion${demand.length === 1 ? "" : "s"} over ${tripDates(c).length} day${tripDates(c).length === 1 ? "" : "s"}${legNote}${wxNote}</div>
+    ${histNote}
   </div>`;
 
   // ⚠️ Honest partial (TRIP_BUILDER.md §9): a pack that covers 8 of 10 must SAY
@@ -945,6 +1097,22 @@ function renderCapsulePack() {
     ${res.violations.slice(0, 4).map(v => `<div>🧺 ${esc(planDayLabel(v.date))} — ${esc(v.name)} would be its ${ordinal(v.nth)} wear (washes every ${v.tol})</div>`).join("")}
     ${res.violations.length > 4 ? `<div>…and ${res.violations.length - 4} more</div>` : ""}
     <div class="pack-warn-note">Set a laundry day on the by-day planner, or add a piece.</div>
+  </div>` : "";
+
+  /* Consequences of her own edits, surfaced on both tabs. packConsequences was
+     computed and only the drop path read it, so a swap that stranded a piece —
+     or that broke a later day — said nothing at all until she went looking.
+     ⚠️ "Broken" is the one that matters and it carries a DATE, same rule as the
+     schedule: an edit that costs her Thursday should name Thursday. */
+  const cons = packConsequences(st);
+  const trueOrphans = cons.orphans.filter(id => {
+    const s = packOptionsForPiece(st, id);
+    return !s || !s.size;
+  });
+  const consHtml = (cons.broken.length || trueOrphans.length) ? `<div class="pack-warn soft">
+    ${cons.broken.length ? `<div>⚠︎ <b>${cons.broken.length} day${cons.broken.length === 1 ? "" : "s"} lost a piece</b> — ${esc(cons.broken.slice(0, 3).map(b => planDayLabel(b.date)).join(", "))}${cons.broken.length > 3 ? "…" : ""}</div>` : ""}
+    ${trueOrphans.length ? `<div>${trueOrphans.length} packed piece${trueOrphans.length === 1 ? "" : "s"} not in any outfit — see the Bag tab</div>` : ""}
+    ${cons.broken.length ? `<div class="pack-warn-note">Nothing re-solved on its own. Fix just those days, or leave them.</div>` : ""}
   </div>` : "";
 
   const wash = packWashPlan(res.pack, { startDate: c.start_date });
@@ -972,7 +1140,7 @@ function renderCapsulePack() {
       <div class="ch-name">The pack</div>
       <div class="ch-sub">${esc(capDateLabel(c) || "no dates")}${packCharacter(capsuleId) ? " · " + esc(packCharacter(capsuleId)) : ""}</div>
     </div>
-    ${head}${unmetHtml}${violHtml}${washHtml}${bulkyHtml}${tabs}${body}
+    ${head}${unmetHtml}${consHtml}${violHtml}${washHtml}${bulkyHtml}${tabs}${body}
     <div class="pack-footer">
       <button class="cap-plan" data-pack-resolve style="background:var(--accent)">
         <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
@@ -1088,6 +1256,7 @@ function packBagHtml(st) {
       u.labels.add(occ.context || OCCASION_LADDER[(occ.level || 1) - 1] || "day");
     }
   }
+  const optionFor = packOptionMap(st);
   const body = keys.map(k => {
     const arr = groups.get(k);
     const sub = k.split("/")[1];
@@ -1095,7 +1264,7 @@ function packBagHtml(st) {
       <div class="pack-grp-hd"><div class="t">${esc(sub)}</div><div class="n">${arr.length}</div></div>
       ${arr.map(i => {
         const on = packedSet.has(i.id);
-        const why = packWhyLine(i, usedBy.get(i.id), c);
+        const why = packWhyLine(i, usedBy.get(i.id), c, optionFor.get(i.id));
         return `<div class="pack-bagrow${on ? " on" : ""}">
           <button class="pack-tick" data-pack-tick="${esc(i.id)}" aria-label="Packed">${on ? "✓" : ""}</button>
           ${thumbHtml(i.image_path, "pack-pthumb")}
@@ -1125,16 +1294,63 @@ function packBagHtml(st) {
     <button class="cap-plan sec" data-pack-addany style="margin-top:10px">＋ Bring something else</button></div>`;
 }
 
+/* Which occasions each packed piece buys an ALTERNATIVE for.
+
+   Stage B adds pieces purely to raise the option count, and those bag rows used
+   to read "another option" — true, and too thin to act on. Naming the occasion
+   is the difference between a line she reads and one she learns to skip. A piece
+   in no combo at all is a genuine orphan, and both surfaces say so.
+
+   ONE derivation, two surfaces (the bag rows and the header's orphan count) —
+   the same rule tripRecapData follows. Enumerated once per LEVEL over the pack,
+   which is 10–20 pieces, so it's cheap; memoised on the pack contents so a
+   re-render during editing doesn't pay for it twice. */
+let _packOptMemo = null;
+function packOptionMap(st) {
+  const { c, demand, res } = st;
+  const stamp = `${st.cid}|${res.pack.slice().sort().join(",")}`;
+  if (_packOptMemo && _packOptMemo.stamp === stamp) return _packOptMemo.map;
+  const packSet = new Set(res.pack);
+  const wxFor = packWxFor(c);
+  const levelLabels = new Map();   // level → Set(label)
+  const repOf = new Map();         // level → representative occasion
+  for (const occ of demand) {
+    if (!repOf.has(occ.level)) repOf.set(occ.level, occ);
+    let s = levelLabels.get(occ.level);
+    if (!s) levelLabels.set(occ.level, s = new Set());
+    s.add(occ.context || OCCASION_LADDER[(occ.level || 1) - 1] || "day");
+  }
+  const map = new Map();
+  for (const [lvl, occ] of repOf) {
+    for (const cd of packCandidates(occ, res.pack, { wxFor, all: true })) {
+      if (!cd.ids.every(id => packSet.has(id))) continue;
+      for (const id of cd.ids) {
+        let s = map.get(id);
+        if (!s) map.set(id, s = new Set());
+        for (const lbl of (levelLabels.get(lvl) || [])) s.add(lbl);
+      }
+    }
+  }
+  _packOptMemo = { stamp, map };
+  return map;
+}
+const packOptionsForPiece = (st, id) => packOptionMap(st).get(id) || null;
+
 /* The "why is this here" line. This is where the old max(laundry, coverage)
    formula lives — as an explanation, which is all it was ever good enough for. */
-function packWhyLine(i, use, c) {
+function packWhyLine(i, use, c, optLabels) {
   const tol = wearTolerance(i);
   const days = use && use.days ? use.days.size : 0;
   const labels = use && use.labels ? [...use.labels] : [];
   const bits = [];
   if (labels.length === 1) bits.push(`for ${labels[0]}`);
   else if (labels.length > 1) bits.push(`covers ${labels.length} kinds of day`);
-  else bits.push("another option");
+  else if (optLabels && optLabels.size) {
+    // Not in a planned outfit, but it makes an alternative possible — say what
+    // for. "another option" on its own is true and unusable.
+    const named = [...optLabels].slice(0, 2).join(" / ");
+    bits.push(`spare option for ${named}`);
+  } else bits.push("not in any outfit yet — drop it?");
   // Only speak about laundry when it actually binds — "1 of 1 wears" on every
   // tee is noise that trains her to stop reading the line.
   if (tol !== Infinity && days > tol) bits.push(`${days} wear-days · needs a wash mid-trip (every ${tol})`);

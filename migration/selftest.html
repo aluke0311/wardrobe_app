@@ -2366,6 +2366,74 @@ async function run() {
      score (they shared three tops between them). Violations are a legitimate
      OUTPUT when the closet genuinely can't cover the trip; they are never
      acceptable when it can. */
+  /* ⚠️ Both of these guard a defect found by RENDERING THE SCREEN, not by a test
+     (2026-07-29 r4). A 5-day trip came back with Thursday and Friday as the
+     IDENTICAL outfit and one sweater on 4 of 5 days at exactly its tolerance
+     ceiling: zero violations, minimum pieces, and it reads as the app failing.
+     The laundry counter only stops a piece EXCEEDING tolerance; sweaters (4) and
+     shoes (Infinity) sail through it, and K guards how many options exist in the
+     pack rather than whether consecutive days differ. See PACK_REPEAT_*. */
+  t("no two consecutive days get the identical outfit", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const { demand, res } = solveFor(c, { K: 2, mix: [{ context: "Errands", per: 0.9 }] });
+    const byDate = new Map();
+    for (const o of demand) {
+      const cd = res.assign.get(o.id);
+      if (cd) byDate.set(o.date, (byDate.get(o.date) || []).concat(cd.ids.join(",")));
+    }
+    const days = [...byDate.keys()].sort();
+    const dup = [];
+    for (let k = 1; k < days.length; k++) {
+      const a = byDate.get(days[k - 1]), b = byDate.get(days[k]);
+      if (a.length === 1 && b.length === 1 && a[0] === b[0]) dup.push([days[k - 1], days[k]]);
+    }
+    return !dup.length ? true : `identical on consecutive days: ${JSON.stringify(dup)}`;
+  }));
+
+  // Max distinct DAYS any one top/dress goes out on. Reusing bottoms and shoes
+  // all week is the point of packing light, so they're deliberately excluded.
+  const topSpread = (demand, res) => {
+    const dayWorn = new Map();
+    for (const o of demand) {
+      const cd = res.assign.get(o.id);
+      if (!cd) continue;
+      for (const id of cd.ids) {
+        const it = W.itemById.get(id);
+        if (!it) continue;
+        const slot = W.suggestSlot(it);
+        if (slot !== "Tops" && slot !== "Dresses") continue;
+        let s = dayWorn.get(id); if (!s) dayWorn.set(id, s = new Set());
+        s.add(o.date);
+      }
+    }
+    return Math.max(0, ...[...dayWorn.values()].map(s => s.size));
+  };
+
+  t("at Cushion no single top carries more than half the trip's days", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const { demand, res } = solveFor(c, { K: 3, mix: [{ context: "Errands", per: 0.9 }] });
+    const days = new Set(demand.map(o => o.date)).size;
+    const worst = topSpread(demand, res);
+    return worst <= Math.ceil(days / 2)
+      ? true : `days=${days} cap=${Math.ceil(days / 2)} worstTop=${worst}`;
+  }));
+
+  /* The tightness dial has to DO something to the thing she'd notice. Before
+     repW existed, K only changed option counts, so Lean and Cushion produced the
+     same daily repetition and the dial was decorative on this axis. */
+  t("Lean tolerates strictly more repetition than Cushion", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const mix = [{ context: "Errands", per: 0.9 }];
+    const lean = solveFor(c, { K: 1, mix });
+    const cush = solveFor(c, { K: 3, mix });
+    const l = topSpread(lean.demand, lean.res), u = topSpread(cush.demand, cush.res);
+    // ⚠️ STRICT on purpose. `l >= u` passed even with repW pinned to 1, i.e. with
+    // the dial decorative on this axis — a test that couldn't fail (verified by
+    // mutation). Measured on this closet: Lean 4 days / 6 pieces, Cushion 2 / 8.
+    return l > u
+      ? true : `leanWorstTop=${l} cushionWorstTop=${u} (dial not affecting repetition)`;
+  }));
+
   t("a 10-day trip packs enough tops to stay inside tolerance", () => withPackCloset(() => {
     const c = packTrip(10);
     const { demand, res } = solveFor(c, { K: 1, mix: [{ context: "Errands", per: 0.9 }] });
@@ -2473,6 +2541,133 @@ async function run() {
     ],
     wears: (ws) => { ws.push({ id: "o1", item_id: "tee0", worn_on: "2026-05-02", context: ["Errands"], formality_for: 3 });
                      ws.push({ id: "o2", item_id: "tee0", worn_on: "2026-06-02", context: ["Errands"], formality_for: 3 }); },
+  }));
+
+  /* ---- mid-trip wash plan (r4) ----
+     Turns "6 things are dirty" into "wash these six, the back half needs them".
+     ⚠️ Like tripUnwornNow, the derivation owns whether to speak at all — a
+     laundry row that always shows is a row she stops reading. */
+  const midTripCloset = (fn, opt = {}) => withPackCloset(fn, {
+    ...opt,
+    capsules: [{ id: "onnow", name: "Now", kind: "packing",
+                 start_date: D(-2), end_date: D(3), locations: [], plan: opt.plan || {} }],
+    capsuleLinks: (opt.members || ["tee0", "jea0", "snk0"]).map(id => ({ capsule_id: "onnow", item_id: id })),
+  });
+
+  t("mid-trip wash plan names the pieces the rest of the trip needs", () => midTripCloset(() => {
+    const c = W.capsuleById.get("onnow");
+    // A tee at tolerance 1, already worn since its wash, and planned again later.
+    const tee = W.itemById.get("tee0");
+    tee.last_washed = D(-5);
+    W.wears.push({ id: "mt1", item_id: "tee0", worn_on: D(-1), context: ["Errands"], formality_for: 3 });
+    W.kvData.set("pack:onnow", {
+      built: D(-3), K: 2, pieces: ["tee0", "jea0", "snk0"],
+      assign: { [D(1) + "#0"]: ["tee0", "jea0", "snk0"], [D(2) + "#0"]: ["tee0", "jea0", "snk0"] },
+    });
+    const m = W.packMidTripWash(c, W.todayStr());
+    return m && m.items.some(i => i.id === "tee0")
+      ? true : `plan=${m ? JSON.stringify(m.items.map(i => i.id)) : "null"}`;
+  }));
+
+  t("mid-trip wash plan says nothing on the last day", () => midTripCloset(() => {
+    const c = W.capsuleById.get("onnow");
+    const tee = W.itemById.get("tee0");
+    tee.last_washed = D(-5);
+    W.wears.push({ id: "mt2", item_id: "tee0", worn_on: D(-1), context: ["Errands"], formality_for: 3 });
+    // ⚠️ The final day MUST carry an assignment with a dirty piece, or the
+    // "no assignment → null" path answers instead of the guard and the case
+    // passes without testing anything (found by mutation).
+    W.kvData.set("pack:onnow", {
+      built: D(-3), K: 2, pieces: ["tee0", "jea0", "snk0"],
+      assign: { [D(3) + "#0"]: ["tee0", "jea0", "snk0"] },
+    });
+    const spoke = W.packMidTripWash(c, D(3));
+    // Sanity: the same state one day earlier DOES speak, so the only difference
+    // being tested is "is this the last day".
+    const earlier = W.packMidTripWash(c, D(2));
+    return spoke === null && earlier !== null
+      ? true : `lastDay=${JSON.stringify(spoke && spoke.items.map(i => i.id))} dayBefore=${earlier ? "spoke" : "silent"}`;
+  }));
+
+  t("mid-trip wash plan stays quiet when nothing would run out", () => midTripCloset(() => {
+    const c = W.capsuleById.get("onnow");
+    // Everything freshly washed today — no reason to speak.
+    for (const id of ["tee0", "jea0", "snk0"]) W.itemById.get(id).last_washed = W.todayStr();
+    W.kvData.set("pack:onnow", {
+      built: D(-3), K: 2, pieces: ["tee0", "jea0", "snk0"],
+      assign: { [D(1) + "#0"]: ["tee0", "jea0", "snk0"] },
+    });
+    return W.packMidTripWash(c, W.todayStr()) === null
+      ? true : `spoke anyway: ${JSON.stringify((W.packMidTripWash(c, W.todayStr()) || {}).list)}`;
+  }));
+
+  t("mid-trip wash plan is null outside the trip phase", () => midTripCloset(() => {
+    const c = W.capsuleById.get("onnow");
+    return W.packMidTripWash(c, D(-30)) === null ? true : "spoke before the trip";
+  }));
+
+  /* ⚠️ Found by rendering the trip dash and reading it: "🧼 Wash 1 piece · white
+     tee" sat directly above "🧺 1 of 7 pieces in the hamper" — two rows for one
+     fact. The wash-plan row is the actionable version, so the generic one folds
+     when it adds nothing. */
+  t("the generic hamper row folds when the wash plan already names everything dirty", () => midTripCloset(() => {
+    const c = W.capsuleById.get("onnow");
+    W.itemById.get("tee0").last_washed = D(-5);
+    W.wears.push({ id: "mtf", item_id: "tee0", worn_on: D(-1), context: ["Errands"], formality_for: 3 });
+    W.kvData.set("pack:onnow", {
+      built: D(-3), K: 2, pieces: ["tee0", "jea0", "snk0"],
+      assign: { [D(1) + "#0"]: ["tee0", "jea0", "snk0"], [D(2) + "#0"]: ["tee0", "jea0", "snk0"] },
+    });
+    const savedTrip = W.tripModeId;
+    W.tripModeId = "onnow";
+    let html = "";
+    try { html = W.tripDashHtml(c); } finally { W.tripModeId = savedTrip; }
+    const plan = (html.match(/data-td-washplan/g) || []).length;
+    const generic = (html.match(/data-td-laundry/g) || []).length;
+    return plan === 1 && generic === 0
+      ? true : `washplanRows=${plan} genericHamperRows=${generic}`;
+  }, { members: ["tee0", "jea0", "snk0"] }));
+
+  /* ---- what the bag line says (r4) ----
+     Stage B adds pieces purely to raise the option count. Those rows read
+     "another option", which is true and unusable — §13 flagged it and nothing in
+     the suite would have caught it, because no case read the copy. */
+  t("a spare piece's why-line names the occasion it buys an option for", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const i = W.itemById.get("blo0");
+    const why = W.packWhyLine(i, undefined, c, new W.Set(["Work"]));
+    return /spare option for Work/.test(why) && !/another option/.test(why)
+      ? true : `why="${why}"`;
+  }));
+
+  t("a piece in no outfit at all says so rather than claiming to be an option", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const why = W.packWhyLine(W.itemById.get("blo0"), undefined, c, null);
+    return /not in any outfit/.test(why) ? true : `why="${why}"`;
+  }));
+
+  /* ⚠️ A far-out trip is packed against ERA5 normals, not a forecast, and has to
+     say so where she reads the summary. The per-day chip's terse "avg" appears on
+     every one of fifteen days, and a label repeated fifteen times is one she
+     stops seeing (r19: the guess is fine, an unlabelled guess is not). */
+  t("a beyond-forecast trip is labelled typical-for, never forecast", () => withPackCloset(() => {
+    const c = W.capsuleById.get("farc");
+    const savedWx = W._planWx, savedFor = W._planWxLoadedFor;
+    const wx = {};
+    for (const d of W.tripDates(c)) wx[d] = { maxT: 82, minT: 68, code: 0, hist: true, locName: "Javea" };
+    W._planWx = wx; W._planWxLoadedFor = c.id;
+    W.capsuleId = c.id; W.capsuleView = "pack"; W._packView = "days";
+    let html = "";
+    try { W.packLoadState(c.id); html = W.renderCapsulePack(); }
+    finally { W._planWx = savedWx; W._planWxLoadedFor = savedFor; }
+    // Must name it as normals AND disclaim explicitly. (Don't try to ban the
+    // WORD "forecast" — the copy legitimately says "beyond the forecast range".)
+    return /typical for/.test(html) && /not a forecast/.test(html)
+      ? true : `missing typical-for/disclaimer (len=${html.length})`;
+  }, {
+    capsules: [{ id: "farc", name: "Javea", kind: "packing",
+                 start_date: D(50), end_date: D(55),
+                 locations: [{ name: "Javea", lat: 38.79, lon: 0.16 }], plan: {} }],
   }));
 
   t("packGrade stays silent until the trip has enough logged days", () => withPackCloset(() => {

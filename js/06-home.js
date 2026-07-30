@@ -715,16 +715,41 @@ function tripDashHtml(c) {
       <span style="color:var(--accent);font-weight:600">›</span></button>`;
   }
 
+  /* Mid-trip wash plan: the specific pieces the REST of the trip needs washed,
+     from re-running the schedule forward over the days that are left. Sits above
+     the generic hamper row because it's the actionable version of it — "wash
+     these six" instead of "6 things are dirty". packMidTripWash owns whether to
+     speak; null on the last day and whenever nothing would actually run out. */
+  let washPlanHtml = "";
+  const mtw = (phase === "trip" && LAUNDRY_READY() && typeof packMidTripWash === "function")
+    ? packMidTripWash(c, today) : null;
+  if (mtw) {
+    const names = mtw.items.slice(0, 3).map(i => i.name || "a piece").join(", ");
+    washPlanHtml = `<button class="td-laun" data-td-washplan>🧼
+      <span style="flex:1">Wash ${mtw.items.length} piece${mtw.items.length === 1 ? "" : "s"} for the rest of the trip · ${esc(names)}${mtw.items.length > 3 ? "…" : ""}</span>
+      <span style="color:var(--accent);font-weight:600">›</span></button>`;
+  }
+
   // Suitcase hamper (works for every phase, incl. capsule mode).
   let launHtml = "";
   if (LAUNDRY_READY()) {
     const members = capsuleItems(c.id).filter(i => itemStatus(i) === "Available");
     const _ls = laundryState();
     const dirty = members.filter(i => isDirty(i, _ls));
-    const verb = phase === "pack" ? "wash before you pack" : "in the hamper";
-    launHtml = `<button class="td-laun" data-td-laundry>🧺
-      <span style="flex:1">${dirty.length ? `${dirty.length} of ${members.length} pieces ${verb}` : `Suitcase is clean · ${members.length} pieces`}</span>
-      <span style="color:var(--accent);font-weight:600">＋</span></button>`;
+    /* ⚠️ Don't say the same thing twice. The wash-plan row above is the
+       ACTIONABLE version of this one ("wash the white tee" vs "1 piece is
+       dirty"), so when it already names everything dirty, this row is noise
+       sitting directly beneath it — visible the moment the dash is rendered and
+       read, invisible in the code. Same instinct as the Home attention
+       hierarchy: one row per thing she has to do. */
+    const named = mtw ? new Set(mtw.items.map(i => i.id)) : null;
+    const covered = named && dirty.length && dirty.every(i => named.has(i.id));
+    if (!covered) {
+      const verb = phase === "pack" ? "wash before you pack" : "in the hamper";
+      launHtml = `<button class="td-laun" data-td-laundry>🧺
+        <span style="flex:1">${dirty.length ? `${dirty.length} of ${members.length} pieces ${verb}` : `Suitcase is clean · ${members.length} pieces`}</span>
+        <span style="color:var(--accent);font-weight:600">＋</span></button>`;
+    }
   }
 
   // Remaining days mini-strip (trip phase): plan coverage + weather at a glance.
@@ -770,6 +795,7 @@ function tripDashHtml(c) {
     ${planHtml}
     ${unpackHtml}
     ${unwornHtml}
+    ${washPlanHtml}
     ${launHtml}
     <div class="td-chips">${chips}</div>
     ${daysHtml}
@@ -1225,6 +1251,13 @@ function wireTripDash(tc) {
   on("[data-td-unpack]", () => openTripRecap(tc.id, { unpack: true }));
   on("[data-td-suggest]", () => openSuggestSheet(null, tc.id));
   on("[data-td-build]", () => openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET }));
+  // Straight into the wash sheet, pre-scoped to exactly those pieces — the point
+  // of the row is that she doesn't have to work out which ones.
+  on("[data-td-washplan]", () => {
+    const m = packMidTripWash(tc, todayStr());
+    if (!m) { renderHome(); return; }
+    openLaundrySheet({ pool: m.items });
+  });
   on("[data-td-laundry]", () => {
     switchTab("closet");
     closetHamper = true; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
