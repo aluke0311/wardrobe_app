@@ -1,7 +1,39 @@
 # Trip Builder ("Pack Plan") — round spec
 
-**Status:** designed, decisions locked, NOT BUILT. Written 2026-07-29 against
-`APP_VERSION 2026-07-29 r1`, selftest 177/177.
+**Status: phases 1–4 SHIPPED** (`2026-07-29 r2` engine, `r3` screens + revision
++ capture). Selftest 177 → **220**, green. Phases 5–6 partly done — see §13.
+
+Written 2026-07-29 against `APP_VERSION 2026-07-29 r1`. The design below is what
+got built; deviations found during the build are marked **BUILT DIFFERENTLY**.
+
+**Decision D2 is CONFIRMED** by its gate case: "distinct = any piece differs"
+does force shoes for both formality bands on a 10-day trip with two dressy
+evenings. No per-slot floor, no shoe cap.
+
+**BUILT DIFFERENTLY — five things the build changed:**
+1. **The greedy walks the trip in DATE ORDER with a running wear counter.** §6
+   described scoring on "unmet → violations → pieces" with a post-hoc repair.
+   That doesn't work: scoring only "new pieces added" makes reuse free, so ten
+   days at one level all chose the identical outfit and the repair couldn't undo
+   it (every occasion shares one candidate list, so they all moved to the same
+   alternative). Tolerance has to drive selection, not be patched after it.
+2. **`PACK_SOLVE_CANDIDATES = 120`, separate from the 8 offered.** Slicing the
+   top 8 by score starves the laundry constraint — those 8 are near-duplicates.
+   This is load-bearing and mutation-checked.
+3. **Candidates are enumerated once per (level, leg, temperature band)**, not per
+   occasion. Per-occasion enumeration was a measured hang, not a slowdown.
+4. **The character mix is a TARGET COUNT across the trip**, not a filler for
+   empty days, and **travel days are claimed before the guesses**. Filler-only
+   meant a "two dressy evenings" character produced no dressy occasion at all,
+   because weekday rhythm had already taken every day.
+5. **`capsules.plan` is written only by an explicit action.** §5 called the plan
+   pass optional; auto-creating ~13 look records per solve would flood Looks.
+
+**⚠️ Three defects were found by RENDERING THE SCREEN AND READING IT, none by
+the tests** — the same lesson as the 181px button. The bag line contradicted the
+laundry warning above it (occasions vs wear-days), "20 options" sat next to a
+"See 20" button, and three occasions stacked on the departure day. Cases now pin
+all three, but the tests did not find them. Render the screens.
 
 The ask, verbatim: *"use logic and previous trips and previous wears to suggest
 items and number of items of different categories/subcategories to pack. Request
@@ -534,6 +566,35 @@ if usage runs out.
 | **4** | Capture: create-form additions, build sheet, `packOccasionSeed`, `packCharacter`, `pruneDayPlan` exemption + cases 19–23 | Now the pre-fill has something real to pre-fill *into*. |
 | **5** | Memory + loop: `packTemplate`, `packGrade`, `packLeftOut`, `packDiff` + cases 24–27 | Needs at least one completed trip to be meaningful. |
 | **6** | Polish: `packWashPlan`, `packBulkyAdvice`, mid-trip wash plan, guess labels | |
+
+### What actually shipped, and what's left
+
+**Shipped in r2** (engine): `tripLegs` · `packSlate` · `packDemand` · `packRack` ·
+`packCandidates` · `packDiversify` · `packSchedule` · `packDistinct` ·
+`packSolve` · `packOptionCount` · `packOutfitCount` · `packGaps` ·
+`packWashPlan` · `packLeftOut` · `packBulkyAdvice` · `packGrade` ·
+`packOccasionSeed` · `packCharacter`.
+
+**Shipped in r3** (surfaces): `capsuleView "pack"` with Days + Bag ·
+`packPersist`/`packSyncMembers` · swap / another / other-options / lock /
+drop / bring / fix-broken · `packResolveUnlocked` · `openPackTightSheet` ·
+`openPackBuildSheet` · character chips + fixed events on the create form ·
+`openPackTemplateSheet` · `packDiff` on the trip-detail button ·
+`packGradeRowHtml` on the recap · the `pruneDayPlan` trip exemption.
+
+**Still open:**
+- **Mid-trip "wash these six"** — `packSchedule` run forward from actual state,
+  surfaced on trip mode's hamper row. Not built.
+- **Guess labels** are only partly there: the build sheet says where the occasion
+  mix came from, and the pack header says "no weather loaded", but the Days cards
+  don't mark a climatology-derived forecast as `hist`.
+- **`packConsequences` is computed but barely surfaced** — the drop path uses it;
+  swap and re-solve just re-render. An orphan-pieces line is the obvious next
+  addition.
+- **The Bag tab's `packWhyLine` never explains a piece that exists only to raise
+  the option count** — it says "another option", which is true but thin.
+- `PACK_CHAR_SEED` and `PACK_TRIP_QUOTA` are still the guessed starting values
+  (§15). Rewrite them from St. Louis and Javea rather than tuning now.
 
 Phases 1–3 are a usable feature. **St. Louis is Aug 12** — that's the deadline
 worth aiming at, and Javea in September stress-tests the hard case with a round in

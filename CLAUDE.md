@@ -56,6 +56,92 @@ the WHOLE outfit (`deriveWearFormality`), so a blazer tagged Dressed Up that
 keeps going out with jeans records genuinely lower days. A solo-logged piece
 derives its level from itself alone and so can never disagree — harmless.
 
+**THE TRIP BUILDER / "pack plan" (2026-07-29 r2 + r3) — SHIPPED, phases 1–4.**
+`js/21-pack.js` (boot renumbered to `22-boot.js`; index.html now has **23**
+cache-busted tags). **Full spec, all 13 locked decisions, the rejected
+alternatives and what's still open: `TRIP_BUILDER.md` in the repo root — read it
+before touching any of this.** Her ask: suggest what and how many to pack, from
+past trips + past wears + this trip's weather + laundry tolerance. Selftest
+177 → **220**, run green; all 43 new cases mutation-checked red in the same
+session. Entry: a dated trip's capsule page → "✨ Build the pack".
+
+⚠️ **THREE INVERSIONS. Getting any of them backwards produces a plausible WRONG
+answer rather than an obvious failure — that's why they're written in the file
+header too.**
+- ① **OUTFITS FIRST; the pack is the union of their pieces.** Set cover over
+  `(slot, level)` cells cannot work — cells aren't independent, so it returns
+  packs where every cell is satisfied and no wearable outfit exists. **Counts are
+  an OUTPUT, never a target.** The old `max(laundry, coverage)` formula survives
+  only as the "why is this here" text on a bag line.
+- ② **SCHEDULE, DON'T DIVIDE.** `ceil(wear-days / tolerance)` breaks on uneven
+  distribution and can't name a day. `packSchedule` walks the dates, so
+  infeasibility arrives **with a DATE**. ⚠️ It seeds each counter from
+  `last_washed` + `laundryState` — a jean at 4/5 wears on departure day is
+  tolerance-1 for the trip. `planRewearFlags` fixed this exact bug once already.
+- ③ **THE SOLVE IS AN EVENT, NOT A FUNCTION.** Output is state (`kv "pack:<cid>"`
+  + `capsule_items`); edits mutate it and never re-enter the solver. Same model as
+  the rack — **stability is the feature**. Determinism comes from a seeded RNG
+  swapped over `Math.random` for the duration of a *synchronous* `suggestOutfits`
+  call; ⚠️ if that function ever gains an `await`, this breaks.
+
+**It REUSES the suggester rather than forking it** — three small extensions:
+`suggestOutfits` gained an `opts` param (`{all, uniqueCap}` = exhaustive mode);
+`buildRack` gained an optional `quota` (`PACK_TRIP_QUOTA`, cold share untouched);
+`buildTripWeather`'s leg-splitting moved to `tripLegs`/`tripLocForDate`.
+⚠️ **Do not add scoring or filtering knobs to `opts`** — the moment the pack asks
+for different RULES it has forked the engine and ① is broken.
+
+- ⚠️ **`PACK_SOLVE_CANDIDATES` (120) is LOAD-BEARING and separate from the 8
+  offered.** The top 8 by score are near-duplicates (same shirt, different shoes),
+  which starves the laundry constraint: a 10-day trip on tolerance-1 tees came
+  back with five violations its closet could easily have avoided.
+- ⚠️ **The greedy walks the trip in DATE ORDER with a running wear counter.**
+  Scoring only "new pieces added" makes reuse free — ten days at one level all
+  chose the identical outfit, and a post-hoc repair can't undo it because every
+  occasion shares one candidate list. **Do not "simplify" this back.**
+- **Candidates are enumerated once per (level, leg, temperature band)**, not per
+  occasion; per-occasion was a measured hang. `RACK_SLOT_QUOTA` is home-sized, so
+  the pack passes `PACK_TRIP_QUOTA`; **one rack PER LEG, unioned** (Madrid-then-
+  Javea is two climates).
+- ⚠️ **`packCandidates` passes `cleanOnly=FALSE` deliberately.** Laundry is a
+  SCHEDULE constraint here, not a pool filter — a piece dirty today is fine after
+  a wash before departure, and filtering it is ② in a new hat. Level 1 draws from
+  the whole closet, never the rack (same precedence as `_suggBasePool`).
+- **Demand is a MULTISET of occasions (D6), not a day grid.** Placement only
+  matters for a mid-trip wash. ⚠️ The character mix is a **target count across the
+  trip**, and **travel days are claimed BEFORE the guesses** — filler-only meant a
+  "two dressy evenings" character produced NO dressy occasion, because weekday
+  rhythm had taken every day, and travel-last stacked three occasions on the
+  departure day.
+- **Tightness = options per occasion** (`PACK_OPTIONS` 1/2/3), not spare pieces.
+  That's what makes `minimize |pack|` safe as an objective: K carries variety
+  structurally, the way `RACK_COLD_SHARE` does at home.
+- **ZERO new columns.** Slate + fixed events → `dayplan`; wash day →
+  `PLAN_LAUNDRY`; pack → `capsule_items` (`packed=false`); solve record + trip
+  character → `kv`. ⚠️ **`pruneDayPlan` now exempts dates inside a dated capsule**
+  — without it a September trip planned in July was silently deleted on the next
+  save (also a latent week-planner bug). `RACK_LOOKAHEAD_DAYS`(14) is what keeps a
+  distant declared event out of today's rack; **don't widen it** for this feature.
+- ⚠️ **`packSyncMembers` never un-packs something already ticked** `packed=true` —
+  it's physically in the bag.
+- **`capsules.plan` is written ONLY by an explicit "send to the by-day plan".**
+  Auto-creating ~13 look records per solve would flood her Looks list.
+- **Honest partial (§9), not a smaller silent pack:** "8 of 10 occasions covered",
+  each named with its date and reason. That's the r12 "looked like a partial
+  result" bug guarded against. Gaps offer the nearest coverable level and **never
+  a purchase** — shopping is a hard NO and packing is where it's most tempting.
+- ⚠️ **`packLeftOut` is a fact, never advice** (from `travelUnused`): "packed 3×,
+  worn 0×" with a one-tap Bring it. Never a "stop packing this".
+- ⚠️ **The bag line and the schedule must both count `(item, DAY)`.** The line
+  said "needs a wash mid-trip" for a tee used twice on ONE day while the schedule
+  correctly found no violation. Same `countByDay` rule; a case pins the agreement.
+- **Same-day occasions in identical clothes merge into one card** — `dayplan`
+  already settles it ("one outfit across contexts = one entry"). Display only; the
+  laundry and options math still sees both.
+- ⚠️ **Three defects were found by RENDERING THE SCREEN AND READING IT, not by the
+  tests** (the day/occasion contradiction, "20 options" beside a "See 20" button,
+  and the stacked departure day). Same lesson as the 181px button.
+
 **TRIP RETROSPECTIVE + TRAVEL MEMORY (2026-07-29 r1) — SHIPPED.** Her ask: "what
 haven't I worn" + "what earned its weight". Trip mode had a beginning and an end
 but nothing carried forward, so the recap was an autopsy. Selftest 167 → **177**,
@@ -485,7 +571,7 @@ first. (It was all one 16k-line `index.html` until 2026-07-25 r13; see
 `index.html` = `<head>` + body markup + ordered `<script src>` tags, ~278 lines.
 Everything else moved out **untouched** — the split was cut-and-paste at the
 existing `/* ==== */` section banners and verified byte-identical, so no logic,
-naming or ordering changed. ~14,600 lines of JS across 20 files:
+naming or ordering changed. ~18,100 lines of JS across 22 files:
 
 | file | lines | what's in it |
 |---|---|---|
@@ -509,7 +595,8 @@ naming or ordering changed. ~14,600 lines of JS across 20 files:
 | `js/18-weather.js` | 311 | Open-Meteo, geocoding, `_wxCache` |
 | `js/19-wiring.js` | 798 | `switchTab`, `wireEvents`, delegation |
 | `js/20-rack.js` | 300 | **the rack** — derivation, nudges, rack screen |
-| `js/21-boot.js` | 183 | snapshot, freshness, auth, `init()` |
+| `js/21-pack.js` | 1699 | **the trip builder** — solver, pack screen, revision |
+| `js/22-boot.js` | 183 | snapshot, freshness, auth, `init()` |
 
 **Load order is the contract.** Top-level `const`/`let` in classic scripts share
 one global lexical scope, which is why the split needed zero code changes — but
@@ -1315,14 +1402,14 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-29 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-29 r3`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
      which Range-fetches the first 2KB of the deployed page — a mismatch means a
      phantom "Update available" toast, or never seeing a real one);
-  3. the **`?v=` on all 22 `js/`+`css/` tags** (21 until 2026-07-26 r6 added
-     `js/20-rack.js` and renumbered boot to `21-boot.js`). Miss one and Pages
+  3. the **`?v=` on all 23 `js/`+`css/` tags** (22 until 2026-07-29 r2 added
+     `js/21-pack.js` and renumbered boot to `22-boot.js`). Miss one and Pages
      serves a fresh `index.html` beside a stale module — a half-updated app,
      which is worse than an un-updated one.
 - Comment non-obvious logic only — match the surrounding density.
@@ -1655,7 +1742,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **177/177** (2026-07-29 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **220/220** (2026-07-29 r3, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
