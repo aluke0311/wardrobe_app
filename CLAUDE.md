@@ -56,14 +56,41 @@ the WHOLE outfit (`deriveWearFormality`), so a blazer tagged Dressed Up that
 keeps going out with jeans records genuinely lower days. A solo-logged piece
 derives its level from itself alone and so can never disagree — harmless.
 
-**THE TRIP BUILDER / "pack plan" (2026-07-29 r2 + r3) — SHIPPED, phases 1–4.**
+**THE TRIP BUILDER / "pack plan" (2026-07-29 r2 → r4) — SHIPPED, phases 1–6.**
 `js/21-pack.js` (boot renumbered to `22-boot.js`; index.html now has **23**
 cache-busted tags). **Full spec, all 13 locked decisions, the rejected
 alternatives and what's still open: `TRIP_BUILDER.md` in the repo root — read it
 before touching any of this.** Her ask: suggest what and how many to pack, from
 past trips + past wears + this trip's weather + laundry tolerance. Selftest
-177 → **220**, run green; all 43 new cases mutation-checked red in the same
+177 → **231**, run green; all 54 new cases mutation-checked red in the same
 session. Entry: a dated trip's capsule page → "✨ Build the pack".
+
+⚠️ **REPETITION IS A FIRST-CLASS COST (r4), and D5 alone did not cover it.**
+A 5-day trip returned Thursday and Friday as the IDENTICAL outfit with one
+sweater on 4 of 5 days at exactly its tolerance ceiling — zero violations,
+minimum pieces, "correct", and it read as the app failing. K guards how many
+options *exist in the pack*, not whether consecutive days differ, and the laundry
+counter only stops a piece EXCEEDING tolerance, so sweaters (4) and shoes
+(Infinity) sail through. `PACK_REPEAT_DAY`/`_ANY`/`_TOP` charge repetition on the
+**visible half only** — reusing the same jeans and shoes all week is the point of
+packing light — and **`repW` scales them by the tightness dial**, which is what
+finally makes lean/normal/cushion change something she'd notice.
+⚠️ `PACK_REPEAT_DAY` is deliberately NOT scaled: the identical outfit two days
+running is the worst-looking output, so that floor holds at every tightness.
+⚠️ **`PACK_SCORE_W`(150)/`PACK_PROVEN_W`(60) fixed a pre-existing calibration
+bug:** `scoreCombo`'s range is only ~2.5–5.5 points against cost terms of
+1000–5000, so the suggester's formality cohesion, colour-pair and item-pair
+affinity were **rounding error** inside the solver. Re-measure if that range
+changes.
+
+**`packMidTripWash(c, today)` (r4)** re-runs `packSchedule` FORWARD from real
+state over the days still left, and names the pieces the back half needs washed —
+the actionable version of "6 things are dirty". ⚠️ Reads the **by-day plan
+first**, the solve record only as a fallback: by mid-trip the plan is what she's
+been living from. Owns whether to speak at all, exactly like `tripUnwornNow` —
+null on the last day (the recap owns it) and null when nothing would run out. Its
+`.td-laun` row **folds the generic hamper row** when it already names everything
+dirty; two rows for one fact was found by rendering the dash and reading it.
 
 ⚠️ **THREE INVERSIONS. Getting any of them backwards produces a plausible WRONG
 answer rather than an obvious failure — that's why they're written in the file
@@ -1402,7 +1429,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-29 r3`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-07-29 r4`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1742,7 +1769,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **220/220** (2026-07-29 r3, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **231/231** (2026-07-29 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

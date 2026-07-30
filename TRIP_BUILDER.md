@@ -1,7 +1,8 @@
 # Trip Builder ("Pack Plan") — round spec
 
-**Status: phases 1–4 SHIPPED** (`2026-07-29 r2` engine, `r3` screens + revision
-+ capture). Selftest 177 → **220**, green. Phases 5–6 partly done — see §13.
+**Status: phases 1–6 SHIPPED** (`2026-07-29 r2` engine, `r3` screens + revision
++ capture, `r4` the repetition fix + mid-trip wash + honest copy). Selftest
+177 → **231**, green. Remaining items are calibration against real trips — §13.
 
 Written 2026-07-29 against `APP_VERSION 2026-07-29 r1`. The design below is what
 got built; deviations found during the build are marked **BUILT DIFFERENTLY**.
@@ -29,11 +30,14 @@ evenings. No per-slot floor, no shoe cap.
 5. **`capsules.plan` is written only by an explicit action.** §5 called the plan
    pass optional; auto-creating ~13 look records per solve would flood Looks.
 
-**⚠️ Three defects were found by RENDERING THE SCREEN AND READING IT, none by
-the tests** — the same lesson as the 181px button. The bag line contradicted the
-laundry warning above it (occasions vs wear-days), "20 options" sat next to a
-"See 20" button, and three occasions stacked on the departure day. Cases now pin
-all three, but the tests did not find them. Render the screens.
+**⚠️ SIX defects were found by RENDERING THE SCREEN AND READING IT, none by the
+tests** — the same lesson as the 181px button, now six times over in one feature.
+The bag line contradicted the laundry warning above it (occasions vs wear-days),
+"20 options" sat next to a "See 20" button, three occasions stacked on the
+departure day, r4 found the identical-outfit-two-days-running defect and its
+sweater-at-tolerance-ceiling twin, and the new wash row sat directly on top of a
+hamper row saying the same thing. Cases now pin all six; **the tests found none of
+them.** Render the screens and read them — every round, before believing green.
 
 The ask, verbatim: *"use logic and previous trips and previous wears to suggest
 items and number of items of different categories/subcategories to pack. Request
@@ -120,7 +124,7 @@ Approved 2026-07-29. Do not re-litigate.
 | D2 | **Distinctness = any piece differs.** Shoes and layers count toward it, so a second pair of shoes is a cheap way to buy options and the optimizer reaches for it on its own. No hardcoded per-slot floors. ⚠️ Prototype against Javea's shape in the selftest before building UI on it — see §11 case 12. |
 | D3 | **The day slate lives in `dayplan`.** One source of truth for "what's happening on day X". Trip days appear in the week planner. `DAYPLAN_KEEP_FUTURE` gains a trip-aware exemption. |
 | D4 | **Booking-time capture: character chip + fixed events.** Both optional, both one tap. Character seeds the occasion mix; fixed events buy lead time on the gap flag. |
-| D5 | **Tightness = options per occasion**, not pieces beyond a minimum. Lean 1 · Normal 2 · Cushion 3. This makes `minimize pack size` safe as the objective, because K carries the variety requirement structurally. |
+| D5 | **Tightness = options per occasion**, not pieces beyond a minimum. Lean 1 · Normal 2 · Cushion 3. This makes `minimize pack size` safe as the objective, because K carries the variety requirement structurally. ⚠️ **AMENDED r4:** K alone was not enough — it guards how many options *exist in the pack*, not whether consecutive days differ, so a "correct" pack still repeated an outfit two days running. K now also scales the repetition penalties (`repW`), which is what makes the dial change the thing she'd actually notice. |
 | D6 | **Demand is a multiset of occasions, not a day grid.** Placement is optional metadata. Unplaced occasions still produce a full answer. |
 | D7 | **No shoe cap.** A hard ceiling of 2 is a magic number that will be wrong on the trip that matters. Coverage need for shoes is real and small; flag bulk instead. |
 | D8 | **Three laundry options**, not four: none · one wash on `<date>` · anytime. Sink washing folds into "anytime". The date matters — that's ② applied to the input. |
@@ -582,19 +586,43 @@ drop / bring / fix-broken · `packResolveUnlocked` · `openPackTightSheet` ·
 `openPackTemplateSheet` · `packDiff` on the trip-detail button ·
 `packGradeRowHtml` on the recap · the `pruneDayPlan` trip exemption.
 
+**Shipped in r4** (the repetition fix + the §13 tail): `PACK_REPEAT_DAY`/`_ANY`/
+`_TOP` + `repW` · `PACK_SCORE_W`/`PACK_PROVEN_W` · `packMidTripWash` + its
+`.td-laun` row · `packOptionMap`/`packOptionsForPiece` · the climatology header
+note · `packConsequences` surfaced on both tabs · the hamper-row fold.
+
+**⚠️ r4's defect was found by RENDERING THE SCREEN too — the fourth time in this
+feature, and the most consequential.** A 5-day trip returned Thursday and Friday
+as the IDENTICAL outfit with one sweater on 4 of 5 days at exactly its tolerance
+ceiling: zero violations, minimum pieces, and it reads as the app failing. Two
+things were wrong underneath:
+1. **A real gap in D5.** K guards how many options *exist in the pack*, not
+   whether consecutive days differ, and the laundry counter only stops a piece
+   EXCEEDING tolerance — sweaters (4) and shoes (Infinity) sail straight through.
+   Repetition is now charged on the **visible half only** (reusing the same jeans
+   and shoes all week is the point of packing light), and **the tightness dial
+   scales it**, so lean/normal/cushion finally changes the thing she'd notice.
+   Measured on one closet: Lean 4 days on one top / 6 pieces, Cushion 2 / 8.
+   ⚠️ `PACK_REPEAT_DAY` is deliberately NOT scaled — the identical outfit two days
+   running is the worst-looking output, so that floor holds at every tightness.
+2. **A pre-existing calibration bug.** `scoreCombo`'s range is only ~2.5–5.5
+   points (measured) against cost terms of 1000–5000, so the engine's formality
+   cohesion, colour-pair and item-pair affinity were **rounding error**.
+   `PACK_SCORE_W`/`PACK_PROVEN_W` make quality a genuine tie-breaker. Re-measure
+   if `scoreCombo`'s range ever changes.
+
 **Still open:**
-- **Mid-trip "wash these six"** — `packSchedule` run forward from actual state,
-  surfaced on trip mode's hamper row. Not built.
-- **Guess labels** are only partly there: the build sheet says where the occasion
-  mix came from, and the pack header says "no weather loaded", but the Days cards
-  don't mark a climatology-derived forecast as `hist`.
-- **`packConsequences` is computed but barely surfaced** — the drop path uses it;
-  swap and re-solve just re-render. An orphan-pieces line is the obvious next
-  addition.
-- **The Bag tab's `packWhyLine` never explains a piece that exists only to raise
-  the option count** — it says "another option", which is true but thin.
 - `PACK_CHAR_SEED` and `PACK_TRIP_QUOTA` are still the guessed starting values
   (§15). Rewrite them from St. Louis and Javea rather than tuning now.
+- **`minimize |pack|` systematically prefers dresses**, because a dress fills two
+  slots so it adds one piece instead of two. That's legitimate efficiency, but it
+  measurably lowers the "outfits they make" number she reads (a pack of separates
+  the same size recombines further). Not obviously wrong — a product decision,
+  written up in `PACK_REVIEW_2026-07-30.md`.
+- **`repW` at "normal" is indistinguishable from "lean"** on the closets tested:
+  0.5 and 1 both sit under the 1000-per-piece threshold, so the middle setting
+  does nothing. Widening the spread is a one-line change but wants a real closet
+  to calibrate against, not a synthetic one.
 
 Phases 1–3 are a usable feature. **St. Louis is Aug 12** — that's the deadline
 worth aiming at, and Javea in September stress-tests the hard case with a round in
