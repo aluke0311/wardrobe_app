@@ -799,6 +799,349 @@ function packWashPlan(pack, { ls = null, today = null, startDate = null } = {}) 
   return { hamper, underTol, lastUsefulWashDay: lastUseful && lastUseful >= t ? lastUseful : null };
 }
 
+/* ===================================================================
+   ITEMS FIRST  (2026-07-30, redesign)
+
+   Her words: *"I do want it to start with clothing not outfits... Start with
+   items and number of slots THEN make sure the outfits cover the required
+   occasions days etc. I think in items and like to decide my outfits on the go
+   more often than not."*
+
+   ⚠️ THIS DOES NOT REPEAL INVERSION ①, and understanding the difference matters.
+   ① exists because a pack chosen ONLY to satisfy independent (slot, level)
+   counts can come back with every count met and no wearable outfit in it —
+   three tops that all clash with the one bottom, or two level-5 pieces that sit
+   in an exclusion pair. That failure is still real. What changes is WHERE the
+   guarantee lives: coverage is now a CHECK (packCoverage) rather than the
+   generator. Counts are the interface and the objective; outfits are how the
+   answer is verified and, on demand, browsed.
+   ⚠️ So packCoverage is not optional decoration. Delete it and this is exactly
+   the set-cover design ① warns about.
+
+   packSolve is deliberately KEPT — outfits-on-demand and the "other options"
+   browser both run on it. This is an added path, not a replacement.
+
+   The flow, and the order is the point:
+     packCounts   → the app PROPOSES a number per slot (the magic moment; she
+                    revises from a starting answer rather than filling a form)
+     packFill     → choose actual items to hit those counts
+     packCoverage → can every occasion actually be dressed? name the blocker
+   =================================================================== */
+
+// Slots the count dials cover, in dressing order. Workout is absent for the same
+// reason buildRack excludes it: those clothes don't mix with the rest.
+const PACK_COUNT_SLOTS = ["Tops", "Bottoms", "Dresses", "Shoes", "Outerwear"];
+// Pieces per slot per trip-DAY, used only until she has trips to learn from.
+// ⚠️ Guesses, labelled as guesses. Rewrite from St. Louis and Javea (§15).
+const PACK_SLOT_RATE_SEED = { Tops: 1.0, Bottoms: 0.45, Dresses: 0.15, Shoes: 0.35, Outerwear: 0.2 };
+const PACK_COUNT_MAX = { Tops: 14, Bottoms: 8, Dresses: 6, Shoes: 5, Outerwear: 3 };
+// Tightness moves the proposal itself, not just repetition.
+const PACK_COUNT_W = { 1: 0.8, 2: 1, 3: 1.25 };
+
+const packSlotOf = (i) => (i && isLayer(i) && i.category === "Tops") ? "Tops" : suggestSlot(i);
+
+/* Pieces per slot per day, learned from her own completed trips (of this
+   character when there are enough of them), falling back to the seed. Returns
+   `source` so the UI can label a guess as a guess. */
+function packSlotRates(character, { caps = null, wearRows = null, kinds = null, today = null } = {}) {
+  const charOf = (id) => kinds ? (kinds.get(id) || null) : packCharacter(id);
+  const all = completedTrips(caps, today);
+  const mine = character ? all.filter(c => charOf(c.id) === character) : [];
+  const use = mine.length >= TRIP_MEMORY_MIN ? mine : all;
+  const totals = new Map(), rates = {};
+  let days = 0;
+  for (const c of use) {
+    const n = tripDates(c).length;
+    if (!n) continue;
+    days += n;
+    for (const i of capsuleItems(c.id)) {
+      const s = packSlotOf(i);
+      if (!s) continue;
+      totals.set(s, (totals.get(s) || 0) + 1);
+    }
+  }
+  if (!days || !totals.size) {
+    return { rates: { ...PACK_SLOT_RATE_SEED }, source: "seed", trips: 0 };
+  }
+  for (const s of PACK_COUNT_SLOTS) rates[s] = (totals.get(s) || 0) / days;
+  return { rates, source: mine.length >= TRIP_MEMORY_MIN ? "character" : "history", trips: use.length };
+}
+
+/* THE PROPOSAL. Three floors, and the largest wins per slot:
+     ① her own rate    — pieces/day on comparable past trips × trip days
+     ② the laundry floor — wear-days this slot must absorb ÷ typical tolerance
+     ③ the coverage floor — one piece per distinct formality band it must reach,
+                            because a single piece can't be in two disjoint bands
+
+   ⚠️ ② is `ceil(wear-days / tolerance)`, the very formula inversion ② rejects as
+   an ENGINE. It is fine here and only here: this is a starting number she can
+   revise, not a feasibility guarantee. The guarantee is packCoverage plus
+   packSchedule. Do not promote this arithmetic back into a solver. */
+function packCounts(demand, { character = null, K = PACK_OPTIONS.normal, days = null,
+                              wearRows = null, caps = null, kinds = null, today = null,
+                              rates = null } = {}) {
+  const occs = demand || [];
+  const nDays = days || new Set(occs.map(o => o.date).filter(Boolean)).size || occs.length || 1;
+  const rr = rates || packSlotRates(character, { caps, wearRows, kinds, today });
+  const w = PACK_COUNT_W[K] || 1;
+  const levels = [...new Set(occs.map(o => o.level).filter(Boolean))].sort((a, b) => a - b);
+  // Distinct formality BANDS, not levels: adjacent levels are usually covered by
+  // the same piece (a blouse at [4,5] serves both), so counting raw levels
+  // over-proposes. A gap of 2+ is a genuinely different band.
+  const bands = levels.reduce((acc, lv) => {
+    if (!acc.length || lv - acc[acc.length - 1] >= 2) acc.push(lv);
+    return acc;
+  }, []);
+
+  const out = {}, why = {};
+  for (const slot of PACK_COUNT_SLOTS) {
+    const rate = Math.round(((rr.rates || {})[slot] ?? PACK_SLOT_RATE_SEED[slot]) * nDays * w * 10) / 10;
+    const fromRate = Math.round(rate);
+    // Wear-days this slot absorbs. Tops and Dresses share the top half, Bottoms
+    // and Shoes get one fill per occasion.
+    const share = (slot === "Tops") ? 0.8 : (slot === "Dresses") ? 0.2 : 1;
+    const wearDays = (slot === "Outerwear") ? 0 : Math.ceil(occs.length * share);
+    const tol = PACK_TYPICAL_TOL[slot] ?? Infinity;
+    const fromLaundry = (tol === Infinity || !wearDays) ? 0 : Math.ceil(wearDays / tol);
+    const fromBands = (slot === "Outerwear" || slot === "Dresses") ? 0 : bands.length;
+    const n = Math.max(fromRate, fromLaundry, fromBands, slot === "Outerwear" ? 0 : 1);
+    out[slot] = Math.min(n, PACK_COUNT_MAX[slot] ?? 99);
+    // The "why" is shown on the dial. It's the old max(laundry, coverage)
+    // formula finally in the one place it was ever good enough for.
+    const bits = [];
+    // Prefer the rate explanation on a tie — "you average 1 per trip" is a
+    // better reason for one dress than "1 wear-days at 2 per wash", which also
+    // read as broken grammar.
+    if (fromLaundry > fromRate && fromLaundry > 0) {
+      bits.push(`${wearDays} wear-day${wearDays === 1 ? "" : "s"} at ${tol} per wash`);
+    } else if (fromRate > 0) {
+      bits.push(`you average ${rate} per ${nDays}-day trip`);
+    }
+    if (fromBands > 1 && fromBands >= n) bits.push(`${fromBands} formality bands to reach`);
+    why[slot] = bits.join(" · ") || "one to have";
+  }
+  return { slots: out, why, bands, days: nDays, rateSource: rr.source, rateTrips: rr.trips };
+}
+/* Typical wears-per-wash per slot, for packCounts' laundry floor. DERIVED from
+   WEAR_TOLERANCE rather than restated, so editing a tolerance there can't leave
+   a stale duplicate here (median across the slot's subcategories; Infinity when
+   the whole slot never gets dirty, as shoes and outerwear don't). */
+const PACK_TYPICAL_TOL = (() => {
+  const out = {};
+  for (const slot of ["Tops", "Bottoms", "Dresses", "Shoes", "Outerwear"]) {
+    const vals = (TAXONOMY_DEFAULT[slot] || [])
+      .map(sub => (sub in WEAR_TOLERANCE) ? WEAR_TOLERANCE[sub] : (WEAR_TOLERANCE_CAT[slot] ?? Infinity))
+      .filter(v => Number.isFinite(v))
+      .sort((a, b) => a - b);
+    out[slot] = vals.length ? vals[Math.floor(vals.length / 2)] : Infinity;
+  }
+  return out;
+})();
+
+/* Split a slot's count across its subcategories, for the expanded dial. Same
+   rate logic, from what she actually packs. */
+function packSubCounts(slot, n, { character = null, caps = null, kinds = null, today = null } = {}) {
+  const charOf = (id) => kinds ? (kinds.get(id) || null) : packCharacter(id);
+  const all = completedTrips(caps, today);
+  const mine = character ? all.filter(c => charOf(c.id) === character) : [];
+  const use = mine.length >= TRIP_MEMORY_MIN ? mine : all;
+  const tally = new Map();
+  for (const c of use) for (const i of capsuleItems(c.id)) {
+    if (packSlotOf(i) !== slot) continue;
+    tally.set(i.subcategory, (tally.get(i.subcategory) || 0) + 1);
+  }
+  /* ⚠️ With no trip history, fall back to what she actually OWNS AND WEARS in
+     this slot — not the first three taxonomy entries. That fallback proposed
+     "2 Graphic tees" for a closet containing none, which is worse than no
+     suggestion: it's the app confidently naming clothes she doesn't have. */
+  if (!tally.size) {
+    for (const i of items) {
+      if (itemStatus(i) !== "Available" || packSlotOf(i) !== slot) continue;
+      tally.set(i.subcategory, (tally.get(i.subcategory) || 0) + 1 + wearCount(i.id) * 0.05);
+    }
+  }
+  const pool = (TAXONOMY[slot] || []).filter(s => tally.has(s));
+  if (!pool.length || n <= 0) return {};
+  const tot = pool.reduce((s, x) => s + (tally.get(x) || 1), 0);
+  const out = {};
+  let left = n;
+  pool.forEach((s, k) => {
+    const share = (tally.get(s) || 1) / tot;
+    const v = k === pool.length - 1 ? left : Math.min(left, Math.round(n * share));
+    if (v > 0) out[s] = v;
+    left -= v;
+  });
+  return out;
+}
+
+/* Fill the counts with actual items.
+   Greedy per slot, scoring each candidate on what it ADDS: formality levels the
+   slot can't yet reach, then contexts, then proven-on-past-trips, then warmth.
+   ⚠️ Pinned pieces (her "keep") count toward the target and are never dropped —
+   that's what makes the keep/swap control trustworthy. */
+function packFill(targets, { c = null, demand = null, rack = null, pinned = null,
+                             subTargets = null, wxFor = null, banned = null,
+                             pool = null } = {}) {
+  const dem = demand || [];
+  const rackIds = (rack && rack.ids) || [];
+  const keep = new Set(pinned || []);
+  const skip = new Set(banned || []);
+  const proven = new Set((travelProven(buildTravelStats(c ? capsules.filter(x => x.id !== c.id) : null)) || [])
+    .map(e => e.item && e.item.id).filter(Boolean));
+  const wantLevels = [...new Set(dem.map(o => o.level).filter(Boolean))];
+
+  const avail = (pool || items).filter(i => itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i));
+  const rackSet = new Set(rackIds);
+  // Level 1 (Utility) draws from the whole closet, never the rack — the rack
+  // excludes the Workout category on purpose. Same precedence as _suggBasePool.
+  const needsUtility = wantLevels.includes(1);
+  const candidates = avail.filter(i =>
+    !skip.has(i.id) &&
+    (rackSet.has(i.id) || (needsUtility && isFunctionWear(i))) &&
+    (i.category !== "Workout" || needsUtility));
+
+  const bySlot = {};
+  const packIds = new Set();
+  for (const slot of PACK_COUNT_SLOTS) {
+    const want = Math.max(0, targets[slot] || 0);
+    const inSlot = candidates.filter(i => packSlotOf(i) === slot);
+    const chosen = [];
+    // Her keeps come first and occupy their slot's budget.
+    for (const i of inSlot) if (keep.has(i.id)) chosen.push(i);
+    const subWant = subTargets && subTargets[slot] ? { ...subTargets[slot] } : null;
+    if (subWant) for (const i of chosen) if (subWant[i.subcategory]) subWant[i.subcategory]--;
+
+    /* ⚠️ Score on DEFICIT REDUCTION per level, not on "does this reach a level
+       nothing else reaches". Scoring bare coverage packed five tees and one
+       sweater for a trip with a work day: the tee covered levels 2–3, the sweater
+       covered 5, every level was then "covered", and the remaining picks fell
+       through to warmth — so it never packed a blouse she wears to work every
+       week, and the whole L5 day hung on one sweater. Coverage is a per-level
+       CAPACITY question (how many wear-days at this level can the pack absorb),
+       which is the laundry dimension applied per level.
+       ⚠️ HONEST SCOPE, all three facts established by mutation, not by argument:
+       ① In the COMMON path the pool comes from buildRack, whose own formality
+          top-up (RACK_LEVEL_MIN = 2 per core slot per needed level) already
+          guarantees two L5 tops. So neither term below rescues the everyday
+          case — the rack does. Don't credit them with more than they do.
+       ② The subcategory penalty is what carries a MIXED pool: with it off, a
+          tee-heavy pool fills up on tees and leaves one L5 top.
+       ③ This capacity term is what carries a UNIFORM pool, where every candidate
+          is the same subcategory so ② is flat: with it off, three occasions at
+          L5 got one L5 blouse and three L3 ones.
+       Each is pinned by exactly one case (the two packFill cases below). Removing
+       either without removing its case is how this silently regresses.
+       ⚠️ Levels only, deliberately: context coverage was tried here and removed
+       because itemContexts walks the whole wears table per call, and this is
+       inside a candidate loop — items × wears, the documented comparator trap. */
+    const needAt = new Map();
+    for (const o of dem) {
+      if (!o.level) continue;
+      // Tops and Dresses split the top half; Bottoms/Shoes take one fill each.
+      const w = (slot === "Tops") ? 0.8 : (slot === "Dresses") ? 0.2 : 1;
+      needAt.set(o.level, (needAt.get(o.level) || 0) + w);
+    }
+    // How many wear-days one piece can absorb before it needs washing.
+    const capacityOf = (i) => {
+      const t = wearTolerance(i);
+      return t === Infinity ? 99 : t;
+    };
+    const haveAt = new Map();
+    const noteCover = (i) => {
+      const cap = capacityOf(i);
+      for (const lv of (itemFormalitySet(i) || [])) {
+        if (needAt.has(lv)) haveAt.set(lv, (haveAt.get(lv) || 0) + cap);
+      }
+    };
+    chosen.forEach(noteCover);
+    const subsUsed = new Map();
+    for (const i of chosen) subsUsed.set(i.subcategory, (subsUsed.get(i.subcategory) || 0) + 1);
+
+    while (chosen.length < want) {
+      let best = null, bestScore = -Infinity;
+      for (const i of inSlot) {
+        if (chosen.some(x => x.id === i.id)) continue;
+        if (subWant && !(subWant[i.subcategory] > 0)) continue;
+        // Never pick something that can't co-exist with what's already in.
+        if (chosen.some(x => isExcluded(x.id, i.id))) continue;
+        const set = (itemFormalitySet(i) || []).filter(lv => needAt.has(lv));
+        const cap = capacityOf(i);
+        let fill = 0;
+        for (const lv of set) {
+          const deficit = Math.max(0, (needAt.get(lv) || 0) - (haveAt.get(lv) || 0));
+          fill += Math.min(cap, deficit);
+        }
+        // Once every level has capacity, prefer breadth and a different
+        // subcategory over another near-copy of what's already in the bag.
+        const s = fill * 100 + set.length * 6
+          - (subsUsed.get(i.subcategory) || 0) * 12
+          + (proven.has(i.id) ? 25 : 0)
+          + rackWarmth(i.id) * 10
+          + (rack && rack.cold && rack.cold.includes(i.id) ? 4 : 0);
+        if (s > bestScore) { bestScore = s; best = i; }
+      }
+      if (!best) break;
+      chosen.push(best);
+      noteCover(best);
+      subsUsed.set(best.subcategory, (subsUsed.get(best.subcategory) || 0) + 1);
+      if (subWant && subWant[best.subcategory]) subWant[best.subcategory]--;
+    }
+    bySlot[slot] = chosen.map(i => i.id);
+    for (const i of chosen) packIds.add(i.id);
+  }
+  return { pack: [...packIds], bySlot, short: Object.fromEntries(
+    PACK_COUNT_SLOTS.map(s => [s, Math.max(0, (targets[s] || 0) - (bySlot[s] || []).length)])) };
+}
+
+/* THE CHECK that keeps items-first honest (see the header). For every occasion,
+   can an outfit actually be built from this pack? When it can't, name the SLOT
+   that's blocking, because "add a top" is actionable and "Thursday fails" isn't.
+   ⚠️ Uses the same enumerator as everything else (suggestOutfits with the pack
+   as its pool), so it cannot disagree with what the outfit views will show. */
+function packCoverage(pack, demand, { wxFor = null } = {}) {
+  const ids = pack instanceof Set ? [...pack] : (pack || []);
+  const idSet = new Set(ids);
+  const byOcc = new Map();
+  const uncovered = [];
+  const memo = new Map();
+  for (const occ of (demand || [])) {
+    const key = `${occ.level}|${occ.date || ""}`;
+    let n = memo.get(key);
+    if (n == null) {
+      const list = packCandidates(occ, ids, { wxFor, all: true })
+        .filter(cd => cd.ids.every(x => idSet.has(x)));
+      n = list.length;
+      memo.set(key, n);
+    }
+    byOcc.set(occ.id, n);
+    if (!n) uncovered.push({
+      occId: occ.id, date: occ.date, level: occ.level, context: occ.context,
+      blocker: packBlockingSlot(ids, occ.level),
+    });
+  }
+  const seen = new Set();
+  for (const lv of new Set((demand || []).map(o => o.level).filter(Boolean))) {
+    const occ = (demand || []).find(o => o.level === lv);
+    for (const cd of packCandidates(occ, ids, { wxFor, all: true })) {
+      if (cd.ids.every(x => idSet.has(x))) seen.add(cd.ids.join(","));
+    }
+  }
+  return { byOcc, uncovered, covered: (demand || []).length - uncovered.length, outfits: seen.size };
+}
+
+/* Which slot is stopping this level from being dressable. Checks the core slots
+   a real outfit needs — a Dress substitutes for Tops AND Bottoms, so it's only
+   a blocker when both are empty. */
+function packBlockingSlot(ids, level) {
+  const has = (slot) => ids.map(id => itemById.get(id)).some(i =>
+    i && packSlotOf(i) === slot && (itemFormalitySet(i) || []).includes(level));
+  if (has("Dresses")) return has("Shoes") ? null : "Shoes";
+  if (!has("Tops")) return "Tops";
+  if (!has("Bottoms")) return "Bottoms";
+  if (!has("Shoes")) return "Shoes";
+  return null;   // pieces exist at this level but no valid combination of them
+}
+
 /* ---- mid-trip: "wash these six" ----------------------------------------
    The pack was solved before departure against the laundry plan she declared.
    Once she's there and actually logging wears, the schedule can be re-run

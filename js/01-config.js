@@ -6,12 +6,11 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-30 r1";
+const APP_VERSION = "2026-07-30 r2";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
-const WHATS_NEW = [
-  "Trips now treat Travel as something you wear every day of a trip, not as the plane-day event — the plane day is its own Flight context",
-];
+// Empty on purpose for r2: the items-first pack engine has no screen yet.
+const WHATS_NEW = [];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 // Editable in-app since 2026-07-21: this is the DEFAULT shape; a saved

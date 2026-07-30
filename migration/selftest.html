@@ -2577,6 +2577,216 @@ async function run() {
                      ws.push({ id: "o2", item_id: "tee0", worn_on: "2026-06-02", context: ["Errands"], formality_for: 3 }); },
   }));
 
+  /* ================= ITEMS FIRST (2026-07-30 redesign) =================
+     Her ask: "start with clothing not outfits... Start with items and number of
+     slots THEN make sure the outfits cover the required occasions."
+     ⚠️ packCoverage is what keeps this honest. Inversion ① is not repealed — a
+     pack chosen only to satisfy per-slot counts can still contain no wearable
+     outfit; the guarantee just moved from the generator to a check. */
+  const itemsFirst = (c, opt = {}) => {
+    const slate = W.packSlate(c, { mix: opt.mix });
+    const demand = W.packDemand(slate);
+    const rack = W.packRack(c, slate);
+    const counts = W.packCounts(demand, { K: opt.K == null ? 2 : opt.K });
+    const targets = opt.targets || counts.slots;
+    const fill = W.packFill(targets, { c, demand, rack, pinned: opt.pinned, subTargets: opt.subTargets });
+    const cov = W.packCoverage(fill.pack, demand, {});
+    return { slate, demand, rack, counts, targets, fill, cov };
+  };
+
+  t("the app proposes a count for every slot before anything is picked", () => withPackCloset(() => {
+    const r = itemsFirst(packTrip(5));
+    const missing = W.PACK_COUNT_SLOTS.filter(s => !(s in r.counts.slots));
+    const noWhy = W.PACK_COUNT_SLOTS.filter(s => !r.counts.why[s]);
+    // Every dial needs a number AND a reason — the reason is what she revises against.
+    return !missing.length && !noWhy.length && r.counts.slots.Tops > 0
+      ? true : `missing=${JSON.stringify(missing)} noWhy=${JSON.stringify(noWhy)} counts=${JSON.stringify(r.counts.slots)}`;
+  }));
+
+  t("Cushion proposes strictly more pieces than Lean", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const lean = itemsFirst(c, { K: 1 }).counts.slots;
+    const cush = itemsFirst(c, { K: 3 }).counts.slots;
+    const sum = (o) => W.PACK_COUNT_SLOTS.reduce((n, s) => n + (o[s] || 0), 0);
+    // STRICT: `>=` would hold even if the dial were ignored entirely, which is
+    // the failure worth catching (it happened once already with repW).
+    return sum(cush) > sum(lean) ? true : `lean=${sum(lean)} cushion=${sum(cush)}`;
+  }));
+
+  t("the count proposal has a laundry floor, not just her average", () => withPackCloset(() => {
+    // 10 days of one level: tolerance can't be met by her per-day rate alone.
+    const c = packTrip(10);
+    const r = itemsFirst(c, { mix: [{ context: "Errands", per: 1 }] });
+    const tol = W.PACK_TYPICAL_TOL.Tops;
+    const occ = r.demand.length;
+    return r.counts.slots.Tops >= Math.ceil((occ * 0.8) / tol)
+      ? true : `tops=${r.counts.slots.Tops} occasions=${occ} tol=${tol}`;
+  }));
+
+  t("packFill hits the targets it was given", () => withPackCloset(() => {
+    const targets = { Tops: 5, Bottoms: 3, Dresses: 1, Shoes: 2, Outerwear: 1 };
+    const r = itemsFirst(packTrip(5), { targets });
+    const off = W.PACK_COUNT_SLOTS.filter(s => (r.fill.bySlot[s] || []).length !== targets[s]);
+    return !off.length
+      ? true : `slots off target: ${JSON.stringify(off.map(s => [s, (r.fill.bySlot[s] || []).length, targets[s]]))}`;
+  }));
+
+  t("a kept piece survives the fill and counts toward its slot", () => withPackCloset(() => {
+    // "keep" is the whole point of the per-item control — it must be honoured
+    // even when the optimiser would never have chosen it.
+    const targets = { Tops: 3, Bottoms: 2, Dresses: 0, Shoes: 2, Outerwear: 0 };
+    const r = itemsFirst(packTrip(5), { targets, pinned: ["ckt0", "hee0"] });
+    const shoes = r.fill.bySlot.Shoes || [];
+    return r.fill.pack.includes("hee0") && shoes.includes("hee0") && shoes.length === 2
+      ? true : `pack=${JSON.stringify(r.fill.pack)} shoes=${JSON.stringify(shoes)}`;
+  }));
+
+  /* ⚠️ THE REGRESSION THIS ENGINE WAS REWRITTEN FOR. Scoring bare "does anything
+     else reach this level" packed five tees and one sweater for a trip with a
+     work day: every level was technically covered, the remaining picks fell
+     through to warmth, and the whole L5 day hung on a single sweater. Coverage is
+     a per-level CAPACITY question. */
+  /* Composed behaviour: a level with several occasions must not hang on one top.
+     ⚠️ Two earlier versions of this case were VACUOUS and both were caught by
+     mutation, which is worth recording because the reason is architectural:
+     when the pool comes from buildRack, the rack's own formality top-up
+     (RACK_LEVEL_MIN = 2) already guarantees two L5 tops, so nothing in packFill
+     is on trial. This case therefore guards the COMPOSED pipeline; the case
+     below isolates packFill's own scoring against a hand-built pool. */
+  t("a level with several occasions never hangs on a single top (end to end)", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const r = itemsFirst(c, { mix: [{ context: "Work", per: 0.9 }] });
+    const occAt = new Map();
+    for (const o of r.demand) if (o.level) occAt.set(o.level, (occAt.get(o.level) || 0) + 1);
+    const piecesAt = new Map();
+    for (const id of r.fill.pack) {
+      const i = W.itemById.get(id);
+      const slot = W.suggestSlot(i);
+      if (slot !== "Tops" && slot !== "Dresses") continue;
+      for (const lv of (W.itemFormalitySet(i) || [])) {
+        if (!occAt.has(lv)) continue;
+        piecesAt.set(lv, (piecesAt.get(lv) || 0) + 1);
+      }
+    }
+    const thin = [...occAt.entries()]
+      .filter(([lv, n]) => n >= 2 && (piecesAt.get(lv) || 0) < 2)
+      .map(([lv, n]) => [lv, n, piecesAt.get(lv) || 0]);
+    return !thin.length
+      ? true : `[level, occasions, topsReachingIt]: ${JSON.stringify(thin)}`;
+  }));
+
+  /* packFill's OWN scoring, with the rack's guarantee deliberately removed: the
+     pool is handed in directly and is tee-heavy, so bare-coverage scoring fills
+     up on tees and leaves one L5 top. This is the case that actually goes red
+     when the deficit term or the subcategory penalty is disabled. */
+  /* Isolates the per-level CAPACITY term specifically. Every candidate is the
+     same subcategory and the same tolerance, so the subcategory-diversity
+     penalty is uniform and cannot be what produces the answer — only counting
+     how many wear-days each level still needs can. Without it, bare coverage
+     stops caring once each level has one piece and fills the rest arbitrarily.
+     ⚠️ This case exists because measurement showed the capacity term carried
+     NOTHING on any other case: sub-diversity was doing all the work. Deleting
+     the capacity maths is a legitimate simplification only if this goes with it. */
+  t("packFill weights levels by how many wear-days they still need", () => withPackCloset(() => {
+    const c = packTrip(5);
+    // 1 occasion at L3, 3 at L5 — so L5 needs roughly three times the capacity.
+    const demand = [
+      { id: "o1", date: D(1), level: 3, context: "Friends", contexts: ["Friends"] },
+      { id: "o2", date: D(2), level: 5, context: "Work", contexts: ["Work"] },
+      { id: "o3", date: D(3), level: 5, context: "Work", contexts: ["Work"] },
+      { id: "o4", date: D(4), level: 5, context: "Work", contexts: ["Work"] },
+    ];
+    const poolIds = ["lo0", "lo1", "lo2", "hi0", "hi1", "hi2"];
+    const fill = W.packFill({ Tops: 4, Bottoms: 0, Dresses: 0, Shoes: 0, Outerwear: 0 },
+      { c, demand, rack: { ids: poolIds, cold: [], legs: 1 } });
+    const tops = (fill.bySlot.Tops || []).map(id => W.itemById.get(id));
+    const atL5 = tops.filter(i => (W.itemFormalitySet(i) || []).includes(5)).length;
+    return tops.length === 4 && atL5 >= 3
+      ? true : `tops=${JSON.stringify(tops.map(i => i.id))} reachingL5=${atL5}`;
+  }, {
+    // All Blouses (tolerance 1, one wear each) so only the LEVEL differs.
+    replace: (add) => {
+      for (let n = 0; n < 3; n++) add("lo" + n, "Tops", "Blouses", [3]);
+      for (let n = 0; n < 3; n++) add("hi" + n, "Tops", "Blouses", [5]);
+      add("padBot", "Bottoms", "Jeans", [3, 5]);
+      add("padSho", "Shoes", "Flats", [3, 5]);
+    },
+  }));
+
+  t("packFill spreads across levels even when the pool is stacked against it", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const demand = W.packDemand(W.packSlate(c, { mix: [{ context: "Work", per: 0.9 }] }));
+    // 6 tees (L2-3) + 1 sweater (L3-5) + 3 blouses (L4-5). Asking for 4 tops:
+    // covering L5 once is trivial, covering it twice needs real scoring.
+    const poolIds = ["tee0", "tee1", "tee2", "tee3", "tee4", "tee5", "swt0", "blo0", "blo1", "blo2"];
+    const fill = W.packFill({ Tops: 4, Bottoms: 0, Dresses: 0, Shoes: 0, Outerwear: 0 },
+      { c, demand, rack: { ids: poolIds, cold: [], legs: 1 } });
+    const l5 = (fill.bySlot.Tops || []).map(id => W.itemById.get(id))
+      .filter(i => (W.itemFormalitySet(i) || []).includes(5));
+    return (fill.bySlot.Tops || []).length === 4 && l5.length >= 2
+      ? true : `tops=${JSON.stringify((fill.bySlot.Tops || []))} reachingL5=${JSON.stringify(l5.map(i => i.id))}`;
+  }));
+
+  t("packCoverage names the blocking slot when a level can't be dressed", () => withPackCloset(() => {
+    // Tops only: nothing to put on the bottom half, so every occasion is blocked
+    // on Bottoms — and "add a bottom" is the actionable half of the message.
+    const c = packTrip(4);
+    const demand = W.packDemand(W.packSlate(c));
+    const tops = W.items.filter(i => i.category === "Tops").slice(0, 3).map(i => i.id);
+    const cov = W.packCoverage(tops, demand, {});
+    return cov.uncovered.length === demand.length
+      && cov.uncovered.every(u => u.blocker === "Bottoms") && cov.outfits === 0
+      ? true : `uncovered=${cov.uncovered.length}/${demand.length} blockers=${JSON.stringify([...new Set(cov.uncovered.map(u => u.blocker))])} outfits=${cov.outfits}`;
+  }));
+
+  t("packCoverage only counts outfits the pack itself can build", () => withPackCloset(() => {
+    const r = itemsFirst(packTrip(5));
+    const whole = W.packCoverage(W.items.map(i => i.id), r.demand, {});
+    return r.cov.outfits > 0 && r.cov.outfits <= whole.outfits
+      ? true : `pack=${r.cov.outfits} closet=${whole.outfits}`;
+  }));
+
+  t("packFill never puts an excluded pair in the same slot", () => withPackCloset(() => {
+    const targets = { Tops: 4, Bottoms: 2, Dresses: 0, Shoes: 2, Outerwear: 0 };
+    const r = itemsFirst(packTrip(5), { targets });
+    const bad = [];
+    for (const list of Object.values(r.fill.bySlot)) {
+      for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
+        if (W.isExcluded(list[a], list[b])) bad.push([list[a], list[b]]);
+      }
+    }
+    return !bad.length ? true : `excluded pairs: ${JSON.stringify(bad)}`;
+  }, { exclusions: [{ item_a: "tee0", item_b: "tee1" }, { item_a: "tee2", item_b: "tee3" }] }));
+
+  /* ⚠️ The fallback used to be "the first three subcategories in the taxonomy",
+     which proposed 2 Graphic tees for a closet containing none — the app
+     confidently naming clothes she doesn't own, which is worse than silence. */
+  t("the expanded dial never proposes a subcategory she owns none of", () => withPackCloset(() => {
+    const owned = new Set(W.items.filter(i => W.suggestSlot(i) === "Tops").map(i => i.subcategory));
+    const subs = W.packSubCounts("Tops", 6, {});
+    const phantom = Object.keys(subs).filter(s => !owned.has(s));
+    return !phantom.length && Object.values(subs).reduce((a, b) => a + b, 0) === 6
+      ? true : `phantom=${JSON.stringify(phantom)} subs=${JSON.stringify(subs)}`;
+  }));
+
+  t("the expanded dial's subcategory counts add up to the slot count", () => withPackCloset(() => {
+    const bad = [];
+    for (const n of [1, 3, 5, 8]) {
+      const subs = W.packSubCounts("Tops", n, {});
+      const tot = Object.values(subs).reduce((a, b) => a + b, 0);
+      if (tot !== n) bad.push([n, tot]);
+    }
+    return !bad.length ? true : `[want,got]: ${JSON.stringify(bad)}`;
+  }));
+
+  t("subcategory targets are respected by the fill", () => withPackCloset(() => {
+    const targets = { Tops: 3, Bottoms: 2, Dresses: 0, Shoes: 1, Outerwear: 0 };
+    const r = itemsFirst(packTrip(5), { targets, subTargets: { Tops: { Blouses: 3 } } });
+    const tops = (r.fill.bySlot.Tops || []).map(id => W.itemById.get(id));
+    return tops.length === 3 && tops.every(i => i.subcategory === "Blouses")
+      ? true : `tops=${JSON.stringify(tops.map(i => i.subcategory))}`;
+  }));
+
   /* ---- mid-trip wash plan (r4) ----
      Turns "6 things are dirty" into "wash these six, the back half needs them".
      ⚠️ Like tripUnwornNow, the derivation owns whether to speak at all — a
