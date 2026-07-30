@@ -166,6 +166,49 @@ function packLegsOrWhole(c) {
   return legs.length ? legs : [{ loc: null, dates: tripDates(c) }];
 }
 
+/* ---- the trip's contexts (2026-07-30 r5) --------------------------------
+   Her correction, and it supersedes the character chip as the way "what's
+   happening" is captured: *"give me a list of contexts and i select all. not by
+   date. context should also be able to select formality level (eg it says
+   party/shower polished casual but i will do party/shower - dressed up)."*
+
+   So the capture is a FLAT multi-select over every context she has, each
+   carrying its own formality FOR THIS TRIP. No dates, no trip type.
+   Shape: [{ ctx, level, n }] — level null means "use the usual one for this
+   context", n is how many days of the trip it takes up.
+   ⚠️ Stored on the pack record, NOT in dayplan: dayplan is per-DATE, and this is
+   deliberately date-free. Fixed events on a specific day still go to dayplan and
+   are still honoured first (pass ① in packSlate). */
+function packTripContexts(cid) {
+  const v = packRecord(cid).contexts;
+  return Array.isArray(v) ? v.filter(e => e && e.ctx) : null;
+}
+async function setPackTripContexts(cid, list) {
+  await savePackRecord(cid, { contexts: Array.isArray(list) ? list : null });
+}
+
+/* What to tick when she opens the list for the first time. The app proposes and
+   she revises — the same contract as the count dials. Uses her real history:
+   contexts she actually wears, most-used first, capped so the list opens with a
+   plausible trip rather than everything. */
+function packSuggestTripContexts(c, { wearRows = null, today = null } = {}) {
+  const rows = wearRows || wears;
+  const days = tripDates(c).length || 1;
+  const counts = countByDay(rows, ctxArr);
+  const skip = new Set([TRIP_CONTEXT, PACK_FLIGHT_CONTEXT]);
+  const ranked = [...counts.entries()]
+    .filter(([ctx, n]) => n > 0 && !skip.has(ctx))
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([ctx]) => ctx);
+  if (!ranked.length) return [];
+  // Spread the trip's days over the picked contexts by how often she lives them.
+  const tot = ranked.reduce((s, ctx) => s + (counts.get(ctx) || 1), 0);
+  const free = Math.max(1, days - 2);           // the two plane days are claimed
+  const out = ranked.map(ctx => ({ ctx, level: null, n: Math.max(1, Math.round(free * (counts.get(ctx) || 1) / tot)) }));
+  return out;
+}
+
 /* ---- trip character (D4) ------------------------------------------------- */
 function packCharacter(cid) {
   const v = kvData.get(PACK_KIND_PREFIX + cid);
@@ -224,7 +267,7 @@ function packOccasionSeed(character, { caps = null, wearRows = null, kinds = nul
    makes it better rather than worse. Same rule as the week planner — never ask
    for the grid, always show the guess. */
 function packSlate(c, { character = null, plans = null, wearRows = null, rhythm = null,
-                       mix = null, today = null } = {}) {
+                       mix = null, today = null, tripContexts = null } = {}) {
   const dates = tripDates(c);
   if (!dates.length) return [];
   const rows = wearRows || wears;
@@ -278,6 +321,48 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
   }
 
   // ③ her weekday rhythm, for days she didn't declare
+  /* ③ HER OWN SELECTION, when she's made one.
+     2026-07-30 r5, her correction: *"I want to select the contexts for the trip,
+     not 'type' of trip. give me a list of contexts and i select all. not by
+     date."* So when `tripContexts` is set it REPLACES both guessing passes below
+     — the weekday rhythm and the character mix are the app deciding what's
+     happening, and she'd rather say.
+     ⚠️ Placement is still computed, because the laundry schedule needs dates —
+     but it is never asked for. Spread evenly across the free days rather than
+     clustered: with an explicit selection the pessimistic clustering just makes
+     the wash maths look worse than the trip is. */
+  if (Array.isArray(tripContexts) && tripContexts.length) {
+    const free = slate.filter(s => !s.occasions.length);
+    const queue = [];
+    for (const e of tripContexts) {
+      const n = Math.max(1, e.n || 1);
+      for (let k = 0; k < n; k++) queue.push(e);
+    }
+    let k = 0;
+    for (const e of queue) {
+      // Fill each free day once, then start doubling up — a day can carry two
+      // occasions (lunch out and a dinner), which is why demand is a multiset.
+      const pool = free.length ? free : slate;
+      const s = pool[k % pool.length];
+      k++;
+      if (!s) break;
+      s.occasions.push({
+        context: e.ctx, contexts: [e.ctx],
+        level: e.level || lvlOf(e.ctx), placed: false, source: "selected",
+        pinnedLevel: !!e.level,
+      });
+    }
+    // Anything still bare gets her modal level, so no day is unanswerable.
+    const floorLvl = packModalLevel(rows);
+    for (const s of slate) {
+      if (s.occasions.length) continue;
+      s.occasions.push({ context: null, contexts: [], level: floorLvl, placed: false, source: "floor" });
+    }
+    return slate;
+  }
+
+  // ③b her weekday rhythm, for days she didn't declare (only when she hasn't
+  // selected the trip's contexts herself).
   for (const s of slate) {
     if (s.occasions.length) continue;
     const r = rhythmFor(s.date, rhy);
@@ -1041,11 +1126,26 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
        ⚠️ Levels only, deliberately: context coverage was tried here and removed
        because itemContexts walks the whole wears table per call, and this is
        inside a candidate loop — items × wears, the documented comparator trap. */
+    /* The top half is split between Tops and Dresses — but the split has to be
+       PER LEVEL, from what can actually serve that level.
+       ⚠️ A flat 0.8/0.2 meant a Dressed Up evening only ever asked Dresses for
+       0.2 of a wear-day, so the fill picked a Polished Casual dress over the one
+       cocktail dress that reaches the level and left the gap it existed to
+       prevent. When no top in the pool reaches a level, dresses carry it whole —
+       and vice versa. Found by pinning Party/Shower to Dressed Up. */
+    const canReach = (list, lv) => list.some(i => (itemFormalitySet(i) || []).includes(lv));
+    const topsPool = candidates.filter(i => packSlotOf(i) === "Tops");
+    const dressPool = candidates.filter(i => packSlotOf(i) === "Dresses");
+    const topHalfShare = (lv) => {
+      const t = canReach(topsPool, lv), d = canReach(dressPool, lv);
+      if (slot === "Tops") return t ? (d ? 0.8 : 1) : 0;
+      return d ? (t ? 0.2 : 1) : 0;
+    };
     const needAt = new Map();
     for (const o of dem) {
       if (!o.level) continue;
-      // Tops and Dresses split the top half; Bottoms/Shoes take one fill each.
-      const w = (slot === "Tops") ? 0.8 : (slot === "Dresses") ? 0.2 : 1;
+      const w = (slot === "Tops" || slot === "Dresses") ? topHalfShare(o.level) : 1;
+      if (!w) continue;
       needAt.set(o.level, (needAt.get(o.level) || 0) + w);
     }
     // How many wear-days one piece can absorb before it needs washing.
@@ -1193,7 +1293,7 @@ function packMidTripWash(c, today = todayStr(), { ls = null, wearRows = null } =
   const assign = [];
   const rec = packRecord(c.id);
   const fromRec = packAssignFromRecord(c.id);
-  const slate = packSlate(c, { character: packCharacter(c.id), wearRows });
+  const slate = packSlate(c, { character: packCharacter(c.id), wearRows, tripContexts: packTripContexts(c.id) });
   const demand = packDemand(slate);
   for (const d of rest) {
     const looks = planActiveLooks(c, d);
@@ -1345,7 +1445,7 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
   if (!c) return null;
   const rec = packRecord(cid);
   const character = packCharacter(cid);
-  const slate = packSlate(c, { character });
+  const slate = packSlate(c, { character, tripContexts: packTripContexts(cid) });
   const demand = packDemand(slate);
   const rack = packRack(c, slate, { wxFor: packWxFor(c) });
   const kk = K != null ? K : (rec.K || PACK_OPTIONS.normal);
@@ -1678,44 +1778,143 @@ async function packSetSubTarget(slot, sub, n) {
    `dayplan` and a second editor would be a second source of truth for "what's
    happening on day X". Contexts, per-event formality and new contexts are all
    edited there. */
-function openPackOccasions() {
+let _pcAddOpen = false;   // the "＋ New context" input on the trip-context list
+
+/* WHAT'S HAPPENING ON THIS TRIP — a flat list of every context she has, ticked
+   for the whole trip. No dates, no trip "type".
+
+   Her words: *"give me a list of contexts and i select all. not by date. context
+   should also be able to select formality level (eg it says party/shower
+   polished casual but i will do party/shower - dressed up)."*
+
+   Each ticked row carries its own formality for THIS trip and how many days it
+   takes up. The days number matters — it is what the laundry maths runs on — so
+   the app fills it in and she can nudge it, rather than being asked for it.
+   ⚠️ Fixed events on a specific date still live in dayplan and are honoured
+   first; this list is the date-free "these things will happen" layer. */
+function openPackContexts() {
   const st = _packState;
   if (!st) return;
-  const rows = st.slate.map(s => {
-    const occs = s.occasions || [];
-    const chips = occs.map(o => {
-      const label = (o.contexts || []).length ? o.contexts.join(" + ") : (OCCASION_LADDER[(o.level || 1) - 1] || "—");
-      const lvl = o.level ? OCCASION_LADDER[o.level - 1] : "";
-      return `<span class="cap-chip${o.pinnedLevel ? " on" : ""}" style="font-size:12px">${esc(label)}${lvl ? ` · ${esc(lvl)}` : ""}</span>`;
-    }).join(" ");
-    const guessed = occs.length && occs.every(o => o.source !== "declared");
-    return `<button class="sheet-row" data-packocc-day="${esc(s.date)}" style="align-items:flex-start">
-      <span style="flex:1;min-width:0">
-        <span style="font-weight:600">${esc(planDayLabel(s.date))}</span>
-        <span class="cap-catbar" style="flex-wrap:wrap;gap:5px;padding-top:5px">${chips || `<span class="muted" style="font-size:12px">nothing yet</span>`}</span>
-        ${guessed ? `<span class="muted" style="font-size:11.5px">a guess from your usual week — tap to set it</span>` : ""}
-      </span>
-      <span class="rt" style="color:var(--accent)">›</span>
-    </button>`;
-  }).join("");
-  $("#logInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="poDone" style="font-weight:700">Done</button>
-      <h2>What's happening</h2>
-      <div style="width:48px"></div>
-    </div>
-    <div class="sheet-note">Set the contexts for a day, or pin how dressy it is when the context alone doesn't say. The pack's numbers follow from these.</div>
-    ${rows}
-    <div style="height:max(env(safe-area-inset-bottom),16px)"></div>`;
-  showSheet("logSheet");
-  $("#poDone").onclick = () => {
-    hideSheet("logSheet");
-    packLoadState(capsuleId);
-    renderCapsules();
-    packOfferCoverageFix();
+  const cid = st.cid, c = st.c;
+  const days = tripDates(c).length;
+  const render = () => {
+    const chosen = packTripContexts(cid) || packSuggestTripContexts(c);
+    const byCtx = new Map(chosen.map(e => [e.ctx, e]));
+    const skip = new Set([TRIP_CONTEXT, PACK_FLIGHT_CONTEXT]);
+    const all = contextOptions().filter(x => !skip.has(x));
+    const picked = all.filter(x => byCtx.has(x));
+    const rest = all.filter(x => !byCtx.has(x));
+
+    const row = (ctx) => {
+      const e = byCtx.get(ctx);
+      const on = !!e;
+      const usual = contextFormalityLevel(ctx) || CONTEXT_FORMALITY_SEED[ctx] || null;
+      const shown = (e && e.level) || usual;
+      return `<div class="det-card" style="margin:0 16px 8px;padding:10px 12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="pack-tick" data-pc-tog="${esc(ctx)}" aria-label="Select">${on ? "✓" : ""}</button>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600">${esc(ctx)}</div>
+            <div class="muted" style="font-size:12px">${shown ? esc(occLabel(shown)) : "no usual level yet"}${e && e.level && e.level !== usual ? ` · usually ${esc(occLabel(usual))}` : ""}</div>
+          </div>
+          ${on ? `<div style="display:flex;align-items:center;gap:5px;flex:none">
+            <button class="plan-act" data-pc-dec="${esc(ctx)}" aria-label="Fewer days">−</button>
+            <div style="min-width:34px;text-align:center;font-weight:700">${e.n || 1}<span class="muted" style="font-weight:400;font-size:11px">d</span></div>
+            <button class="plan-act" data-pc-inc="${esc(ctx)}" aria-label="More days">＋</button>
+          </div>` : ""}
+        </div>
+        ${on ? `<div style="font-size:12px;color:var(--muted);padding-top:8px">how dressy, on this trip</div>
+        <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:4px">
+          ${OCCASION_LADDER.map((lbl, k) => {
+            const n = k + 1;
+            const isSet = e.level === n;
+            const isUsual = !e.level && usual === n;
+            return `<button class="cap-chip${isSet ? " on" : ""}" data-pc-lvl="${esc(ctx)}|${n}"
+              style="font-size:12px${isUsual ? ";border-color:var(--accent);color:var(--accent)" : ""}">${n}. ${esc(lbl)}</button>`;
+          }).join("")}
+        </div>
+        ${e.level ? `<div class="muted" style="font-size:11.5px;padding-top:4px">Set for this trip. Tap it again to go back to your usual.</div>` : ""}` : ""}
+      </div>`;
+    };
+
+    const total = chosen.reduce((n, e) => n + (e.n || 1), 0);
+    $("#logInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="pcDone" style="font-weight:700">Done</button>
+        <h2>What's happening</h2>
+        <div style="width:48px"></div>
+      </div>
+      <div class="sheet-note">Tick everything you'll do on this trip. Each one can have its own formality just for this trip — a Party/Shower you'll do Dressed Up stays Dressed Up here without changing it everywhere else.</div>
+      <div class="center muted" style="font-size:12.5px;padding:0 16px 8px">${total} day${total === 1 ? "" : "s"} accounted for, of ${days} · the two travel days are added for you</div>
+      ${picked.map(row).join("")}
+      ${picked.length && rest.length ? `<div class="stats-sec-hdr" style="padding:10px 16px 4px"><div class="t" style="font-size:14px">Everything else</div></div>` : ""}
+      ${rest.map(row).join("")}
+      <div style="padding:6px 16px 16px">
+        ${_pcAddOpen ? `<div style="display:flex;gap:6px">
+          <input class="inp" id="pcNewInput" placeholder="Name a context…" style="flex:1;font-size:13px" autocomplete="off">
+          <button class="cap-chip" id="pcNewSave">Add</button>
+        </div>` : `<button class="btn btn-sec" id="pcNewOpen" style="width:100%">＋ New context</button>`}
+      </div>
+      <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
+
+    const save = async (next) => { await setPackTripContexts(cid, next); render(); };
+    const list = () => JSON.parse(JSON.stringify(packTripContexts(cid) || packSuggestTripContexts(c)));
+
+    $("#pcDone").onclick = async () => {
+      // Persist whatever's shown even if she never toggled anything, so the
+      // suggestion becomes her selection rather than re-guessing next open.
+      if (!packTripContexts(cid)) await setPackTripContexts(cid, chosen);
+      hideSheet("logSheet");
+      _pcAddOpen = false;
+      packLoadState(cid);
+      renderCapsules();
+      packOfferCoverageFix();
+    };
+    $("#logInner").querySelectorAll("[data-pc-tog]").forEach(b => b.onclick = () => {
+      const ctx = b.dataset.pcTog;
+      const next = list();
+      const at = next.findIndex(e => e.ctx === ctx);
+      if (at >= 0) next.splice(at, 1);
+      else next.push({ ctx, level: null, n: 1 });
+      save(next);
+    });
+    $("#logInner").querySelectorAll("[data-pc-lvl]").forEach(b => b.onclick = () => {
+      const [ctx, n] = b.dataset.pcLvl.split("|");
+      const next = list();
+      const e = next.find(x => x.ctx === ctx); if (!e) return;
+      e.level = e.level === +n ? null : +n;     // tapping the set level clears it
+      save(next);
+    });
+    $("#logInner").querySelectorAll("[data-pc-inc]").forEach(b => b.onclick = () => {
+      const next = list();
+      const e = next.find(x => x.ctx === b.dataset.pcInc); if (!e) return;
+      e.n = Math.min(days, (e.n || 1) + 1);
+      save(next);
+    });
+    $("#logInner").querySelectorAll("[data-pc-dec]").forEach(b => b.onclick = () => {
+      const next = list();
+      const e = next.find(x => x.ctx === b.dataset.pcDec); if (!e) return;
+      e.n = Math.max(1, (e.n || 1) - 1);
+      save(next);
+    });
+    const open = $("#pcNewOpen");
+    if (open) open.onclick = () => { _pcAddOpen = true; render(); const i = $("#pcNewInput"); if (i) i.focus(); };
+    const addNew = () => {
+      const inp = $("#pcNewInput");
+      const name = (inp ? inp.value : "").trim();
+      if (!name) return;
+      const next = list();
+      if (!next.some(e => e.ctx === name)) next.push({ ctx: name, level: null, n: 1 });
+      _pcAddOpen = false;
+      save(next);
+    };
+    const saveBtn = $("#pcNewSave");
+    if (saveBtn) saveBtn.onclick = addNew;
+    const inp = $("#pcNewInput");
+    if (inp) inp.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addNew(); } };
   };
-  $("#logInner").querySelectorAll("[data-packocc-day]").forEach(b =>
-    b.onclick = () => openDayPlanSheet(b.dataset.packoccDay));
+  render();
+  showSheet("logSheet");
 }
 
 /* Throw away her overrides and go back to the app's own numbers. Explicit, and
@@ -2488,7 +2687,7 @@ function packDiff(cid) {
   if (!rec.built) return null;
   const c = capsuleById.get(cid);
   if (!c) return null;
-  const slate = packSlate(c, { character: packCharacter(cid) });
+  const slate = packSlate(c, { character: packCharacter(cid), tripContexts: packTripContexts(cid) });
   const demand = packDemand(slate);
   const reasons = [];
   if (packSlateHash(demand) !== rec.slateHash) reasons.push("the plan for the days changed");
@@ -2523,7 +2722,7 @@ function openPackBuildSheet(cid) {
   if (!c) return;
   const character = packCharacter(cid);
   const seed = packOccasionSeed(character, {});
-  const slate = packSlate(c, { character });
+  const slate = packSlate(c, { character, tripContexts: packTripContexts(cid) });
   const demand = packDemand(slate);
   const rec = packRecord(cid);
   const K = rec.K || PACK_OPTIONS.normal;

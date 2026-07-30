@@ -6,14 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-30 r4";
+const APP_VERSION = "2026-07-30 r5";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Tap “N occasions over N days” on a pack to set what's actually happening — contexts per day, and how dressy each one is",
-  "You can now pin a formality on a single event when the context doesn't say it: a dinner with friends can still be Dressed Up",
-  "New contexts can be created right there, and they show up on other days straight away",
-  "When an occasion can't be dressed, the app only offers to add a piece if one in your closet would actually fix it",
+  "🧳 A pack now asks what's happening as a plain list of your contexts — tick everything you'll do, no dates, no trip “type”",
+  "Each ticked context gets its own formality just for that trip: Party/Shower you'll do Dressed Up stays Dressed Up here, without changing it anywhere else",
+  "Set how many days each one takes up, and the pack's numbers follow",
+  "New contexts can be added right from that list",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

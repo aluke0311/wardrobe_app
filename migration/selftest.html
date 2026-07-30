@@ -2276,6 +2276,82 @@ async function run() {
       ? true : `travelOccasions=${travelOccs.length} flightOccasions=${flightOccs.length}`;
   }));
 
+  /* ---- the trip's contexts, picked from a flat list (2026-07-30 r5) ----
+     Her correction: "I want to select the contexts for the trip, not 'type' of
+     trip. give me a list of contexts and i select all. not by date. context
+     should also be able to select formality level (eg it says party/shower
+     polished casual but i will do party/shower - dressed up)." */
+  t("a selected context list replaces the app's guessing entirely", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const guessed = W.packDemand(W.packSlate(c, {}));
+    const chosen = W.packDemand(W.packSlate(c, {
+      tripContexts: [{ ctx: "Symphony", level: null, n: 2 }],
+    }));
+    const named = chosen.filter(o => o.context && o.context !== "Flight").map(o => o.context);
+    // Nothing from her weekday rhythm or a trip character should survive.
+    return named.length && named.every(x => x === "Symphony")
+      ? true : `chosen=${JSON.stringify(named)} guessed=${JSON.stringify(guessed.map(o => o.context))}`;
+  }));
+
+  t("a per-context formality overrides that context's usual level", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const usual = W.contextFormalityLevel("Party/Shower") || W.CONTEXT_FORMALITY_SEED["Party/Shower"];
+    const demand = W.packDemand(W.packSlate(c, {
+      tripContexts: [{ ctx: "Party/Shower", level: 6, n: 1 }],
+    }));
+    const party = demand.find(o => o.context === "Party/Shower");
+    return party && party.level === 6 && party.pinnedLevel && usual !== 6
+      ? true : `level=${party && party.level} pinned=${party && party.pinnedLevel} usual=${usual}`;
+  }));
+
+  t("the day count on a context drives how many occasions it makes", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const one = W.packDemand(W.packSlate(c, { tripContexts: [{ ctx: "Work", level: null, n: 1 }] }))
+      .filter(o => o.context === "Work").length;
+    const three = W.packDemand(W.packSlate(c, { tripContexts: [{ ctx: "Work", level: null, n: 3 }] }))
+      .filter(o => o.context === "Work").length;
+    return one === 1 && three === 3 ? true : `n=1 gave ${one}, n=3 gave ${three}`;
+  }));
+
+  /* ⚠️ Found by pinning Party/Shower to Dressed Up and reading the result: the
+     fill asked Dresses for only 0.2 of a wear-day at that level (a flat top-half
+     split), so it picked a Polished Casual dress over the one cocktail dress
+     that reaches Dressed Up — and left the very gap it exists to prevent. The
+     split is now per LEVEL, from what can actually serve it. */
+  t("a level only a dress can reach makes the fill pick that dress", () => withPackCloset(() => {
+    const c = packTrip(5);
+    /* ⚠️ The competing dress has to COVER A DEMANDED LEVEL and be the warmer of
+       the two, or the flat split lands on the right dress by luck and this
+       passes vacuously (it did, verified by mutation). Here dayDress reaches the
+       L3 the tops also cover, and nightDress is the only route to L6. */
+    const demand = [
+      { id: "a", date: D(1), level: 3, context: "Errands", contexts: ["Errands"] },
+      { id: "b", date: D(2), level: 3, context: "Errands", contexts: ["Errands"] },
+      { id: "c", date: D(3), level: 6, context: "Party/Shower", contexts: ["Party/Shower"], pinnedLevel: true },
+    ];
+    const pool = ["dayDress", "nightDress", "topA", "topB", "botA", "shoeA", "shoeB"];
+    const fill = W.packFill({ Tops: 2, Bottoms: 1, Dresses: 1, Shoes: 2, Outerwear: 0 },
+      { c, demand, rack: { ids: pool, cold: [], legs: 1 } });
+    const dresses = (fill.bySlot.Dresses || []).map(id => W.itemById.get(id));
+    const reaches6 = dresses.some(i => (W.itemFormalitySet(i) || []).includes(6));
+    return reaches6
+      ? true : `picked ${JSON.stringify(dresses.map(i => i.id))} — the only route to L6 was left behind`;
+  }, {
+    replace: (add) => {
+      add("dayDress", "Dresses", "Short", [3]);       // covers a demanded level
+      add("nightDress", "Dresses", "Cocktail", [6]);  // the only route to L6
+      add("topA", "Tops", "Tee shirts", [3]);
+      add("topB", "Tops", "Tee shirts", [3]);
+      add("botA", "Bottoms", "Jeans", [3, 6]);
+      add("shoeA", "Shoes", "Sneakers", [3]);
+      add("shoeB", "Shoes", "Heels", [6]);
+    },
+    wears: (ws) => {
+      // Make the WRONG dress the warmer one, so only the level maths can win.
+      for (let n = 0; n < 6; n++) ws.push({ id: "dd" + n, item_id: "dayDress", worn_on: D(-(n + 1)), context: ["Errands"], formality_for: 3 });
+    },
+  }));
+
   /* Her ask: "hone the individual events by formality when context is not
      sufficient". A pinned level must WIN over what the contexts average to — a
      dinner tagged Friends can still be a Dressed Up dinner, and the context
