@@ -2140,6 +2140,10 @@ async function run() {
     for (let n = 0; n < 2; n++) add("ckt" + n, "Dresses", "Cocktail", [5, 6]);
     for (let n = 0; n < 2; n++) add("blz" + n, "Outerwear", "Blazers", [5, 6]);
     if (opt.mutate) opt.mutate(W.items, add);
+    // `replace` swaps the whole closet out, for cases that need a deliberately
+    // SCARCE wardrobe (the general fixture is roomy enough that most tradeoffs
+    // never bind, which silently made the tightness-dial case untestable).
+    if (opt.replace) { W.items = []; opt.replace(add); }
 
     W.wears = [];
     // A little history so contextFormalityLevel / rackWarmth / travel stats have
@@ -2248,13 +2252,28 @@ async function run() {
   }));
 
   // ---- the slate ----
-  t("the return day always carries an occasion (the travel-home reserve)", () => withPackCloset(() => {
+  t("the plane days carry a Flight occasion (the travel-home reserve)", () => withPackCloset(() => {
     const c = packTrip(6);
     const slate = W.packSlate(c);
     const last = slate[slate.length - 1], first = slate[0];
-    return last.occasions.some(o => (o.contexts || []).includes("Travel"))
-        && first.occasions.some(o => (o.contexts || []).includes("Travel"))
+    return last.occasions.some(o => (o.contexts || []).includes("Flight"))
+        && first.occasions.some(o => (o.contexts || []).includes("Flight"))
       ? true : `first=${JSON.stringify(first.occasions)} last=${JSON.stringify(last.occasions)}`;
+  }));
+
+  /* ⚠️ Her correction, 2026-07-30: "I use the travel context every day I am on a
+     trip, not just days of plane travel. I have a flight context too." So Travel
+     is a trip-WIDE tag (tripWearContext already stamps it on every wear during
+     trip dates) and must never become an occasion — otherwise a 6-day trip
+     invents six Travel events and inflates the occasion count and the laundry
+     maths along with it. The plane-day event is Flight. */
+  t("Travel is never an occasion — it's a trip-wide tag, not an event", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const demand = W.packDemand(W.packSlate(c));
+    const travelOccs = demand.filter(o => (o.contexts || []).includes("Travel"));
+    const flightOccs = demand.filter(o => (o.contexts || []).includes("Flight"));
+    return travelOccs.length === 0 && flightOccs.length === 2
+      ? true : `travelOccasions=${travelOccs.length} flightOccasions=${flightOccs.length}`;
   }));
 
   t("a declared event with a bare level and no context is a valid occasion", () => withPackCloset(() => {
@@ -2421,18 +2440,33 @@ async function run() {
   /* The tightness dial has to DO something to the thing she'd notice. Before
      repW existed, K only changed option counts, so Lean and Cushion produced the
      same daily repetition and the dial was decorative on this axis. */
+  /* ⚠️ Needs a SCARCE closet, and the reason is worth writing down: on the roomy
+     general fixture the solver spreads tops perfectly at every setting, so the
+     dial has nothing to trade and the case passes vacuously. The pressure comes
+     from high-tolerance tops being available — a sweater (tolerance 4) makes
+     reuse cheap, so Lean takes it and Cushion pays a piece to avoid it.
+     This case was silently defanged once already by an unrelated change to the
+     plane-day occasion's LEVEL, which split the trip across two levels and
+     removed the scarcity. Hence the explicit closet. */
+  const scarceTops = (add) => {
+    add("swtA", "Tops", "Sweaters", [3]);      // tolerance 4 — reuse is cheap
+    add("swtB", "Tops", "Sweaters", [3]);
+    add("teeA", "Tops", "Tee shirts", [3]);    // tolerance 1 — one day each
+    add("teeB", "Tops", "Tee shirts", [3]);
+    add("jeaA", "Bottoms", "Jeans", [3]);
+    add("jeaB", "Bottoms", "Jeans", [3]);
+    add("snkA", "Shoes", "Sneakers", [3]);
+  };
   t("Lean tolerates strictly more repetition than Cushion", () => withPackCloset(() => {
     const c = packTrip(6);
-    const mix = [{ context: "Errands", per: 0.9 }];
+    const mix = [{ context: "Errands", per: 1 }];
     const lean = solveFor(c, { K: 1, mix });
     const cush = solveFor(c, { K: 3, mix });
     const l = topSpread(lean.demand, lean.res), u = topSpread(cush.demand, cush.res);
-    // ⚠️ STRICT on purpose. `l >= u` passed even with repW pinned to 1, i.e. with
-    // the dial decorative on this axis — a test that couldn't fail (verified by
-    // mutation). Measured on this closet: Lean 4 days / 6 pieces, Cushion 2 / 8.
+    // STRICT: `l >= u` held even with repW pinned to 1 (verified by mutation).
     return l > u
-      ? true : `leanWorstTop=${l} cushionWorstTop=${u} (dial not affecting repetition)`;
-  }));
+      ? true : `leanWorstTop=${l} cushionWorstTop=${u} leanPieces=${lean.res.pack.length} cushionPieces=${cush.res.pack.length}`;
+  }, { replace: scarceTops }));
 
   t("a 10-day trip packs enough tops to stay inside tolerance", () => withPackCloset(() => {
     const c = packTrip(10);

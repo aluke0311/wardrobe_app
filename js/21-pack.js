@@ -93,6 +93,11 @@ const PACK_REPEAT_TOP = 150;    // per earlier DAY this top/dress already went o
 const PACK_SCORE_W = 150;       // weight on the suggester's own combo score
 const PACK_PROVEN_W = 60;       // per piece proven on past trips
 
+/* The occasion on a plane day. ⚠️ NOT TRIP_CONTEXT ("Travel") — she tags Travel
+   on every wear of a trip, which tripWearContext already does automatically, so
+   Travel is a trip-wide fact and never an event. Flight is the event. */
+const PACK_FLIGHT_CONTEXT = "Flight";
+
 const PACK_BULKY_SUBCATS = ["Coats", "Boots"];   // wear-don't-pack advice (D9)
 const PACK_GRADE_MIN_DAYS = 3;                   // logged days before self-grading speaks
 
@@ -242,19 +247,27 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
     }
   }
 
-  /* ② Travel days, claimed BEFORE the guesses. ⚠️ Ordering is load-bearing: with
-     the travel stamp last, the departure day collected a rhythm occasion AND a
-     character occasion AND then Travel — three occasions on the day she's on a
-     plane. Claiming it first means the later passes see it as taken.
-     This is also what enforces the travel-home reserve: because the return day
-     always carries an occasion, the ordinary schedule walk detects a trip that
-     burns its last clean bottoms on day 8. No special case, which is why there
-     is no PACK_HOME_RESERVE constant. */
+  /* ② Flight days, claimed BEFORE the guesses.
+     ⚠️ The plane-day occasion is FLIGHT, not Travel (2026-07-30, her correction:
+     "I use the travel context every day I am on a trip, not just days of plane
+     travel. I have a flight context too"). Travel is a trip-wide tag — which is
+     exactly what tripWearContext already stamps on every wear-create during trip
+     dates — so it must NOT generate occasions here, or a 6-day trip invents six
+     Travel events and inflates both the occasion count and the laundry maths.
+     ⚠️ Ordering is load-bearing: with this stamp last, the departure day
+     collected a rhythm occasion AND a character occasion AND then this one —
+     three occasions on the day she's on a plane. Claiming it first means the
+     later passes see the day as taken.
+     This also enforces the travel-home reserve: because the return day always
+     carries an occasion, the ordinary schedule walk detects a trip that burns its
+     last clean bottoms on day 8. No special case, which is why there is no
+     PACK_HOME_RESERVE constant. */
   for (const d of [dates[0], dates[dates.length - 1]]) {
     const s = byDate.get(d);
     if (!s) continue;
-    if (!s.occasions.some(o => (o.contexts || []).includes(TRIP_CONTEXT))) {
-      s.occasions.push({ context: TRIP_CONTEXT, contexts: [TRIP_CONTEXT], level: lvlOf(TRIP_CONTEXT), placed: true, source: "travel" });
+    if (!s.occasions.some(o => (o.contexts || []).includes(PACK_FLIGHT_CONTEXT))) {
+      s.occasions.push({ context: PACK_FLIGHT_CONTEXT, contexts: [PACK_FLIGHT_CONTEXT],
+                         level: lvlOf(PACK_FLIGHT_CONTEXT), placed: true, source: "flight" });
     }
   }
 
@@ -262,7 +275,7 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
   for (const s of slate) {
     if (s.occasions.length) continue;
     const r = rhythmFor(s.date, rhy);
-    const ctxs = (r && r.contexts || []).filter(x => x !== TRIP_CONTEXT);
+    const ctxs = (r && r.contexts || []).filter(x => x !== TRIP_CONTEXT && x !== PACK_FLIGHT_CONTEXT);
     if (!ctxs.length) continue;
     s.occasions.push({ context: ctxs[0], contexts: ctxs, level: lvlOf(ctxs[0]), placed: false, source: "rhythm" });
   }

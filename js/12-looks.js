@@ -1280,7 +1280,7 @@ let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next
 const CONTEXT_FORMALITY_SEED = {
   "Work": 5, "Symphony": 4, "Chorus Concert": 6, "Date Night": 4, "Friends": 2,
   "Rehearsal": 2, "Party/Shower": 4, "Wedding": 6, "Funeral": 4, "Errands": 2,
-  "Travel": 3, "Workout": 1,
+  "Travel": 3, "Flight": 2, "Workout": 1,
 };
 function topContextsByWearCount(limit = 6) {
   const counts = countByDay(wears, ctxArr);
