@@ -114,8 +114,15 @@ function rackWarmth(itemId, today = todayStr()) {
    Returns { ids, cold, slots, levels } — `cold` is the rediscovery subset and
    is surfaced in the UI, because the thing that keeps the rack honest is also
    the nicest thing about it. */
+/* `quota` (2026-07-29) lets the trip builder ask for a trip-sized rack:
+   RACK_SLOT_QUOTA is calibrated for a day at home, and a 10-day trip with two
+   dress-coded evenings needs a wider pool to draw from. Defaults to the home
+   quotas, so the daily rack is untouched. ⚠️ The cold share is deliberately NOT
+   parameterised — it is load-bearing here for the same reason it is at home. */
 function buildRack({ pool = null, wearRows = null, today = todayStr(), season = null,
-                     wx = null, plans = null, pinned = null, pushed = null } = {}) {
+                     wx = null, plans = null, pinned = null, pushed = null,
+                     quota = null } = {}) {
+  const QUOTA = quota || RACK_SLOT_QUOTA;
   const rows = wearRows || wears;
   const seas = season || currentSeason();
   const pin = pinned || rackPinnedSet();
@@ -145,17 +152,17 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   const ids = new Set();
   const cold = new Set();
 
-  for (const [slot, quota] of Object.entries(RACK_SLOT_QUOTA)) {
+  for (const [slot, slotQuota] of Object.entries(QUOTA)) {
     const inSlot = eligible.filter(i => slotOf(i) === slot ||
       (slot === "Outerwear" && isLayer(i) && i.category === "Tops"));
     const warmList = inSlot.filter(i => score(i) > 0).sort(byWarm);
     const coldList = inSlot.filter(i => score(i) === 0).sort(byCold);
-    const nCold = Math.max(1, Math.round(quota * RACK_COLD_SHARE));
-    const nWarm = quota - nCold;
+    const nCold = Math.max(1, Math.round(slotQuota * RACK_COLD_SHARE));
+    const nWarm = slotQuota - nCold;
     const takenWarm = warmList.slice(0, nWarm);
     const takenCold = coldList.slice(0, nCold);
     // Backfill from whichever side has slack, so a thin slot still fills.
-    const short = quota - takenWarm.length - takenCold.length;
+    const short = slotQuota - takenWarm.length - takenCold.length;
     const extra = short > 0
       ? [...warmList.slice(takenWarm.length), ...coldList.slice(takenCold.length)].slice(0, short)
       : [];

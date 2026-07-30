@@ -2103,6 +2103,387 @@ async function run() {
     eq([W.kvSameValue(undefined, null), W.kvSameValue({ a: 1 }, { a: 1 }), W.kvSameValue({ a: 1 }, { a: 2 })],
        [true, true, false]));
 
+  /* ================= TRIP BUILDER / pack plan (2026-07-29 r2) =================
+     Spec: TRIP_BUILDER.md. These cover the three inversions, because getting any
+     of them backwards produces a plausible WRONG answer rather than a crash:
+       ① outfits first — every packed piece must be in a real outfit
+       ② schedule, don't divide — violations carry a date, seeded from last_washed
+       ③ the solve is an event — same inputs, same pack
+     Case "a 10-day trip with two dressy evenings doesn't pack one pair of shoes"
+     is a GATE on decision D2, not a regression test. */
+  const withPackCloset = (fn, opt = {}) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    caps: W.capsules, links: W.capsuleLinks, excl: W.exclusions,
+                    ready: W.dataReady, rack: W.kvData.get("rack"), plan: W.kvData.get("dayplan") };
+    const mk = (id, cat, sub, fml, extra) => ({
+      id, name: id, category: cat, subcategory: sub, status: "Available",
+      image_path: id + ".jpg", color_family: (extra && extra.color) || "Blue",
+      formality: fml, season: ["Spring", "Summer", "Fall", "Winter"],
+      tags: (extra && extra.tags) || [],
+      last_washed: (extra && extra.last_washed) || null,
+      laundry_state: (extra && extra.laundry_state) || null,
+    });
+    W.items = [];
+    const add = (...a) => { const it = mk(...a); W.items.push(it); return it; };
+    // Casual + smart tops (tolerance 1 tees, 4 sweaters), bottoms, shoes across
+    // two formality bands, dresses, outerwear. Generous enough that outfits form.
+    for (let n = 0; n < 8; n++) add("tee" + n, "Tops", "Tee shirts", [2, 3]);
+    for (let n = 0; n < 4; n++) add("blo" + n, "Tops", "Blouses", [4, 5]);
+    for (let n = 0; n < 3; n++) add("swt" + n, "Tops", "Sweaters", [3, 4, 5]);
+    for (let n = 0; n < 3; n++) add("jea" + n, "Bottoms", "Jeans", [2, 3, 4]);
+    for (let n = 0; n < 2; n++) add("pnt" + n, "Bottoms", "Pants", [4, 5, 6]);
+    for (let n = 0; n < 2; n++) add("skt" + n, "Bottoms", "Skirts", [4, 5, 6]);
+    for (let n = 0; n < 3; n++) add("snk" + n, "Shoes", "Sneakers", [2, 3]);
+    for (let n = 0; n < 2; n++) add("fla" + n, "Shoes", "Flats", [3, 4, 5]);
+    for (let n = 0; n < 2; n++) add("hee" + n, "Shoes", "Heels", [5, 6]);
+    for (let n = 0; n < 2; n++) add("drs" + n, "Dresses", "Short", [4, 5]);
+    for (let n = 0; n < 2; n++) add("ckt" + n, "Dresses", "Cocktail", [5, 6]);
+    for (let n = 0; n < 2; n++) add("blz" + n, "Outerwear", "Blazers", [5, 6]);
+    if (opt.mutate) opt.mutate(W.items, add);
+
+    W.wears = [];
+    // A little history so contextFormalityLevel / rackWarmth / travel stats have
+    // something to read, without making any one piece dominant.
+    for (let n = 0; n < 20; n++) {
+      W.wears.push({ id: "pw" + n, item_id: "tee" + (n % 8), worn_on: W.shiftDate(today, -(n + 2)),
+                     outfit_id: null, context: ["Errands"], formality_for: 3 });
+    }
+    for (let n = 0; n < 6; n++) {
+      W.wears.push({ id: "pwk" + n, item_id: "blo" + (n % 4), worn_on: W.shiftDate(today, -(n * 3 + 2)),
+                     outfit_id: null, context: ["Work"], formality_for: 5 });
+    }
+    if (opt.wears) opt.wears(W.wears);
+
+    W.outfits = []; W.outfitLinks = [];
+    W.capsules = opt.capsules || []; W.capsuleLinks = opt.capsuleLinks || [];
+    W.exclusions = opt.exclusions || [];
+    W.dataReady = true;
+    W.kvData.delete("rack");
+    if (opt.dayplan) W.kvData.set("dayplan", opt.dayplan); else W.kvData.delete("dayplan");
+    W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildSuggestIndexes(); W.buildExcludeSet();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.capsules = saved.caps; W.capsuleLinks = saved.links;
+      W.exclusions = saved.excl; W.dataReady = saved.ready;
+      if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+      W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildSuggestIndexes(); W.buildExcludeSet();
+    }
+  };
+  // A dated trip capsule, n days from tomorrow.
+  const packTrip = (n, locs) => ({ id: "tripc", name: "Test trip", kind: "packing",
+    start_date: D(1), end_date: D(n), locations: locs || [], plan: {} });
+  // Solve with few restarts — the suite asserts invariants, not pack quality.
+  const solveFor = (c, o = {}) => {
+    const slate = W.packSlate(c, { character: o.character || "city break", mix: o.mix });
+    const demand = W.packDemand(slate);
+    const rack = W.packRack(c, slate);
+    return { slate, demand, rack, res: W.packSolve({ c, demand, rack, restarts: o.restarts || 12,
+      K: o.K == null ? 2 : o.K, pinned: o.pinned, locked: o.locked, washDays: o.washDays }) };
+  };
+
+  // ---- ② schedule, don't divide ----
+  t("pack schedule seeds the wear counter from last_washed, not zero", () => withPackCloset(() => {
+    // A jean washed 10 days ago and worn 4 times since, tolerance 5 → it has ONE
+    // wear left, so a second trip day must violate. Seeding at zero would say 5.
+    const j = W.itemById.get("jea0");
+    j.last_washed = D(-10);
+    for (let n = 0; n < 4; n++) W.wears.push({ id: "jw" + n, item_id: "jea0", worn_on: D(-(n + 1)), context: [] });
+    const r = W.packSchedule([{ date: D(1), ids: ["jea0"] }, { date: D(2), ids: ["jea0"] }], { dates: [D(1), D(2)] });
+    return r.violations.length === 1 && r.violations[0].date === D(2)
+      ? true : `violations=${JSON.stringify(r.violations)}`;
+  }));
+
+  t("a wash day mid-trip resets the counter", () => withPackCloset(() => {
+    const j = W.itemById.get("jea0");
+    j.last_washed = D(-10);
+    for (let n = 0; n < 4; n++) W.wears.push({ id: "jw" + n, item_id: "jea0", worn_on: D(-(n + 1)), context: [] });
+    const assign = [1, 2, 3].map(k => ({ date: D(k), ids: ["jea0"] }));
+    const dirty = W.packSchedule(assign, { dates: [D(1), D(2), D(3)] });
+    const washed = W.packSchedule(assign, { dates: [D(1), D(2), D(3)], washDays: [D(2)] });
+    return dirty.violations.length === 2 && washed.violations.length === 0
+      ? true : `dirty=${dirty.violations.length} washed=${washed.violations.length}`;
+  }));
+
+  t("two outfits in one day sharing a piece is ONE wear-day", () => withPackCloset(() => {
+    const j = W.itemById.get("jea0");
+    j.last_washed = D(-10);
+    // tolerance 5, so 5 single-piece days are fine; the same day twice must not
+    // count twice (that's the countByDay rule, and double-counting would inflate
+    // laundry need by the number of outfits per day).
+    const dup = W.packSchedule([{ date: D(1), ids: ["jea0"] }, { date: D(1), ids: ["jea0"] },
+                                { date: D(2), ids: ["jea0"] }, { date: D(3), ids: ["jea0"] },
+                                { date: D(4), ids: ["jea0"] }, { date: D(5), ids: ["jea0"] }],
+                               { dates: [D(1), D(2), D(3), D(4), D(5)] });
+    return dup.violations.length === 0 ? true : `violations=${JSON.stringify(dup.violations)}`;
+  }));
+
+  t("a tol: tag override beats the subcategory default in the schedule", () => withPackCloset(() => {
+    const j = W.itemById.get("jea0");
+    j.last_washed = D(-10); j.tags = ["tol:1"];
+    const r = W.packSchedule([{ date: D(1), ids: ["jea0"] }, { date: D(2), ids: ["jea0"] }],
+                             { dates: [D(1), D(2)] });
+    return r.violations.length === 1 && r.violations[0].tol === 1
+      ? true : `violations=${JSON.stringify(r.violations)}`;
+  }));
+
+  t("infinity-tolerance pieces never generate a violation", () => withPackCloset(() => {
+    const s = W.itemById.get("hee0");
+    s.last_washed = D(-30);
+    const assign = [];
+    for (let k = 1; k <= 12; k++) assign.push({ date: D(k), ids: ["hee0"] });
+    return eq(W.packSchedule(assign).violations.length, 0);
+  }));
+
+  t("a hamper override starts the trip already over tolerance", () => withPackCloset(() => {
+    // "Wash before you go" has to be able to see this — a piece she explicitly
+    // put in the hamper is not packable until it's washed.
+    const b = W.itemById.get("blo0");
+    b.last_washed = D(-10); b.laundry_state = "hamper";
+    const r = W.packSchedule([{ date: D(1), ids: ["blo0"] }], { dates: [D(1)] });
+    const wash = W.packWashPlan(["blo0"], { startDate: D(1) });
+    return r.violations.length === 1 && wash.hamper.length === 1
+      ? true : `viol=${r.violations.length} hamper=${wash.hamper.length}`;
+  }));
+
+  // ---- the slate ----
+  t("the return day always carries an occasion (the travel-home reserve)", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const slate = W.packSlate(c);
+    const last = slate[slate.length - 1], first = slate[0];
+    return last.occasions.some(o => (o.contexts || []).includes("Travel"))
+        && first.occasions.some(o => (o.contexts || []).includes("Travel"))
+      ? true : `first=${JSON.stringify(first.occasions)} last=${JSON.stringify(last.occasions)}`;
+  }));
+
+  t("a declared event with a bare level and no context is a valid occasion", () => withPackCloset(() => {
+    // "one dressy evening" is a thing she knows before she knows what it is.
+    const c = packTrip(5);
+    const slate = W.packSlate(c, { plans: { [D(3)]: [{ contexts: [], level: 6, outfit: null }] } });
+    const day = slate.find(s => s.date === D(3));
+    return day && day.occasions.some(o => o.level === 6 && !o.context)
+      ? true : `day=${JSON.stringify(day && day.occasions)}`;
+  }));
+
+  t("a declared event beats the character guess on that day", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const slate = W.packSlate(c, { plans: { [D(3)]: [{ contexts: ["Wedding"], outfit: null }] } });
+    const day = slate.find(s => s.date === D(3));
+    return day && day.occasions.some(o => o.source === "declared" && (o.contexts || []).includes("Wedding"))
+      ? true : `day=${JSON.stringify(day && day.occasions)}`;
+  }));
+
+  // ---- ① outfits first ----
+  t("every packed piece appears in at least one assigned outfit", () => withPackCloset(() => {
+    const { demand, res } = solveFor(packTrip(5));
+    const used = new Set();
+    for (const cd of res.assign.values()) for (const id of cd.ids) used.add(id);
+    // Stage B may add pieces purely to raise the OPTION count — those are in a
+    // valid outfit inside the pack even if not in the chosen one, so check
+    // against the pack's own enumeration rather than only the chosen combos.
+    const extra = res.pack.filter(id => !used.has(id));
+    const reachable = new Set();
+    for (const lvl of new Set(demand.map(o => o.level))) {
+      const list = W.packCandidates({ id: "probe", level: lvl, date: D(1) }, res.pack, { all: true });
+      for (const cd of list) if (cd.ids.every(id => res.pack.includes(id))) cd.ids.forEach(id => reachable.add(id));
+    }
+    const orphans = extra.filter(id => !reachable.has(id));
+    return res.pack.length > 0 && !orphans.length
+      ? true : `pack=${res.pack.length} orphans=${JSON.stringify(orphans)}`;
+  }));
+
+  t("no assigned outfit violates an exclusion pair", () => withPackCloset(() => {
+    const bad = [];
+    const { res } = solveFor(packTrip(5));
+    for (const cd of res.assign.values()) {
+      for (let a = 0; a < cd.ids.length; a++) for (let b = a + 1; b < cd.ids.length; b++) {
+        if (W.isExcluded(cd.ids[a], cd.ids[b])) bad.push([cd.ids[a], cd.ids[b]]);
+      }
+    }
+    return !bad.length ? true : `excluded pairs in pack: ${JSON.stringify(bad)}`;
+  }, { exclusions: [{ item_a: "jea0", item_b: "tee0" }, { item_a: "jea1", item_b: "tee1" }] }));
+
+  // ---- ③ the solve is an event ----
+  /* ⚠️ This needs a closet BIG enough that suggestOutfits' 12-per-slot random
+     sample actually bites. On the standard fixture every slot is under 12, so the
+     sample is a no-op and the result is deterministic even with the seeded RNG
+     removed — the case passed while proving nothing (verified by mutation). With
+     24 eligible tees the shuffle decides which 12 are considered, so losing the
+     seed changes the pack. */
+  t("the same trip solves to the same pack twice (stability is the feature)", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const eligible = W.items.filter(i => i.category === "Tops" && (W.itemFormalitySet(i) || []).includes(3)).length;
+    const a = solveFor(c).res.pack.slice().sort();
+    const b = solveFor(c).res.pack.slice().sort();
+    return eligible > 12 && eq(a, b) === true
+      ? true : `eligibleTops=${eligible} (need >12 for the sample cap to bite) ${eq(a, b)}`;
+  }, { mutate: (list, add) => { for (let n = 0; n < 16; n++) add("xtee" + n, "Tops", "Tee shirts", [2, 3]); } }));
+
+  // ---- variety / D2 ----
+  t("K options per occasion actually exist inside the returned pack", () => withPackCloset(() => {
+    const { demand, res } = solveFor(packTrip(5), { K: 2 });
+    const solvable = demand.filter(o => !res.unmet.some(u => u.occId === o.id));
+    const short = solvable.filter(o => (res.options.get(o.id) || 0) < 2);
+    return !short.length
+      ? true : `short=${JSON.stringify(short.map(o => [o.id, o.level, res.options.get(o.id)]))}`;
+  }));
+
+  t("Cushion never packs less than Lean", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const lean = solveFor(c, { K: 1 }).res.pack.length;
+    const cush = solveFor(c, { K: 3 }).res.pack.length;
+    return cush >= lean ? true : `lean=${lean} cushion=${cush}`;
+  }));
+
+  /* ⚠️ GATE ON DECISION D2 (TRIP_BUILDER.md §1). "Distinct = any piece differs"
+     is meant to make a second pair of shoes something the optimiser reaches for
+     on merit. If this goes red, D2 is insufficient and needs the visible-core or
+     per-slot-floor variant — do NOT relax the assertion. */
+  t("two dressy evenings on a 10-day trip force shoes for BOTH bands", () => withPackCloset(() => {
+    const c = packTrip(10);
+    const { demand, res } = solveFor(c, {
+      K: 2,
+      mix: [{ context: "Errands", per: 0.6 }, { context: "Chorus Concert", per: 0.2 }],
+    });
+    // ⚠️ Asserting "≥2 pairs of shoes" is NOT enough and passed vacuously: the
+    // laundry-aware greedy packs extra shoes anyway. The claim being guarded is
+    // that a SECOND FORMALITY BAND is what pulls in a second kind of shoe, so
+    // check the bands directly — and that the dressy occasions exist at all,
+    // which is what the character-mix-as-target-count fix provides.
+    const dressy = demand.filter(o => o.level >= 6).length;
+    const shoes = res.pack.map(id => W.itemById.get(id)).filter(i => i && i.category === "Shoes");
+    const reaches6 = shoes.filter(i => (W.itemFormalitySet(i) || []).includes(6));
+    const casual = shoes.filter(i => !(W.itemFormalitySet(i) || []).includes(6));
+    return dressy >= 2 && reaches6.length >= 1 && casual.length >= 1
+      ? true : `dressyOccasions=${dressy} reaches6=${JSON.stringify(reaches6.map(i => i.id))} casual=${JSON.stringify(casual.map(i => i.id))}`;
+  }));
+
+  /* ⚠️ The case that catches a starved candidate list. Ten casual days against
+     tolerance-1 tees needs a fresh top most days; the closet below can easily do
+     that, so ANY violation here means the solver couldn't see enough of the
+     wardrobe — which is exactly what happened when candidates were the top 8 by
+     score (they shared three tops between them). Violations are a legitimate
+     OUTPUT when the closet genuinely can't cover the trip; they are never
+     acceptable when it can. */
+  t("a 10-day trip packs enough tops to stay inside tolerance", () => withPackCloset(() => {
+    const c = packTrip(10);
+    const { demand, res } = solveFor(c, { K: 1, mix: [{ context: "Errands", per: 0.9 }] });
+    // Assert the OUTCOME (nothing worn dirty), not a top count — 2 sweaters at
+    // tolerance 4 plus 2 tees legitimately covers 10 days, and demanding "≥5
+    // tops" encoded an assumption rather than the requirement.
+    return demand.length >= 9 && res.violations.length === 0
+      ? true : `occasions=${demand.length} violations=${JSON.stringify(res.violations)} pack=${res.pack.length}`;
+  }));
+
+  t("pinned pieces are in the pack even when the optimiser wouldn't pick them", () => withPackCloset(() => {
+    const { res } = solveFor(packTrip(4), { pinned: ["ckt1", "hee1"] });
+    return res.pack.includes("ckt1") && res.pack.includes("hee1")
+      ? true : `pack=${JSON.stringify(res.pack)}`;
+  }));
+
+  t("a locked occasion keeps its outfit through a re-solve", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const first = solveFor(c);
+    const occ = first.demand[2];
+    const lockCombo = { ids: ["blo0", "pnt0", "fla0"].sort(), pieces: [], score: 0 };
+    const locked = new W.Map();
+    locked.set(occ.id, lockCombo);
+    const again = solveFor(c, { locked });
+    const got = again.res.assign.get(occ.id);
+    return got && eq(got.ids, lockCombo.ids) === true
+        && lockCombo.ids.every(id => again.res.pack.includes(id))
+      ? true : `got=${JSON.stringify(got && got.ids)}`;
+  }));
+
+  // ---- the pool ----
+  t("a two-leg trip draws on both climates", () => withPackCloset(() => {
+    // Same dates, one leg vs two. Two legs run buildRack twice and union, so the
+    // pool can only be larger — a single call with one weather band is how half
+    // a multi-destination trip's wardrobe would go missing.
+    const one = packTrip(8, [{ name: "A", lat: 40, lon: -3 }]);
+    const two = packTrip(8, [{ name: "A", lat: 40, lon: -3, from: D(1), to: D(4) },
+                         { name: "B", lat: 38, lon: 0, from: D(5), to: D(8) }]);
+    const legs1 = W.tripLegs(one).length, legs2 = W.tripLegs(two).length;
+    const s1 = W.packSlate(one), s2 = W.packSlate(two);
+    const r1 = W.packRack(one, s1).ids.length, r2 = W.packRack(two, s2).ids.length;
+    return legs1 === 1 && legs2 === 2 && r2 >= r1
+      ? true : `legs=${legs1}/${legs2} rack=${r1}/${r2}`;
+  }));
+
+  t("the trip rack keeps the cold share (it can't quietly calcify)", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const r = W.packRack(c, W.packSlate(c));
+    return r.cold.length > 0 ? true : `cold=${r.cold.length} of ${r.ids.length}`;
+  }));
+
+  t("pack candidates ignore laundry — it's a schedule constraint, not a filter", () => withPackCloset(() => {
+    // Hamper every blouse. They must still be CANDIDATES (a wash before
+    // departure fixes them); filtering here is the divide-don't-schedule bug.
+    for (let n = 0; n < 4; n++) {
+      const b = W.itemById.get("blo" + n);
+      b.last_washed = D(-10); b.laundry_state = "hamper";
+    }
+    const c = packTrip(5);
+    const rack = W.packRack(c, W.packSlate(c));
+    const cands = W.packCandidates({ id: "p", level: 5, date: D(2) }, rack.ids, { all: true });
+    const usesHampered = cands.some(cd => cd.ids.some(id => id.startsWith("blo")));
+    const ls = W.laundryState();
+    const reallyDirty = W.isDirty(W.itemById.get("blo0"), ls);
+    return reallyDirty && usesHampered
+      ? true : `dirty=${reallyDirty} usesHampered=${usesHampered} cands=${cands.length}`;
+  }));
+
+  t("an uncoverable level reports as unmet with its date, never as an empty pack", () => withPackCloset(() => {
+    // Nothing in this closet reaches level 8 (black tie).
+    const c = packTrip(4);
+    const slate = W.packSlate(c, { plans: { [D(2)]: [{ contexts: [], level: 8, outfit: null }] } });
+    const demand = W.packDemand(slate);
+    const rack = W.packRack(c, slate);
+    const res = W.packSolve({ c, demand, rack, restarts: 8, K: 1 });
+    const gaps = W.packGaps(demand, rack.ids);
+    const u = res.unmet.find(x => x.level === 8);
+    return res.pack.length > 0 && !!u && u.date === D(2)
+        && gaps.some(g => g.level === 8 && g.nearest && g.nearest < 8)
+      ? true : `pack=${res.pack.length} unmet=${JSON.stringify(res.unmet)} gaps=${JSON.stringify(gaps)}`;
+  }));
+
+  t("packOutfitCount only counts outfits buildable from the pack itself", () => withPackCloset(() => {
+    const { demand, res } = solveFor(packTrip(5));
+    const n = W.packOutfitCount(res.pack, demand);
+    const all = W.packOutfitCount(W.items.map(i => i.id), demand);
+    return n > 0 && n <= all ? true : `pack=${n} closet=${all}`;
+  }));
+
+  t("packLeftOut names a proven-unused piece as a fact, and never one in the pack", () => withPackCloset(() => {
+    // Two finished trips that both packed ckt0 and never wore it.
+    const c = packTrip(4);
+    const left = W.packLeftOut(c, ["tee0", "jea0"]);
+    const names = left.map(e => e.item.id);
+    return names.includes("ckt0") && left.every(e => e.worn === 0 && e.packed >= 2)
+      ? true : `left=${JSON.stringify(left.map(e => [e.item.id, e.packed, e.worn]))}`;
+  }, {
+    capsules: [
+      { id: "old1", name: "T1", kind: "packing", start_date: "2026-05-01", end_date: "2026-05-05", locations: [] },
+      { id: "old2", name: "T2", kind: "packing", start_date: "2026-06-01", end_date: "2026-06-05", locations: [] },
+    ],
+    capsuleLinks: [
+      { capsule_id: "old1", item_id: "ckt0" }, { capsule_id: "old1", item_id: "tee0" },
+      { capsule_id: "old2", item_id: "ckt0" }, { capsule_id: "old2", item_id: "tee0" },
+    ],
+    wears: (ws) => { ws.push({ id: "o1", item_id: "tee0", worn_on: "2026-05-02", context: ["Errands"], formality_for: 3 });
+                     ws.push({ id: "o2", item_id: "tee0", worn_on: "2026-06-02", context: ["Errands"], formality_for: 3 }); },
+  }));
+
+  t("packGrade stays silent until the trip has enough logged days", () => withPackCloset(() => {
+    const c = { id: "old1", name: "T1", kind: "packing", start_date: "2026-05-01", end_date: "2026-05-05", locations: [] };
+    return W.packGrade(c) === null ? true : `graded=${JSON.stringify(W.packGrade(c))}`;
+  }, {
+    capsules: [{ id: "old1", name: "T1", kind: "packing", start_date: "2026-05-01", end_date: "2026-05-05", locations: [] }],
+    capsuleLinks: [{ capsule_id: "old1", item_id: "tee0" }],
+    wears: (ws) => ws.push({ id: "g1", item_id: "tee0", worn_on: "2026-05-02", context: ["Errands"], formality_for: 3 }),
+  }));
+
   // ---- render summary ----
   await Promise.all(pending);
   const ul = document.getElementById("results");

@@ -129,33 +129,14 @@ async function buildTripWeather(capsule) {
   const locs = capsule.locations || [];
   if (!locs.length) return [];
 
-  const dates = [];
-  { let d = new Date(capsule.start_date + "T00:00:00"), e = new Date(capsule.end_date + "T00:00:00");
-    while (d <= e) { dates.push(localISO(d)); d.setDate(d.getDate() + 1); } }
-  if (!dates.length) return [];
+  // Legs (consecutive dates sharing one location) come from tripLegs in
+  // js/21-pack.js — the pack solver needs exactly this split to build one rack
+  // per climate, and two copies of it would drift. Defined in a later-loaded
+  // file, which is fine: this runs long after load.
+  const groups = tripLegs(capsule);
+  if (!groups.length) return [];
 
-  function locForDate(ds) {
-    const specific = locs.filter(l => l.from && l.to && ds >= l.from && ds <= l.to);
-    if (specific.length) return specific[specific.length - 1];
-    const partial = locs.find(l => (l.from && !l.to && ds >= l.from) || (!l.from && l.to && ds <= l.to));
-    if (partial) return partial;
-    return locs.find(l => !l.from && !l.to) || locs[0];
-  }
-
-  // Group consecutive dates sharing the same location
-  const groups = [];
-  let curKey = null, curLoc = null, curDates = [];
-  for (const ds of dates) {
-    const loc = locForDate(ds);
-    const key = loc ? `${loc.lat},${loc.lon}` : null;
-    if (key !== curKey) {
-      if (curDates.length && curLoc) groups.push({ loc: curLoc, dates: curDates });
-      curKey = key; curLoc = loc; curDates = [ds];
-    } else { curDates.push(ds); }
-  }
-  if (curDates.length && curLoc) groups.push({ loc: curLoc, dates: curDates });
-
-  // Fetch weather per group in parallel
+  // Fetch weather per leg in parallel
   const fetched = await Promise.all(groups.map(async g => {
     const wx = await fetchWeatherRange(g.loc.lat, g.loc.lon, g.dates[0], g.dates[g.dates.length - 1]);
     return { g, wx };

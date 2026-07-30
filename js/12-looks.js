@@ -1017,7 +1017,18 @@ function scoreCombo(its, target, season = null, wx = null) {
   return s;
 }
 
-function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, lockedRoles = null, shapeKey = null) {
+/* `opts` (2026-07-29, the trip builder) is the ONE extension point that lets the
+   pack solver reuse this engine instead of growing a second one that would drift
+   from it. Two knobs, both no-ops by default:
+     opts.all       — return EVERY unique combo instead of a sampled 8. Sampling
+                      is what makes the sheet feel varied; counting how many
+                      outfits a suitcase can actually make needs the full set.
+     opts.uniqueCap — raise the 60-combo enumeration cap (a 20-piece suitcase can
+                      exceed it, and a truncated count would understate the pack).
+   ⚠️ Do not add scoring or filtering knobs here. The moment the pack asks for
+   different RULES rather than a different amount of output, it has forked the
+   engine and inversion ① of TRIP_BUILDER.md is broken. */
+function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, lockedRoles = null, shapeKey = null, opts = {}) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
   let avail = base.filter(i => i.image_path && !isNoSuggest(i));
   /* ⚠️ Level 1 (Utility) IS the function-wear mode — there is no separate
@@ -1166,11 +1177,17 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   // deduplicate: don't show the same set of item_ids twice
   const seen = new Set();
   const unique = [];
+  const uniqueCap = opts.uniqueCap || 60;
   for (const c of pool2) {
     const key = c.pieces.map(p => p.id).sort().join(",");
     if (!seen.has(key)) { seen.add(key); unique.push(c); }
-    if (unique.length >= 60) break;
+    if (unique.length >= uniqueCap) break;
   }
+
+  // Exhaustive mode: every valid combo, unsampled. Same enumerator and the same
+  // hard filters as the sheet gets — that identity is the whole reason this flag
+  // exists rather than a second engine.
+  if (opts.all) return unique;
 
   // Weighted-random sample (softmax) so results vary each call while still
   // respecting the (small) match score. High temperature → mostly random among
