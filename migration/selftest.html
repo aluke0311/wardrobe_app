@@ -2276,6 +2276,33 @@ async function run() {
       ? true : `travelOccasions=${travelOccs.length} flightOccasions=${flightOccs.length}`;
   }));
 
+  /* Her ask: "hone the individual events by formality when context is not
+     sufficient". A pinned level must WIN over what the contexts average to — a
+     dinner tagged Friends can still be a Dressed Up dinner, and the context
+     guess must not talk her out of it. */
+  t("a pinned formality overrides the context's own level", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const ctxLevel = W.contextFormalityLevel("Friends") || W.CONTEXT_FORMALITY_SEED["Friends"];
+    const slate = W.packSlate(c, { plans: { [D(3)]: [{ contexts: ["Friends"], level: 6, outfit: null }] } });
+    const day = slate.find(s => s.date === D(3));
+    const occ = day && day.occasions.find(o => (o.contexts || []).includes("Friends"));
+    return occ && occ.level === 6 && ctxLevel !== 6
+      ? true : `level=${occ && occ.level} contextWouldSay=${ctxLevel}`;
+  }));
+
+  t("a pinned formality is flagged as pinned all the way into the demand", () => withPackCloset(() => {
+    // The occasions list marks pinned events differently from guessed ones, so
+    // the flag has to survive packSlate -> packDemand.
+    const c = packTrip(5);
+    const demand = W.packDemand(W.packSlate(c, {
+      plans: { [D(3)]: [{ contexts: ["Friends"], level: 6, outfit: null }] },
+    }));
+    const pinned = demand.filter(o => o.pinnedLevel);
+    const guessed = demand.filter(o => !o.pinnedLevel);
+    return pinned.length === 1 && pinned[0].level === 6 && guessed.length
+      ? true : `pinned=${JSON.stringify(pinned.map(o => [o.level, o.pinnedLevel]))}`;
+  }));
+
   t("a declared event with a bare level and no context is a valid occasion", () => withPackCloset(() => {
     // "one dressy evening" is a thing she knows before she knows what it is.
     const c = packTrip(5);
@@ -2725,6 +2752,35 @@ async function run() {
       .filter(i => (W.itemFormalitySet(i) || []).includes(5));
     return (fill.bySlot.Tops || []).length === 4 && l5.length >= 2
       ? true : `tops=${JSON.stringify((fill.bySlot.Tops || []))} reachingL5=${JSON.stringify(l5.map(i => i.id))}`;
+  }));
+
+  /* ⚠️ Found by pinning a Dressed Up evening and accepting the app's own offer.
+     Her closet's only level-6 pieces are a cocktail dress, a blazer, heels and
+     trousers — no TOP reaches 6 — yet the flag said "needs a top", the "Add one"
+     offer duly added a top, and coverage did not move. Naming a slot with
+     nothing to offer is worse than saying nothing, and an offer that fixes
+     nothing is the app pretending to have helped. */
+  t("the blocking slot is one she can actually fill", () => withPackCloset(() => {
+    const c = packTrip(4);
+    // Level 6 demanded; the pool has a level-6 DRESS but no level-6 top.
+    const demand = [{ id: "d1", date: D(1), level: 6, context: "Wedding", contexts: ["Wedding"] }];
+    const pool = ["tee0", "jea0", "snk0", "ckt0", "hee0"];
+    const pack = ["tee0", "jea0", "snk0"];
+    const cov = W.packCoverage(pack, demand, { poolIds: pool });
+    const u = cov.uncovered[0];
+    // Dresses is fillable (ckt0 reaches 6); Tops is not. It must not say Tops.
+    return u && u.blocker === "Dresses"
+      ? true : `blocker=${u && u.blocker}`;
+  }));
+
+  t("no blocking slot is named when nothing in the closet reaches the level", () => withPackCloset(() => {
+    const c = packTrip(4);
+    const demand = [{ id: "d1", date: D(1), level: 8, context: "Gala", contexts: ["Gala"] }];
+    const pool = ["tee0", "jea0", "snk0", "ckt0"];          // nothing reaches 8
+    const cov = W.packCoverage(["tee0", "jea0", "snk0"], demand, { poolIds: pool });
+    const u = cov.uncovered[0];
+    return u && u.blocker === null
+      ? true : `blocker=${u && u.blocker} (should be null — it's an honest gap)`;
   }));
 
   t("packCoverage names the blocking slot when a level can't be dressed", () => withPackCloset(() => {

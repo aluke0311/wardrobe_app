@@ -660,6 +660,7 @@ function wireEvents() {
     }
     if (e.target.closest("[data-pack-swapsel]")) return packSwapSelected();
     if (e.target.closest("[data-pack-selclear]")) { _packSel.clear(); return renderCapsules(); }
+    if (e.target.closest("[data-pack-occasions]")) return openPackOccasions();
     if (e.target.closest("[data-pack-rebuild]")) return packRebuildFromProposal();
     if (e.target.closest("[data-pack-resolve]")) return packResolveUnlocked();
     if (e.target.closest("[data-pack-toplan]")) return packSendToPlan();

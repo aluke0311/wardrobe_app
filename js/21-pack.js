@@ -241,9 +241,15 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
   for (const s of slate) {
     for (const e of (all[s.date] || [])) {
       const ctxs = (e.contexts || []).filter(Boolean);
-      const lvl = ctxs.length ? Math.max(...ctxs.map(x => lvlOf(x) || 0)) : (e.level || 0);
+      /* ⚠️ An explicit level WINS over the context-derived one — her words:
+         "hone the individual events by formality when context is not
+         sufficient". A dinner that happens to be tagged Friends can be a
+         Dressed Up dinner, and the context average must not talk her out of it.
+         Contexts still supply the level when she hasn't said. */
+      const lvl = e.level || (ctxs.length ? Math.max(...ctxs.map(x => lvlOf(x) || 0)) : 0);
       if (!ctxs.length && !e.level) continue;
-      s.occasions.push({ context: ctxs[0] || null, contexts: ctxs, level: lvl || null, placed: true, source: "declared" });
+      s.occasions.push({ context: ctxs[0] || null, contexts: ctxs, level: lvl || null,
+                         placed: true, source: "declared", pinnedLevel: !!e.level });
     }
   }
 
@@ -340,6 +346,7 @@ function packDemand(slate) {
         id: `${s.date}#${idx}`, date: s.date, leg: s.leg,
         context: o.context || null, contexts: o.contexts || [],
         level: o.level || null, placed: !!o.placed, source: o.source || null,
+        pinnedLevel: !!o.pinnedLevel,
       });
     });
   }
@@ -1098,7 +1105,7 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
    that's blocking, because "add a top" is actionable and "Thursday fails" isn't.
    ⚠️ Uses the same enumerator as everything else (suggestOutfits with the pack
    as its pool), so it cannot disagree with what the outfit views will show. */
-function packCoverage(pack, demand, { wxFor = null } = {}) {
+function packCoverage(pack, demand, { wxFor = null, poolIds = null } = {}) {
   const ids = pack instanceof Set ? [...pack] : (pack || []);
   const idSet = new Set(ids);
   const byOcc = new Map();
@@ -1116,7 +1123,7 @@ function packCoverage(pack, demand, { wxFor = null } = {}) {
     byOcc.set(occ.id, n);
     if (!n) uncovered.push({
       occId: occ.id, date: occ.date, level: occ.level, context: occ.context,
-      blocker: packBlockingSlot(ids, occ.level),
+      blocker: packBlockingSlot(ids, occ.level, poolIds),
     });
   }
   const seen = new Set();
@@ -1129,17 +1136,35 @@ function packCoverage(pack, demand, { wxFor = null } = {}) {
   return { byOcc, uncovered, covered: (demand || []).length - uncovered.length, outfits: seen.size };
 }
 
-/* Which slot is stopping this level from being dressable. Checks the core slots
-   a real outfit needs — a Dress substitutes for Tops AND Bottoms, so it's only
-   a blocker when both are empty. */
-function packBlockingSlot(ids, level) {
-  const has = (slot) => ids.map(id => itemById.get(id)).some(i =>
+/* Which slot is stopping this level from being dressable — and it must be a slot
+   she can ACTUALLY fix.
+
+   ⚠️ Naming a slot with nothing to offer is worse than saying nothing. Caught by
+   pinning a Dressed Up evening on a closet whose only level-6 pieces are a
+   cocktail dress, a blazer, heels and trousers: the flag said "needs a top", the
+   "Add one" offer duly added a top, and coverage did not move — because she owns
+   no top that reaches 6. When no slot can be filled, say so plainly and let it
+   stay a gap (D11: report it, never turn it into shopping).
+
+   `poolIds` is the trip rack. Without it this falls back to the old
+   pack-only reasoning, which is why it's threaded through packRegroup. */
+function packBlockingSlot(ids, level, poolIds = null) {
+  const reaches = (list, slot) => list.map(id => itemById.get(id)).some(i =>
     i && packSlotOf(i) === slot && (itemFormalitySet(i) || []).includes(level));
-  if (has("Dresses")) return has("Shoes") ? null : "Shoes";
-  if (!has("Tops")) return "Tops";
-  if (!has("Bottoms")) return "Bottoms";
-  if (!has("Shoes")) return "Shoes";
-  return null;   // pieces exist at this level but no valid combination of them
+  const inPack = (slot) => reaches(ids, slot);
+  const available = (slot) => !poolIds || reaches(poolIds, slot);
+
+  // Top half: a dress substitutes for Tops AND Bottoms, so it's only a problem
+  // when neither route is dressed.
+  const topHalfOk = inPack("Dresses") || (inPack("Tops") && inPack("Bottoms"));
+  if (!topHalfOk) {
+    if (!inPack("Tops") && available("Tops")) return "Tops";
+    if (!inPack("Bottoms") && available("Bottoms")) return "Bottoms";
+    if (!inPack("Dresses") && available("Dresses")) return "Dresses";
+    return null;    // nothing in the closet reaches this level — an honest gap
+  }
+  if (!inPack("Shoes")) return available("Shoes") ? "Shoes" : null;
+  return null;      // pieces exist at this level but no valid combination of them
 }
 
 /* ---- mid-trip: "wash these six" ----------------------------------------
@@ -1360,7 +1385,8 @@ function packRegroup(st) {
     const s = i ? packSlotOf(i) : null;
     if (s && st.bySlot[s]) st.bySlot[s].push(id);
   }
-  st.cov = packCoverage(st.pack, st.demand, { wxFor: packWxFor(st.c) });
+  st.cov = packCoverage(st.pack, st.demand,
+    { wxFor: packWxFor(st.c), poolIds: (st.rack && st.rack.ids) || null });
   st.wash = packWashPlan(st.pack, { startDate: st.c.start_date });
   return st;
 }
@@ -1647,6 +1673,51 @@ async function packSetSubTarget(slot, sub, n) {
   packOfferCoverageFix();
 }
 
+/* What's happening on this trip, day by day. Every row hands off to the ordinary
+   day-plan editor — the same one the week planner uses — because the slate reads
+   `dayplan` and a second editor would be a second source of truth for "what's
+   happening on day X". Contexts, per-event formality and new contexts are all
+   edited there. */
+function openPackOccasions() {
+  const st = _packState;
+  if (!st) return;
+  const rows = st.slate.map(s => {
+    const occs = s.occasions || [];
+    const chips = occs.map(o => {
+      const label = (o.contexts || []).length ? o.contexts.join(" + ") : (OCCASION_LADDER[(o.level || 1) - 1] || "—");
+      const lvl = o.level ? OCCASION_LADDER[o.level - 1] : "";
+      return `<span class="cap-chip${o.pinnedLevel ? " on" : ""}" style="font-size:12px">${esc(label)}${lvl ? ` · ${esc(lvl)}` : ""}</span>`;
+    }).join(" ");
+    const guessed = occs.length && occs.every(o => o.source !== "declared");
+    return `<button class="sheet-row" data-packocc-day="${esc(s.date)}" style="align-items:flex-start">
+      <span style="flex:1;min-width:0">
+        <span style="font-weight:600">${esc(planDayLabel(s.date))}</span>
+        <span class="cap-catbar" style="flex-wrap:wrap;gap:5px;padding-top:5px">${chips || `<span class="muted" style="font-size:12px">nothing yet</span>`}</span>
+        ${guessed ? `<span class="muted" style="font-size:11.5px">a guess from your usual week — tap to set it</span>` : ""}
+      </span>
+      <span class="rt" style="color:var(--accent)">›</span>
+    </button>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="poDone" style="font-weight:700">Done</button>
+      <h2>What's happening</h2>
+      <div style="width:48px"></div>
+    </div>
+    <div class="sheet-note">Set the contexts for a day, or pin how dressy it is when the context alone doesn't say. The pack's numbers follow from these.</div>
+    ${rows}
+    <div style="height:max(env(safe-area-inset-bottom),16px)"></div>`;
+  showSheet("logSheet");
+  $("#poDone").onclick = () => {
+    hideSheet("logSheet");
+    packLoadState(capsuleId);
+    renderCapsules();
+    packOfferCoverageFix();
+  };
+  $("#logInner").querySelectorAll("[data-packocc-day]").forEach(b =>
+    b.onclick = () => openDayPlanSheet(b.dataset.packoccDay));
+}
+
 /* Throw away her overrides and go back to the app's own numbers. Explicit, and
    confirmed, because it discards keeps and swaps she may have spent time on. */
 async function packRebuildFromProposal() {
@@ -1668,6 +1739,9 @@ async function packRebuildFromProposal() {
 function packOfferCoverageFix() {
   const st = _packState;
   if (!st || !st.cov || !st.cov.uncovered.length) return;
+  // ⚠️ Only offer when raising a dial can genuinely fix it. Offering "Add one"
+  // for a level nothing in her closet reaches added a piece and moved nothing —
+  // the app looking like it fixed something it hadn't.
   const first = st.cov.uncovered.find(u => u.blocker);
   if (!first) return;
   const slot = first.blocker;
@@ -1730,7 +1804,9 @@ function renderCapsulePack() {
       <div class="kpi-cell"><div class="kpi-val">${st.pack.length}</div><div class="kpi-lbl">pieces</div></div>
       <div class="kpi-cell"><div class="kpi-val">${st.cov.outfits}</div><div class="kpi-lbl">outfits they make</div></div>
     </div>
-    <div class="cap-cov-lbl" style="margin-top:10px">${st.demand.length} occasion${st.demand.length === 1 ? "" : "s"} over ${days} day${days === 1 ? "" : "s"}${legNote}${wxNote}</div>
+    <button class="cap-cov-lbl" data-pack-occasions style="margin-top:10px;width:100%;text-align:left;color:var(--accent)">
+      ${st.demand.length} occasion${st.demand.length === 1 ? "" : "s"} over ${days} day${days === 1 ? "" : "s"}${legNote}${wxNote} · edit ›
+    </button>
     ${histNote}
   </div>`;
 
@@ -1743,7 +1819,12 @@ function renderCapsulePack() {
         <b>${cov.covered} of ${st.demand.length} occasions can be dressed.</b>
         ${cov.uncovered.slice(0, 4).map(u => {
           const lvl = OCCASION_LADDER[(u.level || 1) - 1] || `level ${u.level}`;
-          const need = u.blocker ? ` — needs a ${esc(u.blocker.replace(/s$/, "").toLowerCase())}` : " — nothing here combines for it";
+          // ⚠️ No blocker means no slot she can fill would help — usually because
+          // nothing in the closet reaches this level. Say that, and stop: gaps
+          // are reported, never turned into something to buy (D11).
+          const need = u.blocker
+            ? ` — needs a ${esc(u.blocker.replace(/s$/, "").toLowerCase())}`
+            : " — nothing in your closet reaches this level";
           return `<div>${esc(u.date ? planDayLabel(u.date) : "unplaced")}${u.context ? " · " + esc(u.context) : ""} (${esc(lvl)})${need}</div>`;
         }).join("")}
         ${cov.uncovered.length > 4 ? `<div>…and ${cov.uncovered.length - 4} more</div>` : ""}

@@ -861,6 +861,15 @@ function contextOptions() {
   // Most-used first (never-used seeds trail, alphabetical among ties).
   const counts = countByDay(wears, ctxArr);
   for (const c of CONTEXT_SEED) if (!counts.has(c)) counts.set(c, 0);
+  /* Contexts she's PLANNED but not yet worn count too (2026-07-30). Without
+     this, a context invented in the day-plan editor vanished from every other
+     day's chip list until she'd logged a wear with it — so "create a new
+     context" only half worked. Derive-first, still nothing stored. */
+  for (const entries of Object.values(dayPlanAll())) {
+    for (const e of (entries || [])) {
+      for (const c of (e.contexts || [])) if (c && !counts.has(c)) counts.set(c, 0);
+    }
+  }
   return [...counts.keys()].sort((a, b) => (counts.get(b) - counts.get(a)) || a.localeCompare(b));
 }
 

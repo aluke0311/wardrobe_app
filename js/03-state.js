@@ -232,6 +232,8 @@ function _dpSuggestCtx(date, entryIdx, ctxs) {
   // planned workout day asks for Utility without a special case.
   return { kv: true, date, entryIdx, level: entrySuggestLevel(ctxs) };
 }
+let _dpAddCtx = null;   // entry index whose "＋ New…" context input is open
+
 function openDayPlanSheet(date) {
   const entries = dayPlan(date);
   const rh = rhythmFor(date);
@@ -242,8 +244,29 @@ function openDayPlanSheet(date) {
     const chips = shown.map(c =>
       `<button class="cap-chip${(e.contexts || []).includes(c) ? " on" : ""}" data-dp-ctx="${idx}|${esc(c)}" style="font-size:12.5px">${esc(c)}</button>`).join("");
     const lvls = [...new Set((e.contexts || []).map(c => contextFormalityLevel(c)).filter(Boolean))];
-    const mixNote = lvls.length > 1
+    const derived = lvls.length ? Math.max(...lvls) : null;
+    const mixNote = (lvls.length > 1 && !e.level)
       ? `<div class="muted" style="font-size:11.5px;padding-top:4px">Contexts differ in formality — suggesting for ${esc(occLabel(Math.max(...lvls)))}</div>` : "";
+    /* Formality per EVENT, independent of context (2026-07-30, her ask: "hone the
+       individual events by formality when context is not sufficient"). A set
+       level overrides whatever the contexts average to — a dinner tagged Friends
+       can still be a Dressed Up dinner.
+       ⚠️ Tapping the active level CLEARS it, back to the context guess. A chip
+       that can only be turned on is a trap (same rule as the formula chip). */
+    const fmlChips = OCCASION_LADDER.map((lbl, k) => {
+      const n = k + 1;
+      const on = e.level === n;
+      const auto = !e.level && derived === n;
+      return `<button class="cap-chip${on ? " on" : ""}" data-dp-lvl="${idx}|${n}"
+        style="font-size:12px${auto ? ";border-color:var(--accent);color:var(--accent)" : ""}"
+        title="${esc(OCCASION_HINTS[k] || "")}">${n}. ${esc(lbl)}</button>`;
+    }).join("");
+    const fmlNote = e.level
+      ? `<div class="muted" style="font-size:11.5px;padding-top:4px">Set to <b style="color:var(--text)">${esc(occLabel(e.level))}</b>${derived && derived !== e.level ? ` — contexts alone would say ${esc(occLabel(derived))}` : ""}. Tap it again for the guess.</div>`
+      : (derived ? `<div class="muted" style="font-size:11.5px;padding-top:4px">From the contexts: ${esc(occLabel(derived))}. Tap a level to pin a different one.</div>`
+                 : `<div class="muted" style="font-size:11.5px;padding-top:4px">No context yet — or just pin a formality.</div>`);
+    const fmlBlock = `<div style="font-size:12px;color:var(--muted);padding-top:8px">how dressy</div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:4px">${fmlChips}</div>${fmlNote}`;
     const o = e.outfit ? outfitById.get(e.outfit) : null;
     const worn = o && planWorn(date, o.id);
     const lookHtml = o ? `
@@ -266,8 +289,14 @@ function openDayPlanSheet(date) {
         <div style="font-size:12px;color:var(--muted)">Outfit ${entries.length > 1 ? idx + 1 : ""} · contexts</div>
         <button class="lnk" data-dp-rm="${idx}" style="font-size:12px;color:var(--muted)">remove</button>
       </div>
-      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:6px">${chips}</div>
-      ${mixNote}${lookHtml}
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:6px">${chips}
+        <button class="cap-chip" data-dp-newctx="${idx}" style="font-size:12.5px;color:var(--muted)">＋ New…</button>
+      </div>
+      ${_dpAddCtx === idx ? `<div style="display:flex;gap:6px;padding-top:6px">
+        <input class="inp" id="dpNewCtxInput" placeholder="Name a context…" style="flex:1;font-size:13px" autocomplete="off">
+        <button class="cap-chip" data-dp-newctx-save="${idx}">Add</button>
+      </div>` : ""}
+      ${mixNote}${fmlBlock}${lookHtml}
     </div>`;
   };
   $("#logInner").innerHTML = `
@@ -287,9 +316,18 @@ function openDayPlanSheet(date) {
   const save = async (next) => { await saveDayPlan(date, next); openDayPlanSheet(date); };
   $("#dpClose").onclick = () => {
     hideSheet("logSheet");
+    _dpAddCtx = null;
     const tab = activeTabName();
     if (tab === "home") renderHome();
     else if (tab === "calendar") renderCalendar();
+    else if (tab === "capsules") {
+      /* The pack's slate reads dayplan, so editing occasions here changes the
+         demand, the proposed counts and the coverage. Reload the state (which
+         keeps her stored pieces) rather than leaving a screen built on the old
+         occasions. */
+      if (capsuleView === "pack" && capsuleId) packLoadState(capsuleId);
+      renderCapsules();
+    }
   };
   // The weekday guess seeds the FIRST entry only, and only because this tap is
   // the acceptance — nothing about the rhythm is ever written on its own.
@@ -302,6 +340,32 @@ function openDayPlanSheet(date) {
     e.contexts = (e.contexts || []).includes(ctx) ? e.contexts.filter(c => c !== ctx) : [...(e.contexts || []), ctx];
     save(next);
   });
+  $("#logInner").querySelectorAll("[data-dp-lvl]").forEach(b => b.onclick = () => {
+    const [idx, n] = b.dataset.dpLvl.split("|");
+    const next = JSON.parse(JSON.stringify(entries));
+    const e = next[+idx]; if (!e) return;
+    e.level = (e.level === +n) ? null : +n;    // tapping the set level clears it
+    save(next);
+  });
+  $("#logInner").querySelectorAll("[data-dp-newctx]").forEach(b => b.onclick = () => {
+    _dpAddCtx = _dpAddCtx === +b.dataset.dpNewctx ? null : +b.dataset.dpNewctx;
+    openDayPlanSheet(date);
+    const inp = $("#dpNewCtxInput"); if (inp) inp.focus();
+  });
+  const addNewCtx = (idx) => {
+    const inp = $("#dpNewCtxInput");
+    const name = (inp ? inp.value : "").trim();
+    if (!name) return;
+    const next = JSON.parse(JSON.stringify(entries));
+    const e = next[idx]; if (!e) return;
+    if (!(e.contexts || []).includes(name)) e.contexts = [...(e.contexts || []), name];
+    _dpAddCtx = null;
+    save(next);
+  };
+  $("#logInner").querySelectorAll("[data-dp-newctx-save]").forEach(b =>
+    b.onclick = () => addNewCtx(+b.dataset.dpNewctxSave));
+  { const inp = $("#dpNewCtxInput");
+    if (inp) inp.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addNewCtx(_dpAddCtx); } }; }
   $("#logInner").querySelectorAll("[data-dp-rm]").forEach(b => b.onclick = () => {
     const next = JSON.parse(JSON.stringify(entries)); next.splice(+b.dataset.dpRm, 1); save(next);
   });
