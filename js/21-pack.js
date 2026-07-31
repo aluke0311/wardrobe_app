@@ -24,7 +24,6 @@
    =================================================================== */
 
 const PACK_KEY_PREFIX = "pack:";        // kv: the solve record, per capsule
-const PACK_KIND_PREFIX = "pack_kind:";  // kv: trip character, per capsule
 
 // Options per occasion (D5). This is the tightness dial, and it is what makes
 // "minimize pack size" SAFE as an objective — K carries the variety requirement
@@ -52,19 +51,6 @@ const PACK_OPT_GUARD = 6;               // max pieces added per occasion for opt
 // days with two dress-coded evenings needs more to draw from. Passed to
 // buildRack as `quota` — the cold share is untouched and stays load-bearing.
 const PACK_TRIP_QUOTA = { Tops: 20, Bottoms: 12, Dresses: 8, Shoes: 10, Outerwear: 5 };
-
-const PACK_CHARACTERS = ["beach week", "work trip", "family visit", "city break", "event trip"];
-/* Occasions per DAY, used only until she has trips of that character to learn
-   from (packOccasionSeed prefers history). ⚠️ These are guesses and are
-   labelled as guesses in the UI — rewrite them from the first few real trips
-   rather than tuning them now (TRIP_BUILDER.md §15). */
-const PACK_CHAR_SEED = {
-  "beach week":   [{ context: "Errands", per: 0.5 }, { context: "Friends", per: 0.4 }, { context: "Date Night", per: 0.15 }],
-  "work trip":    [{ context: "Work", per: 0.8 }, { context: "Friends", per: 0.2 }, { context: "Errands", per: 0.2 }],
-  "family visit": [{ context: "Friends", per: 0.6 }, { context: "Errands", per: 0.4 }],
-  "city break":   [{ context: "Errands", per: 0.5 }, { context: "Friends", per: 0.4 }, { context: "Date Night", per: 0.2 }],
-  "event trip":   [{ context: "Friends", per: 0.5 }, { context: "Errands", per: 0.35 }, { context: "Wedding", per: 0.15 }],
-};
 
 /* ---- repetition penalties (2026-07-29 r4) --------------------------------
    ⚠️ FOUND BY RENDERING THE SCREEN, not by a test. A 5-day trip came back with
@@ -209,86 +195,37 @@ function packSuggestTripContexts(c, { wearRows = null, today = null } = {}) {
   return out;
 }
 
-/* ---- trip character (D4) ------------------------------------------------- */
-function packCharacter(cid) {
-  const v = kvData.get(PACK_KIND_PREFIX + cid);
-  return typeof v === "string" && PACK_CHARACTERS.includes(v) ? v : null;
-}
-async function setPackCharacter(cid, ch) {
-  await kvSet(PACK_KIND_PREFIX + cid, ch || null);
-}
-
-/* Occasions per day for a character, learned from her own completed trips of
-   that character and falling back to PACK_CHAR_SEED. `source` is returned so
-   the UI can label a guess as a guess — the r19 lesson is that an unlabelled
-   guess costs more trust than hand-entry costs taps. */
-function packOccasionSeed(character, { caps = null, wearRows = null, kinds = null, today = null } = {}) {
-  const rows = wearRows || wears;
-  const charOf = (id) => kinds ? (kinds.get(id) || null) : packCharacter(id);
-  const trips = (character ? completedTrips(caps, today) : []).filter(c => charOf(c.id) === character);
-  const per = new Map();
-  let nTrips = 0;
-  for (const c of trips) {
-    const dates = new Set(tripDates(c));
-    if (!dates.size) continue;
-    nTrips++;
-    // Occasion-DAYS per context (a wear is a day — never a row).
-    const seen = new Set(), byCtx = new Map();
-    for (const w of rows) {
-      if (!w.worn_on || !dates.has(w.worn_on)) continue;
-      for (const ctx of ctxArr(w)) {
-        const k = ctx + "\u0000" + w.worn_on;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        byCtx.set(ctx, (byCtx.get(ctx) || 0) + 1);
-      }
-    }
-    for (const [ctx, n] of byCtx) per.set(ctx, (per.get(ctx) || 0) + n / dates.size);
-  }
-  if (nTrips >= TRIP_MEMORY_MIN && per.size) {
-    const out = [...per.entries()]
-      .map(([context, tot]) => ({ context, per: tot / nTrips }))
-      .filter(e => e.context !== TRIP_CONTEXT)   // travel days are stamped structurally
-      .sort((a, b) => b.per - a.per);
-    return { mix: out, source: "history", trips: nTrips };
-  }
-  const seed = (character && PACK_CHAR_SEED[character]) || [];
-  return { mix: seed.map(e => ({ ...e })), source: seed.length ? "seed" : "none", trips: nTrips };
-}
-
 /* ---- the slate ----------------------------------------------------------
    Demand is a MULTISET of occasions; placement is optional metadata (D6). What
    this builds is the placed view, because a mid-trip wash needs to know WHICH
    days — with no wash the trip is one stretch and placement is irrelevant.
 
-   Precedence per day: declared (dayplan) → her weekday rhythm → the character
-   mix, clustered. ⚠️ Clustered on purpose: same context on consecutive days is
-   the WORST case for laundry, so the default plan is conservative and one drag
-   makes it better rather than worse. Same rule as the week planner — never ask
-   for the grid, always show the guess. */
-function packSlate(c, { character = null, plans = null, wearRows = null, rhythm = null,
-                       mix = null, today = null, tripContexts = null } = {}) {
+   ⚠️ ONE source for "what's happening": the contexts she ticked (or, until she
+   has, packSuggestTripContexts' proposal from her own history). The weekday
+   rhythm and trip-character passes that used to guess this are GONE — 2026-07-30
+   r6, her words: "I'm still seeing trip types and things that i've asked not to
+   have." Fixed events on a date still win, because those are facts.
+
+   Placement across days is computed (the laundry schedule needs dates) but never
+   asked for. */
+function packSlate(c, { plans = null, wearRows = null, today = null, tripContexts = null } = {}) {
   const dates = tripDates(c);
   if (!dates.length) return [];
   const rows = wearRows || wears;
   const all = plans || dayPlanAll();
-  const rhy = rhythm || weeklyRhythm(rows);
-  const legOf = new Map();
-  for (const leg of packLegsOrWhole(c)) for (const d of leg.dates) legOf.set(d, leg);
 
   const lvlOf = (ctx) => contextFormalityLevel(ctx, rows) || CONTEXT_FORMALITY_SEED[ctx] || null;
+  const legOf = new Map();
+  for (const leg of packLegsOrWhole(c)) for (const d of leg.dates) legOf.set(d, leg);
   const slate = dates.map(date => ({ date, leg: legOf.get(date) || null, occasions: [] }));
   const byDate = new Map(slate.map(s => [s.date, s]));
 
-  // ① declared — a fixed event captured at booking IS a named context on a date
+  // ① Fixed events she declared for a specific date. Facts beat everything.
   for (const s of slate) {
     for (const e of (all[s.date] || [])) {
       const ctxs = (e.contexts || []).filter(Boolean);
-      /* ⚠️ An explicit level WINS over the context-derived one — her words:
-         "hone the individual events by formality when context is not
-         sufficient". A dinner that happens to be tagged Friends can be a
-         Dressed Up dinner, and the context average must not talk her out of it.
-         Contexts still supply the level when she hasn't said. */
+      /* ⚠️ An explicit level WINS over the context-derived one: "hone the
+         individual events by formality when context is not sufficient". */
       const lvl = e.level || (ctxs.length ? Math.max(...ctxs.map(x => lvlOf(x) || 0)) : 0);
       if (!ctxs.length && !e.level) continue;
       s.occasions.push({ context: ctxs[0] || null, contexts: ctxs, level: lvl || null,
@@ -296,21 +233,15 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
     }
   }
 
-  /* ② Flight days, claimed BEFORE the guesses.
-     ⚠️ The plane-day occasion is FLIGHT, not Travel (2026-07-30, her correction:
-     "I use the travel context every day I am on a trip, not just days of plane
-     travel. I have a flight context too"). Travel is a trip-wide tag — which is
-     exactly what tripWearContext already stamps on every wear-create during trip
-     dates — so it must NOT generate occasions here, or a 6-day trip invents six
-     Travel events and inflates both the occasion count and the laundry maths.
-     ⚠️ Ordering is load-bearing: with this stamp last, the departure day
-     collected a rhythm occasion AND a character occasion AND then this one —
-     three occasions on the day she's on a plane. Claiming it first means the
-     later passes see the day as taken.
-     This also enforces the travel-home reserve: because the return day always
-     carries an occasion, the ordinary schedule walk detects a trip that burns its
-     last clean bottoms on day 8. No special case, which is why there is no
-     PACK_HOME_RESERVE constant. */
+  /* ② Flight days, claimed BEFORE anything spreads.
+     ⚠️ The plane-day occasion is FLIGHT, not Travel — she tags Travel on every
+     wear of a trip (tripWearContext already does that automatically), so Travel
+     is a trip-wide fact and must never generate occasions, or a 6-day trip
+     invents six of them and inflates the laundry maths with them.
+     Claiming these first is what stops the departure day collecting a stack of
+     occasions, and it's also the travel-home reserve: the return day always
+     carries an occasion, so the schedule walk notices a trip that burns its last
+     clean bottoms on day 8. */
   for (const d of [dates[0], dates[dates.length - 1]]) {
     const s = byDate.get(d);
     if (!s) continue;
@@ -320,90 +251,36 @@ function packSlate(c, { character = null, plans = null, wearRows = null, rhythm 
     }
   }
 
-  // ③ her weekday rhythm, for days she didn't declare
-  /* ③ HER OWN SELECTION, when she's made one.
-     2026-07-30 r5, her correction: *"I want to select the contexts for the trip,
-     not 'type' of trip. give me a list of contexts and i select all. not by
-     date."* So when `tripContexts` is set it REPLACES both guessing passes below
-     — the weekday rhythm and the character mix are the app deciding what's
-     happening, and she'd rather say.
-     ⚠️ Placement is still computed, because the laundry schedule needs dates —
-     but it is never asked for. Spread evenly across the free days rather than
-     clustered: with an explicit selection the pessimistic clustering just makes
-     the wash maths look worse than the trip is. */
-  if (Array.isArray(tripContexts) && tripContexts.length) {
-    const free = slate.filter(s => !s.occasions.length);
-    const queue = [];
-    for (const e of tripContexts) {
-      const n = Math.max(1, e.n || 1);
-      for (let k = 0; k < n; k++) queue.push(e);
-    }
-    let k = 0;
-    for (const e of queue) {
-      // Fill each free day once, then start doubling up — a day can carry two
-      // occasions (lunch out and a dinner), which is why demand is a multiset.
-      const pool = free.length ? free : slate;
-      const s = pool[k % pool.length];
-      k++;
-      if (!s) break;
-      s.occasions.push({
-        context: e.ctx, contexts: [e.ctx],
-        level: e.level || lvlOf(e.ctx), placed: false, source: "selected",
-        pinnedLevel: !!e.level,
-      });
-    }
-    // Anything still bare gets her modal level, so no day is unanswerable.
-    const floorLvl = packModalLevel(rows);
-    for (const s of slate) {
-      if (s.occasions.length) continue;
-      s.occasions.push({ context: null, contexts: [], level: floorLvl, placed: false, source: "floor" });
-    }
-    return slate;
+  // ③ Her selection. Spread evenly over the free days; a day can carry two
+  //    occasions, which is why demand is a multiset rather than a day grid.
+  const picked = (Array.isArray(tripContexts) && tripContexts.length)
+    ? tripContexts
+    : packSuggestTripContexts(c, { wearRows: rows, today });
+  const free = slate.filter(s => !s.occasions.length);
+  const queue = [];
+  for (const e of (picked || [])) {
+    const n = Math.max(1, e.n || 1);
+    for (let k = 0; k < n; k++) queue.push(e);
+  }
+  let k = 0;
+  for (const e of queue) {
+    const pool = free.length ? free : slate;
+    const s = pool[k % pool.length];
+    k++;
+    if (!s) break;
+    s.occasions.push({
+      context: e.ctx, contexts: [e.ctx],
+      level: e.level || lvlOf(e.ctx), placed: false, source: "selected",
+      pinnedLevel: !!e.level,
+    });
   }
 
-  // ③b her weekday rhythm, for days she didn't declare (only when she hasn't
-  // selected the trip's contexts herself).
-  for (const s of slate) {
-    if (s.occasions.length) continue;
-    const r = rhythmFor(s.date, rhy);
-    const ctxs = (r && r.contexts || []).filter(x => x !== TRIP_CONTEXT && x !== PACK_FLIGHT_CONTEXT);
-    if (!ctxs.length) continue;
-    s.occasions.push({ context: ctxs[0], contexts: ctxs, level: lvlOf(ctxs[0]), placed: false, source: "rhythm" });
-  }
-
-  /* ④ the character mix, as a TARGET COUNT across the trip.
-     ⚠️ NOT merely a filler for empty days. Her weekday rhythm covers almost
-     every day with one ordinary context, so filler-only meant a character
-     carrying "two dressy evenings" produced NO dressy occasion at all and the
-     pack silently lost the level it existed for. A nice dinner is an EXTRA
-     occasion on a beach day, not a replacement for it — which is also why
-     demand is a multiset (D6) rather than one context per day.
-     Placement is clustered: consecutive days is the worst case for laundry, so
-     the default plan is conservative and a drag can only improve it. */
-  const targets = (mix || packOccasionSeed(character, { wearRows: rows, today }).mix)
-    .map(e => ({ ...e, n: Math.max(0, Math.round((e.per || 0) * dates.length)) }));
-  for (const e of targets) {
-    const has = (s) => s.occasions.some(o => (o.contexts || []).includes(e.context));
-    let need = e.n - slate.reduce((n, s) => n + (has(s) ? 1 : 0), 0);
-    /* Still clustered (earliest days first, the worst case for laundry) but it
-       skips days that are already carrying two occasions. Plain first-fit piled
-       three occasions onto the departure day, which is neither realistic nor a
-       worse laundry case — just a worse-looking one. */
-    const order = slate.slice().sort((a, b) => a.occasions.length - b.occasions.length);
-    for (const s of order) {
-      if (need <= 0) break;
-      if (has(s) || s.occasions.length >= 2) continue;
-      s.occasions.push({ context: e.context, contexts: [e.context], level: lvlOf(e.context), placed: false, source: "character" });
-      need--;
-    }
-  }
   // Anything still bare gets her modal level, so no day is ever unanswerable.
-  const floor = packModalLevel(rows);
+  const floorLvl = packModalLevel(rows);
   for (const s of slate) {
     if (s.occasions.length) continue;
-    s.occasions.push({ context: null, contexts: [], level: floor, placed: false, source: "floor" });
+    s.occasions.push({ context: null, contexts: [], level: floorLvl, placed: false, source: "floor" });
   }
-
   return slate;
 }
 // The level she actually lives at — the fallback when nothing else says.
@@ -935,11 +812,8 @@ const packSlotOf = (i) => (i && isLayer(i) && i.category === "Tops") ? "Tops" : 
 /* Pieces per slot per day, learned from her own completed trips (of this
    character when there are enough of them), falling back to the seed. Returns
    `source` so the UI can label a guess as a guess. */
-function packSlotRates(character, { caps = null, wearRows = null, kinds = null, today = null } = {}) {
-  const charOf = (id) => kinds ? (kinds.get(id) || null) : packCharacter(id);
-  const all = completedTrips(caps, today);
-  const mine = character ? all.filter(c => charOf(c.id) === character) : [];
-  const use = mine.length >= TRIP_MEMORY_MIN ? mine : all;
+function packSlotRates({ caps = null, wearRows = null, today = null } = {}) {
+  const use = completedTrips(caps, today);
   const totals = new Map(), rates = {};
   let days = 0;
   for (const c of use) {
@@ -956,7 +830,7 @@ function packSlotRates(character, { caps = null, wearRows = null, kinds = null, 
     return { rates: { ...PACK_SLOT_RATE_SEED }, source: "seed", trips: 0 };
   }
   for (const s of PACK_COUNT_SLOTS) rates[s] = (totals.get(s) || 0) / days;
-  return { rates, source: mine.length >= TRIP_MEMORY_MIN ? "character" : "history", trips: use.length };
+  return { rates, source: "history", trips: use.length };
 }
 
 /* THE PROPOSAL. Three floors, and the largest wins per slot:
@@ -969,12 +843,12 @@ function packSlotRates(character, { caps = null, wearRows = null, kinds = null, 
    an ENGINE. It is fine here and only here: this is a starting number she can
    revise, not a feasibility guarantee. The guarantee is packCoverage plus
    packSchedule. Do not promote this arithmetic back into a solver. */
-function packCounts(demand, { character = null, K = PACK_OPTIONS.normal, days = null,
-                              wearRows = null, caps = null, kinds = null, today = null,
+function packCounts(demand, { K = PACK_OPTIONS.normal, days = null,
+                              wearRows = null, caps = null, today = null,
                               rates = null } = {}) {
   const occs = demand || [];
   const nDays = days || new Set(occs.map(o => o.date).filter(Boolean)).size || occs.length || 1;
-  const rr = rates || packSlotRates(character, { caps, wearRows, kinds, today });
+  const rr = rates || packSlotRates({ caps, wearRows, today });
   const w = PACK_COUNT_W[K] || 1;
   const levels = [...new Set(occs.map(o => o.level).filter(Boolean))].sort((a, b) => a - b);
   // Distinct formality BANDS, not levels: adjacent levels are usually covered by
@@ -1032,11 +906,8 @@ const PACK_TYPICAL_TOL = (() => {
 
 /* Split a slot's count across its subcategories, for the expanded dial. Same
    rate logic, from what she actually packs. */
-function packSubCounts(slot, n, { character = null, caps = null, kinds = null, today = null } = {}) {
-  const charOf = (id) => kinds ? (kinds.get(id) || null) : packCharacter(id);
-  const all = completedTrips(caps, today);
-  const mine = character ? all.filter(c => charOf(c.id) === character) : [];
-  const use = mine.length >= TRIP_MEMORY_MIN ? mine : all;
+function packSubCounts(slot, n, { caps = null, today = null } = {}) {
+  const use = completedTrips(caps, today);
   const tally = new Map();
   for (const c of use) for (const i of capsuleItems(c.id)) {
     if (packSlotOf(i) !== slot) continue;
@@ -1293,7 +1164,7 @@ function packMidTripWash(c, today = todayStr(), { ls = null, wearRows = null } =
   const assign = [];
   const rec = packRecord(c.id);
   const fromRec = packAssignFromRecord(c.id);
-  const slate = packSlate(c, { character: packCharacter(c.id), wearRows, tripContexts: packTripContexts(c.id) });
+  const slate = packSlate(c, { wearRows, tripContexts: packTripContexts(c.id) });
   const demand = packDemand(slate);
   for (const d of rest) {
     const looks = planActiveLooks(c, d);
@@ -1444,8 +1315,7 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
   const c = capsuleById.get(cid);
   if (!c) return null;
   const rec = packRecord(cid);
-  const character = packCharacter(cid);
-  const slate = packSlate(c, { character, tripContexts: packTripContexts(cid) });
+  const slate = packSlate(c, { tripContexts: packTripContexts(cid) });
   const demand = packDemand(slate);
   const rack = packRack(c, slate, { wxFor: packWxFor(c) });
   const kk = K != null ? K : (rec.K || PACK_OPTIONS.normal);
@@ -1454,7 +1324,7 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
 
   // The app's PROPOSAL always exists, so a dial can show what it would have said
   // even after she's overridden it.
-  const counts = packCounts(demand, { character, K: kk, days: tripDates(c).length });
+  const counts = packCounts(demand, { K: kk, days: tripDates(c).length });
   const targets = { ...counts.slots };
   if (!resolve && rec.targets) for (const s of PACK_COUNT_SLOTS) {
     if (Number.isFinite(rec.targets[s])) targets[s] = rec.targets[s];
@@ -1540,7 +1410,6 @@ async function packPersist(cid) {
     built: todayStr(), K: st.K, slateHash: packSlateHash(st.demand),
     pieces: st.pack, targets: st.targets, subTargets: st.subTargets || null,
     pinned: [...st.keeps], banned: [...st.banned],
-    character: packCharacter(cid) || null,
   };
   // Only overwrite the stored outfit assignment when a solve actually ran —
   // otherwise editing items would wipe outfits she'd already arranged.
@@ -1753,7 +1622,7 @@ async function packSetSubTarget(slot, sub, n) {
   const st = _packState;
   if (!st) return;
   st.subTargets = st.subTargets || {};
-  st.subTargets[slot] = st.subTargets[slot] || packSubCounts(slot, st.targets[slot] || 0, { character: packCharacter(st.cid) });
+  st.subTargets[slot] = st.subTargets[slot] || packSubCounts(slot, st.targets[slot] || 0);
   st.subTargets[slot][sub] = Math.max(0, n);
   const tot = Object.values(st.subTargets[slot]).reduce((a, b) => a + b, 0);
   st.targets[slot] = tot;
@@ -1792,7 +1661,7 @@ let _pcAddOpen = false;   // the "＋ New context" input on the trip-context lis
    the app fills it in and she can nudge it, rather than being asked for it.
    ⚠️ Fixed events on a specific date still live in dayplan and are honoured
    first; this list is the date-free "these things will happen" layer. */
-function openPackContexts() {
+function openPackContexts({ back = null } = {}) {
   const st = _packState;
   if (!st) return;
   const cid = st.cid, c = st.c;
@@ -1864,8 +1733,9 @@ function openPackContexts() {
       // Persist whatever's shown even if she never toggled anything, so the
       // suggestion becomes her selection rather than re-guessing next open.
       if (!packTripContexts(cid)) await setPackTripContexts(cid, chosen);
-      hideSheet("logSheet");
       _pcAddOpen = false;
+      if (back) { back(); return; }      // came from the build sheet — go back to it
+      hideSheet("logSheet");
       packLoadState(cid);
       renderCapsules();
       packOfferCoverageFix();
@@ -2071,7 +1941,7 @@ function renderCapsulePack() {
   return capToolbar(c.name + " · Pack", true) + `
     <div class="cap-hdr">
       <div class="ch-name">The pack</div>
-      <div class="ch-sub">${esc(capDateLabel(c) || "no dates")}${packCharacter(capsuleId) ? " · " + esc(packCharacter(capsuleId)) : ""}</div>
+      <div class="ch-sub">${esc(capDateLabel(c) || "no dates")}</div>
     </div>
     ${head}${covHtml}${violHtml}${washHtml}${bulkyHtml}${tabs}${selBar}${body}
     <div class="pack-footer">
@@ -2123,7 +1993,7 @@ function packSlotsHtml(st) {
 
     const subs = open ? (st.subTargets && st.subTargets[slot]
       ? st.subTargets[slot]
-      : packSubCounts(slot, target, { character: packCharacter(st.cid) })) : null;
+      : packSubCounts(slot, target)) : null;
     const subHtml = open ? `<div class="pack-subs">
       ${Object.entries(subs).map(([sub, n]) => `<div class="pack-bagrow">
         <div class="pack-baginfo"><div class="pack-bagname">${esc(sub)}</div></div>
@@ -2687,7 +2557,7 @@ function packDiff(cid) {
   if (!rec.built) return null;
   const c = capsuleById.get(cid);
   if (!c) return null;
-  const slate = packSlate(c, { character: packCharacter(cid), tripContexts: packTripContexts(cid) });
+  const slate = packSlate(c, { tripContexts: packTripContexts(cid) });
   const demand = packDemand(slate);
   const reasons = [];
   if (packSlateHash(demand) !== rec.slateHash) reasons.push("the plan for the days changed");
@@ -2711,34 +2581,28 @@ function packDiff(cid) {
    the slate pre-fills from dates + weekday rhythm + declared events, and the
    three questions are chips she taps only when the guess is wrong.
    =================================================================== */
-function packCharChipsHtml(cid) {
-  const cur = packCharacter(cid);
-  return `<div class="pack-chiprow">${PACK_CHARACTERS.map(ch =>
-    `<button class="cap-chip${cur === ch ? " on" : ""}" data-packchar="${esc(ch)}">${esc(ch)}</button>`).join("")}</div>`;
-}
-
+/* First run: confirm what's happening and how much to bring, then build.
+   ⚠️ NO trip "type" here, and no per-date grid — both were asked for and removed
+   (2026-07-30 r6). What's happening is the ticked context list, edited in the
+   one place that owns it (openPackContexts). */
 function openPackBuildSheet(cid) {
   const c = capsuleById.get(cid);
   if (!c) return;
-  const character = packCharacter(cid);
-  const seed = packOccasionSeed(character, {});
-  const slate = packSlate(c, { character, tripContexts: packTripContexts(cid) });
+  const picked = packTripContexts(cid) || packSuggestTripContexts(c);
+  const slate = packSlate(c, { tripContexts: picked });
   const demand = packDemand(slate);
   const rec = packRecord(cid);
   const K = rec.K || PACK_OPTIONS.normal;
   const washDays = packWashDays(c);
-  const guessNote = seed.source === "history"
-    ? `From your last ${seed.trips} ${esc(character || "")} trip${seed.trips === 1 ? "" : "s"}.`
-    : seed.source === "seed"
-      ? `A starting guess for a ${esc(character || "trip")} — correct it on the by-day planner.`
-      : `Built from your weekday habits — set a character to sharpen it.`;
-  const byCtx = new Map();
-  for (const o of demand) {
-    const k = o.context || (OCCASION_LADDER[(o.level || 1) - 1] || "day");
-    byCtx.set(k, (byCtx.get(k) || 0) + 1);
-  }
-  const mixRows = [...byCtx.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) =>
-    `<div class="pack-mixrow"><span>${esc(k)}</span><b>×${n}</b></div>`).join("");
+  const mine = !!packTripContexts(cid);
+
+  const rows = picked.length
+    ? picked.map(e => {
+        const lvl = e.level || contextFormalityLevel(e.ctx) || CONTEXT_FORMALITY_SEED[e.ctx];
+        return `<div class="pack-mixrow"><span>${esc(e.ctx)}${lvl ? ` · ${esc(occLabel(lvl))}` : ""}</span><b>${e.n || 1}d</b></div>`;
+      }).join("")
+    : `<div class="pack-warn-note" style="padding:4px 0">Nothing picked yet.</div>`;
+
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="packBuildCancel">Cancel</button>
@@ -2746,11 +2610,12 @@ function openPackBuildSheet(cid) {
       <span style="width:54px"></span>
     </div>
     <div style="padding:4px 16px 0">
-      <div class="fld">What kind of trip</div>
-      ${packCharChipsHtml(cid)}
-      <div class="fld" style="margin-top:14px">What's happening · ${demand.length} occasion${demand.length === 1 ? "" : "s"}</div>
-      <div class="pack-mix">${mixRows}</div>
-      <div class="pack-warn-note" style="padding:6px 0">${guessNote} Days you've declared events for win.</div>
+      <div class="fld">What's happening · ${demand.length} occasion${demand.length === 1 ? "" : "s"}</div>
+      <div class="pack-mix">${rows}</div>
+      <button class="btn btn-sec" id="packBuildCtx" style="margin-top:8px;width:100%">${mine ? "Change what's happening" : "Pick what's happening"}</button>
+      <div class="pack-warn-note" style="padding:6px 0">${mine
+        ? `Your picks. Days you've set a fixed event for win over these.`
+        : `A starting guess from the contexts you wear most — change it and it's yours.`}</div>
       <div class="fld" style="margin-top:14px">Laundry</div>
       <div class="pack-warn-note" style="padding:2px 0 6px">${washDays.length
         ? `Washing on ${esc(washDays.map(d => fmtDate(d)).join(", "))} — set on the by-day planner.`
@@ -2765,17 +2630,22 @@ function openPackBuildSheet(cid) {
     </div>`;
   showSheet("logSheet");
   $("#packBuildCancel").onclick = () => hideSheet("logSheet");
-  $("#logInner").querySelectorAll("[data-packchar]").forEach(b => {
-    b.onclick = async () => { await setPackCharacter(cid, b.dataset.packchar === packCharacter(cid) ? null : b.dataset.packchar); openPackBuildSheet(cid); };
-  });
+  $("#packBuildCtx").onclick = async () => {
+    // The context list needs a loaded pack state to read the trip from.
+    if (!_packState || _packState.cid !== cid) { capsuleId = cid; packLoadState(cid); }
+    openPackContexts({ back: () => openPackBuildSheet(cid) });
+  };
   $("#logInner").querySelectorAll("[data-packbk]").forEach(b => {
     b.onclick = async () => { await savePackRecord(cid, { K: +b.dataset.packbk }); openPackBuildSheet(cid); };
   });
   $("#packBuildGo").onclick = async () => {
     hideSheet("logSheet");
+    // Whatever's shown becomes hers, so the pack isn't built on a guess that
+    // then re-guesses differently next time.
+    if (!packTripContexts(cid)) await setPackTripContexts(cid, picked);
     await openPackPlan(cid, { resolve: true });
     const st = _packState;
-    if (st) toast(`${st.res.stats.pieces} pieces → ${st.res.stats.outfits} outfits`);
+    if (st) toast(`${st.pack.length} pieces → ${st.cov.outfits} outfits`);
   };
 }
 

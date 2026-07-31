@@ -177,7 +177,7 @@ function renderCapsuleList() {
 
 // ---- create form ----
 function openCapsuleNew() {
-  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "", character: null, anchors: [] };
+  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "", anchors: [] };
   capsuleView = "form";
   renderCapsules();
 }
@@ -201,12 +201,6 @@ function renderCapsuleForm() {
       ${trip ? `<div class="cap-dates">
         <div><label class="fld">Start</label><input class="inp" type="date" id="capStart" value="${esc(f.start_date)}"></div>
         <div><label class="fld">End</label><input class="inp" type="date" id="capEnd" value="${esc(f.end_date)}"></div>
-      </div>
-      <div>
-        <label class="fld">What kind of trip (optional)</label>
-        <div class="pack-chiprow">${PACK_CHARACTERS.map(ch =>
-          `<button class="cap-chip${f.character === ch ? " on" : ""}" data-capchar="${esc(ch)}">${esc(ch)}</button>`).join("")}</div>
-        <div class="pack-warn-note" style="padding:4px 0 0">Lets the pack builder start from your own past trips of this kind.</div>
       </div>
       <div>
         <label class="fld">Anything already fixed? (optional)</label>
@@ -247,7 +241,6 @@ async function saveNewCapsule() {
        an anchor event IS a named context on a date, so it goes straight into
        dayplan — which also means rackNeededLevels stocks the home rack for it
        automatically, bounded by RACK_LOOKAHEAD_DAYS. */
-    if (f.character) { try { await setPackCharacter(c.id, f.character); } catch (err) { /* non-fatal */ } }
     for (const a of (f.anchors || [])) {
       try {
         const existing = dayPlan(a.date);

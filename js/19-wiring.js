@@ -642,7 +642,7 @@ function wireEvents() {
     if (subDec) {
       const s = subDec.dataset.packSubdec, sub = subDec.dataset.packSub;
       const shown = (_packState.subTargets && _packState.subTargets[s])
-        || packSubCounts(s, _packState.targets[s] || 0, { character: packCharacter(_packState.cid) });
+        || packSubCounts(s, _packState.targets[s] || 0);
       return packSetSubTarget(s, sub, Math.max(0, (shown[sub] || 0) - 1));
     }
     const packKeep = e.target.closest("[data-pack-keep]");
@@ -680,13 +680,7 @@ function wireEvents() {
     if (packDrop) { e.stopPropagation(); return packDropPiece(packDrop.dataset.packDrop); }
     const packAdd = e.target.closest("[data-pack-add]");
     if (packAdd) return packAddPiece(packAdd.dataset.packAdd);
-    // create-form capture (character chip + fixed events)
-    const capChar = e.target.closest("[data-capchar]");
-    if (capChar) {
-      syncCapForm();
-      _capForm.character = _capForm.character === capChar.dataset.capchar ? null : capChar.dataset.capchar;
-      return renderCapsules();
-    }
+    // create-form capture (fixed events)
     if (e.target.closest("[data-capanchor-add]")) { syncCapForm(); return openCapAnchorSheet(); }
     const capAnchDel = e.target.closest("[data-capanchor-del]");
     if (capAnchDel) {
