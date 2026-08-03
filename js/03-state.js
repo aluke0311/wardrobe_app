@@ -319,6 +319,7 @@ function openDayPlanSheet(date) {
     _dpAddCtx = null;
     const tab = activeTabName();
     if (tab === "home") renderHome();
+    else if (tab === "week") renderWeekPlan();
     else if (tab === "calendar") renderCalendar();
     else if (tab === "capsules") {
       /* The pack's slate reads dayplan, so editing occasions here changes the

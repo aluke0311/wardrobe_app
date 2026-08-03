@@ -3551,6 +3551,107 @@ async function run() {
       ? true : `html=${html.slice(0, 220)}`;
   }));
 
+  /* ---- the week planner's laundry forecast (2026-08-03) ----
+     Her ask: "including the ability to understand what is/will be in laundry."
+     ⚠️ SCHEDULE, DON'T DIVIDE — the same inversion the trip builder rests on.
+     ceil(planned wears / tolerance) cannot name a DAY, and can't be reset by a
+     wash placed mid-week. */
+  const withWeekCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    byId: W.itemById, plan: W.kvData.get("dayplan"), wash: W.kvData.get("washdays") };
+    W.items = [
+      { id: "jea", name: "Black jeans", category: "Bottoms", subcategory: "Jeans", status: "Available", last_washed: D(-30) },
+      { id: "tee", name: "Tee", category: "Tops", subcategory: "Tee shirts", status: "Available", last_washed: D(-30) },
+      { id: "boo", name: "Boots", category: "Shoes", subcategory: "Boots", status: "Available", last_washed: null },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.outfits = [{ id: "o1", name: "Uniform", archived: false }];
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "jea" }, { outfit_id: "o1", item_id: "boo" }];
+    W.wears = [];
+    W.buildOutfitIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.itemById = saved.byId;
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+      if (saved.wash === undefined) W.kvData.delete("washdays"); else W.kvData.set("washdays", saved.wash);
+      W.buildOutfitIndexes();
+    }
+  };
+  const weekDates = () => [...Array(7)].map((_, n) => D(n));
+
+  t("the forecast names the DAY a piece runs out, not just that it will", () => withWeekCloset(() => {
+    // jeans tolerance 5, worn 0 times since the wash; planned every day
+    const plans = {};
+    for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    const fc = W.weekLaundryForecast(weekDates(), { plans, wearRows: [], washSet: {} });
+    // days 0-4 are fine, day 5 is the 6th wear → over, and it's reported once
+    return eq([fc.firstOverflow, [...fc.byDate.keys()]], [D(5), [D(5)]]);
+  }));
+
+  /* ⚠️ Seeded from real history, not from zero. A jean already at 4 of 5 on
+     Monday is ONE wear from the hamper all week — planRewearFlags fixed exactly
+     this bug once already for trips. */
+  t("the forecast seeds from wears already on the clock", () => withWeekCloset(() => {
+    const plans = {}; for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    const prior = [1, 2, 3, 4].map(k => ({ item_id: "jea", worn_on: D(-k) }));
+    const fc = W.weekLaundryForecast(weekDates(), { plans, wearRows: prior, washSet: {} });
+    // 4 already on the clock → the 2nd planned day is the 6th wear
+    return eq(fc.firstOverflow, D(1));
+  }));
+
+  t("a wash day mid-week resets the clock", () => withWeekCloset(() => {
+    const plans = {}; for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    const prior = [1, 2, 3, 4].map(k => ({ item_id: "jea", worn_on: D(-k) }));
+    const dirty = W.weekLaundryForecast(weekDates(), { plans, wearRows: prior, washSet: {} });
+    const washed = W.weekLaundryForecast(weekDates(), { plans, wearRows: prior, washSet: { [D(1)]: 1 } });
+    return eq([dirty.firstOverflow, washed.firstOverflow], [D(1), D(6)]);
+  }));
+
+  t("the suggested wash day is the day before things run out", () => withWeekCloset(() => {
+    const plans = {}; for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    const fc = W.weekLaundryForecast(weekDates(), { plans, wearRows: [], washSet: {} });
+    return eq([fc.firstOverflow, fc.suggestWash], [D(5), D(4)]);
+  }));
+
+  /* ⚠️ Found by RENDERING the screen and reading it, not by a test: once a piece
+     is over tolerance it stays over, so flagging it every remaining day restated
+     one fact with a bigger number ("2 of 1", "3 of 1", "4 of 1"). Same lesson as
+     the doubled hamper row in the trip dash. */
+  t("a piece that has run out is reported once, not every day after", () => withWeekCloset(() => {
+    const plans = {}; for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "tee" }];   // tolerance 1
+    W.buildOutfitIndexes();
+    const fc = W.weekLaundryForecast(weekDates(), { plans, wearRows: [], washSet: {} });
+    const named = [...fc.byDate.values()].flat().map(h => h.item.id);
+    return eq([named, [...fc.byDate.keys()]], [["tee"], [D(1)]]);
+  }));
+
+  t("after a wash, running out again is news again", () => withWeekCloset(() => {
+    const plans = {}; for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "tee" }];
+    W.buildOutfitIndexes();
+    const fc = W.weekLaundryForecast(weekDates(), { plans, wearRows: [], washSet: { [D(3)]: 1 } });
+    return eq([...fc.byDate.keys()], [D(1), D(4)]);
+  }));
+
+  t("shoes and untracked pieces never run out", () => withWeekCloset(() => {
+    const plans = {}; for (const d of weekDates()) plans[d] = [{ contexts: [], outfit: "o1" }];
+    const fc = W.weekLaundryForecast(weekDates(), { plans, wearRows: [], washSet: {} });
+    const named = [...fc.byDate.values()].flat().map(h => h.item.id);
+    return named.every(id => id === "jea") ? true : `flagged: ${JSON.stringify([...new Set(named)])}`;
+  }));
+
+  /* A day she has ALREADY lived counts what she really wore, not only what she
+     planned — and the union means a fulfilled plan isn't counted twice. */
+  t("a real wear and the plan that produced it count once", () => withWeekCloset(() => {
+    const plans = { [D(0)]: [{ contexts: [], outfit: "o1" }] };
+    const rows = [{ item_id: "jea", worn_on: D(0) }];
+    const both = W.weekLaundryForecast(weekDates(), { plans, wearRows: rows, today: D(0), washSet: {} });
+    // 1 wear on the clock, tolerance 5 → nothing flagged all week
+    return eq([both.firstOverflow, both.byDate.size], [null, 0]);
+  }));
+
   t("no js/ module reintroduces a hardcoded white", () => {
     // The redesign routed every literal through a token; a new #fff looks fine
     // while you're building and then glows on a dark screen.

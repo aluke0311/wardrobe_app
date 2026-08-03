@@ -4,7 +4,7 @@
 const TAB_TITLES = {
   home: "Wardrobe", closet: "Closet", looks: "Looks", calendar: "Calendar",
   capsules: "Capsules", stats: "Style Stats", search: "Search", add: "Add Item",
-  builder: "Build a Look", settings: "Settings",
+  builder: "Build a Look", settings: "Settings", week: "Plan the week",
 };
 
 // Tapping a bottom-nav / Home tile should land on the top level of that tab,
@@ -51,6 +51,7 @@ function switchTab(name) {
   // entry-scroll captured before she left the tab.
   else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; _statsLastView = null; _statsEntryScroll = 0; renderStats(); }
   else if (name === "settings") renderSettings();
+  else if (name === "week")     renderWeekPlan();
 
   scrollToTop();
 }

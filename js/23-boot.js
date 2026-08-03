@@ -68,6 +68,7 @@ function rerenderRootAfterRefresh() {
   else if (tab === "looks" && !lookId) renderLooks();
   else if (tab === "calendar") renderCalendar();
   else if (tab === "stats" && statsView !== "review") renderStats();
+  else if (tab === "week") renderWeekPlan();
 }
 
 // "Update available" toast — GH Pages caches hard, so a deployed fix can sit

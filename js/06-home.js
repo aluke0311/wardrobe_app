@@ -975,41 +975,232 @@ function todayPlanRowsHtml() {
     </button>`;
   }).join("");
 }
-function openWeekPlanSheet() {
+/* ===================================================================
+   PLAN THE WEEK  (2026-08-03)
+
+   Her ask: "I want to be able to actually plan my week when I tap plan my
+   week. Yes, set contexts — but then the option to tap through and actually
+   plan the looks for the week, including the ability to understand what
+   is/will be in laundry."
+
+   What was there was seven rows that each punted to the day sheet, so the only
+   thing you could do from "Plan the week" was open one day at a time. This is a
+   real screen: contexts AND a look slot per day, and a laundry forecast across
+   the whole week.
+
+   ⚠️ SCHEDULE, DON'T DIVIDE — the same inversion the trip builder is built on.
+   The forecast WALKS the seven days in date order with a running per-piece wear
+   counter seeded from real history, rather than dividing planned wears by
+   tolerance. That is what lets it say "the black jeans run out on THURSDAY"
+   instead of "you have too many jeans days", and it is the only way a wash day
+   placed mid-week can reset anything.
+   ⚠️ It seeds from actual wear-days since last_washed, so a jean already at 4
+   of 5 on Monday is one wear from the hamper all week. planRewearFlags fixed
+   exactly this bug once already for trips.
+
+   ⚠️ IT WARNS, IT DOES NOT FILTER. Suggestions for Thursday still draw from the
+   normal pool; the card just says which pieces will be dirty by then. Silently
+   removing them would be the invisible narrowing the December sundress bug was
+   about, and she asked to UNDERSTAND the laundry, not to have it hidden.
+   =================================================================== */
+const WASHDAY_KEY = "washdays";
+const WEEK_PLAN_DAYS = 7;
+function washDayAll() { const v = kvData.get(WASHDAY_KEY); return v && typeof v === "object" ? v : {}; }
+const isWashDay = (d, all = null) => !!(all || washDayAll())[d];
+async function toggleWashDay(d) {
+  await kvUpdate(WASHDAY_KEY, prev => {
+    const m = { ...(prev && typeof prev === "object" ? prev : {}) };
+    if (m[d]) delete m[d]; else m[d] = 1;
+    // Same window discipline as the day plans — a wash day from March is noise.
+    const cut = shiftDate(todayStr(), -30);
+    for (const k of Object.keys(m)) if (k < cut) delete m[k];
+    return m;
+  });
+}
+
+/* Pure (given its injectables) so the selftest can drive it.
+   Returns { byDate: Map(date → [{item, n, tol}]), firstOverflow, suggestWash }. */
+function weekLaundryForecast(dates, { plans = null, wearRows = null, today = null, washSet = null } = {}) {
+  const all = plans || dayPlanAll();
+  const rows = wearRows || wears;
+  const now = today || todayStr();
+  const wash = washSet || washDayAll();
+  const start = dates[0];
+
+  // item → Set(wear days), one pass.
+  const dayMap = new Map();
+  for (const w of rows) {
+    if (!w.item_id || !w.worn_on) continue;
+    let s = dayMap.get(w.item_id); if (!s) dayMap.set(w.item_id, s = new Set());
+    s.add(w.worn_on);
+  }
+  // Seed: wear-days since the last wash that already happened, BEFORE the window.
+  const counts = new Map();
+  for (const [id, s] of dayMap) {
+    const i = itemById.get(id);
+    if (!i || !i.last_washed) continue;
+    counts.set(id, [...s].filter(d => d > i.last_washed && d < start).length);
+  }
+
+  const byDate = new Map();
+  const flagged = new Set();     // pieces already reported as run-out
+  let firstOverflow = null;
+  for (const date of dates) {
+    if (isWashDay(date, wash)) { counts.clear(); flagged.clear(); }  // washed; the week starts over
+    /* A day's pieces are the union of what she ACTUALLY wore (a fact, for today
+       and any past day in the window) and what she's PLANNED. A Set, so a plan
+       she has already fulfilled isn't counted twice. */
+    const ids = new Set();
+    if (date <= now) for (const w of rows) if (w.worn_on === date && w.item_id) ids.add(w.item_id);
+    for (const e of (all[date] || [])) {
+      const o = e.outfit ? outfitById.get(e.outfit) : null;
+      if (o) for (const it of outfitItems(o)) ids.add(it.id);
+    }
+    const hits = [];
+    for (const id of ids) {
+      const i = itemById.get(id);
+      if (!i) continue;
+      const tol = wearTolerance(i);
+      if (tol === Infinity) continue;          // shoes / outerwear never run out
+      if (!i.last_washed) continue;            // not tracked yet
+      const n = (counts.get(id) || 0) + 1;
+      counts.set(id, n);
+      /* ⚠️ Report a piece only on the day it FIRST runs out. Once it's over
+         tolerance it stays over until a wash, so repeating it every day just
+         restates one fact with a bigger number — found by rendering the screen
+         and reading it, same lesson as the doubled hamper row in the trip dash.
+         A wash day clears `flagged` with the counters, so a piece that runs out
+         again after the wash is news again. */
+      if (n > tol && !flagged.has(id)) {
+        flagged.add(id);
+        hits.push({ item: i, n, tol });
+        if (!firstOverflow) firstOverflow = date;
+      }
+    }
+    if (hits.length) byDate.set(date, hits);
+  }
+  /* The day to run a wash: the day BEFORE the first thing runs out, or that day
+     itself when it's the first of the window (nothing earlier to suggest). */
+  const suggestWash = firstOverflow && firstOverflow > dates[0]
+    ? dates[dates.indexOf(firstOverflow) - 1] : firstOverflow;
+  return { byDate, firstOverflow, suggestWash };
+}
+
+// One label for a week date, so the header and the cards can't disagree about
+// what to call today (the header said "Mon, Aug 3" while the card said "Today").
+function weekDayLabel(d, today = todayStr()) {
+  if (d === today) return "today";
+  if (d === shiftDate(today, 1)) return "tomorrow";
+  return planDayLabel(d);
+}
+
+function renderWeekPlan() {
   const today = todayStr();
-  // Seven blank rows is what an abandoned planner looks like. Days with nothing
-  // planned borrow the weekday's usual contexts, shown muted + italic so a
-  // guess never reads as a commitment.
+  const dates = [...Array(WEEK_PLAN_DAYS)].map((_, n) => shiftDate(today, n));
   const rhythm = weeklyRhythm();
-  const rows = [...Array(7)].map((_, n) => {
-    const d = shiftDate(today, n);
-    const label = n === 0 ? "Today" : n === 1 ? "Tomorrow" : planDayLabel(d);
+  const fc = weekLaundryForecast(dates);
+  const washAll = washDayAll();
+  const planned = dates.reduce((a, d) => a + dayPlan(d).filter(e => e.outfit).length, 0);
+
+  const card = (d, n) => {
     const entries = dayPlan(d);
     const rh = entries.length ? null : rhythmFor(d, rhythm);
-    const sum = entries.length
-      ? entries.map(e => {
-          const o = e.outfit ? outfitById.get(e.outfit) : null;
-          return o ? outfitName(o) : ((e.contexts || []).join("/") || "outfit TBD");
-        }).join(" · ")
-      : (rh ? `${rh.contexts.join(" · ")} · usually` : "—");
-    return `<button data-wk-day="${d}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:10px 16px;border-bottom:1px solid var(--line)">
-      <span style="width:86px;flex:none;font-size:13.5px;font-weight:600">${esc(label)}</span>
-      <span style="flex:1;min-width:0;font-size:13px;color:${entries.length ? "var(--text)" : "var(--muted)"}${rh ? ";font-style:italic" : ""};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(sum)}</span>
-      <svg class="chev" viewBox="0 0 24 24" style="flex:none"><path d="M9 6l6 6-6 6"/></svg>
-    </button>`;
-  }).join("");
-  $("#logInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="wkClose">Done</button>
-      <h2>Plan ahead</h2>
-      <div style="width:48px"></div>
-    </div>
-    ${rows}
-    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
-  showSheet("logSheet");
-  $("#wkClose").onclick = () => { hideSheet("logSheet"); if (activeTabName() === "home") renderHome(); };
-  $("#logInner").querySelectorAll("[data-wk-day]").forEach(b => b.onclick = () => openDayPlanSheet(b.dataset.wkDay));
+    const wx = _dpWx(d);
+    const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
+    const label = n === 0 ? "Today" : n === 1 ? "Tomorrow" : planDayLabel(d);
+    const hits = fc.byDate.get(d) || [];
+    const washOn = isWashDay(d, washAll);
+
+    const bodyRows = entries.length ? entries.map((e, idx) => {
+      const o = e.outfit ? outfitById.get(e.outfit) : null;
+      const ctxs = (e.contexts || []).join(", ");
+      const lvl = e.level || entrySuggestLevel(e.contexts);
+      const sub = [ctxs, lvl ? occLabel(lvl) : ""].filter(Boolean).join(" · ");
+      if (o) return `<div style="display:flex;align-items:center;gap:10px;padding-top:8px">
+        <button data-wk-look="${esc(o.id)}" style="width:52px;flex:none">${outfitCollageHtml(o, 4)}</button>
+        <button data-wk-look="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
+          <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
+          ${sub ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(sub)}</span>` : ""}
+        </button>
+        <div class="cap-chip" data-wk-edit="${esc(d)}" style="flex:none;font-size:12px">✎</div>
+      </div>`;
+      return `<div style="padding-top:8px">
+        ${sub ? `<div style="font-size:12.5px;color:var(--muted);padding-bottom:5px">${esc(sub)} — outfit still to pick</div>` : ""}
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="cap-chip" data-wk-sugg="${esc(d)}|${idx}" style="font-size:12.5px">✨ Suggest</button>
+          <button class="cap-chip" data-wk-pick="${esc(d)}|${idx}" style="font-size:12.5px">＋ Look</button>
+          <button class="cap-chip" data-wk-build="${esc(d)}|${idx}" style="font-size:12.5px">✎ Build</button>
+        </div>
+      </div>`;
+    }).join("") : `<div style="padding-top:8px">
+      <div style="font-size:12.5px;color:var(--muted);padding-bottom:6px">${rh
+        ? `Usually <b style="color:var(--text)">${esc(rh.contexts.join(" · "))}</b> — tap to start there.`
+        : "Nothing planned."}</div>
+      <button class="cap-chip" data-wk-edit="${esc(d)}" style="font-size:12.5px">＋ Plan this day</button>
+    </div>`;
+
+    /* The laundry line is the point of the whole screen: it names the pieces and
+       the day, because "6 things are dirty" is not actionable and "the black
+       jeans run out Thursday" is. */
+    const launRow = hits.length ? `<div class="snote" style="margin-top:9px;padding:7px 9px;background:var(--panel);border-radius:9px;font-size:12.5px;line-height:1.4">
+        🧺 ${hits.map(h => `<b>${esc(h.item.name || "A piece")}</b> hits ${h.n} of ${h.tol}`).join(" · ")} — ${hits.length === 1 ? "it needs" : "they need"} a wash before this.
+      </div>` : "";
+
+    return `<div class="det-card" style="margin:0 16px 10px;padding:11px 13px${washOn ? ";border-color:var(--accent)" : ""}">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="font-size:13.5px;font-weight:600">${esc(label)}<span style="font-weight:400;color:var(--muted)">${esc(wxBit)}</span></div>
+        <button class="cap-chip${washOn ? " on" : ""}" data-wk-wash="${esc(d)}" style="flex:none;font-size:12px" title="Mark a wash day">🧺 ${washOn ? "Wash day" : "Wash?"}</button>
+      </div>
+      ${bodyRows}${launRow}
+    </div>`;
+  };
+
+  const head = `<div style="padding:14px 16px 4px">
+      <div style="font-size:13px;color:var(--muted);line-height:1.5">${planned
+        ? `${planned} outfit${planned === 1 ? "" : "s"} planned this week.`
+        : `Set each day's context, then pick the outfit whenever.`}
+      ${fc.suggestWash && !isWashDay(fc.suggestWash, washAll)
+        ? ` Things start running out ${esc(weekDayLabel(fc.firstOverflow, today))} — a wash <b style="color:var(--text)">${esc(weekDayLabel(fc.suggestWash, today))}</b> would clear it.`
+        : fc.firstOverflow ? "" : ` Nothing runs out of clean this week.`}</div>
+    </div>`;
+
+  $("#weekBody").innerHTML = `<div class="tabbody">
+    <div class="cltoolbar"><button class="lnk" id="wkBack" style="font-size:15px">Back</button>
+      <div style="flex:1;text-align:center;font-size:16px;font-weight:600">Plan the week</div>
+      <div style="width:48px"></div></div>
+    ${head}
+    ${dates.map(card).join("")}
+    <div style="height:40px"></div>
+  </div>`;
+  hydratePhotos($("#weekBody"));
+
+  $("#wkBack").onclick = () => switchTab("home");
+  const re = () => renderWeekPlan();
+  $("#weekBody").querySelectorAll("[data-wk-wash]").forEach(b =>
+    b.onclick = async () => { await toggleWashDay(b.dataset.wkWash); re(); });
+  $("#weekBody").querySelectorAll("[data-wk-edit]").forEach(b =>
+    b.onclick = () => openDayPlanSheet(b.dataset.wkEdit));
+  $("#weekBody").querySelectorAll("[data-wk-look]").forEach(b =>
+    b.onclick = () => openLookFrom(b.dataset.wkLook));
+  const split = (v) => { const [d, i] = v.split("|"); return [d, +i]; };
+  $("#weekBody").querySelectorAll("[data-wk-sugg]").forEach(b => b.onclick = () => {
+    const [d, idx] = split(b.dataset.wkSugg);
+    openSuggestSheet(null, null, _dpSuggestCtx(d, idx, (dayPlan(d)[idx] || {}).contexts));
+  });
+  $("#weekBody").querySelectorAll("[data-wk-pick]").forEach(b => b.onclick = () => {
+    const [d, idx] = split(b.dataset.wkPick);
+    openPlanLookPickerKv(d, idx);
+    showSheet("logSheet");
+  });
+  $("#weekBody").querySelectorAll("[data-wk-build]").forEach(b => b.onclick = () => {
+    const [d, idx] = split(b.dataset.wkBuild);
+    openBuilder(null, null, { kv: true, date: d, entryIdx: idx });
+  });
 }
+
+/* The old sheet is gone — "Plan the week" is a real screen now (see above).
+   Kept as the one named entry point so every caller still says what it means. */
+function openWeekPlanSheet() { switchTab("week"); }
 
 // Session-only: whether the folded Home attention rows are expanded. Not
 // persisted — a fresh open should be calm again.
