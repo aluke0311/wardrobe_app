@@ -851,9 +851,21 @@ function tmPickSet(date, idx, pieces) {
     return all;
   });
 }
+/* ⚠️ `pool` is the TRIP suitcase or null. A null pool used to fall through to
+   suggestOutfits' own default — the whole Available closet — so the Tomorrow
+   card was the one outfit surface that never used the rack (fixed 2026-08-03,
+   her ask: "I want the tomorrow planner to be from the rack"). It now goes
+   through planningPool, the same precedence the suggester uses, so the two can
+   never drift. An explicit entry level beats the contexts' usual one, exactly
+   as in entrySuggestLevel.
+   ⚠️ Picks already saved in kv "tmpick" were generated from the whole closet
+   and are deliberately NOT invalidated — a sticky pick she liked survives; the
+   ✨ re-roll is what moves it onto the rack. */
 function tomorrowGenPieces(date, entry, pool = null, idx = 0, force = false) {
   if (!force) { const saved = tmPickGet(date, idx); if (saved) return saved; }
-  const res = suggestOutfits(entrySuggestLevel(entry.contexts), null, pool, seasonOf(date), _dpWx(date), null, true);
+  const level = entry.level || entrySuggestLevel(entry.contexts);
+  const from = pool || planningPool({ level });
+  const res = suggestOutfits(level, null, from, seasonOf(date), _dpWx(date), null, true);
   const pieces = res.length ? res[0].pieces : null;
   if (pieces) tmPickSet(date, idx, pieces);
   return pieces;
@@ -924,8 +936,12 @@ function tomorrowCardHtml() {
       const pieces = tomorrowGenPieces(tm, e, pool, idx);
       if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found${trip ? " in the suitcase" : ""}; tap ✨ to dig.</div>
         <div style="display:flex;gap:6px;padding:2px 0"><button class="cap-chip" data-tm-refine="${idx}">✨ Suggest</button></div>`;
-      const why = [ctxs || (entrySuggestLevel(e.contexts) ? occLabel(entrySuggestLevel(e.contexts)) : ""),
-                   trip ? "from the suitcase" : "clean picks"].filter(Boolean).join(" · ");
+      // Name the pool, always — same non-negotiable as the suggester's pool chip.
+      const lvl = e.level || entrySuggestLevel(e.contexts);
+      const from = trip ? "from the suitcase"
+        : lvl === 1 ? "whole closet · clean"
+        : `from the rack · clean`;
+      const why = [ctxs || (lvl ? occLabel(lvl) : ""), from].filter(Boolean).join(" · ");
       return `<div style="padding:4px 0">
         <button data-tm-open="${idx}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>
         <div style="display:flex;align-items:center;gap:8px;padding-top:6px">

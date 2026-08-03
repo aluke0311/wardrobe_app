@@ -132,6 +132,11 @@ async function bootApp() {
   checkForNewVersion();   // fire-and-forget
   try {
     await loadData();
+    /* ⚠️ The rack's 7-day cadence and its season-flip guard only ever ran when
+       she happened to open the rack SCREEN — every other consumer reads the
+       stored ids without checking. Boot is where staleness should be noticed.
+       Cheap: on six days out of seven this is a date comparison. */
+    rackEnsure().catch(() => {});
     prewarmUrlCache();    // fire-and-forget: batch-sign all photo URLs into cache
     prunePhotoCache();    // fire-and-forget: drop cached bytes for photos no item references
     rerenderRootAfterRefresh();  // user may have navigated off Home while data fetched

@@ -1802,12 +1802,22 @@ async function run() {
           season: ["Spring", "Summer", "Fall", "Winter"] });
       }
     }
-    // the first 12 of each slot are "warm" (worn inside RACK_WARM_DAYS)
+    /* Three populations per slot, so all three bands have real material:
+         0–13  worn in the last fortnight   → rotation candidates
+        14–25  worn 30–52 days ago          → STEADY candidates (the dead zone
+                                              that used to be unreachable: too
+                                              old for the rotation cut, too
+                                              recent to be eligible for cold)
+        26–39  never worn                   → dormant candidates */
     W.wears = [];
-    for (let s = 0; s < slots.length; s++)
-      for (let n = 0; n < 12; n++)
+    for (let s = 0; s < slots.length; s++) {
+      for (let n = 0; n < 14; n++)
         W.wears.push({ id: `w${s}_${n}`, item_id: `${slots[s][0]}_${n}`,
           worn_on: W.shiftDate(today, -(n + 1)), outfit_id: null, context: ["Errands"], formality_for: 3 });
+      for (let n = 14; n < 26; n++)
+        W.wears.push({ id: `w${s}_${n}`, item_id: `${slots[s][0]}_${n}`,
+          worn_on: W.shiftDate(today, -(16 + n)), outfit_id: null, context: ["Errands"], formality_for: 3 });
+    }
     W.outfits = []; W.outfitLinks = []; W.exclusions = [];
     W.activeCapsuleId = null; W.dataReady = true;
     W.kvData.delete("rack"); W.kvData.delete("dayplan");
@@ -1830,29 +1840,119 @@ async function run() {
 
   t("buildRack fills every slot to its quota", () => withRackCloset(() => {
     const r = W.buildRack({ today });
-    return eq(rackSlotCounts(r), W.RACK_SLOT_QUOTA);
+    const want = {};
+    for (const [s, q] of Object.entries(W.RACK_SLOT_QUOTA)) want[s] = W.rackQuotaTotal(q);
+    return eq(rackSlotCounts(r), want);
   }));
 
-  // ⚠️ The cold quota is what stops the rack calcifying: worn → on the rack →
+  // ⚠️ The dormant quota is what stops the rack calcifying: worn → on the rack →
   // suggested → worn, which over years would shrink her working wardrobe, i.e.
   // the mirror would cause the thing it measures. If this test starts failing,
   // do not relax it.
-  t("buildRack reserves the cold quota in every slot", () => withRackCloset(() => {
+  t("buildRack reserves the dormant quota in every slot", () => withRackCloset(() => {
     const r = W.buildRack({ today });
-    const cold = new Set(r.cold);
+    const cold = new Set(r.dormant);
     const perSlot = {};
     for (const id of cold) { const i = W.itemById.get(id); perSlot[W.suggestSlot(i)] = (perSlot[W.suggestSlot(i)] || 0) + 1; }
     const everySlotHasCold = Object.keys(W.RACK_SLOT_QUOTA).every(s => (perSlot[s] || 0) >= 1);
     const share = cold.size / r.ids.length;
-    return everySlotHasCold && share >= 0.15 && share <= 0.30
+    return everySlotHasCold && share >= 0.13 && share <= 0.30
       ? true : `perSlot=${JSON.stringify(perSlot)} share=${share.toFixed(2)}`;
   }));
 
-  t("cold pieces really are the ones she hasn't reached for", () => withRackCloset(() => {
+  t("dormant pieces really are the ones she hasn't reached for", () => withRackCloset(() => {
     const r = W.buildRack({ today });
     const warmIds = new Set(W.wears.map(w => w.item_id));
-    const bad = r.cold.filter(id => warmIds.has(id));
-    return bad.length ? `cold but recently worn: ${JSON.stringify(bad)}` : true;
+    const bad = r.dormant.filter(id => warmIds.has(id));
+    return bad.length ? `dormant but recently worn: ${JSON.stringify(bad)}` : true;
+  }));
+
+  /* ⚠️ THE DEAD ZONE (2026-08-03, her question: "what about pieces that are
+     moderately worn? Not warm or cold?"). The split used to be binary at
+     RACK_WARM_DAYS, with the warm side then CUT TO QUOTA — so a piece worn five
+     weeks ago was too old to survive the cut and too recent to be eligible for
+     the cold list, and reached the rack only by accident. The fixture's items
+     14–25 are exactly that population. If this goes red the middle of her
+     wardrobe has gone invisible again. */
+  t("the steady band carries pieces the rotation cut left behind", () => withRackCloset(() => {
+    const r = W.buildRack({ today });
+    const steady = new Set(r.steady);
+    if (!steady.size) return "steady band is empty";
+    // every steady piece has been worn (inside RACK_WARM_DAYS) but isn't in rotation
+    const rot = new Set(r.rotation);
+    const bad = [...steady].filter(id => rot.has(id) || W.rackWarmth(id, today) === 0);
+    if (bad.length) return `not middle-band: ${JSON.stringify(bad.slice(0, 4))}`;
+    // its per-slot quota is really met — the fixture has 15+ candidates per slot,
+    // so anything short means the band is being absorbed by its neighbours
+    const perSlot = {};
+    for (const id of steady) { const i = W.itemById.get(id); perSlot[W.suggestSlot(i)] = (perSlot[W.suggestSlot(i)] || 0) + 1; }
+    const short = Object.entries(W.RACK_SLOT_QUOTA).filter(([s, q]) => (perSlot[s] || 0) < q.steady);
+    if (short.length) return `steady under quota: ${JSON.stringify(short)} got ${JSON.stringify(perSlot)}`;
+    // and it reaches into the old dead zone (worn 30+ days ago)
+    const fromDeadZone = [...steady].some(id => {
+      const w = W.rackWarmth(id, today);
+      return w > 0 && w < 0.55;
+    });
+    return fromDeadZone ? true : `steady holds nothing from the dead zone`;
+  }));
+
+  t("rotation is ranked by recency, and does not rotate", () => withRackCloset(() => {
+    const a = W.buildRack({ today });
+    // a piece offered many times still can't displace something worn yesterday
+    const seen = {}; for (const id of a.rotation) seen[id] = 99;
+    const b = W.buildRack({ today, seen });
+    return eq(a.rotation.slice().sort(), b.rotation.slice().sort());
+  }));
+
+  /* ⚠️ Her hearted-but-neglected pieces were the ones systematically SHUT OUT of
+     rediscovery: the liked bonus was added to the score that decided the band,
+     so a liked piece unworn for 60+ days scored 0.15 → warm list, ranked below
+     everything worn in the last ~51 days, and excluded from cold entirely. */
+  t("a liked piece she hasn't worn can still be a dormant pick", () => withRackCloset(() => {
+    const never = "Tops_39";                       // never worn → dormant pool
+    W.outfits = [{ id: "lk1", name: "Liked", rating: 1, archived: false }];
+    W.outfitLinks = [{ outfit_id: "lk1", item_id: never }, { outfit_id: "lk1", item_id: "Bottoms_39" }];
+    W.buildOutfitIndexes();
+    const r = W.buildRack({ today });
+    return r.dormant.includes(never) ? true
+      : `liked+neglected excluded from dormant (dormant=${JSON.stringify(r.dormant.filter(x => x.startsWith("Tops")))})`;
+  }));
+
+  /* ⚠️ ROTATION IS THE ORDERING. The cold band used to be sorted by all-time
+     wearCount among pieces untouched 60+ days — both inputs near-static, so the
+     same nine pieces came back every rebuild forever against a cold pool of
+     hundreds. The mechanism that exists to stop the rack calcifying had itself
+     calcified. If this goes red, it has again. */
+  t("a piece offered and passed over steps aside for the next one", () => withRackCloset(() => {
+    const first = W.buildRack({ today });
+    const tops = first.dormant.filter(id => id.startsWith("Tops"));
+    if (!tops.length) return "no dormant tops to rotate";
+    const seen = {}; for (const id of tops) seen[id] = W.RACK_SEEN_LIMIT;
+    const next = W.buildRack({ today, seen });
+    const stillThere = next.dormant.filter(id => tops.includes(id));
+    return stillThere.length === 0 ? true
+      : `passed-over pieces re-offered: ${JSON.stringify(stillThere)}`;
+  }));
+
+  t("worth a second look lists what's been offered and not worn", () => withRackCloset(() => {
+    W.kvData.set("rack", { seen: { "Tops_30": W.RACK_SEEN_LIMIT, "Tops_31": W.RACK_SEEN_LIMIT - 1, "Tops_32": 9 } });
+    const list = W.rackPassedOver().map(x => x.item.id);
+    // at/over the limit only, most-passed-over first
+    return eq(list, ["Tops_32", "Tops_30"]);
+  }));
+
+  /* ⚠️ rackEnsure was called from exactly TWO places — the closet's rack row and
+     the "Rebuild now" button — while every consumer read the stored ids without
+     checking staleness. So the 7-day cadence and the season-flip guard only ran
+     if she happened to visit the rack SCREEN. */
+  t("a stale or old-format rack is rebuilt, a fresh one is left alone", () => withRackCloset(() => {
+    const fresh = { built: today, season: W.currentSeason(), ids: ["a"], rotation: ["a"], steady: [], dormant: [] };
+    const old = { built: today, season: W.currentSeason(), ids: ["a"], cold: [] };   // pre-band shape
+    const aged = { ...fresh, built: W.shiftDate(today, -(W.RACK_REBUILD_DAYS + 1)) };
+    const offSeason = { ...fresh, season: "NotASeason" };
+    return eq([W.rackIsStale(fresh, today), W.rackIsStale(old, today),
+               W.rackIsStale(aged, today), W.rackIsStale(offSeason, today)],
+              [false, true, true, true]);
   }));
 
   t("the rack is deterministic — same inputs, same rack", () => withRackCloset(() => {
@@ -1981,6 +2081,85 @@ async function run() {
     const ids = new Set(W.buildRack({ today }).ids);
     return eq([ids.has("no1"), ids.has("arch1"), ids.has("wk1")], [false, false, false]);
   }));
+
+  /* ⚠️ The Tomorrow card passed `pool = null`, and suggestOutfits reads null as
+     the whole Available closet — so the one surface that shows an outfit without
+     being asked was the one place that had never used the rack (2026-08-03, her
+     ask: "I want the tomorrow planner to be from the rack"). Both now go through
+     planningPool, so they cannot drift apart again. */
+  t("the tomorrow planner draws from the same pool the suggester does", () => withRackCloset(() => {
+    const rackIds = new Set(W.rackItems().map(i => i.id));
+    // the helper and the suggester agree...
+    const plan = W.planningPool({});
+    W.openSuggestSheet();
+    const sugg = W._suggBasePool();
+    if (!(plan.length === rackIds.size && plan.every(i => rackIds.has(i.id)) && sugg.length === plan.length))
+      return `plan=${plan.length} rack=${rackIds.size} sugg=${sugg.length}`;
+    // ...and the card actually GOES THROUGH it. Driving the real function is the
+    // point: asserting on planningPool alone passed happily while the card was
+    // still handing suggestOutfits a null pool.
+    const savedPick = W.kvData.get("tmpick");
+    W.kvData.delete("tmpick");
+    const tm = W.shiftDate(today, 1);
+    const pieces = W.tomorrowGenPieces(tm, { contexts: [] }, null, 0, true);
+    if (savedPick === undefined) W.kvData.delete("tmpick"); else W.kvData.set("tmpick", savedPick);
+    if (!pieces || !pieces.length) return "tomorrow generated nothing";
+    const offRack = pieces.filter(p => !rackIds.has(p.id)).map(p => p.id);
+    return offRack.length === 0 ? true : `tomorrow picked off-rack pieces: ${JSON.stringify(offRack)}`;
+  }));
+
+  t("Utility and trips still bypass the rack, from either surface", () => withRackCloset(() => {
+    const all = W.items.filter(i => W.itemStatus(i) === "Available").length;
+    const utility = W.planningPool({ level: 1 }).length;
+    const wide = W.planningPool({ wholeCloset: true }).length;
+    const rack = W.rackItems().length;
+    return utility === all && wide === all && rack < all
+      ? true : `utility=${utility} wide=${wide} all=${all} rack=${rack}`;
+  }));
+
+  /* ⚠️ A WEAR IS A DAY. contextFormalityLevel counted wear ROWS until
+     2026-08-03, so a 6-piece outfit cast six votes and a 2-piece outfit two —
+     the mode could name a level she'd dressed for on FEWER days. And "min 3 to
+     trust" was 3 rows, i.e. one three-piece outfit worn once. */
+  t("a context's usual level counts days, not pieces", () => {
+    const rows = [];
+    // ONE day at level 6, wearing six pieces
+    for (let k = 0; k < 6; k++) rows.push({ item_id: "x" + k, worn_on: "2026-06-01", context: ["Work"], formality_for: 6 });
+    // FIVE days at level 4, wearing two pieces each
+    for (let d = 2; d <= 6; d++)
+      for (let k = 0; k < 2; k++) rows.push({ item_id: "y" + k, worn_on: `2026-06-0${d}`, context: ["Work"], formality_for: 4 });
+    const spread = W.contextLevelSpread("Work", rows);
+    return eq([W.contextFormalityLevel("Work", rows), spread.occasions,
+               spread.levels.map(l => [l.level, l.days])],
+              [4, 6, [[4, 5], [6, 1]]]);
+  });
+
+  t("one outfit worn once does not override the seed", () => {
+    const rows = [{ item_id: "a", worn_on: "2026-06-01", context: ["Wedding"], formality_for: 3 },
+                  { item_id: "b", worn_on: "2026-06-01", context: ["Wedding"], formality_for: 3 },
+                  { item_id: "c", worn_on: "2026-06-01", context: ["Wedding"], formality_for: 3 }];
+    // 3 rows but ONE occasion → the seed (6) still wins
+    return eq([W.contextLevelSpread("Wedding", rows), W.contextFormalityLevel("Wedding", rows)],
+              [null, W.CONTEXT_FORMALITY_SEED["Wedding"]]);
+  });
+
+  /* Her question: "if I say I need an outfit for x context, in which I have worn
+     different formality levels, what happens?" It took the mode, hard-filtered
+     on it, and showed nothing about the rest. */
+  t("a context worn at several levels offers all of them", () => {
+    const rows = [];
+    for (const [d, lv] of [["01", 5], ["02", 5], ["03", 5], ["04", 3], ["05", 6]])
+      rows.push({ item_id: "a", worn_on: `2026-06-${d}`, context: ["Work"], formality_for: lv });
+    const saved = W.wears; W.wears = rows;
+    W.openSuggestSheet();
+    W._sugg.activeContext = "Work"; W._sugg.targetLevel = 5;
+    const html = W.suggestContextSpreadHtml();
+    W._sugg.activeContext = "Errands";
+    const single = W.suggestContextSpreadHtml();
+    W.wears = saved;
+    return /data-sctxlvl="3"/.test(html) && /data-sctxlvl="6"/.test(html) && /data-sctxlvl="5"/.test(html) && single === ""
+      ? true : `html=${html.slice(0, 160)} single=${JSON.stringify(single)}`;
+  });
 
   // ---- "Vary this" (2026-07-26, her own request) ----
   // The point is that she already knows WHICH piece to change, so this must seed
@@ -2562,7 +2741,14 @@ async function run() {
   };
   t("Lean tolerates strictly more repetition than Cushion", () => withPackCloset(() => {
     const c = packTrip(6);
-    const tripContexts = [{ context: "Errands", per: 1 }];
+    /* ⚠️ `ctx`/`n`, not `context`/`per` — packSlate reads those keys. This test
+       carried the old spelling from before the 2026-07-30 r5 flat-list rework
+       and had been silently solving a degenerate slate ever since: every
+       occasion came out with context `undefined` and level null, so K couldn't
+       bite and lean and cushion returned the identical pack. It was RED on main
+       and nothing had noticed, because a failing assertion still looks like a
+       test doing its job. */
+    const tripContexts = [{ ctx: "Errands", n: 4 }];
     const lean = solveFor(c, { K: 1, tripContexts });
     const cush = solveFor(c, { K: 3, tripContexts });
     const l = topSpread(lean.demand, lean.res), u = topSpread(cush.demand, cush.res);

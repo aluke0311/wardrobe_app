@@ -6,12 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-07-30 r6";
+const APP_VERSION = "2026-08-03 r1";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Trip “type” is gone everywhere — creating a trip no longer asks what kind it is, and neither does the pack builder",
-  "What's happening on a trip is only ever the contexts you tick, each with its own formality for that trip",
+  "The rack now has three bands — in rotation, steady, and haven't reached for lately — so the middle of your wardrobe stops going invisible. It's bigger too (58 pieces)",
+  "The rediscovery picks actually rotate now. Anything the rack offers three times without you wearing it turns up under “Worth a second look”, where you say what's wrong with it",
+  "The rack refreshes itself on its own again — it used to only catch up when you opened the rack screen",
+  "Tomorrow's outfit comes from the rack, and picking a context that you dress for at several formality levels now offers you all of them",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

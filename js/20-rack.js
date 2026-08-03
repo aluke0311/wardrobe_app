@@ -1,7 +1,7 @@
 /* ===================================================================
-   THE RACK  (2026-07-26)
+   THE RACK  (2026-07-26; three bands + rotation 2026-08-03)
 
-   A standing ~60-piece derived pool — "what's actually in play right now" —
+   A standing ~58-piece derived pool — "what's actually in play right now" —
    out of a 476-piece closet. The suggester draws from it by default (r7), the
    way capsule mode already does; that small-pool quality is the entire point,
    since the suggester is good in a capsule and a slot machine over the whole
@@ -26,9 +26,59 @@
         scoring.
      3. Which creates a feedback loop: worn → on the rack → suggested → worn.
         Left alone that shrinks her working wardrobe over years, i.e. the mirror
-        would cause the thing it measures. RACK_COLD_SHARE is the answer and is
-        LOAD-BEARING, not a nicety — a fixed fraction of every slot is reserved
-        for pieces she has NOT reached for lately. Do not "optimise" it away.
+        would cause the thing it measures. The DORMANT band is the answer and is
+        LOAD-BEARING, not a nicety. Do not "optimise" it away.
+
+   ── THREE BANDS (2026-08-03) ────────────────────────────────────────────
+   Her question, and it was the right one: "what about pieces that are
+   moderately worn? Not warm or cold?"
+
+   The original split was binary at RACK_WARM_DAYS (60): worn inside 60 days →
+   warm list, outside → cold list. But the warm list was then CUT TO QUOTA, so a
+   top worn five weeks ago was simultaneously too old to survive the warm cut
+   and too recent to be eligible for the cold list at all. It reached the rack
+   only by accident (slot backfill, formality top-up, or a pin) — and when it
+   finally aged past 60 days it joined the BACK of the cold queue and stayed
+   invisible. A dead zone on both sides of an arbitrary cliff; nothing about a
+   garment changes on day 60.
+
+   So the band that actually exists is named:
+     · rotation — top N by recency. Stable week to week; this is what makes the
+       rack recognisable, and it does NOT rotate.
+     · steady   — worn inside RACK_WARM_DAYS but below the rotation cut. The
+       middle of the wardrobe, which is most of it.
+     · dormant  — not worn inside RACK_WARM_DAYS (or never worn). Rediscovery.
+
+   ── ROTATION IS THE ORDERING (2026-08-03) ───────────────────────────────
+   ⚠️ The cold band used to be sorted by all-time wearCount descending among
+   pieces untouched for 60+ days. Both inputs are near-static — all-time counts
+   barely move, and by definition these pieces are not being worn — so the SAME
+   nine pieces came back every rebuild, forever, until one was worn or pushed
+   out. The mechanism that exists to stop the rack calcifying had itself
+   calcified, against a cold pool of several hundred pieces.
+
+   The fix is one counter doing two jobs. `seen[id]` counts how many rebuilds a
+   piece has been OFFERED in steady/dormant without being worn, and both queues
+   are ordered least-offered-first. That guarantees turnover with no tuning: a
+   piece that keeps being passed over sinks, and the next candidates get their
+   turn. Past RACK_SEEN_LIMIT it also surfaces in the "worth a second look"
+   list, which is the same signal read as a question rather than as an ordering.
+
+   ⚠️ Only the ~26 steady+dormant slots rotate. The 32 rotation slots are
+   ranked by recency and stay put, so the rack still looks like itself when she
+   opens it. That trade — some recognisability for coverage of the middle — was
+   made explicitly, and it is confined to the bands where nothing was being
+   seen at all.
+
+   ⚠️ THE LIKED BONUS IS A TIEBREAK, NOT A BAND-DECIDER (fixed 2026-08-03).
+   `score()` used to be `warmth + (liked ? 0.15 : 0)` and the split was
+   `score > 0` → warm, `score === 0` → cold. So a piece in a look she'd HEARTED
+   but hadn't worn in 60 days scored 0.15: it landed in the warm list ranked
+   below everything worn in the last ~51 days (so effectively never picked) AND
+   was excluded from the cold list, where it would have ranked well. Her
+   hearted-but-neglected pieces — precisely the ones rediscovery is for — were
+   the ones systematically shut out of it. Liked now breaks ties WITHIN a band
+   and never decides which band a piece is in.
 
    LAUNDRY IS DELIBERATELY IGNORED HERE. If dirty pieces fell off the rack it
    would churn daily and stop being a thing she can recognise. The suggester's
@@ -37,31 +87,64 @@
    =================================================================== */
 
 const RACK_KEY = "rack";
-// Per-slot quotas, not a flat top-60: a 60-piece rack that happens to be 45
-// tops cannot build an outfit. These sum to ~46 and formality top-ups take it
-// toward 60.
-const RACK_SLOT_QUOTA = { Tops: 16, Bottoms: 11, Dresses: 5, Shoes: 9, Outerwear: 5 };
-const RACK_COLD_SHARE = 0.20;   // ⚠️ load-bearing — see the header note
-const RACK_WARM_DAYS = 60;      // "recently reached for"
+/* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
+   cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
+   "some weeks will have more contexts and formality levels" — with the extra 12
+   going disproportionately to steady and dormant, which is where the coverage
+   hole was. Formality top-ups take the real total toward 65. */
+const RACK_SLOT_QUOTA = {
+  Tops:      { rotation: 11, steady: 5, dormant: 4 },   // 20
+  Bottoms:   { rotation: 8,  steady: 3, dormant: 3 },   // 14
+  Dresses:   { rotation: 3,  steady: 2, dormant: 1 },   // 6
+  Shoes:     { rotation: 6,  steady: 3, dormant: 2 },   // 11
+  Outerwear: { rotation: 4,  steady: 2, dormant: 1 },   // 7
+};
+const RACK_COLD_SHARE = 0.20;   // ⚠️ dormant share — load-bearing, see header
+const RACK_STEADY_SHARE = 0.25; // the middle band; rotation takes the remainder
+const RACK_WARM_DAYS = 60;      // the rotation/steady vs dormant line
 const RACK_REBUILD_DAYS = 7;    // stability is a feature; don't reshuffle daily
 const RACK_PUSH_DAYS = 42;      // a push-out expires, so a summer no doesn't haunt October
+const RACK_PUSH_LONG_DAYS = 120;// "not right now" from a reassessment — a season, not a month
 const RACK_LOOKAHEAD_DAYS = 14; // how far ahead declared plans stock the rack
 const RACK_LEVEL_MIN = 2;       // per core slot, per level she'll actually need
+const RACK_SEEN_LIMIT = 3;      // offered this many rebuilds unworn → worth a second look
+
+/* A slot quota is either the banded object above or a plain number (the trip
+   builder's PACK_TRIP_QUOTA is flat, and calibrating it per-band would be a
+   second place to get the shares wrong). A number splits by the shares. */
+function rackBands(q) {
+  if (q && typeof q === "object") return q;
+  const n = Math.max(1, +q || 0);
+  const dormant = Math.max(1, Math.round(n * RACK_COLD_SHARE));
+  const steady = Math.max(1, Math.round(n * RACK_STEADY_SHARE));
+  return { rotation: Math.max(1, n - dormant - steady), steady, dormant };
+}
+const rackQuotaTotal = (q) => { const b = rackBands(q); return b.rotation + b.steady + b.dormant; };
 
 // ---- stored state (kv "rack") ----
-// { built: "YYYY-MM-DD", ids: [...], cold: [...], pinned: [...], pushed: {id: date} }
+// { built, season, ids, rotation, steady, dormant, cold, seen: {id:n},
+//   pinned: [...], pushed: {id: date | {d,n}} }
 function rackState() {
   const v = kvData.get(RACK_KEY);
   return v && typeof v === "object" ? v : {};
 }
 function rackPinnedSet() { return new Set(rackState().pinned || []); }
-// Push-outs expire on their own so the rack can't be permanently narrowed by a
-// decision she made in another season and forgot about.
+/* Push-outs expire on their own so the rack can't be permanently narrowed by a
+   decision she made in another season and forgot about. Two durations: the
+   ordinary nudge (RACK_PUSH_DAYS) and the longer "not right now" from a
+   reassessment. Legacy entries are bare date strings — read as the short one. */
 function rackPushedSet(today = todayStr()) {
-  const cut = shiftDate(today, -RACK_PUSH_DAYS);
   const out = new Set();
-  for (const [id, d] of Object.entries(rackState().pushed || {})) if (d > cut) out.add(id);
+  for (const [id, v] of Object.entries(rackState().pushed || {})) {
+    const at = typeof v === "string" ? v : (v && v.d);
+    const days = typeof v === "string" ? RACK_PUSH_DAYS : ((v && v.n) || RACK_PUSH_DAYS);
+    if (at && at > shiftDate(today, -days)) out.add(id);
+  }
   return out;
+}
+function rackSeen() {
+  const s = rackState().seen;
+  return s && typeof s === "object" ? s : {};
 }
 
 /* Levels the rack must be able to dress.
@@ -73,7 +156,10 @@ function rackPushedSet(today = todayStr()) {
    ⚠️ Without this the rack is all levels 2–3 and the first "Dressed Up" ask
    returns ZERO, because targetLevel is a hard filter in suggestOutfits — the
    same failure as the 2026-07-19 capsule bug, from a smaller pool instead of a
-   smaller capsule. */
+   smaller capsule.
+   ⚠️ A day-plan entry's OWN level (set per event since 2026-07-30 r4) wins over
+   its contexts' usual level, exactly as entrySuggestLevel does — otherwise a
+   dinner she has explicitly pinned to Dressed Up stocks the rack for Friends. */
 function rackNeededLevels(today = todayStr(), plans = null, wearRows = null) {
   const rows = wearRows || wears;
   const all = plans || dayPlanAll();
@@ -81,6 +167,7 @@ function rackNeededLevels(today = todayStr(), plans = null, wearRows = null) {
   for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
     const d = shiftDate(today, k);
     for (const e of (all[d] || [])) {
+      if (e.level) { levels.add(e.level); continue; }
       for (const c of (e.contexts || [])) {
         const lv = contextFormalityLevel(c, rows);
         if (lv) levels.add(lv);
@@ -111,22 +198,25 @@ function rackWarmth(itemId, today = todayStr()) {
 }
 
 /* Build the rack. Pure apart from its defaults, so the selftest can drive it.
-   Returns { ids, cold, slots, levels } — `cold` is the rediscovery subset and
-   is surfaced in the UI, because the thing that keeps the rack honest is also
-   the nicest thing about it. */
-/* `quota` (2026-07-29) lets the trip builder ask for a trip-sized rack:
+   Returns { ids, rotation, steady, dormant, cold, offered, slots, levels }.
+   `cold` is an alias for `dormant` kept for the trip builder and the stored
+   shape; `offered` is steady ∪ dormant — the pieces this build is PUTTING in
+   front of her, which is what rackEnsure increments the seen-counter for.
+
+   `quota` (2026-07-29) lets the trip builder ask for a trip-sized rack:
    RACK_SLOT_QUOTA is calibrated for a day at home, and a 10-day trip with two
-   dress-coded evenings needs a wider pool to draw from. Defaults to the home
-   quotas, so the daily rack is untouched. ⚠️ The cold share is deliberately NOT
-   parameterised — it is load-bearing here for the same reason it is at home. */
+   dress-coded evenings needs a wider pool to draw from. ⚠️ The band shares are
+   deliberately NOT parameterised — they are load-bearing for the same reason at
+   home and away. */
 function buildRack({ pool = null, wearRows = null, today = todayStr(), season = null,
                      wx = null, plans = null, pinned = null, pushed = null,
-                     quota = null } = {}) {
+                     quota = null, seen = null } = {}) {
   const QUOTA = quota || RACK_SLOT_QUOTA;
   const rows = wearRows || wears;
   const seas = season || currentSeason();
   const pin = pinned || rackPinnedSet();
   const push = pushed || rackPushedSet(today);
+  const seenMap = seen || rackSeen();
   const liked = (typeof likedLookItemIds === "function") ? likedLookItemIds() : new Set();
 
   // Candidates mirror the suggester's own normal-mode pool so the rack can never
@@ -139,40 +229,74 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   const eligible = base.filter(i => inSeasonWx(i, seas, wx));
   const levels = rackNeededLevels(today, plans, rows);
 
-  // Deterministic ordering: same inputs, same rack. Stability is the point —
-  // she should come to recognise it, and a rack that reshuffles every open is
-  // just a random sample with extra steps.
-  const score = i => rackWarmth(i.id, today) + (liked.has(i.id) ? 0.15 : 0);
-  const byWarm = (a, b) => (score(b) - score(a)) || (a.id < b.id ? -1 : 1);
-  // Cold pick order: most-loved-but-not-lately first. "You used to wear this a
-  // lot and haven't in a while" is a better rediscovery than a random stranger.
-  const byCold = (a, b) => (wearCount(b.id) - wearCount(a.id)) || (a.id < b.id ? -1 : 1);
+  /* Deterministic ordering: same inputs, same rack. Stability is the point —
+     she should come to recognise it, and a rack that reshuffles every open is
+     just a random sample with extra steps. */
+  const warmth = i => rackWarmth(i.id, today);
+  const likedRank = i => (liked.has(i.id) ? 1 : 0);
+  const seenOf = i => seenMap[i.id] || 0;
+  // Rotation: purely how recently she reached for it. Liked only breaks ties.
+  const byRecent = (a, b) => (warmth(b) - warmth(a)) || (likedRank(b) - likedRank(a)) || (a.id < b.id ? -1 : 1);
+  /* Steady + dormant: a round-robin queue. Least-offered-first is what makes the
+     whole pool cycle instead of the same handful looping forever; all-time wear
+     count then leads with "you used to wear this a lot", which is a better
+     rediscovery than a random stranger. */
+  const byQueue = (a, b) => (seenOf(a) - seenOf(b)) || (likedRank(b) - likedRank(a)) ||
+    (wearCount(b.id) - wearCount(a.id)) || (a.id < b.id ? -1 : 1);
 
   const slotOf = i => (isLayer(i) && i.category === "Tops") ? "Tops" : suggestSlot(i);
   const ids = new Set();
-  const cold = new Set();
+  const rotation = new Set(), steady = new Set(), dormant = new Set();
 
   for (const [slot, slotQuota] of Object.entries(QUOTA)) {
+    const band = rackBands(slotQuota);
     const inSlot = eligible.filter(i => slotOf(i) === slot ||
       (slot === "Outerwear" && isLayer(i) && i.category === "Tops"));
-    const warmList = inSlot.filter(i => score(i) > 0).sort(byWarm);
-    const coldList = inSlot.filter(i => score(i) === 0).sort(byCold);
-    const nCold = Math.max(1, Math.round(slotQuota * RACK_COLD_SHARE));
-    const nWarm = slotQuota - nCold;
-    const takenWarm = warmList.slice(0, nWarm);
-    const takenCold = coldList.slice(0, nCold);
-    // Backfill from whichever side has slack, so a thin slot still fills.
-    const short = slotQuota - takenWarm.length - takenCold.length;
-    const extra = short > 0
-      ? [...warmList.slice(takenWarm.length), ...coldList.slice(takenCold.length)].slice(0, short)
-      : [];
-    for (const i of takenWarm) ids.add(i.id);
-    for (const i of takenCold) { ids.add(i.id); cold.add(i.id); }
-    for (const i of extra) ids.add(i.id);
+
+    // 1. rotation — top N by recency, out of everything in the slot.
+    const ranked = inSlot.slice().sort(byRecent);
+    const inRotation = ranked.filter(i => warmth(i) > 0).slice(0, band.rotation);
+    const chosen = new Set(inRotation.map(i => i.id));
+
+    // 2. the remainder splits on the RACK_WARM_DAYS line. Everything the
+    //    rotation cut left behind but that she HAS worn recently is the steady
+    //    band — the middle of the wardrobe that used to be invisible.
+    const rest = inSlot.filter(i => !chosen.has(i.id));
+    const steadyPool = rest.filter(i => warmth(i) > 0).sort(byQueue);
+    const dormantPool = rest.filter(i => warmth(i) === 0).sort(byQueue);
+    const inSteady = steadyPool.slice(0, band.steady);
+    for (const i of inSteady) chosen.add(i.id);
+    const inDormant = dormantPool.slice(0, band.dormant);
+    for (const i of inDormant) chosen.add(i.id);
+
+    /* 3. Backfill from whichever band has slack, so a thin slot still fills to
+       its total. A young closet has no dormant pieces at all; a neglected slot
+       has no rotation. Backfilled pieces keep the band they came FROM, so the
+       screen never calls a piece she wore yesterday "dormant". */
+    const want = band.rotation + band.steady + band.dormant;
+    let short = want - chosen.size;
+    if (short > 0) {
+      const spare = [
+        ...ranked.filter(i => warmth(i) > 0 && !chosen.has(i.id)),   // more recent
+        ...dormantPool.filter(i => !chosen.has(i.id)),               // then dormant
+      ];
+      for (const i of spare) {
+        if (short <= 0) break;
+        chosen.add(i.id);
+        (warmth(i) > 0 ? inSteady : inDormant).push(i);
+        short--;
+      }
+    }
+
+    for (const i of inRotation) { ids.add(i.id); rotation.add(i.id); }
+    for (const i of inSteady) { ids.add(i.id); steady.add(i.id); }
+    for (const i of inDormant) { ids.add(i.id); dormant.add(i.id); }
   }
 
-  // Formality top-up: for every level she'll actually need, make sure each core
-  // slot can cover it. This is what stops "Dressed Up" returning an empty sheet.
+  /* Formality top-up: for every level she'll actually need, make sure each core
+     slot can cover it. This is what stops "Dressed Up" returning an empty sheet.
+     Top-ups join the STEADY band — they're here because a declared plan needs
+     them, not because she's been reaching for them. */
   for (const lv of levels) {
     for (const slot of ["Tops", "Bottoms", "Shoes"]) {
       const covers = i => (itemFormalitySet(i) || []).includes(lv);
@@ -180,9 +304,9 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
       if (have >= RACK_LEVEL_MIN) continue;
       const add = eligible
         .filter(i => !ids.has(i.id) && slotOf(i) === slot && covers(i))
-        .sort(byWarm)
+        .sort(byRecent)
         .slice(0, RACK_LEVEL_MIN - have);
-      for (const i of add) ids.add(i.id);
+      for (const i of add) { ids.add(i.id); steady.add(i.id); }
     }
   }
 
@@ -190,7 +314,9 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   // season and slot quotas, but not "does this item still exist and is wearable".
   for (const id of pin) {
     const i = itemById.get(id);
-    if (i && itemStatus(i) === "Available") { ids.add(id); cold.delete(id); }
+    if (i && itemStatus(i) === "Available") {
+      ids.add(id); dormant.delete(id); steady.delete(id); rotation.add(id);
+    }
   }
 
   const slots = new Map();
@@ -199,25 +325,61 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     const s = i ? (slotOf(i) || "Other") : "Other";
     slots.set(s, (slots.get(s) || 0) + 1);
   }
-  return { ids: [...ids], cold: [...cold], slots, levels };
+  return {
+    ids: [...ids], rotation: [...rotation], steady: [...steady], dormant: [...dormant],
+    cold: [...dormant],                       // alias: the trip builder reads .cold
+    offered: [...new Set([...steady, ...dormant])],
+    slots, levels,
+  };
 }
 
 // ---- the live rack (stored, rebuilt on a cadence) ----
 let _rackMemo = null;
 function rackIsStale(st = rackState(), today = todayStr()) {
   if (!st.built || !Array.isArray(st.ids) || !st.ids.length) return true;
+  // A rack stored before the three-band rework has no bands — rebuild rather
+  // than render a screen with two thirds of its sections empty.
+  if (!Array.isArray(st.steady) || !Array.isArray(st.rotation)) return true;
   if (daysBetween(st.built, today) >= RACK_REBUILD_DAYS) return true;
   return st.season !== currentSeason();   // a season flip must not wait a week
 }
-/* Rebuild if due, otherwise return what's stored. Nudges (pin/push) rebuild
-   immediately so the change is visible at once. */
+/* Rebuild if due, otherwise return what's stored.
+
+   ⚠️ WHERE THIS IS CALLED IS THE WHOLE FEATURE (fixed 2026-08-03). Until then
+   rackEnsure ran in exactly two places — tapping the closet's rack row, and the
+   "Rebuild now" button — while EVERY consumer (the suggester's pool, the pool
+   chip, the closet row's count) read rackEffective(), which checks nothing. So
+   the 7-day cadence and the season-flip guard only ever ran if she happened to
+   visit the rack screen; three weeks of suggestions could come from a
+   three-week-old rack, and a summer rack could survive into October. It is now
+   also called at boot and whenever the suggester opens. Both are cheap: on six
+   days out of seven rackIsStale is a date comparison that returns false.
+
+   kvUpdate applies to kvData synchronously (persisting in the background), so
+   callers that can't await — openSuggestSheet is synchronous — still see the
+   fresh rack on this very render. */
 async function rackEnsure({ force = false } = {}) {
   const st = rackState();
   if (!force && !rackIsStale(st)) return st;
+  const prevBuilt = st.built || null;
   const built = buildRack({ wx: (_homeWx && _homeWx.date === todayStr()) ? _homeWx.wx : null });
+
+  /* The seen-counter: how many rebuilds each piece has been offered in
+     steady/dormant without being worn. Reset first — if she wore it while the
+     PREVIOUS rack was standing, the offer worked and the count starts over. */
+  const seen = { ...rackSeen() };
+  for (const id of Object.keys(seen)) {
+    if (!itemById.get(id)) { delete seen[id]; continue; }        // deleted piece
+    const lw = lastWorn(id);
+    if (prevBuilt && lw && lw >= prevBuilt) delete seen[id];
+  }
+  for (const id of built.offered) seen[id] = (seen[id] || 0) + 1;
+
   const next = {
     built: todayStr(), season: currentSeason(),
     ids: built.ids, cold: built.cold,
+    rotation: built.rotation, steady: built.steady, dormant: built.dormant,
+    seen,
     pinned: [...rackPinnedSet()], pushed: rackState().pushed || {},
   };
   _rackMemo = null;
@@ -225,16 +387,22 @@ async function rackEnsure({ force = false } = {}) {
   return next;
 }
 /* The effective rack: what's stored, or a fresh derivation when nothing is
-   stored yet. Both ids AND the cold subset come from the SAME source — reading
-   ids from the fallback build while reading cold from empty stored state made
-   the rediscovery block silently vanish on first open, which is the one part of
+   stored yet. Every band comes from the SAME source — reading ids from the
+   fallback build while reading cold from empty stored state made the
+   rediscovery block silently vanish on first open, which is the one part of
    this feature that must never quietly disappear. */
 function rackEffective() {
   if (_rackMemo && _rackMemo.stamp === rackStamp()) return _rackMemo.eff;
   const st = rackState();
-  const eff = (Array.isArray(st.ids) && st.ids.length)
-    ? { ids: st.ids, cold: new Set(st.cold || []) }
-    : (() => { const b = buildRack(); return { ids: b.ids, cold: new Set(b.cold) }; })();
+  const fromStored = Array.isArray(st.ids) && st.ids.length && Array.isArray(st.steady);
+  const b = fromStored ? st : buildRack();
+  const eff = {
+    ids: b.ids,
+    rotation: new Set(b.rotation || []),
+    steady: new Set(b.steady || []),
+    dormant: new Set(b.dormant || b.cold || []),
+    cold: new Set(b.dormant || b.cold || []),
+  };
   _rackMemo = { stamp: rackStamp(), eff };
   return eff;
 }
@@ -248,6 +416,44 @@ const rackStamp = () => {
 };
 const isOnRack = (id) => rackItems().some(i => i.id === id);
 const rackColdSet = () => rackEffective().cold;
+// Which band a piece is in, for the item view's rack line. null = not on the rack.
+function rackBandOf(id) {
+  const eff = rackEffective();
+  if (eff.rotation.has(id)) return "rotation";
+  if (eff.steady.has(id)) return "steady";
+  if (eff.dormant.has(id)) return "dormant";
+  return null;
+}
+const RACK_BAND_LABEL = { rotation: "In rotation", steady: "Steady", dormant: "Haven't reached for it lately" };
+
+/* ---- "worth a second look" ------------------------------------------------
+   Pieces the rack has put in front of her RACK_SEEN_LIMIT times and that she
+   still hasn't worn. Her idea, and it falls straight out of the counter that
+   already drives rotation: one number, two jobs.
+
+   ⚠️ THIS STATES A FACT AND ASKS A QUESTION. It never guesses WHY. The app
+   cannot tell "wrong for work" from "I don't like it any more" from "the season
+   tag is wrong", and the r19 guessing layer is the standing proof that a wrong
+   guess costs more trust than a tap costs effort. Same tone as "packed 3×, worn
+   0×": the sweater offered three times may simply be waiting for a cold snap.
+   There is deliberately no "get rid of this" recommendation and never a
+   purchase suggestion. */
+function rackPassedOver(limit = RACK_SEEN_LIMIT) {
+  const seen = rackSeen();
+  return Object.entries(seen)
+    .filter(([, n]) => n >= limit)
+    .map(([id, n]) => ({ item: itemById.get(id), n }))
+    .filter(x => x.item && itemStatus(x.item) === "Available")
+    .sort((a, b) => (b.n - a.n) || ((a.item.name || "") < (b.item.name || "") ? -1 : 1));
+}
+async function rackClearSeen(id) {
+  await kvUpdate(RACK_KEY, prev => {
+    const st = prev && typeof prev === "object" ? prev : {};
+    const seen = { ...(st.seen || {}) }; delete seen[id];
+    return { ...st, seen };
+  });
+  _rackMemo = null;
+}
 
 // ---- nudges ----
 // Pull in: an explicit yes. Survives every rebuild until she pushes it back out.
@@ -258,46 +464,122 @@ async function pullOntoRack(id) {
     const st = prev && typeof prev === "object" ? prev : {};
     const pinned = new Set(st.pinned || []); pinned.add(id);
     const pushed = { ...(st.pushed || {}) }; delete pushed[id];
+    const seen = { ...(st.seen || {}) }; delete seen[id];
     const ids = new Set(st.ids || []); ids.add(id);
-    return { ...st, pinned: [...pinned], pushed, ids: [...ids] };
+    const rotation = new Set(st.rotation || []); rotation.add(id);
+    return { ...st, pinned: [...pinned], pushed, seen, ids: [...ids], rotation: [...rotation] };
   });
   _rackMemo = null;
   toast(`${i.name || "Piece"} is on the rack`);
 }
-// Push out: "not right now". Expires by itself (RACK_PUSH_DAYS).
-async function pushOffRack(id) {
+// Push out: "not right now". Expires by itself (RACK_PUSH_DAYS, or the longer
+// RACK_PUSH_LONG_DAYS when it comes from a second-look answer).
+async function pushOffRack(id, { days = RACK_PUSH_DAYS, quiet = false } = {}) {
   const i = itemById.get(id);
   if (!i) return;
   await kvUpdate(RACK_KEY, prev => {
     const st = prev && typeof prev === "object" ? prev : {};
     const pinned = new Set(st.pinned || []); pinned.delete(id);
-    const pushed = { ...(st.pushed || {}), [id]: todayStr() };
-    const ids = (st.ids || []).filter(x => x !== id);
-    return { ...st, pinned: [...pinned], pushed, ids };
+    const pushed = { ...(st.pushed || {}), [id]: { d: todayStr(), n: days } };
+    const seen = { ...(st.seen || {}) }; delete seen[id];
+    const drop = (a) => (a || []).filter(x => x !== id);
+    return { ...st, pinned: [...pinned], pushed, seen, ids: drop(st.ids),
+             rotation: drop(st.rotation), steady: drop(st.steady),
+             dormant: drop(st.dormant), cold: drop(st.cold) };
   });
   _rackMemo = null;
-  toast(`Off the rack for now`, { label: "Undo", fn: () => pullOntoRack(id) });
+  if (!quiet) toast(`Off the rack for now`, { label: "Undo", fn: () => pullOntoRack(id) });
+}
+
+/* ---- the second-look sheet ----
+   Four answers, each wired to the thing that actually fixes it. She labels it;
+   the app never labels it for her. */
+function openRackSecondLook(id) {
+  const i = itemById.get(id);
+  if (!i) return;
+  const n = rackSeen()[id] || 0;
+  const lvls = (itemFormalitySet(i) || []).map(l => occLabel(l)).filter(Boolean);
+  const last = lastWorn(id);
+  const row = (key, label, sub) => `<button class="qa-row" data-rsl="${key}" style="display:block;text-align:left;width:100%">
+      <div style="font-size:15px">${esc(label)}</div>
+      <div class="muted" style="font-size:12.5px;padding-top:2px">${esc(sub)}</div>
+    </button>`;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="rslCancel">Cancel</button>
+      <h2>Worth a second look</h2>
+      <div style="width:54px"></div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;padding:4px 16px 12px">
+      <div style="width:64px;flex:none">${thumbHtml(i.image_path, "cthumb")}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</div>
+        <div class="muted" style="font-size:12.5px;padding-top:2px">On the rack ${n}× without going out${last ? ` · last worn ${esc(fmtDate(last))}` : " · never worn"}</div>
+      </div>
+    </div>
+    <div class="snote" style="padding:0 16px 10px;font-size:12.5px">This isn't a verdict — a piece can sit on the rack for weeks and still be exactly right when the weather turns. It's only worth asking why.</div>
+    ${row("formality", "It's wrong for that kind of day", lvls.length ? `Tagged ${lvls.join(", ")} — edit what it's actually for` : "Set what it's actually for")}
+    ${row("season", "Wrong time of year", "Edit its seasons")}
+    ${row("later", "Not right now", `Off the rack for ${RACK_PUSH_LONG_DAYS} days, then it comes back on its own`)}
+    ${row("storage", "I've moved on from it", "Move it to Storage — it stays in your closet and its history is kept")}
+    ${row("keep", "Nothing's wrong — keep offering it", "Resets the counter")}
+    <div style="height:max(env(safe-area-inset-bottom),16px)"></div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  $("#rslCancel").onclick = () => hideSheet("logSheet");
+  const after = () => { hideSheet("logSheet"); if (closetRack) renderCloset(); };
+  $("#logInner").querySelectorAll("[data-rsl]").forEach(b => b.onclick = async () => {
+    const k = b.dataset.rsl;
+    if (k === "formality") { hideSheet("logSheet"); await rackClearSeen(id); return openFieldEdit(id, "formality"); }
+    if (k === "season")    { hideSheet("logSheet"); await rackClearSeen(id); return openFieldEdit(id, "season"); }
+    if (k === "later")     { await pushOffRack(id, { days: RACK_PUSH_LONG_DAYS, quiet: true }); toast("Off the rack for now"); return after(); }
+    if (k === "storage")   { await saveField(id, "status", "Storage"); await rackClearSeen(id); toast("Moved to Storage"); return after(); }
+    await rackClearSeen(id); toast("Keeping it in play"); after();
+  });
 }
 
 // ---- the rack screen (closet shelf, same shape as Worn / Hamper) ----
 function renderClosetRack() {
   const list = rackItems();
-  const cold = rackColdSet();
+  const eff = rackEffective();
   const st = rackState();
-  const coldList = list.filter(i => cold.has(i.id));
+  const byId = new Map(list.map(i => [i.id, i]));
+  const band = (set) => [...set].map(id => byId.get(id)).filter(Boolean);
+  const inRot = band(eff.rotation), inSteady = band(eff.steady), inDorm = band(eff.dormant);
+  const due = st.built ? Math.max(0, RACK_REBUILD_DAYS - daysBetween(st.built, todayStr())) : 0;
   const note = st.built
-    ? `Put together ${st.built === todayStr() ? "today" : fmtDate(st.built)} from what's clean-ish, in season, and what you've been reaching for.`
+    ? `Put together ${st.built === todayStr() ? "today" : fmtDate(st.built)} from what's in season and what you've been reaching for${due ? ` · refreshes itself in ${due} day${due === 1 ? "" : "s"}` : " · due a refresh"}.`
     : `Derived from what's in season and what you've been reaching for.`;
-  // Cold pieces lead, and are NOT repeated in the grid below — the same tile
-  // twice on one screen reads as a bug, not as emphasis.
-  const rest = list.filter(i => !cold.has(i.id));
-  const coldBlock = coldList.length
-    ? `<div class="snote" style="padding:10px 16px 2px">✨ <b>${coldList.length} you haven't reached for lately</b> — deliberately kept in, so the rack can't quietly shrink your wardrobe.</div>`
-      + gridHtml(coldList)
-      + `<div class="snote" style="padding:14px 16px 2px"><b>The rest of the rack</b></div>`
+
+  /* Three labelled sections, because the bands ARE the picture of the wardrobe —
+     what's in play, what's still in the mix, and what's gone quiet. Nothing is
+     repeated between them; the same tile twice on one screen reads as a bug
+     rather than as emphasis. */
+  const sec = (title, sub, arr) => arr.length
+    ? `<div class="snote" style="padding:14px 16px 2px"><b>${esc(title)} · ${arr.length}</b><div style="font-size:12.5px;padding-top:2px">${esc(sub)}</div></div>` + gridHtml(arr)
     : "";
+
+  const second = rackPassedOver();
+  const secondBlock = second.length
+    ? `<div class="snote" style="padding:16px 16px 2px"><b>Worth a second look · ${second.length}</b>
+         <div style="font-size:12.5px;padding-top:2px">On the rack ${RACK_SEEN_LIMIT}+ times and still not worn. Not a verdict — just worth asking why.</div></div>
+       <div style="padding:6px 16px 0">
+         ${second.slice(0, 12).map(({ item, n }) => `<button data-rsecond="${esc(item.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 0;border-bottom:1px solid var(--line)">
+           <span style="width:46px;flex:none">${thumbHtml(item.image_path, "cthumb")}</span>
+           <span style="flex:1;min-width:0">
+             <span style="display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || "Untitled")}</span>
+             <span class="muted" style="display:block;font-size:12px">offered ${n}× · not worn</span>
+           </span>
+           <svg class="chev" viewBox="0 0 24 24" style="flex:none"><path d="M9 6l6 6-6 6"/></svg>
+         </button>`).join("")}
+       </div>`
+    : "";
+
   const body = list.length
-    ? coldBlock + gridHtml(rest)
+    ? sec("In rotation", "What you've actually been reaching for.", inRot)
+      + sec("Steady", "You wear these — just not this week. This band exists so the middle of your wardrobe doesn't go invisible.", inSteady)
+      + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, so you see different ones over time.", inDorm)
+      + secondBlock
     : `<div class="placeholder" style="padding:40px 32px"><b>Rack not built yet</b>
         <div>It fills itself from what's in season and what you've been wearing.</div></div>`;
   return clToolbar(`The rack · ${list.length}`, true, false)

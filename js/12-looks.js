@@ -1286,15 +1286,55 @@ function topContextsByWearCount(limit = 6) {
   const counts = countByDay(wears, ctxArr);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([c]) => c);
 }
-// Most common formality_for level among this context's wears (min 3 to trust);
+/* How dressy this context runs, as OCCASIONS — one (day, level) pair each.
+
+   ⚠️ THIS COUNTED WEAR ROWS UNTIL 2026-08-03, and both consequences were real.
+   A wear writes one row per PIECE, so a 6-piece Dressed Up outfit cast six
+   votes and a 2-piece Polished Casual outfit cast two: wear the big one twice
+   and the small one five times and the mode said 6 while the honest answer,
+   by day, was 4. And "min 3 to trust" was min 3 ROWS — i.e. one three-piece
+   outfit, worn once, permanently overrode the seed constant. This is the
+   2026-07-24 "a wear is a DAY, never a row" audit; contextFormalityStats was
+   fixed then and this function was missed, so the Contexts stats page and the
+   suggester could quietly disagree about the same context.
+
+   A day with two outfits at different levels is two occasions, which is right —
+   they were two different things she dressed for. */
+const CONTEXT_LEVEL_MIN_OCCASIONS = 3;
+function contextLevelDays(context, wearRows = null) {
+  const seen = new Set();
+  const byLevel = new Map();
+  for (const w of (wearRows || wears)) {
+    if (!w.formality_for || !w.worn_on) continue;
+    if (!ctxArr(w).includes(context)) continue;
+    const k = w.formality_for + "|" + w.worn_on;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    byLevel.set(w.formality_for, (byLevel.get(w.formality_for) || 0) + 1);
+  }
+  return byLevel;
+}
+/* The whole shape, not just the mode: { occasions, levels:[{level,days}] }
+   commonest first. Null when there isn't enough history to trust.
+   ⚠️ The suggester used to take the mode, set it as targetLevel — a HARD filter —
+   and throw the rest away, so asking for a context she dresses for at 3, 5 and 6
+   silently returned level-5 pieces only, with nothing on screen saying so. */
+function contextLevelSpread(context, wearRows = null) {
+  const m = contextLevelDays(context, wearRows);
+  const occasions = [...m.values()].reduce((a, b) => a + b, 0);
+  if (occasions < CONTEXT_LEVEL_MIN_OCCASIONS) return null;
+  return {
+    occasions,
+    levels: [...m.entries()]
+      .sort((a, b) => (b[1] - a[1]) || (a[0] - b[0]))
+      .map(([level, days]) => ({ level, days })),
+  };
+}
+// Most common formality level among this context's occasions (min 3 to trust);
 // falls back to the seed constant above.
 function contextFormalityLevel(context, wearRows = null) {
-  const levels = (wearRows || wears).filter(w => ctxArr(w).includes(context) && w.formality_for).map(w => w.formality_for);
-  if (levels.length >= 3) {
-    const freq = {};
-    for (const l of levels) freq[l] = (freq[l] || 0) + 1;
-    return +Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0];
-  }
+  const s = contextLevelSpread(context, wearRows);
+  if (s) return s.levels[0].level;
   return CONTEXT_FORMALITY_SEED[context] || null;
 }
 
@@ -1302,6 +1342,11 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   // Trip/capsule mode: every suggest entry point defaults to the suitcase pool
   // unless the caller scoped it explicitly.
   if (!capsuleId && tripModeId && capsuleById.get(tripModeId)) capsuleId = tripModeId;
+  /* The rack is this sheet's default pool, so this is the other place its
+     staleness must be noticed (see rackEnsure). kvUpdate applies to kvData
+     synchronously, so the fresh rack is visible to _suggPool() below on THIS
+     render — the await is only for persistence. */
+  if (!capsuleId && dataReady) rackEnsure().catch(() => {});
   _sugg.seedItemId = seedItemId;
   _sugg.capsuleId = capsuleId;
   _sugg.planCtx = planCtx || null;
@@ -1368,13 +1413,27 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
       so one would add a concept and shrink nothing. Revisit only if generating a
       workout outfit ever starts to feel like a slot machine.
    3. Otherwise the rack, unless she's widened it. */
+/* The precedence itself, without the sheet's state — so anything that generates
+   an outfit OUTSIDE the suggester follows exactly the same rules.
+
+   ⚠️ The Tomorrow card didn't, until 2026-08-03. tomorrowGenPieces passed
+   `pool = null` and suggestOutfits reads null as the whole Available closet, so
+   the card had never once used the rack — the one surface that shows an outfit
+   without being asked was the one drawing from all 476 pieces. Two spellings of
+   one rule is how that happens, so now there is one. */
+function planningPool({ capsuleId = null, level = null, wholeCloset = false } = {}) {
+  if (capsuleId) return capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available");
+  // Level 1 (Utility) draws from the whole closet, never the rack: buildRack
+  // excludes the Workout category on purpose, so a rack filtered to gear can
+  // never form an outfit (r12, reported the day the rack shipped).
+  if (level === 1 || wholeCloset) return items.filter(i => itemStatus(i) === "Available");
+  return rackItems();
+}
 function _suggBasePool() {
   // Inside a trip, "build from what's still in the bag" narrows one step further
   // than the suitcase. Same deal as the rack: named, counted, one tap to widen.
   if (_sugg.unworn) return _sugg.unworn.pool;
-  if (_sugg.capsuleId) return capsuleItems(_sugg.capsuleId).filter(i => itemStatus(i) === "Available");
-  if (_sugg.targetLevel === 1 || _sugg.wholeCloset) return items.filter(i => itemStatus(i) === "Available");
-  return rackItems();
+  return planningPool({ capsuleId: _sugg.capsuleId, level: _sugg.targetLevel, wholeCloset: _sugg.wholeCloset });
 }
 function _suggPool() {
   let pool = _suggBasePool();
@@ -1435,6 +1494,29 @@ function suggestShapeChipsHtml() {
     <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
       ${tops.map(f => `<button class="cap-chip${_sugg.shapeKey === f.key ? " on" : ""}" data-sshape="${esc(f.key)}" style="font-size:13px">${esc(f.label)}</button>`).join("")}
     </div>
+  </div>`;
+}
+
+/* A context she dresses for at several levels (2026-08-03, her question:
+   "if I say I need an outfit for x context, in which I have worn different
+   formality levels, what happens?"). It used to take the mode, set it as
+   targetLevel — a HARD filter — and discard the rest, so a Work ask returned
+   Smart Casual pieces only and nothing on screen admitted that Work also runs
+   at 3 and 6. The Contexts stats page was showing her the spread the whole time.
+
+   Same rule as the pool chip: the narrowing is named, counted and one tap from
+   being changed. Only rendered when the history actually disagrees with itself —
+   a context that always runs at one level needs no extra row. */
+function suggestContextSpreadHtml() {
+  const c = _sugg.activeContext;
+  if (!c) return "";
+  const s = contextLevelSpread(c);
+  if (!s || s.levels.length < 2) return "";
+  const usual = s.levels[0].level;
+  return `<div style="padding:2px 16px 4px">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">You dress for ${esc(c)} at ${s.levels.length} different levels — usually <b style="color:var(--text)">${esc(occLabel(usual))}</b></div>
+    <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${s.levels.map(({ level, days }) =>
+      `<button class="cap-chip${_sugg.targetLevel === level ? " on" : ""}" data-sctxlvl="${level}" style="font-size:12.5px">${esc(occLabel(level))} · ${days}×</button>`).join("")}</div>
   </div>`;
 }
 
@@ -1907,6 +1989,7 @@ function renderSuggestSheet() {
     ${capLabel}
     ${suggestShapeChipsHtml()}
     ${contextChipsHtml}
+    ${suggestContextSpreadHtml()}
     <div style="padding:12px 16px 4px">
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
@@ -1999,6 +2082,12 @@ function renderSuggestSheet() {
       }
       regen();
     };
+  });
+
+  // Picking a level from the spread row KEEPS the context selected — the point
+  // is "the dressier kind of Work day", not "forget Work".
+  $("#logInner").querySelectorAll("[data-sctxlvl]").forEach(b => {
+    b.onclick = () => { _sugg.targetLevel = +b.dataset.sctxlvl; regen(); };
   });
 
   $("#logInner").querySelectorAll("[data-sseason]").forEach(b => {
