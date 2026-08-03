@@ -303,6 +303,52 @@ async function run() {
     W.wears = Array.from({ length: 40 }, (_, k) => ({ item_id: "s1", worn_on: D(-k - 1) }));
     return eq(W.isDirty(W.items[0]), false);
   });
+  /* ---- back-dating a wash (2026-08-03) ----
+     Her words: "I often will go back the next day and say things were washed —
+     and like, today's clothes might not be included in that, even though
+     they're now in the hamper." The sheet showed TODAY's hamper and stamped
+     everything ticked with the chosen date. */
+  t("a piece worn only after the wash date wasn't in that wash", () => {
+    laundrySetup();
+    W.wears = [{ item_id: "i1", worn_on: D(0) }];      // worn TODAY only
+    const ls = W.laundryState();
+    // dirty now, but the machine ran yesterday and this was still in the drawer
+    return eq([W.isDirty(W.items[0], ls), W.isDirtyAsOf(W.items[0], ls, D(-1))], [true, false]);
+  });
+  t("a piece already dirty on the wash date was in it", () => {
+    laundrySetup();
+    W.wears = [{ item_id: "i1", worn_on: D(-3) }];
+    const ls = W.laundryState();
+    return eq([W.isDirtyAsOf(W.items[0], ls, D(-1)), W.isDirtyAsOf(W.items[0], ls, D(-5))], [true, false]);
+  });
+  /* ⚠️ The partition is what the sheet renders. `after` must never be reachable
+     by a load chip — that is the exact path by which yesterday's wash swallowed
+     today's clothes, and stamping it would also DELETE the wash-day wear from
+     the piece's count (wearDatesSinceWash keeps d > since). */
+  t("laundryAsOfSplit puts worn-since-then in its own bucket", () => {
+    W.items = [
+      { id: "old", name: "Old tee", category: "Tops", subcategory: "Tee shirts", status: "Available", last_washed: D(-10), laundry_state: null },
+      { id: "new", name: "New tee", category: "Tops", subcategory: "Tee shirts", status: "Available", last_washed: D(-10), laundry_state: null },
+      { id: "jean", name: "Jean", category: "Bottoms", subcategory: "Jeans", status: "Available", last_washed: D(-10), laundry_state: null },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.wears = [{ item_id: "old", worn_on: D(-4) },     // dirty before the wash
+               { item_id: "new", worn_on: D(0) },      // only worn today
+               { item_id: "jean", worn_on: D(-4) }];   // 1 of 5 → worn, not dirty
+    const ls = W.laundryState();
+    const s = W.laundryAsOfSplit(W.items, ls, D(-1));
+    return eq([s.hamper.map(i => i.id), s.worn.map(i => i.id), s.after.map(i => i.id)],
+              [["old"], ["jean"], ["new"]]);
+  });
+  t("same-day laundry is exactly the live derivation", () => {
+    laundrySetup();
+    W.wears = [{ item_id: "i1", worn_on: D(0) }];
+    const ls = W.laundryState();
+    const s = W.laundryAsOfSplit(W.items, ls, D(0));
+    return eq([W.isDirtyAsOf(W.items[0], ls, D(0)), s.hamper.length, s.after.length],
+              [W.isDirty(W.items[0], ls), 1, 0]);
+  });
+
   // Laundry Control round (2026-07-22): D3 — per-item tolerance override tag.
   t("wearTolerance: tol:<n> tag beats subcat/category defaults", () => {
     const withTag = { category: "Bottoms", subcategory: "Jeans", tags: ["tol:2"] };

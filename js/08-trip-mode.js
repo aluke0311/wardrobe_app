@@ -516,6 +516,11 @@ let _lnSelIds = new Set();     // item ids that will be stamped washed
 let _lnActiveLoads = new Set(); // which load chips are "on" (controls grid visibility)
 let _lnPool = null;  // Set of item ids scoping the laundry sheet (trip mode), or null
 let _lnFromPrompt = false;
+/* The wash DATE, chosen first and driving everything below it (2026-08-03).
+   It lives here rather than being read back off the input, because the sheet
+   re-renders on every chip tap and the whole point is that changing the date
+   changes which pieces are shown. */
+let _lnDate = null;
 // Generic color-family filter — works over the hamper OR the worn-tray pool.
 function _lnLoadItems(load, list) {
   if (load === "All") return list;
@@ -528,6 +533,7 @@ function openLaundrySheet({ fromPrompt = false, pool = null } = {}) {
   _lnSelIds = new Set();
   _lnActiveLoads = new Set();
   _lnFromPrompt = fromPrompt;
+  _lnDate = todayStr();
   // Trip mode: wash the suitcase, not the closet — pool limits the hamper to
   // the passed items (capsule members). Null = whole closet, as ever.
   _lnPool = pool ? new Set(pool.map(i => i.id)) : null;
@@ -546,9 +552,14 @@ function _lnWornPool(ls) {
 }
 function renderLaundrySheet() {
   const ls = laundryState();
-  const hamper = _lnHamper(ls);
-  const worn = _lnWornPool(ls);
-  const date = $("#lnDate")?.value || todayStr();  // survives chip-toggle re-renders
+  const date = _lnDate || todayStr();
+  /* Everything in play right now, re-partitioned AS OF the chosen date. On the
+     ordinary same-day path `after` is empty and this is exactly the old sheet;
+     back-date it and pieces that only went out after the wash move out of the
+     loads and into their own section. */
+  const livePool = [..._lnHamper(ls), ..._lnWornPool(ls)];
+  const split = laundryAsOfSplit(livePool, ls, date);
+  const hamper = split.hamper, worn = split.worn, after = split.after;
   const chips = [...LAUNDRY_REAL_LOADS, "All"].map(l => {
     const n = _lnLoadItems(l, hamper).length + _lnLoadItems(l, worn).length;
     const lbl = l === "All" ? `All together (${hamper.length + worn.length})` : `${l} (${n})`;
@@ -564,23 +575,29 @@ function renderLaundrySheet() {
   // when the hamper already holds manual overrides, which used to hide it.
   // Scoped (trip) sheets never show the whole-closet bootstrap.
   const tracking = items.some(i => i.last_washed) || !!_lnPool;
+  const backDated = date < todayStr();
+  /* ⚠️ The date leads now. She sets WHEN the wash ran, and the lists below
+     answer "what was dirty then" — the other order is what let yesterday's
+     wash swallow today's clothes. */
   const dateRow = `
-    <div style="padding:12px 16px 0;display:flex;align-items:center;gap:10px">
+    <div style="padding:10px 16px 2px;display:flex;align-items:center;gap:10px">
       <span style="font-size:13px;color:var(--muted);flex:none">Washed on</span>
       <input class="inp" id="lnDate" type="date" value="${date}" max="${todayStr()}" style="flex:1;font-size:16px">
-    </div>`;
+    </div>
+    ${backDated ? `<div class="snote" style="padding:4px 16px 0;font-size:12.5px">Showing what was in the hamper on ${esc(fmtDate(date))}.</div>` : ""}`;
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="lnCancel">Cancel</button>
       <h2>${_lnPool ? "Trip laundry" : "Laundry"}</h2>
       <span style="width:54px"></span>
     </div>
+    ${(hamper.length || after.length || !tracking) ? dateRow : ""}
     ${hamper.length ? `
-    <div style="padding:8px 16px 4px">
+    <div style="padding:10px 16px 4px">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Which loads did you run?</div>
       <div class="cap-catbar" style="flex-wrap:wrap;gap:8px">${chips}</div>
     </div>` : tracking ? `
-    <div class="center muted" style="padding:24px 24px 4px">Nothing in the hamper 🎉</div>` : ""}
+    <div class="center muted" style="padding:24px 24px 4px">${backDated ? `Nothing was in the hamper on ${esc(fmtDate(date))}.` : "Nothing in the hamper 🎉"}</div>` : ""}
     ${visHamper.length ? `
     <div style="padding:10px 16px 0">
       <div class="section-label">In this wash · ${visHamper.length}</div>
@@ -591,7 +608,12 @@ function renderLaundrySheet() {
       <div class="section-label">Also worn, not dirty yet</div>
       ${itemGridView(visWorn, { select: true, selSet: _lnSelIds, onTap: "lnitem", cols: 4 })}
     </div>` : ""}
-    ${(hamper.length || !tracking) ? dateRow : ""}
+    ${after.length ? `
+    <div style="padding:16px 16px 0">
+      <div class="section-label">Worn since then · ${after.length}</div>
+      <div class="muted" style="font-size:12.5px;padding:2px 0 6px;line-height:1.4">These only went out after ${esc(fmtDate(date))}, so they weren't in that load. The load buttons leave them alone — tap any that did go in.</div>
+      ${itemGridView(after, { select: true, selSet: _lnSelIds, onTap: "lnitem", cols: 4 })}
+    </div>` : ""}
     ${hamper.length ? `
     <div style="padding:16px 16px 0;display:flex;flex-direction:column;gap:10px">
       <button class="btn" id="lnSave" ${selN ? "" : "disabled"}>Mark washed${selN ? ` · ${selN} item${selN === 1 ? "" : "s"}` : ""}</button>
@@ -608,6 +630,20 @@ function renderLaundrySheet() {
     <div style="padding:12px 16px 0"><button class="btn${hamper.length ? " btn-sec" : ""}" id="lnStart">Mark whole closet washed</button></div>` : ""}
     <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
   $("#lnCancel").onclick = () => { hideSheet("logSheet"); };
+  /* Changing the date re-derives the lists, so anything that has just moved into
+     "worn since then" is un-ticked — otherwise a load selected at today's date
+     would silently carry pieces into a wash that ran two days ago, which is the
+     whole bug. Loads are cleared too: "which loads did you run" is a question
+     about that day, and the answer shouldn't survive the day changing. */
+  const dateEl = $("#lnDate");
+  if (dateEl) dateEl.onchange = () => {
+    const next = dateEl.value || todayStr();
+    if (next === _lnDate) return;
+    _lnDate = next > todayStr() ? todayStr() : next;
+    _lnActiveLoads = new Set();
+    _lnSelIds = new Set();
+    renderLaundrySheet();
+  };
   $("#logInner").querySelectorAll("[data-lnload]").forEach(b => {
     b.onclick = () => {
       const l = b.dataset.lnload;
@@ -635,7 +671,7 @@ function renderLaundrySheet() {
   const save = $("#lnSave");
   if (save) save.onclick = async () => {
     const ids = [..._lnSelIds];
-    const day = $("#lnDate")?.value || todayStr();
+    const day = _lnDate || todayStr();
     hideSheet("logSheet");
     try {
       await stampWash(ids, day);
@@ -655,7 +691,7 @@ function renderLaundrySheet() {
   // Available) closet clean as of the chosen date — tracking derives from there.
   const start = $("#lnStart");
   if (start) start.onclick = async () => {
-    const day = $("#lnDate")?.value || todayStr();
+    const day = _lnDate || todayStr();
     const ids = items.filter(i => itemStatus(i) === "Available" && wearTolerance(i) !== Infinity).map(i => i.id);
     hideSheet("logSheet");
     try {

@@ -6,14 +6,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-03 r1";
+const APP_VERSION = "2026-08-03 r2";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "The rack now has three bands — in rotation, steady, and haven't reached for lately — so the middle of your wardrobe stops going invisible. It's bigger too (58 pieces)",
-  "The rediscovery picks actually rotate now. Anything the rack offers three times without you wearing it turns up under “Worth a second look”, where you say what's wrong with it",
-  "The rack refreshes itself on its own again — it used to only catch up when you opened the rack screen",
-  "Tomorrow's outfit comes from the rack, and picking a context that you dress for at several formality levels now offers you all of them",
+  "Laundry: set the date FIRST, and the hamper shows what was dirty on that day. Back-date yesterday's wash and anything you've worn since sits in its own “Worn since then” section, left out of the load buttons",
+  "That also fixes a quiet bug — back-dating a wash used to erase a wear from a piece's count if you'd worn it on the wash day too",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

@@ -138,6 +138,58 @@ function wornItems(ls) {
   ls = ls || laundryState();
   return items.filter(i => itemStatus(i) === "Available" && isWornNotDirty(i, ls));
 }
+
+/* ---- "as of" a past date (2026-08-03) -------------------------------------
+   Her words: "I often will go back the next day and say things were washed —
+   and like, today's clothes might not be included in that, even though they're
+   now in the hamper."
+
+   The laundry sheet showed TODAY's hamper and stamped everything ticked with
+   whatever date she picked, which is wrong in both directions. It swept in
+   pieces that only got dirty after the wash ran; and for a piece worn both on
+   the wash day and the day before, stamping it washed on the earlier date
+   DELETED the earlier wear from its count (wearDatesSinceWash keeps d > since),
+   quietly resetting a jean that was actually most of the way to the hamper.
+
+   So the date is chosen first and the hamper is derived as of that date.
+   ⚠️ asOf >= today short-circuits to the live derivation, so the ordinary
+   "I did laundry just now" path is byte-for-byte what it always was. */
+function wearDatesSinceWashAsOf(i, ls, asOf) {
+  const all = wearDatesSinceWash(i, ls);
+  return asOf ? all.filter(d => d <= asOf) : all;
+}
+function isDirtyAsOf(i, ls, asOf) {
+  if (!i) return false;
+  if (!asOf || asOf >= todayStr()) return isDirty(i, ls);
+  const st = i.laundry_state || null;
+  // An explicit "this is dirty" is ground truth and carries backwards — she
+  // hampered it by hand, which the derivation can't second-guess.
+  if (st === "hamper") return true;
+  if (!i.last_washed) return false;
+  const tol = wearTolerance(i);
+  if (tol === Infinity) return false;
+  const n = wearDatesSinceWashAsOf(i, ls, asOf).length;
+  if (st && st.startsWith("extra:") && n <= +st.slice(6)) return false;
+  return n >= tol;
+}
+function isWornNotDirtyAsOf(i, ls, asOf) {
+  if (!i || isDirtyAsOf(i, ls, asOf)) return false;
+  if (!i.last_washed) return false;
+  if (wearTolerance(i) === Infinity) return false;
+  return wearDatesSinceWashAsOf(i, ls, asOf).length > 0;
+}
+/* Split what's dirty-or-worn NOW into what the wash on `asOf` could actually
+   have contained. `after` is the honest remainder: pieces that only went out
+   after that date, so they were still in the drawer when the machine ran. */
+function laundryAsOfSplit(pool, ls, asOf) {
+  const hamper = [], worn = [], after = [];
+  for (const i of pool) {
+    if (isDirtyAsOf(i, ls, asOf)) hamper.push(i);
+    else if (isWornNotDirtyAsOf(i, ls, asOf)) worn.push(i);
+    else after.push(i);
+  }
+  return { hamper, worn, after };
+}
 // Load a color family belongs to (null = unmapped).
 function laundryLoadOf(cf) {
   for (const [load, fams] of Object.entries(LAUNDRY_LOADS)) if (fams.includes(cf)) return load;
