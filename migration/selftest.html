@@ -3547,8 +3547,9 @@ async function run() {
     const empty = W.wearDetailHtml(null, { live: true });
     // _cpw drops the cents above $10 — the interesting range for cost per wear
     // is under a few dollars, where they matter.
-    return /\$30 → /.test(html) && /\$15<\/b> a wear/.test(html) && /data-wd-item="tee"/.test(html) && empty === ""
-      ? true : `html=${html.slice(0, 220)}`;
+    return /\$30<\/span> → /.test(html) && /\$15<\/b> a wear/.test(html) &&
+           /data-wd-item="tee"/.test(html) && empty === ""
+      ? true : `html=${html.slice(0, 320)}`;
   }));
 
   /* ---- the week planner's laundry forecast (2026-08-03) ----
@@ -3650,6 +3651,113 @@ async function run() {
     const both = W.weekLaundryForecast(weekDates(), { plans, wearRows: rows, today: D(0), washSet: {} });
     // 1 wear on the clock, tolerance 5 → nothing flagged all week
     return eq([both.firstOverflow, both.byDate.size], [null, 0]);
+  }));
+
+  /* ---- planning ahead knows the laundry (2026-08-03 r5) ----
+     ⚠️ Her report: she planned a tank top for one day and the app kept
+     suggesting it for the NEXT day. suggestibleClean() reads TODAY's state, so
+     planning ahead recommended pieces it already knew would be in the hamper.
+     r4 deliberately made the week planner WARN rather than filter — right for
+     the planner's cards, wrong for suggestions. */
+  t("a piece today's plan will dirty is not offered for tomorrow", () => withWeekCloset(() => {
+    // tee, tolerance 1, clean now, planned today → dirty by tomorrow
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "tee" }];
+    W.buildOutfitIndexes();
+    const plans = { [D(0)]: [{ contexts: [], outfit: "o1" }] };
+    const soon = W.plannedDirtyBy(D(1), { plans, wearRows: [], today: D(0), washSet: {} });
+    const today = W.plannedDirtyBy(D(0), { plans, wearRows: [], today: D(0), washSet: {} });
+    return eq([soon.has("tee"), today.has("tee")], [true, false]);
+  }));
+
+  t("a wash planned in between clears it again", () => withWeekCloset(() => {
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "tee" }];
+    W.buildOutfitIndexes();
+    const plans = { [D(0)]: [{ contexts: [], outfit: "o1" }] };
+    const dirty = W.plannedDirtyBy(D(2), { plans, wearRows: [], today: D(0), washSet: {} });
+    const washed = W.plannedDirtyBy(D(2), { plans, wearRows: [], today: D(0), washSet: { [D(1)]: 1 } });
+    return eq([dirty.has("tee"), washed.has("tee")], [true, false]);
+  }));
+
+  /* ⚠️ The forecast only walks pieces that appear in a PLAN, so on its own it
+     would call an already-dirty shirt clean simply because she hasn't planned
+     it. Both populations have to be in the set. */
+  t("something already in the hamper counts as dirty tomorrow too", () => withWeekCloset(() => {
+    const tee = W.itemById.get("tee");
+    tee.laundry_state = "hamper";
+    const dirty = W.plannedDirtyBy(D(1), { plans: {}, wearRows: [], today: D(0), washSet: {} });
+    tee.laundry_state = null;
+    return dirty.has("tee") ? true : `hamper piece missing from ${JSON.stringify([...dirty])}`;
+  }));
+
+  /* ---- month review (2026-08-03 r5) ----
+     Her ask: "how did cost per wear change for key pieces in the month?" */
+  const withMonthCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks, byId: W.itemById };
+    W.items = [
+      { id: "coat", name: "Wool coat", category: "Outerwear", subcategory: "Coats", status: "Available", price: 300, color_family: "Gray" },
+      { id: "tee", name: "Tee", category: "Tops", subcategory: "Tee shirts", status: "Available", price: 20, color_family: "Blue" },
+      { id: "new", name: "New skirt", category: "Bottoms", subcategory: "Skirts", status: "Available", price: 60, color_family: "Blue" },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.outfits = []; W.outfitLinks = []; W.buildOutfitIndexes();
+    try { return fn(); } finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.itemById = saved.byId; W.buildOutfitIndexes();
+    }
+  };
+
+  t("the month review answers how cost per wear moved", () => withMonthCloset(() => {
+    /* $300 coat: 2 wears before June, 3 during → $150 → $60 a wear, a $90 drop.
+       ⚠️ The numbers are chosen so `drop` differs from `cpwAfter` — an earlier
+       fixture made them both 50, and a mutation replacing the drop with the
+       after-price passed happily. */
+    W.wears = [
+      ...["2026-05-09", "2026-05-16"].map(d => ({ item_id: "coat", worn_on: d })),
+      ...["2026-06-03", "2026-06-10", "2026-06-17"].map(d => ({ item_id: "coat", worn_on: d })),
+    ];
+    const s = W.buildMonthReview("2026-06");
+    const m = s.movers[0];
+    return eq([s.movers.length, m.item.id, m.cpwBefore, m.cpwAfter, m.drop, m.n],
+              [1, "coat", 150, 60, 90, 3]);
+  }));
+
+  t("first outings and rediscoveries are told apart", () => withMonthCloset(() => {
+    W.wears = [
+      { item_id: "new", worn_on: "2026-06-04" },                    // first ever
+      { item_id: "tee", worn_on: "2026-01-05" },                    // long ago
+      { item_id: "tee", worn_on: "2026-06-08" },                    // back after ~5mo
+    ];
+    const s = W.buildMonthReview("2026-06");
+    return eq([s.debuts.map(d => d.item.id), s.rediscovered.map(r => r.item.id),
+               s.rediscovered[0].gap >= W.MONTH_REDISCOVER_DAYS],
+              [["new"], ["tee"], true]);
+  }));
+
+  t("a piece crossing under $1 a wear is called out, gifts excluded", () => withMonthCloset(() => {
+    const tee = W.itemById.get("tee");           // $20
+    W.wears = [];
+    for (let k = 1; k <= 19; k++) W.wears.push({ item_id: "tee", worn_on: `2026-05-${String(k).padStart(2, "0")}` });
+    W.wears.push({ item_id: "tee", worn_on: "2026-06-02" });   // 20th → exactly $1
+    const paid = W.buildMonthReview("2026-06").paidOff.map(p => p.item.id);
+    tee.acquisition = "Gift";
+    const asGift = W.buildMonthReview("2026-06").paidOff.map(p => p.item.id);
+    tee.acquisition = null;
+    return eq([paid, asGift], [["tee"], []]);
+  }));
+
+  t("the month review reads a past month without touching the live one", () => withMonthCloset(() => {
+    W.wears = [{ item_id: "tee", worn_on: "2026-06-04" }, { item_id: "coat", worn_on: "2026-07-04" }];
+    const jun = W.buildMonthReview("2026-06"), jul = W.buildMonthReview("2026-07");
+    return eq([jun.pieces, jun.top[0].item.id, jul.pieces, jul.top[0].item.id, jul.prev.ym],
+              [1, "tee", 1, "coat", "2026-06"]);
+  }));
+
+  t("the wear block gives every fact its own room", () => withWearCloset(() => {
+    W.wears = [{ item_id: "tee", worn_on: D(-40) }, { item_id: "tee", worn_on: D(-20) },
+               { item_id: "tee", worn_on: D(-10) }, { item_id: "tee", worn_on: D(0) }];
+    const p = W.buildWearDelta([{ item_id: "tee", worn_on: D(0) }]).pieces[0];
+    // time between wears, in both directions — the thing she asked for by name
+    return eq([p.gap, p.avgGap, p.after], [10, 15, 4]);
   }));
 
   t("no js/ module reintroduces a hardcoded white", () => {

@@ -724,9 +724,20 @@ function tripDashHtml(c) {
   const mtw = (phase === "trip" && LAUNDRY_READY() && typeof packMidTripWash === "function")
     ? packMidTripWash(c, today) : null;
   if (mtw) {
-    const names = mtw.items.slice(0, 3).map(i => i.name || "a piece").join(", ");
-    washPlanHtml = `<button class="td-laun" data-td-washplan>🧼
-      <span style="flex:1">Wash ${mtw.items.length} piece${mtw.items.length === 1 ? "" : "s"} for the rest of the trip · ${esc(names)}${mtw.items.length > 3 ? "…" : ""}</span>
+    /* ⚠️ COPY REWRITTEN 2026-08-03 r5 — her report: "the packing thing — wash x
+       item for rest of trip — what was that? seeing it on the trip made no
+       sense to me." It said "Wash 3 pieces for the rest of the trip · white
+       tee, jeans…", which named neither the DAY nor what happens if she does
+       nothing, and read as a chore she hadn't asked for. It is a heads-up, not
+       an instruction: the plan needs these pieces again and they're out of
+       clean wears, so lead with THAT and let the wash be the offer. */
+    const first = mtw.list[0];
+    const nm = (i) => i && (i.name || "a piece");
+    const when = first ? weekDayLabel(first.date, today) : "later in the trip";
+    const rest = mtw.items.length - 1;
+    washPlanHtml = `<button class="td-laun" data-td-washplan style="align-items:flex-start">🧼
+      <span style="flex:1;line-height:1.4">Your plan wears the <b>${esc(nm(first && first.item))}</b> again ${esc(when)}, but it's out of clean wears${rest > 0 ? ` — and ${rest} other${rest === 1 ? "" : "s"} run out too` : ""}.
+        <span style="display:block;color:var(--muted);font-size:12px">Tap to mark a wash on the trip.</span></span>
       <span style="color:var(--accent);font-weight:600">›</span></button>`;
   }
 
@@ -864,7 +875,13 @@ function tmPickSet(date, idx, pieces) {
 function tomorrowGenPieces(date, entry, pool = null, idx = 0, force = false) {
   if (!force) { const saved = tmPickGet(date, idx); if (saved) return saved; }
   const level = entry.level || entrySuggestLevel(entry.contexts);
-  const from = pool || planningPool({ level });
+  let from = pool || planningPool({ level });
+  /* Tomorrow is a FUTURE day, so "clean" means clean by then — anything today's
+     plan is about to put in the hamper is out (the tank-top report). */
+  if (LAUNDRY_READY()) {
+    const dirty = plannedDirtyBy(date);
+    if (dirty.size) from = from.filter(i => !dirty.has(i.id));
+  }
   const res = suggestOutfits(level, null, from, seasonOf(date), _dpWx(date), null, true);
   const pieces = res.length ? res[0].pieces : null;
   if (pieces) tmPickSet(date, idx, pieces);
@@ -1083,7 +1100,13 @@ function weekLaundryForecast(dates, { plans = null, wearRows = null, today = nul
      itself when it's the first of the window (nothing earlier to suggest). */
   const suggestWash = firstOverflow && firstOverflow > dates[0]
     ? dates[dates.indexOf(firstOverflow) - 1] : firstOverflow;
-  return { byDate, firstOverflow, suggestWash };
+  /* ⚠️ TWO DIFFERENT THRESHOLDS, and conflating them is easy.
+     `byDate` flags `n > tol` — "wearing this that day means wearing something
+     dirty", which is what the planner warns about. Whether a piece is IN THE
+     HAMPER by a date is `n >= tol`, the same test isDirty uses. `endCounts` is
+     exposed so plannedDirtyBy can ask the second question without re-walking
+     the schedule and drifting from this one. */
+  return { byDate, firstOverflow, suggestWash, endCounts: counts };
 }
 
 // One label for a week date, so the header and the cards can't disagree about
@@ -1092,6 +1115,51 @@ function weekDayLabel(d, today = todayStr()) {
   if (d === today) return "today";
   if (d === shiftDate(today, 1)) return "tomorrow";
   return planDayLabel(d);
+}
+
+/* Pieces that will be AT OR OVER tolerance by `date`, given everything planned
+   between now and then. The set the suggester must not offer when she's
+   dressing a future day.
+
+   ⚠️ This is the tank-top bug (reported 2026-08-03, after r4): she planned a
+   tank top for one day and the app went on suggesting it for the NEXT day,
+   because suggestibleClean() reads TODAY's laundry state. r4 deliberately made
+   the week planner warn rather than filter — right for the planner's own
+   cards, wrong for suggestions, where the app was actively recommending
+   something it already knew would be dirty.
+
+   ⚠️ The narrowing stays visible and reversible, same as the rack: the
+   suggester's laundry chip reads "Clean on Thu" instead of "Clean only" when
+   this is in play, and turning it off widens back in one tap. */
+function plannedDirtyBy(date, { plans = null, wearRows = null, today = null, washSet = null } = {}) {
+  const now = today || todayStr();
+  if (!date || date <= now) return new Set();
+  const dates = [];
+  for (let d = now; d < date; d = shiftDate(d, 1)) dates.push(d);
+  if (!dates.length) return new Set();
+  /* Reuse the forecast walk rather than re-deriving it — one schedule, so the
+     planner's warning and the suggester's filter can never disagree. The
+     forecast reports a piece on the day it FIRST runs out, which is exactly the
+     set that is still dirty on `date`. */
+  const fc = weekLaundryForecast(dates, { plans, wearRows, today: now, washSet });
+  /* Two populations, and the first is easy to forget: pieces that are ALREADY
+     in the hamper stay there. The forecast only walks pieces that appear in a
+     plan, so on its own it would call a dirty shirt clean simply because she
+     hasn't planned it. */
+  const out = new Set();
+  const wash = washSet || washDayAll();
+  const washedBefore = dates.some(d => isWashDay(d, wash));
+  if (!washedBefore) for (const i of hamperItems()) out.add(i.id);
+  /* ⚠️ `>= tol`, NOT the forecast's `> tol`. "Is it in the hamper by then" is
+     the isDirty test; "would wearing it that day mean wearing something dirty"
+     is one wear later. A tee at tolerance 1 planned for today IS dirty
+     tomorrow — reading the planner's overflow flag here missed exactly that,
+     which is the tank top she reported. */
+  for (const [id, n] of fc.endCounts) {
+    const i = itemById.get(id);
+    if (i && n >= wearTolerance(i)) out.add(id);
+  }
+  return out;
 }
 
 function renderWeekPlan() {

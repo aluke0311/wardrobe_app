@@ -6,13 +6,14 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-03 r4";
+const APP_VERSION = "2026-08-03 r5";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "“Plan the week” is a real screen now — each day gets its contexts AND its outfit, with Suggest / + Look / Build right there",
-  "It forecasts your laundry across the week: it walks the days in order and names the piece and the day it runs out (“Black jeans hits 6 of 5 on Wednesday”), then suggests a wash day",
-  "Mark any day a wash day with the 🧺 button and the whole week recalculates from there",
+  "Planning ahead now knows the laundry — a piece today's plan will dirty is no longer suggested for tomorrow. The chip says “Clean on Thu” so you can widen it in one tap",
+  "The wear panel has room to breathe and more in it: time since last wear, your usual gap, wears per month, wears this year, and when something crosses under $1",
+  "New Month in Review under Stats — what got cheaper, what you wore most, first outings, pieces back from the deep, and how dressed up the month was. Browse any past month",
+  "The trip's wash heads-up now says which piece, which day, and why, instead of just “wash 3 pieces”",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

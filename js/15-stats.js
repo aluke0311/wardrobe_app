@@ -490,6 +490,7 @@ function _renderStatsView() {
   if (statsView === "gap")         { renderStatsGapPage();      return; }
   if (statsView === "rotation")    { renderStatsRotationPage(); return; }
   if (statsView === "wrapped")     { renderStatsWrapped();      return; }
+  if (statsView === "month")       { renderStatsMonthPage();   return; }
   if (statsView === "pixels")      { renderStatsPixelsPage();  return; }
   if (statsView === "palette")     { renderStatsPalettePage(); return; }
   if (statsView === "missing")     { renderStatsMissingPage(); return; }
@@ -922,8 +923,9 @@ function renderStatsMain() {
       </div>
 
       <div class="stats-sec">
-        <div class="stats-sec-hdr"><div class="t">Year in Review</div><div class="s">Your closet, wrapped</div></div>
+        <div class="stats-sec-hdr"><div class="t">Looking back</div><div class="s">A month at a time, or the whole year</div></div>
         <div class="stats-sec-body">
+          ${row(monthLabel(monthOf(todayStr())), "What got cheaper, what you reached for, what came back", "month")}
           ${row(String(new Date().getFullYear()), "The year so far — most worn, best $/wear, dead weight", "wrapped")}
           ${row("Year in pixels", "Every day you logged, shaded by how dressed up it was", "pixels")}
         </div>
@@ -998,6 +1000,9 @@ function renderStatsMain() {
       }
       if (action === "wrapped") {
         statsView = "wrapped"; statsWrappedYear = null; renderStats(); return;
+      }
+      if (action === "month") {
+        statsView = "month"; statsMonthYm = null; renderStats(); return;
       }
       if (action === "pixels") {
         statsView = "pixels"; statsPixelsYear = null; renderStats(); return;
@@ -1980,6 +1985,283 @@ function renderStatsWrapped() {
   $("#statsBody").querySelectorAll("[data-wr-item]").forEach(b => {
     b.onclick = () => openItemFromStats(b.dataset.wrItem);
   });
+}
+
+/* ===================================================================
+   MONTH REVIEW  (2026-08-03 r5)
+
+   Her ask: "month review — how did cost per wear change for key pieces in the
+   month? what got worn most? etc. think creatively about fun stats, and make it
+   reviewable for past months too."
+
+   Year in Review already exists and is deliberately a once-a-year artefact. A
+   month is a different unit: short enough that she remembers it, long enough to
+   have a shape. So this leans on MOVEMENT — what changed during the window —
+   rather than on totals, which is also the only honest way to answer "how did
+   cost per wear change".
+
+   ⚠️ Every number here is wear-DAYS (the 2026-07-24 rule). Piece-days where a
+   share across pieces is wanted, which is the unit the Palette page already
+   uses and the only one comparable to a per-item closet share.
+   ⚠️ Pure given its injectables, and it takes `ym` rather than "this month", so
+   the past-months browser is the same code path — a second derivation for the
+   live month would have been free to drift.
+   =================================================================== */
+const MONTH_REDISCOVER_DAYS = 90;   // gap that makes a wear a rediscovery
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"];
+const monthLabel = (ym) => `${MONTH_NAMES[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
+const monthOf = (d) => String(d || "").slice(0, 7);
+function monthDays(ym) {
+  const y = +ym.slice(0, 4), m = +ym.slice(5, 7);
+  return new Date(y, m, 0).getDate();
+}
+function shiftMonth(ym, n) {
+  const y = +ym.slice(0, 4), m = +ym.slice(5, 7) - 1 + n;
+  const d = new Date(y, m, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function buildMonthReview(ym, { pool = null, wearRows = null, log = null } = {}) {
+  const rows = wearRows || wears;
+  const closet = pool || items.filter(i => itemStatus(i) === "Available");
+  const start = `${ym}-01`, end = `${ym}-${String(monthDays(ym)).padStart(2, "0")}`;
+  const today = todayStr();
+  const inProgress = monthOf(today) === ym;
+
+  // item → sorted wear days (whole history — the movement questions need it).
+  const dayMap = new Map();
+  const lookDays = new Map();
+  for (const w of rows) {
+    if (!w.worn_on) continue;
+    if (w.item_id) { let s = dayMap.get(w.item_id); if (!s) dayMap.set(w.item_id, s = new Set()); s.add(w.worn_on); }
+    if (w.outfit_id) { let s = lookDays.get(w.outfit_id); if (!s) lookDays.set(w.outfit_id, s = new Set()); s.add(w.worn_on); }
+  }
+  const inMonth = (d) => d >= start && d <= end;
+
+  const daysLoggedSet = new Set();
+  const levelDays = new Map();          // level → count of (day, level) occasions
+  const seenLvl = new Set();
+  for (const w of rows) {
+    if (!w.worn_on || !inMonth(w.worn_on)) continue;
+    daysLoggedSet.add(w.worn_on);
+    if (w.formality_for) {
+      const k = w.formality_for + "|" + w.worn_on;
+      if (!seenLvl.has(k)) { seenLvl.add(k); levelDays.set(w.formality_for, (levelDays.get(w.formality_for) || 0) + 1); }
+    }
+  }
+  const elapsed = inProgress ? +today.slice(8, 10) : monthDays(ym);
+
+  // ---- per piece, inside the month ----
+  const worn = [];
+  for (const [id, s] of dayMap) {
+    const i = itemById.get(id);
+    if (!i) continue;
+    const days = [...s].sort();
+    const mine = days.filter(inMonth);
+    if (!mine.length) continue;
+    const before = days.filter(d => d < start).length;
+    const through = before + mine.length;
+    const price = (i.price != null && i.price > 0) ? i.price : null;
+    const gift = i.acquisition === "Gift";
+    const cpwBefore = (price && before) ? price / before : null;
+    const cpwAfter = price ? price / through : null;
+    // Longest gap CLOSED this month — a rediscovery is a gap, not a count.
+    let bestGap = null;
+    for (const d of mine) {
+      const prior = days.filter(x => x < d);
+      if (!prior.length) continue;
+      const g = daysBetween(prior[prior.length - 1], d);
+      if (bestGap == null || g > bestGap) bestGap = g;
+    }
+    worn.push({
+      item: i, n: mine.length, before, through, price, gift,
+      cpwBefore, cpwAfter,
+      drop: (cpwBefore != null && cpwAfter != null) ? cpwBefore - cpwAfter : null,
+      debut: before === 0,
+      gap: bestGap,
+      paidOff: !!(price && !gift && before && cpwBefore > 1 && cpwAfter <= 1),
+    });
+  }
+  worn.sort((a, b) => (b.n - a.n) || ((a.item.name || "") < (b.item.name || "") ? -1 : 1));
+
+  // ---- looks ----
+  const looks = [];
+  for (const [oid, s] of lookDays) {
+    const o = outfitById.get(oid);
+    if (!o) continue;
+    const n = [...s].filter(inMonth).length;
+    if (n) looks.push({ outfit: o, n });
+  }
+  looks.sort((a, b) => b.n - a.n);
+
+  // ---- colour of the month, in PIECE-DAYS (the Palette unit) ----
+  const colour = new Map();
+  for (const w of worn) {
+    const cf = w.item.color_family;
+    if (!cf) continue;
+    colour.set(cf, (colour.get(cf) || 0) + w.n);
+  }
+  const topColour = [...colour.entries()].sort((a, b) => b[1] - a[1])[0] || null;
+
+  // ---- weather bookends ----
+  const wl = log || (typeof wxLog === "function" ? wxLog() : {});
+  let hottest = null, coldest = null;
+  for (const d of daysLoggedSet) {
+    const e = wl[d];
+    if (!e || e.maxT == null) continue;
+    if (!hottest || e.maxT > hottest.maxT) hottest = { date: d, ...e };
+    if (!coldest || e.minT < coldest.minT) coldest = { date: d, ...e };
+  }
+
+  // ---- the busiest day, and the priciest outing ----
+  let busiest = null, priciest = null;
+  const byDay = new Map();
+  for (const d of daysLoggedSet) byDay.set(d, []);
+  for (const w of worn) for (const d of [...dayMap.get(w.item.id)].filter(inMonth)) byDay.get(d)?.push(w.item);
+  for (const [d, its] of byDay) {
+    if (!busiest || its.length > busiest.n) busiest = { date: d, n: its.length };
+    const v = its.reduce((a, i) => a + (i.price || 0), 0);
+    if (v > 0 && (!priciest || v > priciest.v)) priciest = { date: d, v, n: its.length };
+  }
+
+  // ---- against last month ----
+  const prevYm = shiftMonth(ym, -1);
+  let prevDays = new Set(), prevPieces = new Set();
+  for (const w of rows) {
+    if (!w.worn_on || monthOf(w.worn_on) !== prevYm) continue;
+    prevDays.add(w.worn_on);
+    if (w.item_id) prevPieces.add(w.item_id);
+  }
+
+  return {
+    ym, label: monthLabel(ym), inProgress, elapsed, days: monthDays(ym),
+    daysLogged: daysLoggedSet.size,
+    coverage: elapsed ? daysLoggedSet.size / elapsed : 0,
+    pieces: worn.length,
+    closetShare: closet.length ? worn.length / closet.length : 0,
+    closetSize: closet.length,
+    top: worn.slice(0, 5),
+    // The question she actually asked, answered by the biggest movers.
+    movers: worn.filter(w => w.drop != null && w.drop > 0).sort((a, b) => b.drop - a.drop).slice(0, 5),
+    paidOff: worn.filter(w => w.paidOff),
+    debuts: worn.filter(w => w.debut),
+    rediscovered: worn.filter(w => w.gap != null && w.gap >= MONTH_REDISCOVER_DAYS)
+      .sort((a, b) => b.gap - a.gap),
+    topLook: looks[0] || null,
+    repeats: looks.filter(l => l.n > 1),
+    levels: [...levelDays.entries()].sort((a, b) => a[0] - b[0]),
+    topColour, hottest, coldest, busiest, priciest,
+    valueWorn: worn.reduce((a, w) => a + (w.price || 0), 0),
+    prev: { ym: prevYm, label: monthLabel(prevYm), daysLogged: prevDays.size, pieces: prevPieces.size },
+  };
+}
+
+let statsMonthYm = null;
+function renderStatsMonthPage() {
+  const ym = statsMonthYm || monthOf(todayStr());
+  const s = buildMonthReview(ym);
+  // Every month she has actually logged in, newest first — the browser.
+  const months = [...new Set(wears.map(w => monthOf(w.worn_on)).filter(m => m && m.length === 7))]
+    .sort((a, b) => (a < b ? 1 : -1)).slice(0, 24);
+  // "June 2026" → "June ’26" so a year of chips fits on one scrolling row.
+  const shortMonth = (m) => monthLabel(m).replace(/ \d{2}(\d{2})$/, " ’$1");
+  const chips = `<div class="cap-catbar" style="padding:8px 14px 0;overflow-x:auto">${months.map(m =>
+    `<button class="cap-chip${m === ym ? " on" : ""}" data-mo="${m}" style="white-space:nowrap">${esc(shortMonth(m))}</button>`).join("")}</div>`;
+
+  const card = (inner, accent) => `<div style="margin:12px 14px;padding:16px;border-radius:16px;border:1px solid var(--line);${accent ? "background:var(--accent-soft);" : ""}">${inner}</div>`;
+  const big = (v, lbl) => `<div style="text-align:center;flex:1"><div style="font-size:30px;font-weight:800;color:var(--accent);line-height:1.1">${v}</div><div style="font-size:12px;color:var(--muted);padding-top:3px">${lbl}</div></div>`;
+  const lbl = (t) => `<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">${t}</div>`;
+  const row = (it, right, sub) => `<button data-mo-item="${esc(it.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:6px 0">
+      <span style="width:42px;flex:none">${thumbHtml(it.image_path, "cthumb")}</span>
+      <span style="flex:1;min-width:0">
+        <span style="display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
+        ${sub ? `<span style="display:block;font-size:11.5px;color:var(--muted)">${esc(sub)}</span>` : ""}
+      </span>
+      <span style="flex:none;font-size:13px;color:var(--accent);font-weight:600">${esc(right)}</span>
+    </button>`;
+
+  if (!s.daysLogged) {
+    $("#statsBody").innerHTML = statsToolbar(s.label, true, false, true) + chips +
+      `<div class="placeholder" style="padding:44px 32px"><b>Nothing logged in ${esc(s.label)}</b>
+        <div>Pick another month above.</div></div>`;
+    wireStatsToolbar();
+    $("#statsBody").querySelectorAll("[data-mo]").forEach(b =>
+      b.onclick = () => { statsMonthYm = b.dataset.mo; renderStats(); });
+    return;
+  }
+
+  const hero = card(`
+    <div style="text-align:center;font-size:15px;font-weight:700;margin-bottom:14px">${esc(s.label)}${s.inProgress ? " · so far" : ""}</div>
+    <div style="display:flex">
+      ${big(s.daysLogged, "days logged")}
+      ${big(`${Math.round(s.coverage * 100)}%`, "of the month")}
+      ${big(s.pieces, "pieces worn")}
+    </div>
+    <div style="text-align:center;font-size:12.5px;color:var(--muted);padding-top:12px;line-height:1.5">
+      That's ${Math.round(s.closetShare * 100)}% of your ${s.closetSize}-piece closet out of the wardrobe.
+    </div>`, true);
+
+  // The question she asked, first.
+  const movers = s.movers.length ? card(lbl("What got cheaper") +
+    s.movers.map(m => row(m.item, `−${esc(_cpw(m.drop))}`,
+      `${_cpw(m.cpwBefore)} → ${_cpw(m.cpwAfter)} a wear · ${m.n} day${m.n === 1 ? "" : "s"} this month`)).join("") +
+    (s.paidOff.length ? `<div style="font-size:13px;color:var(--accent);font-weight:600;padding-top:10px">💸 ${s.paidOff.length} piece${s.paidOff.length === 1 ? "" : "s"} went under $1 a wear this month</div>` : "")) : "";
+
+  const most = s.top.length ? card(lbl("Worn most") +
+    s.top.map(w => row(w.item, `${w.n}d`,
+      w.through === w.n ? "all of it this month" : `${w.through} days out all-time`)).join("")) : "";
+
+  const lookCard = s.topLook ? card(lbl("The look you kept coming back to") + `
+    <div style="display:flex;align-items:center;gap:12px">
+      <button data-mo-look="${esc(s.topLook.outfit.id)}" style="width:64px;flex:none">${outfitCollageHtml(s.topLook.outfit, 4)}</button>
+      <button data-mo-look="${esc(s.topLook.outfit.id)}" style="flex:1;min-width:0;text-align:left">
+        <div style="font-size:15px;font-weight:700">${esc(outfitName(s.topLook.outfit))}</div>
+        <div style="font-size:13px;color:var(--muted)">${s.topLook.n} time${s.topLook.n === 1 ? "" : "s"}${s.repeats.length > 1 ? ` · ${s.repeats.length} looks repeated` : ""}</div>
+      </button>
+    </div>`) : "";
+
+  const debuts = s.debuts.length ? card(lbl(`First outings · ${s.debuts.length}`) +
+    s.debuts.slice(0, 6).map(w => row(w.item, `${w.n}d`, "first time ever worn")).join("")) : "";
+
+  const redis = s.rediscovered.length ? card(lbl(`Back from the deep · ${s.rediscovered.length}`) +
+    `<div style="font-size:12.5px;color:var(--muted);margin:-4px 0 8px">Worn again after ${MONTH_REDISCOVER_DAYS}+ days out of sight.</div>` +
+    s.rediscovered.slice(0, 6).map(w => row(w.item, humanGap(w.gap), "since the time before")).join("")) : "";
+
+  // Fun, but derived and honest: the shape of the month rather than a number.
+  const levelTotal = s.levels.reduce((a, [, n]) => a + n, 0);
+  const mix = levelTotal ? card(lbl("How dressed up") + `
+    <div style="display:flex;height:12px;border-radius:99px;overflow:hidden;margin-bottom:10px">
+      ${s.levels.map(([lv, n]) => `<div title="${esc(occLabel(lv))}" style="width:${(n / levelTotal * 100).toFixed(1)}%;background:var(--accent);opacity:${(0.25 + 0.75 * (lv / 8)).toFixed(2)}"></div>`).join("")}
+    </div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5">${s.levels.map(([lv, n]) =>
+      `${esc(occLabel(lv))} ${Math.round(n / levelTotal * 100)}%`).join(" · ")}</div>`) : "";
+
+  const bits = [];
+  if (s.topColour) bits.push(`<b style="color:var(--text)">${esc(s.topColour[0])}</b> was your colour of the month — ${s.topColour[1]} piece-days.`);
+  if (s.busiest && s.busiest.n > 2) bits.push(`Your fullest day was ${esc(fmtDate(s.busiest.date))} with ${s.busiest.n} pieces.`);
+  if (s.hottest && s.coldest && s.hottest.maxT !== s.coldest.maxT)
+    bits.push(`You dressed for ${s.coldest.minT}° and ${s.hottest.maxT}° in the same month.`);
+  if (s.priciest) bits.push(`The most valuable thing you walked out in was ${esc(money(s.priciest.v))} on ${esc(fmtDate(s.priciest.date))}.`);
+  if (s.prev.daysLogged) {
+    const dd = s.daysLogged - s.prev.daysLogged;
+    bits.push(dd === 0 ? `Same number of days logged as ${esc(s.prev.label)}.`
+      : `${Math.abs(dd)} ${dd > 0 ? "more" : "fewer"} day${Math.abs(dd) === 1 ? "" : "s"} logged than ${esc(s.prev.label)}.`);
+  }
+  const odds = bits.length ? card(lbl("Odds and ends") +
+    `<div style="font-size:13.5px;line-height:1.65;color:var(--muted)">${bits.join(" ")}</div>`) : "";
+
+  $("#statsBody").innerHTML = statsToolbar(s.label, true, false, true) + chips +
+    hero + movers + most + lookCard + redis + debuts + mix + odds +
+    `<div style="height:34px"></div>`;
+  hydratePhotos($("#statsBody"));
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-mo]").forEach(b =>
+    b.onclick = () => { statsMonthYm = b.dataset.mo; renderStats(); });
+  $("#statsBody").querySelectorAll("[data-mo-item]").forEach(b =>
+    b.onclick = () => openItemFromStats(b.dataset.moItem));
+  $("#statsBody").querySelectorAll("[data-mo-look]").forEach(b =>
+    b.onclick = () => openLookFrom(b.dataset.moLook));
 }
 
 function renderStatsContextDetailPage() {

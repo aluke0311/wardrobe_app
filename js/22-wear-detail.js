@@ -72,12 +72,33 @@ function buildWearDelta(rows, { wearRows = null, today = null } = {}) {
     const hamperNow = tracked && sinceWash >= tol;
     const hamperThis = hamperNow && sinceWash === tol;   // THIS wear is what tipped it
 
+    /* The rhythm this wear moved: her average gap BEFORE today, so "you usually
+       leave 18 days and this time it was 3" is sayable. Needs 3 wear-days like
+       wearRhythm — two wears is one gap, which is noise not a rhythm. */
+    let avgGap = null, longestGap = null;
+    if (prior.length >= 3) {
+      const gs = [];
+      for (let k = 1; k < prior.length; k++) gs.push(daysBetween(prior[k - 1], prior[k]));
+      avgGap = Math.round(gs.reduce((a, b) => a + b, 0) / gs.length);
+      longestGap = Math.max(...gs);
+    }
+    // Pace: wear-days per month over the time she's actually owned it.
+    const owned = i.purchase_date ? daysBetween(i.purchase_date, date)
+      : (days.length ? daysBetween(days[0], date) : 0);
+    const perMonth = owned > 45 ? (after / (owned / 30.44)) : null;
+    const year = date.slice(0, 4);
     return {
       item: i, before, after,
       cpwBefore: (price && before) ? price / before : null,
       cpwAfter: price ? price / after : null,
       price, gap, first: before === 0,
       tracked, tol, sinceWash, hamperNow, hamperThis,
+      avgGap, longestGap, perMonth, owned,
+      thisYear: days.filter(d => d.slice(0, 4) === year && d <= date).length,
+      // Crossed under a dollar a wear with THIS outing — the milestone rung,
+      // shown here too because this is where the number actually lives.
+      paidOff: !!(price && i.acquisition !== "Gift" && before &&
+                  price / before > 1 && price / after <= 1),
       band: (typeof rackBandOf === "function") ? rackBandOf(id) : null,
     };
   }).filter(Boolean);
@@ -112,30 +133,49 @@ const _cpw = (n) => n == null ? "—" : "$" + n.toFixed(n < 10 ? 2 : 0);
    picker and Save/Skip live below it); otherwise read-only. */
 function wearDetailHtml(d, { live = false } = {}) {
   if (!d || !d.pieces.length) return "";
+  /* ⚠️ A CARD PER PIECE, not a cramped row (2026-08-03 r5, her report: "make the
+     wear screen have bigger space so things don't overlap and you can have more
+     stats"). The old row put a 44px thumb and three lines of text on one line,
+     so a long item name collided with the numbers on a phone. The name now owns
+     its own line above the facts, and the facts are a wrapping chip row that can
+     grow without ever overlapping anything. */
+  const fact = (txt, accent) =>
+    `<span style="display:inline-block;font-size:11.5px;padding:2px 7px;border-radius:99px;background:var(--panel);${accent ? "color:var(--accent);font-weight:600;" : "color:var(--muted);"}white-space:nowrap">${esc(txt)}</span>`;
+
   const rows = d.pieces.map(p => {
     const i = p.item;
     // Lead with the thing she asked for. A first outing has no "before" — say
     // so rather than printing an infinity or a dash she has to interpret.
     const cpwBit = !p.price
-      ? `<span class="muted">no price on file</span>`
+      ? `<span class="muted" style="font-size:13px">No price on file</span>`
       : p.first
-        ? `<b style="color:var(--accent)">${esc(_cpw(p.cpwAfter))}</b> a wear, first time out`
-        : `${esc(_cpw(p.cpwBefore))} → <b style="color:var(--accent)">${esc(_cpw(p.cpwAfter))}</b> a wear`;
-    const bits = [];
-    bits.push(`${p.after} day${p.after === 1 ? "" : "s"} out`);
-    if (p.gap != null && p.gap >= 14) bits.push(`first in ${esc(humanGap(p.gap))}`);
-    if (p.tracked) {
-      bits.push(p.hamperThis ? `🧺 that's the hamper`
-        : p.hamperNow ? `🧺 in the hamper`
-        : `${p.sinceWash}/${p.tol} since a wash`);
+        ? `<span style="font-size:15px"><b style="color:var(--accent)">${esc(_cpw(p.cpwAfter))}</b> a wear <span class="muted" style="font-size:12.5px">· first time out</span></span>`
+        : `<span style="font-size:15px"><span class="muted">${esc(_cpw(p.cpwBefore))}</span> → <b style="color:var(--accent)">${esc(_cpw(p.cpwAfter))}</b> a wear</span>`;
+
+    const facts = [];
+    facts.push(fact(`${p.after} day${p.after === 1 ? "" : "s"} out`));
+    if (p.thisYear && p.thisYear !== p.after) facts.push(fact(`${p.thisYear} this year`));
+    // Time between wears — the thing she asked for by name.
+    if (p.gap != null) {
+      facts.push(fact(p.gap === 0 ? "worn again same day"
+        : `${humanGap(p.gap)} since last time`, p.avgGap != null && p.gap > p.avgGap * 2));
     }
-    if (p.band === "dormant") bits.push("back off the rack");
-    return `<button data-wd-item="${esc(i.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 0;border-bottom:1px solid var(--line)">
-      <span style="width:44px;flex:none">${thumbHtml(i.image_path, "cthumb")}</span>
+    if (p.avgGap != null) facts.push(fact(`usually every ${humanGap(p.avgGap)}`));
+    if (p.perMonth != null) facts.push(fact(`${p.perMonth.toFixed(1)}×/month`));
+    if (p.tracked) {
+      facts.push(p.hamperThis ? fact("🧺 that's the hamper", true)
+        : p.hamperNow ? fact("🧺 in the hamper")
+        : fact(`${p.sinceWash} of ${p.tol} since a wash`));
+    }
+    if (p.paidOff) facts.push(fact("💸 under $1 a wear", true));
+    if (p.band === "dormant") facts.push(fact("✨ back off the rack", true));
+
+    return `<button data-wd-item="${esc(i.id)}" style="display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;padding:12px 0;border-bottom:1px solid var(--line)">
+      <span style="width:58px;flex:none">${thumbHtml(i.image_path, "cthumb")}</span>
       <span style="flex:1;min-width:0">
-        <span style="display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</span>
-        <span style="display:block;font-size:13px;padding-top:1px">${cpwBit}</span>
-        <span class="muted" style="display:block;font-size:11.5px;padding-top:1px">${esc(bits.join(" · "))}</span>
+        <span style="display:block;font-size:14px;font-weight:600;line-height:1.3">${esc(i.name || "Untitled")}</span>
+        <span style="display:block;padding-top:5px">${cpwBit}</span>
+        <span style="display:flex;flex-wrap:wrap;gap:5px;padding-top:7px">${facts.join("")}</span>
       </span>
     </button>`;
   }).join("");
@@ -151,11 +191,11 @@ function wearDetailHtml(d, { live = false } = {}) {
     ? `<div style="font-size:12.5px;color:var(--muted);padding-top:8px">Today took ${esc(_cpw(d.saved))} off what this outfit costs you per wear.</div>`
     : "";
 
-  return `<div style="padding:${live ? "2px 2px 14px" : "6px 16px 14px"}">
+  return `<div style="padding:${live ? "2px 2px 16px" : "6px 16px 16px"}">
     ${live ? "" : `<div style="font-size:12px;color:var(--muted)">${esc(fmtDate(d.date))}</div>`}
-    ${head ? `<div style="font-size:13px;padding-top:2px">${esc(head)}</div>` : ""}
+    ${head ? `<div style="font-size:13.5px;padding-top:2px">${esc(head)}</div>` : ""}
     ${lookBit}
-    <div style="padding-top:6px">${rows}</div>
+    <div style="padding-top:8px">${rows}</div>
     ${savedBit}
   </div>`;
 }

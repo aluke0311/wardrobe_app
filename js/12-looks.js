@@ -1379,7 +1379,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.wx = planCtx
     ? (_planWx[planCtx.date] || null)
     : (_homeWx.date === todayStr() ? _homeWx.wx : null);
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), null, _sugg.shapeKey);
+  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey);
   renderSuggestSheet();
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -1388,7 +1388,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), null, _sugg.shapeKey);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey);
     }
     renderSuggestSheet();
   });
@@ -1435,8 +1435,29 @@ function _suggBasePool() {
   if (_sugg.unworn) return _sugg.unworn.pool;
   return planningPool({ capsuleId: _sugg.capsuleId, level: _sugg.targetLevel, wholeCloset: _sugg.wholeCloset });
 }
+/* The date this sheet is dressing, when that isn't today. Null for "right now".
+   Drives the date-aware laundry filter below. */
+function _suggPlanDate() {
+  const d = _sugg.planCtx && _sugg.planCtx.date;
+  if (!d || d === PLAN_BUCKET) return null;
+  return d > todayStr() ? d : null;
+}
+/* ⚠️ When a plan date is in play, _suggPool has ALREADY applied the date-aware
+   laundry filter, and that subsumes today's — passing today's on top would
+   exclude a piece that a wash day planned before then will have cleaned. */
+const _suggCleanArg = () => (_suggPlanDate() ? false : _suggClean());
 function _suggPool() {
   let pool = _suggBasePool();
+  /* ⚠️ LAUNDRY IS AS OF THE DAY SHE'S DRESSING, not today (fixed 2026-08-03 r5,
+     her report: a tank top planned for one day kept being suggested for the
+     next). suggestibleClean reads today's state, so planning ahead recommended
+     pieces the app already knew would be in the hamper by then. The chip names
+     the date when this is on, so the narrowing stays visible and reversible. */
+  const planDate = _suggPlanDate();
+  if (planDate && _suggClean() && LAUNDRY_READY()) {
+    const dirty = plannedDirtyBy(planDate);
+    if (dirty.size) pool = pool.filter(i => !dirty.has(i.id));
+  }
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
   // Mirrors the engine so swap/+Layer/ban candidates see the same pool.
   // At Utility the pool IS function-wear (see isFunctionWear); at every other
@@ -1657,7 +1678,7 @@ function openGearTagSheet() {
   hydratePhotos($("#logInner"));
   $("#gearDone").onclick = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   };
   const flip = (b, on) => b.classList.toggle("on", on);
@@ -1726,7 +1747,7 @@ function openTripUnwornSuggest(cid) {
   if (!u.pool.length) return toast("Nothing unworn left to build from");
   openSuggestSheet(null, cid);
   _sugg.unworn = u;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season, _suggWx(), null, _suggClean(), null, _sugg.shapeKey);
+  _sugg.results = suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey);
   _sugg.idx = 0;
   renderSuggestSheet();
 }
@@ -1748,7 +1769,7 @@ function swapSuggestionPiece(pieceId) {
   const ls = laundryState();
   let cands = pool.filter(i =>
     i.image_path && !isNoSuggest(i) && i.id !== pieceId &&
-    (!_suggClean() || suggestibleClean(i, ls)) &&
+    (!_suggCleanArg() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
     inSeasonWx(i, _sugg.season, _suggWx()) &&
     !others.some(o => isExcluded(i.id, o.id)));
@@ -1813,7 +1834,7 @@ function banSuggestionPiece(pieceId) {
       return renderSuggestSheet();
     }
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   }
 }
@@ -1827,7 +1848,7 @@ function addSuggestionLayer() {
   let cands = pool.filter(i =>
     i.image_path && !isNoSuggest(i) &&
     !combo.pieces.some(p => p.id === i.id) &&
-    (!_suggClean() || suggestibleClean(i, ls)) &&
+    (!_suggCleanArg() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === "Outerwear" || (isLayer(i) && i.category === "Tops")) &&
     inSeasonWx(i, _sugg.season, _suggWx()) &&
     !combo.pieces.some(p => isExcluded(i.id, p.id)));
@@ -2000,7 +2021,14 @@ function renderSuggestSheet() {
         ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
         <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
         ${_sugg.wx && _sugg.wx.maxT != null ? `<button class="cap-chip${_sugg.useWx ? " on" : ""}" data-swx style="font-size:13px" title="Weather-aware picks">${wmoEmoji(_sugg.wx.code)} ${_sugg.wx.maxT}°/${_sugg.wx.minT}°</button>` : ""}
-        ${(() => { if (!LAUNDRY_READY()) return ""; const n = hamperItems().length; return n ? `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="Skip items in the hamper">🧺 Clean only</button>` : ""; })()}
+        ${(() => { if (!LAUNDRY_READY()) return ""; const n = hamperItems().length;
+          const pd = _suggPlanDate();
+          // Name the day when the filter means "clean by then" — an unlabelled
+          // narrowing is the thing she approved the rack on condition of avoiding.
+          const hidden = (pd && _suggClean() && LAUNDRY_READY()) ? plannedDirtyBy(pd).size : n;
+          if (!n && !hidden) return "";
+          const lbl = pd ? `\u{1F9FA} Clean on ${esc(weekDayLabel(pd))} \u00b7 ${hidden} out` : `\u{1F9FA} Clean only`;
+          return `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="${pd ? "Skip what'll be in the hamper by then" : "Skip items in the hamper"}">${lbl}</button>`; })()}
         ${suggestPoolChipHtml()}
       </div>
     </div>
@@ -2058,7 +2086,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
     renderSuggestSheet();
   };
 
@@ -2167,7 +2195,7 @@ function renderSuggestSheet() {
       // Locks must apply to the WHOLE batch, not just the combo on screen —
       // browsing to the next outfit used to drop them (2026-07-21). Regenerate,
       // then keep the current combo in front so the view doesn't jump.
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
       _sugg.idx = 0;
       if (cur && [..._sugg.locked].every(lid => cur.pieces.some(p => p.id === lid))) {
         const k = comboKey(cur.pieces);
@@ -2307,7 +2335,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
+      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -2388,7 +2416,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggClean(), _sugg.lockedRoles, _sugg.shapeKey);
+        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }
