@@ -224,6 +224,58 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-03 r5 — FOUR REPORTS FROM USING r1–r4.**
+
+⚠️ **PLANNING AHEAD NOW KNOWS THE LAUNDRY — the tank-top bug.** Her report: she
+planned a tank top for one day and the app kept suggesting it for the NEXT.
+`suggestibleClean()` reads TODAY's state, so planning ahead recommended pieces
+the app already knew would be in the hamper by then. **r4 deliberately made the
+week planner WARN rather than filter, and that was right for the planner's own
+cards and wrong for suggestions.** "Clean only" now means clean ON THE DAY she's
+dressing (**`plannedDirtyBy(date)`** + **`_suggPlanDate()`** + **`_suggCleanArg()`**),
+and the chip reads **"Clean on Thu · N out"** so the narrowing stays named and
+one tap from widening. Applies to the day-plan suggester AND the Tomorrow card.
+- ⚠️ **TWO THRESHOLDS, and conflating them is the easy mistake** (made once
+  here). `weekLaundryForecast`'s `byDate` flags **`n > tol`** — "wearing it that
+  day means wearing something dirty". Whether a piece is **IN THE HAMPER** by a
+  date is **`n >= tol`**, the `isDirty` test. Reading the planner's overflow flag
+  for the filter missed exactly the tank-top case. `endCounts` is now returned so
+  both questions come off ONE schedule walk.
+- ⚠️ The forecast only walks pieces that appear in a PLAN, so **anything already
+  in the hamper must be unioned in separately** or a dirty shirt reads as clean
+  purely because she hasn't planned it.
+- ⚠️ When a plan date is in play `_suggPool` owns laundry entirely and the
+  engine's own `cleanOnly` is passed FALSE — the date-aware filter subsumes it,
+  and layering today's on top would exclude a piece a planned wash will clean.
+
+**THE WEAR PANEL GOT ROOM (r3 → r5).** Her report: *"make the wear screen have
+bigger space so things don't overlap and you can have more stats."* It was a
+44px thumb and three lines crammed on one row, so a long item name collided with
+the numbers. Now a **card per piece**: name on its own line, cost per wear big,
+and the facts as a **wrapping chip row** that can grow without ever overlapping.
+New facts: time since last wear, **her usual gap** (`avgGap`, needs 3 prior
+wear-days like `wearRhythm`), wears per month, wears this year, and the under-$1
+crossing.
+
+**MONTH REVIEW (r5).** Her ask: *"how did cost per wear change for key pieces in
+the month? what got worn most? think creatively… and make it reviewable for past
+months too."* `statsView "month"` + **`buildMonthReview(ym)`** + month chips.
+Leads with the question she asked (**before → after per piece, biggest movers
+first**), then most worn, the look she kept returning to, **back from the deep**
+(`MONTH_REDISCOVER_DAYS` 90), first outings, a formality-mix bar, and odds and
+ends (colour of the month in PIECE-DAYS, temperature range, priciest outing, vs
+last month). ⚠️ **It takes `ym`, never "this month"** — browsing past months is
+the same code path, so a live-month derivation can't drift from the archive one.
+Whole-wardrobe page → **no pool AND `hideFilter=true`**, per the funnel rule.
+
+**THE TRIP WASH ROW SAID NOTHING USEFUL (r5).** Her report: *"the packing thing —
+wash x item for rest of trip — what was that? seeing it on the trip made no sense
+to me."* `packMidTripWash`'s row read "Wash 3 pieces for the rest of the trip ·
+white tee, jeans…" — it named neither the DAY nor the consequence, and tapping it
+opened the mark-as-washed FORM, so a heads-up read as a chore. Now: *"Your plan
+wears the white tee again Thursday, but it's out of clean wears."* The derivation
+is unchanged; only the copy and the sub-line were wrong.
+
 **2026-08-03 r1–r4 — FIVE ASKS, SHIPPED. Read `RACK.md` (repo root) before
 touching the rack; it carries the reasoning, the rejected alternatives and the
 conversation these came out of.** Selftest 249 → **278**, run green; every new
@@ -1552,7 +1604,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-03 r4`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-03 r5`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1892,7 +1944,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **278/278** (2026-08-03 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **286/286** (2026-08-03 r5, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

@@ -185,9 +185,15 @@ may simply be waiting for a cold snap.
 
 ## 7. Rejected in these conversations
 
-- **Filtering the week planner's suggestions by the laundry forecast.** She asked
-  to *understand* what will be in the laundry, not to have it hidden. Removing
-  pieces silently is the invisible-narrowing mistake; the card warns instead.
+- ~~**Filtering the week planner's suggestions by the laundry forecast.**~~
+  ⚠️ **REVERSED 2026-08-03 r5.** The original call — warn, never filter — was
+  right for the planner's own day CARDS and wrong for SUGGESTIONS: she reported
+  a tank top planned for one day still being offered for the next, i.e. the app
+  actively recommending something it knew would be in the hamper. The rule was
+  never "don't narrow", it was "don't narrow INVISIBLY", and the rack is the
+  precedent for how: "Clean only" now means clean on the day she's dressing, the
+  chip reads "Clean on Thu · N out", and one tap widens it. The planner's cards
+  still warn rather than filter — that part stands.
 - **Guessing why a piece keeps being passed over.** See §5.
 - **A second "workout rack".** See §6.
 - **Rebuilding the trip-detection guessing layer** (r19) in any form. A wrong
