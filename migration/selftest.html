@@ -3470,6 +3470,87 @@ async function run() {
               ["", "", " · 3 options", " · plenty of options"]);
   });
 
+  /* ---- the wear screen (2026-08-03) ----
+     Her ask: "I want to see the change in cost per wear for each item in a
+     wear/look." */
+  const withWearCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks, byId: W.itemById };
+    W.items = [
+      { id: "tee", name: "Tee", category: "Tops", subcategory: "Tee shirts", status: "Available", price: 30, last_washed: D(-20) },
+      { id: "jea", name: "Jeans", category: "Bottoms", subcategory: "Jeans", status: "Available", price: 100, last_washed: D(-20) },
+      { id: "gif", name: "Gift scarf", category: "Tops", subcategory: "Blouses", status: "Available", price: null, last_washed: null },
+    ];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.outfits = []; W.outfitLinks = [];
+    W.buildOutfitIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.itemById = saved.byId;
+      W.buildOutfitIndexes();
+    }
+  };
+
+  t("cost per wear moves from before to after", () => withWearCloset(() => {
+    // $30 tee, 2 prior days, worn again today → 30/2 = 15 → 30/3 = 10
+    W.wears = [{ item_id: "tee", worn_on: D(-5) }, { item_id: "tee", worn_on: D(-3) },
+               { item_id: "tee", worn_on: D(0) }];
+    const d = W.buildWearDelta([{ item_id: "tee", worn_on: D(0) }]);
+    const p = d.pieces[0];
+    return eq([p.before, p.after, p.cpwBefore, p.cpwAfter, p.first], [2, 3, 15, 10, false]);
+  }));
+
+  /* ⚠️ A WEAR IS A DAY. "before" is the day-set minus this DATE, not minus this
+     row — logging the same piece twice in one day must not read as two wears,
+     and the definition has to work when she opens a wear from last March. */
+  t("logging a piece twice in one day is still one wear", () => withWearCloset(() => {
+    /* TWO rows on the prior day as well — that's what separates counting days
+       from counting rows. A 5-piece look writes 5 rows for one outing, so a
+       row count would read this closet as 4 wears instead of 2. */
+    W.wears = [{ item_id: "tee", worn_on: D(-5) }, { item_id: "tee", worn_on: D(-5) },
+               { item_id: "tee", worn_on: D(0) }, { item_id: "tee", worn_on: D(0) }];
+    const p = W.buildWearDelta([{ item_id: "tee", worn_on: D(0) }]).pieces[0];
+    return eq([p.before, p.after, p.cpwAfter], [1, 2, 15]);
+  }));
+
+  t("a first outing has no before, and a priceless piece has no cost story", () => withWearCloset(() => {
+    W.wears = [{ item_id: "tee", worn_on: D(0) }, { item_id: "gif", worn_on: D(0) }];
+    const d = W.buildWearDelta([{ item_id: "tee", worn_on: D(0) }, { item_id: "gif", worn_on: D(0) }]);
+    const tee = d.pieces.find(p => p.item.id === "tee"), gif = d.pieces.find(p => p.item.id === "gif");
+    return eq([tee.first, tee.cpwBefore, tee.cpwAfter, gif.price, gif.cpwAfter],
+              [true, null, 30, null, null]);
+  }));
+
+  t("the delta says when this wear is what tipped it into the hamper", () => withWearCloset(() => {
+    // jeans, tolerance 5, washed 20 days ago, four prior wears since
+    W.wears = [1, 2, 3, 4].map(k => ({ item_id: "jea", worn_on: D(-k) }));
+    const before = W.buildWearDelta([{ item_id: "jea", worn_on: D(-1) }]).pieces[0];
+    W.wears.push({ item_id: "jea", worn_on: D(0) });
+    const tipping = W.buildWearDelta([{ item_id: "jea", worn_on: D(0) }]).pieces[0];
+    return eq([before.hamperNow, before.sinceWash, tipping.hamperThis, tipping.sinceWash, tipping.tol],
+              [false, 4, true, 5, 5]);
+  }));
+
+  /* The same block renders read-only from the calendar and a look's wear list,
+     so the number is there whether the wear was ten seconds or ten months ago. */
+  t("the delta reads correctly for a wear from months ago", () => withWearCloset(() => {
+    W.wears = [{ item_id: "tee", worn_on: D(-200) }, { item_id: "tee", worn_on: D(-100) },
+               { item_id: "tee", worn_on: D(-2) }];
+    const old = W.buildWearDelta([{ item_id: "tee", worn_on: D(-100) }]).pieces[0];
+    // as of that day it was its 2nd outing, regardless of what came after
+    return eq([old.before, old.after, old.cpwBefore, old.cpwAfter, old.gap], [2, 3, 15, 10, 100]);
+  }));
+
+  t("the wear block names the piece, the change, and nothing it can't back up", () => withWearCloset(() => {
+    W.wears = [{ item_id: "tee", worn_on: D(-5) }, { item_id: "tee", worn_on: D(0) }];
+    const html = W.wearDetailHtml(W.buildWearDelta([{ item_id: "tee", worn_on: D(0) }]), { live: true });
+    const empty = W.wearDetailHtml(null, { live: true });
+    // _cpw drops the cents above $10 — the interesting range for cost per wear
+    // is under a few dollars, where they matter.
+    return /\$30 → /.test(html) && /\$15<\/b> a wear/.test(html) && /data-wd-item="tee"/.test(html) && empty === ""
+      ? true : `html=${html.slice(0, 220)}`;
+  }));
+
   t("no js/ module reintroduces a hardcoded white", () => {
     // The redesign routed every literal through a token; a new #fff looks fine
     // while you're building and then glows on a dark screen.

@@ -530,6 +530,13 @@ function wireEvents() {
       return;
     }
     if (e.target.closest("#lookWearsBtn")) { if (lookId) openLookWears(lookId); return; }
+    // Checked BEFORE [data-wear-date] — it sits inside that row (same precedence
+    // rule as data-piece-open vs data-occ-item).
+    const wdDate = e.target.closest("[data-wd-date]");
+    if (wdDate && lookId) {
+      const d = wdDate.dataset.wdDate;
+      return openWearDetail(d, wears.filter(w => w.outfit_id === lookId && w.worn_on === d).map(w => w.id));
+    }
     const wearDate = e.target.closest("[data-wear-date]");
     if (wearDate && lookId) {
       const d = wearDate.dataset.wearDate;

@@ -2732,11 +2732,14 @@ function openLookWears(id) {
     const dt = new Date(d + "T00:00:00");
     const dlabel = dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
     const dow = dt.toLocaleDateString(undefined, { weekday: "long" });
+    /* ⚠️ Nested tap targets inside a .det-row must be <div>, not <button> — the
+       parser hoists a nested button out as a sibling (the .gtile lesson). */
     return `<button class="det-row" data-wear-date="${esc(d)}" style="align-items:center">
       <span style="flex:1;min-width:0">
         <span style="display:block">${esc(dlabel)}</span>
         <span style="display:block;color:var(--muted);font-size:12.5px;margin-top:2px">${esc(dow)}${ctx.length ? ` · ${esc(ctx.join(", "))}` : ""}</span>
       </span>
+      <div class="cap-chip" data-wd-date="${esc(d)}" style="flex:none;font-size:12px;margin-right:6px" title="What this wear changed">✨ What changed</div>
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   }).join("");

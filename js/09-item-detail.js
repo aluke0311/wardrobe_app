@@ -1252,13 +1252,20 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
     ? wearRows[0].outfit_id : null;
   const o = oid ? outfitById.get(oid) : null;
 
+  /* The payoff block (2026-08-03). Her ask was "a screen on that wear"; she
+     chose to have it REPLACE this sheet, and the way that doesn't cost taps is
+     for it to BE this sheet — the deltas sit above the context chips, the
+     header and the heart are untouched, and logging is still two taps. */
+  const _wd = buildWearDelta(wearRows);
+
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="postLogCancel">Skip</button>
-      <h2>Add context</h2>
+      <h2>${_wd ? "What this changed" : "Add context"}</h2>
       <button class="lnk" id="postLogSave" style="font-weight:700">Save</button>
     </div>
-    <div style="padding:20px 18px 30px">
+    <div style="padding:14px 18px 30px">
+      ${wearDetailHtml(_wd, { live: true })}
       ${o ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
         <label style="font-size:13px;color:var(--muted)">Loved wearing this look?</label>
         <button class="lk-heart-btn${o.rating === 1 ? " on" : ""}" id="postLikeBtn"><svg viewBox="0 0 24 24" style="width:26px;height:26px;stroke:currentColor;stroke-width:1.8;fill:none">${HEART_SVG}</svg></button>
@@ -1276,6 +1283,10 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
     </div>`;
   showSheet("logSheet");
   renderContextPicker();
+  hydratePhotos($("#logInner"));
+  // A piece row opens the item — the sheet's own context/heart state is already
+  // saved on tap, so leaving it is safe.
+  wireWearDetail($("#logInner"), { onLeave: () => hideSheet("logSheet") });
   const tripAdd = $("#postTripAdd");
   if (tripAdd) tripAdd.onclick = async () => {
     const miss = tripMissingPieces(wearRows.map(r => r.item_id));

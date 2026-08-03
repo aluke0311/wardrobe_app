@@ -233,6 +233,10 @@ function renderCalendarDay(body) {
             <span style="font-size:13px;color:${has ? 'var(--accent)' : 'var(--muted)'};font-weight:${has ? '600' : '400'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${has ? esc(g.context.join(', ')) : 'Add context'}</span>
           </button>`;
           })()}
+          <button class="cal-ctx-btn" data-cal-wd="${esc(wearIdsStr)}"
+            style="display:flex;align-items:center;gap:6px;background:none;border:none;text-align:left;padding:0;cursor:pointer">
+            <span style="font-size:13px;color:var(--muted)">✨ What this wear changed</span>
+          </button>
         </div>
       </div>
       <div class="cal-swipe-acts">
@@ -455,6 +459,12 @@ function renderCalendarDay(body) {
     };
   });
 
+  body.querySelectorAll('[data-cal-wd]').forEach(el => {
+    el.onclick = () => {
+      const ids = (el.dataset.calWd || '').split(',').filter(Boolean);
+      if (ids.length) openWearDetail(dateStr, ids);
+    };
+  });
   body.querySelectorAll('[data-cal-ctx]').forEach(el => {
     el.onclick = () => {
       const wearIds = (el.dataset.calCtx || '').split(',').filter(Boolean);
