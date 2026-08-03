@@ -224,19 +224,141 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
-**THE RACK (2026-07-26, r6 + r7) — SHIPPED.** `js/20-rack.js` (boot renumbered
-to `21-boot.js`; index.html now has **22** cache-busted tags). A standing derived
+**2026-08-03 r1–r4 — FIVE ASKS, SHIPPED. Read `RACK.md` (repo root) before
+touching the rack; it carries the reasoning, the rejected alternatives and the
+conversation these came out of.** Selftest 249 → **278**, run green; every new
+case mutation-checked red in the same session.
+
+⚠️ **THE RACK NOW HAS THREE BANDS AND A ROTATION COUNTER (r1).** Her question —
+*"what about pieces that are moderately worn? Not warm or cold?"* — named the
+biggest hole in it. The split was binary at `RACK_WARM_DAYS`(60) and the warm
+side was then CUT TO QUOTA, so a top worn five weeks ago was both too old to
+survive the cut and too recent to be eligible for the cold list; it reached the
+rack only by accident, and when it aged past 60 days it joined the back of the
+cold queue and stayed invisible. Bands are now **rotation / steady / dormant**
+(`RACK_SLOT_QUOTA` is a banded object; a plain number still works and splits by
+the shares, which is how `PACK_TRIP_QUOTA` keeps working). Rack grew **46 → 58**
+at her request, extra weight to steady + dormant.
+- ⚠️ **ROTATION IS THE ORDERING.** The cold band sorted by all-time `wearCount`
+  among pieces untouched 60+ days — both inputs near-static, so the SAME NINE
+  PIECES came back every rebuild forever against a cold pool of hundreds. The
+  anti-calcification mechanism had itself calcified. `seen[id]` counts rebuilds
+  offered-and-not-worn; steady + dormant are least-offered-first queues, cleared
+  when she wears the piece. **Rotation (32 of 58) still ranks by recency and does
+  NOT move** — that's what keeps the rack recognisable.
+- **"Worth a second look"** = the same counter read as a question, past
+  `RACK_SEEN_LIMIT`(3). ⚠️ **It states a fact and never guesses why** (r19): four
+  answers SHE picks — wrong formality, wrong season, not right now
+  (`RACK_PUSH_LONG_DAYS`), moved on → Storage. **Never a "get rid of this", never
+  a purchase.**
+- ⚠️ **THE LIKED BONUS WAS A BAND-DECIDER.** `score()` was
+  `warmth + (liked ? .15 : 0)` split at `> 0`, so a hearted piece unworn 60+ days
+  scored .15 → warm list, ranked below everything worn in ~51 days, AND excluded
+  from cold. **Her hearted-but-neglected pieces were the ones shut out of
+  rediscovery.** Liked is now a tiebreak WITHIN a band.
+- ⚠️ **`rackEnsure()` RAN IN TWO PLACES** — the closet's rack row and "Rebuild
+  now" — while every consumer read `rackEffective()`, which checks nothing. The
+  7-day cadence and the season-flip guard only ran if she visited the SCREEN.
+  Now also at boot and on suggester open.
+- **`rackBandOf(id)` / `rackPassedOver()` / `rackQuotaTotal(q)`** are the new
+  readers; `pushed` values may be a bare date string (legacy) or `{d, n}`.
+
+**CONTEXTS × FORMALITY (r1).** Her question: *"if I say I need an outfit for x
+context, in which I have worn different formality levels, what happens?"* It took
+the mode, set it as `targetLevel` — a HARD filter — and discarded the rest.
+- ⚠️ **`contextFormalityLevel` COUNTED WEAR ROWS.** A 6-piece outfit cast six
+  votes and a 2-piece outfit two, so the mode could name a level she'd dressed
+  for on FEWER days; and *"min 3 to trust"* was 3 ROWS, i.e. one three-piece
+  outfit worn once, permanently overriding the seed. This is the 2026-07-24
+  "a wear is a DAY" audit — `contextFormalityStats` was fixed then and **this
+  function was missed**, so the Contexts stats page and the suggester could
+  disagree about the same context. Now counts OCCASIONS (distinct day+level).
+- **`contextLevelDays` / `contextLevelSpread` / `CONTEXT_LEVEL_MIN_OCCASIONS`(3)**
+  are the new shape; `suggestContextSpreadHtml()` renders the levels she's
+  actually worn for that context, mode preselected, **only when the history
+  disagrees with itself**. Picking one KEEPS the context selected.
+
+**TOMORROW FROM THE RACK (r1).** `tomorrowGenPieces` passed `pool = null` and
+`suggestOutfits` reads null as the whole Available closet — **the one surface
+that shows an outfit unasked had never used the rack.** New **`planningPool
+({capsuleId, level, wholeCloset})`** owns the precedence and `_suggBasePool`
+delegates to it, so the two can't drift. Level 1 and trips still bypass the rack.
+⚠️ Picks already in `kv "tmpick"` are deliberately NOT invalidated — a sticky
+pick she liked survives; the ✨ re-roll moves it onto the rack.
+
+**LAUNDRY: THE DATE LEADS (r2).** Her words: *"I often will go back the next day
+and say things were washed — and like, today's clothes might not be included in
+that, even though they're now in the hamper."* The sheet showed TODAY's hamper
+and stamped everything ticked with the chosen date, wrong in both directions: a
+load chip swept in pieces that only got dirty AFTER the wash, and for a piece
+worn both on the wash day and the day before, stamping it washed on the earlier
+date **DELETED the earlier wear from its count** (`wearDatesSinceWash` keeps
+`d > since`), quietly resetting a jean that was most of the way to the hamper.
+**`isDirtyAsOf` / `isWornNotDirtyAsOf` / `laundryAsOfSplit`** partition what's in
+play into *in this wash* · *also worn, not dirty yet* · **"Worn since then"** —
+shown, unselected, untouched by the load chips. Changing the date clears the
+loads and the selection. ⚠️ **`asOf >= today` short-circuits to the live
+derivation**, so the ordinary same-day path is unchanged; a case pins that.
+
+**THE WEAR SCREEN (r3).** Her ask: *"I want to see the change in cost per wear
+for each item in a wear/look… a screen on that wear, maybe?"* — and she chose to
+have it **replace the post-log sheet**. `js/22-wear-detail.js`; boot renumbered
+to `23-boot.js`; index.html now has **24** cache-busted tags.
+- ⚠️ **It IS the post-log sheet.** "Log what I wore" is a sacred two-tap flow, so
+  `buildWearDelta` renders ABOVE the context chips with the same Skip/Save header
+  and the same heart — same taps, plus a payoff. The identical block renders
+  read-only from a calendar day card (`data-cal-wd`) and a look's wear list
+  (`data-wd-date`, checked BEFORE `data-wear-date`).
+- Per piece: **CPW before → after**, days out, the gap closed, wears-since-wash
+  vs tolerance (and whether THIS wear tipped it into the hamper), rack band.
+- ⚠️ **"before" is the day-set minus this DATE, not minus this ROW.** The only
+  definition that also works when she opens a wear from last March, and the
+  "a wear is a DAY" rule — a 5-piece look writes 5 rows for one outing.
+
+**PLAN THE WEEK (r4).** Her ask: *"actually plan my week… set contexts, but then
+the option to tap through and actually plan the looks, including the ability to
+understand what is/will be in laundry."* Now a real screen (`tab-week` /
+`renderWeekPlan`) instead of seven rows that punted to the day sheet: contexts
+AND an outfit slot per day with ✨ Suggest / ＋ Look / ✎ Build inline, the weekday
+rhythm as a muted starting point, and a 🧺 wash-day toggle.
+- ⚠️ **SCHEDULE, DON'T DIVIDE**, at home now. `weekLaundryForecast` walks the
+  seven days in DATE ORDER with a running counter **seeded from real wear-days
+  since `last_washed`** (a jean at 4 of 5 on Monday is one wear from the hamper
+  all week — `planRewearFlags` fixed this exact bug once already). That's what
+  lets it name a DAY. A lived day counts what she actually WORE unioned with the
+  plan, so a fulfilled plan isn't double-counted.
+- ⚠️ **A piece is reported only on the day it FIRST runs out** — once over
+  tolerance it stays over, so flagging it every remaining day restated one fact
+  with a bigger number. A wash day clears the flag set with the counters.
+- ⚠️ **IT WARNS, IT DOES NOT FILTER.** Thursday's suggestions still draw from the
+  normal pool. Silently removing pieces is the invisible-narrowing mistake, and
+  she asked to UNDERSTAND the laundry, not to have it hidden.
+- Wash days live in **`kv "washdays"`** — zero new columns, and deliberately NOT
+  a sentinel inside `dayplan`, which every other consumer iterates.
+- ⚠️ Both r4 defects were found by **RENDERING THE SCREEN AND READING IT**, not
+  by the tests (the repeated flag, and a header calling today "Mon, Aug 3" while
+  the card said "Today").
+
+⚠️ **A RED TEST SAT ON `main` UNNOTICED** (fixed r1). The lean-vs-cushion pack
+case passed `{context, per}` where `packSlate` reads `{ctx, n}` — left behind by
+the 2026-07-30 r5 flat-list rework — so it had been solving a degenerate slate
+where K couldn't bite. **Check the suite is green before starting, not only
+after**; a failing assertion still looks like a test doing its job.
+
+**THE RACK (2026-07-26, r6 + r7) — SHIPPED; REWORKED 2026-08-03 r1 (see the
+entry above and `RACK.md`).** `js/20-rack.js`. A standing derived
 pool — "what's in play right now" — that the suggester draws from by default.
 It exists because the suggester is good in a capsule and a slot machine over 476
 items: the fix was the POOL, not the algorithm.
 
-- **`buildRack({pool, wearRows, today, season, wx, plans, pinned, pushed})`** is
+- **`buildRack({pool, wearRows, today, season, wx, plans, pinned, pushed, quota, seen})`** is
   injectable and deterministic — same inputs, same rack — because **stability is
   the feature**; a rack that reshuffles every open is a random sample with extra
   steps. Stratified, NOT a top-N: `RACK_SLOT_QUOTA` (Tops 16 · Bottoms 11 ·
   Dresses 5 · Shoes 9 · Outerwear 5), because a 60-piece rack that happens to be
   45 tops cannot build an outfit.
-- ⚠️ **`RACK_COLD_SHARE` (20% of every slot) is LOAD-BEARING, not a nicety.**
+- ⚠️ **`RACK_COLD_SHARE` (20% of every slot — the DORMANT band) is LOAD-BEARING,
+  not a nicety.**
   Without it the rack calcifies — worn → on the rack → suggested → worn — and
   over five years shrinks her working wardrobe, i.e. the mirror would cause the
   thing it measures. It's also the nicest part (the rack screen leads with "N you
@@ -598,7 +720,7 @@ first. (It was all one 16k-line `index.html` until 2026-07-25 r13; see
 `index.html` = `<head>` + body markup + ordered `<script src>` tags, ~278 lines.
 Everything else moved out **untouched** — the split was cut-and-paste at the
 existing `/* ==== */` section banners and verified byte-identical, so no logic,
-naming or ordering changed. ~18,100 lines of JS across 22 files:
+naming or ordering changed. ~19,900 lines of JS across 23 files:
 
 | file | lines | what's in it |
 |---|---|---|
@@ -621,9 +743,10 @@ naming or ordering changed. ~18,100 lines of JS across 22 files:
 | `js/17-builder.js` | 692 | Build-a-Look canvas |
 | `js/18-weather.js` | 311 | Open-Meteo, geocoding, `_wxCache` |
 | `js/19-wiring.js` | 798 | `switchTab`, `wireEvents`, delegation |
-| `js/20-rack.js` | 300 | **the rack** — derivation, nudges, rack screen |
-| `js/21-pack.js` | 1699 | **the trip builder** — solver, pack screen, revision |
-| `js/22-boot.js` | 183 | snapshot, freshness, auth, `init()` |
+| `js/20-rack.js` | 490 | **the rack** — three bands, rotation, second look, rack screen |
+| `js/21-pack.js` | 2742 | **the trip builder** — solver, pack screen, revision |
+| `js/22-wear-detail.js` | 190 | **the wear screen** — `buildWearDelta`, the block, both surfaces |
+| `js/23-boot.js` | 185 | snapshot, freshness, auth, `init()` |
 
 **Load order is the contract.** Top-level `const`/`let` in classic scripts share
 one global lexical scope, which is why the split needed zero code changes — but
@@ -1429,14 +1552,14 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-07-29 r4`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-03 r4`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
      which Range-fetches the first 2KB of the deployed page — a mismatch means a
      phantom "Update available" toast, or never seeing a real one);
-  3. the **`?v=` on all 23 `js/`+`css/` tags** (22 until 2026-07-29 r2 added
-     `js/21-pack.js` and renumbered boot to `22-boot.js`). Miss one and Pages
+  3. the **`?v=` on all 24 `js/`+`css/` tags** (23 until 2026-08-03 r3 added
+     `js/22-wear-detail.js` and renumbered boot to `23-boot.js`). Miss one and Pages
      serves a fresh `index.html` beside a stale module — a half-updated app,
      which is worse than an un-updated one.
 - Comment non-obvious logic only — match the surrounding density.
@@ -1769,7 +1892,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **231/231** (2026-07-29 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **278/278** (2026-08-03 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
