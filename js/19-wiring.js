@@ -73,6 +73,24 @@ function renderSettings() {
             <span class="theme-nm">Sage</span>
           </button>
         </div>
+        <div><div class="fld" style="margin-top:4px">Looks without an arrangement</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">Looks you've arranged in the builder always show the way you arranged them. This is for the rest.</div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${[["collage", "Collage"], ["layout", "Default layout"]].map(([k, lbl]) =>
+            `<button class="cap-chip${lookFallbackMode() === k ? " on" : ""}" data-lookfb="${k}" style="font-size:13px">${lbl}</button>`).join("")}
+        </div>
+      </div>
+      <div class="card stack">
+        <div><div class="fld">What's new</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">${(() => {
+            // Just the version and a count. Leading with the first bullet ran to
+            // six lines of muted text and buried the button under it — the
+            // detail is one tap away, which is what the button is for.
+            const n = ((RELEASE_NOTES[0] || {}).notes || []).length;
+            return `${esc((RELEASE_NOTES[0] || {}).v || APP_VERSION)}${n ? ` · ${n} change${n === 1 ? "" : "s"}` : ""}.`;
+          })()}</div></div>
+        <button class="btn btn-sec" id="setWhatsNew">What changed in this update</button>
+        <button class="lnk" id="setChangelog" style="font-size:14px;color:var(--accent);font-weight:600;padding:2px 0">All ${RELEASE_NOTES.length} updates →</button>
       </div>
       <div class="card stack">
         <div><div class="fld">Signed in as</div><div id="set_email">${esc(session?.user?.email || "")}</div></div>
@@ -112,6 +130,9 @@ function renderSettings() {
     </div>`;
   $("#signOutBtn").onclick = () => handleSignedOut();
   $("#settingsBody").querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { applyTheme(b.dataset.themeSet); renderSettings(); });
+  $("#settingsBody").querySelectorAll("[data-lookfb]").forEach(b => b.onclick = () => { setLookFallbackMode(b.dataset.lookfb); renderSettings(); });
+  $("#setWhatsNew").onclick = () => openWhatsNewSheet();
+  $("#setChangelog").onclick = () => openChangelogSheet();
   $("#setBackup").onclick = downloadBackup;
   $("#setHealth").onclick = () => runDataHealthCheck();
   $("#setTaxonomy").onclick = () => openTaxonomySheet();
@@ -476,12 +497,19 @@ function wireEvents() {
     if (e.target.closest("#clKeyword")) { navDeeper("closet"); closetSearchQ = ""; searchResults = null; return renderCloset(); }
     if (e.target.closest("#clSearch")) return openSearch();
     if (e.target.closest("[data-cap-filter]")) return openClosetCapsuleFilter();
-    if (e.target.closest("[data-laundry-wash]")) {
+    const hl = e.target.closest("[data-hload]");
+    if (hl) { hamperLoad = hl.dataset.hload || null; exitSelectMode(); return renderCloset(); }
+    const lw = e.target.closest("[data-laundry-wash]");
+    if (lw) {
       // Scoped hamper page → scoped wash sheet (trip laundry = the suitcase).
-      return openLaundrySheet(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {});
+      // The load chip she's standing on comes with her.
+      return openLaundrySheet({
+        ...(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {}),
+        preLoad: lw.dataset.laundryWash || null,
+      });
     }
     if (e.target.closest("[data-rack]")) { navDeeper("closet"); closetRack = true; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; rackEnsure().then(() => { if (closetRack) renderCloset(); }); return renderCloset(); }
-    if (e.target.closest("[data-laundry]")) { navDeeper("closet"); closetHamper = true; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
+    if (e.target.closest("[data-laundry]")) { navDeeper("closet"); closetHamper = true; hamperLoad = null; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     if (e.target.closest("[data-worn]")) { navDeeper("closet"); closetWorn = true; closetHamper = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");
     if (lens) { closetLens = lens.dataset.lens; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; navResetScroll("closet"); scrollToTop(); return renderCloset(); }
@@ -550,6 +578,7 @@ function wireEvents() {
     if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
     if (e.target.closest("#lookDecon")) { if (lookId) deconstructLook(lookId); return; }
     if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
+    if (e.target.closest("#lookDefLayout")) { if (lookId) applyDefaultLayout(lookId); return; }
     const pieceOpen = e.target.closest("[data-piece-open]");
     if (pieceOpen) {
       // Thumbnail tap opens the item; must run BEFORE the [data-occ-item] row check.

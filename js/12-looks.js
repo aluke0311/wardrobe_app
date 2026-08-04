@@ -618,9 +618,35 @@ function layoutCanvasHtml(o, wrapCls) {
   return `<div class="${wrapCls}">${cells}</div>`;
 }
 
+/* What a look with no saved arrangement looks like (2026-08-04, her ask: "want
+   the option to set a look layout to default rather than collage").
+
+   Most of her 1,500+ looks were logged rather than arranged in the builder, so
+   the collage grid is what she sees nearly everywhere. "Default layout" renders
+   those through the same dressing-order arrangement the suggester previews with.
+
+   ⚠️ PRESENTATION ONLY, and store-backed rather than written to rows: it must be
+   reversible in one tap and must never touch `outfits.layout`. A look she HAS
+   arranged always wins — this only fills in for looks with nothing saved. The
+   per-look "Use the default arrangement" button on the Details page is the
+   version that actually writes, so she can then edit it in the builder. */
+const LOOK_FALLBACK_KEY = "wardrobe.lookFallback";
+const lookFallbackMode = () => (store.getItem(LOOK_FALLBACK_KEY) === "layout" ? "layout" : "collage");
+function setLookFallbackMode(m) {
+  store.setItem(LOOK_FALLBACK_KEY, m === "layout" ? "layout" : "collage");
+}
+// The arrangement a layout-less look should get, or null to fall through to the
+// collage. Shared by the grid tiles and the look hero so they can't disagree.
+function lookFallbackLayout(pieces) {
+  if (lookFallbackMode() !== "layout" || !pieces.length) return null;
+  return suggestionLayout(pieces);
+}
+
 function outfitCollageHtml(o, max, mini) {
   const canvas = layoutCanvasHtml(o, "ocanvas" + (mini ? " omini" : ""));
   if (canvas) return canvas;
+  const fb = lookFallbackLayout(outfitPieces(o));
+  if (fb) return layoutCanvasHtml({ layout: fb }, "ocanvas" + (mini ? " omini" : ""));
   const pieces = outfitPieces(o).slice(0, max);
   let cls = "ocollage" + (mini ? " omini" : "");
   if (!pieces.length) return `<div class="${cls} empty"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>`;
@@ -1038,9 +1064,21 @@ function scoreCombo(its, target, season = null, wx = null) {
       }
     }
   }
-  s += Math.min(3, aff);
+  /* ⚠️ AVERAGE PER PAIR, NOT TOTAL (2026-08-04, part of "the suggester doesn't
+     seem to like suggesting dresses"). Summing over pairs made this term scale
+     with PIECE COUNT: a four-piece look has six pairs to earn from and can max
+     the cap easily, while dress + shoes has exactly ONE and could reach 1.8 at
+     best. Every dress combo was handed a structural handicap of over a point on
+     a score range of roughly 2.5–5.5. Averaging asks the right question anyway —
+     "do these pieces go together" is a rate, not a total.
+     The 0–3 output range is unchanged, so PACK_SCORE_W needs no re-measuring. */
+  const pairs = its.length * (its.length - 1) / 2;
+  s += pairs ? Math.min(3, (aff / pairs) * 3) : 0;
   // C2 session variety salt — see _saltFor (tie-breaker, not a preference).
-  s += its.reduce((n, p) => n + _saltFor(p.id), 0);
+  // ⚠️ The MEAN, for the same reason as the affinity term above: summed, a
+  // four-piece combo drew twice the expected random bonus of a two-piece one,
+  // which is a preference for pieces rather than a tie-breaker.
+  s += its.length ? its.reduce((n, p) => n + _saltFor(p.id), 0) / its.length : 0;
   // NOTE: no rotation/last-worn weighting by design — suggestions are random
   // among pieces that plausibly match, not biased toward unworn items.
   return s;
@@ -1094,6 +1132,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   // Formula mode (Round B): restrict each slot to the shape's subcategories,
   // so "Sweaters + Jeans + Boots" re-fills with DIFFERENT sweaters/jeans/boots.
   const shape = shapeKey ? formulaShapeMap(shapeKey) : null;
+  const slotSize = new Map();   // slot -> eligible pieces before the 12-piece sample cap
   const slot = (...cats) => {
     // Layerable tops (e.g. button-ups, flagged via isLayer) double as the outerwear
     // layer, so they're eligible for the Outerwear slot in addition to the Tops slot.
@@ -1130,6 +1169,11 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       if (!subs && cats.includes("Outerwear") && (shape.get("Tops") || new Set()).size > 1) subs = shape.get("Tops");
       pool = subs ? pool.filter(i => subs.has(i.subcategory)) : [];
     }
+    // How many pieces this slot could really have offered, BEFORE the sample cap
+    // below flattens every slot to 12. That true size is what silhouette parity
+    // has to reason about — capped counts would say 40 dresses and 200 tops are
+    // an even split.
+    slotSize.set(cats[0], pool.length);
     // Random sample (Fisher–Yates) — no unworn/last-worn bias. A larger sample than
     // before so a single batch mixes more distinct pieces (less "same item every time").
     for (let k = pool.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [pool[k], pool[j]] = [pool[j], pool[k]]; }
@@ -1205,18 +1249,72 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
 
   // deduplicate: don't show the same set of item_ids twice
   const seen = new Set();
-  const unique = [];
   const uniqueCap = opts.uniqueCap || 60;
-  for (const c of pool2) {
-    const key = c.pieces.map(p => p.id).sort().join(",");
-    if (!seen.has(key)) { seen.add(key); unique.push(c); }
-    if (unique.length >= uniqueCap) break;
+  const isDressCombo = c => c.pieces.some(p => p.category === "Dresses");
+
+  /* Exhaustive mode: every valid combo, unsampled. Same enumerator and the same
+     hard filters as the sheet gets — that identity is the whole reason this flag
+     exists rather than a second engine. It takes the plain cut, deliberately:
+     the pack solver wants the true set, and silhouette parity below is about
+     what gets OFFERED, not about what exists. */
+  if (opts.all) {
+    const all = [];
+    for (const c of pool2) {
+      const key = c.pieces.map(p => p.id).sort().join(",");
+      if (!seen.has(key)) { seen.add(key); all.push(c); }
+      if (all.length >= uniqueCap) break;
+    }
+    return all;
   }
 
-  // Exhaustive mode: every valid combo, unsampled. Same enumerator and the same
-  // hard filters as the sheet gets — that identity is the whole reason this flag
-  // exists rather than a second engine.
-  if (opts.all) return unique;
+  /* ⚠️ SILHOUETTE PARITY (2026-08-04, her report: "outfit suggester doesn't seem
+     to like suggesting dresses").
+
+     It doesn't dislike them — it never really sees them. The two loops above are
+     cartesian products of DIFFERENT ARITY, so the candidate list is shaped by
+     enumeration rather than by her closet: a dress makes `dresses × shoes × 3`
+     combos while a top makes `tops × bottoms × shoes × 3`. On a typical rack
+     that's ~200 dress combos against ~5,000 two-piece ones. Cutting the top 60
+     by score and sampling 8 from those put dresses at a few percent — i.e.
+     never, in practice.
+
+     A dress REPLACES a top and a bottom, so the honest share is
+     `dresses / (dresses + tops)`: its share of the outfit STARTING POINTS she
+     actually owns. Fill the candidate list to that share by interleaving the two
+     score-ordered queues, and let the softmax do the rest.
+
+     ⚠️ Interleave rather than concatenate-and-re-sort: pool2 is already ordered
+     seed-first then by score, and re-sorting would drop the seed guarantee.
+     ⚠️ Sizes come from `slotSize` (pre-sample), not from the sliced pools —
+     both slots cap at 12, which would call 40 dresses and 200 tops an even
+     split. Reading them off the RACK is the right target, not an accident: the
+     rack's own quota says 6 of its 26 core pieces should be dresses.
+
+     Measured on a 58-piece rack (6 dresses / 20 tops), 2026-08-04: enumeration
+     alone offered dresses in 7% of combos; parity puts them at ~23% of the
+     candidate list and ~37% of what's actually shown. The gap between those two
+     is the softmax preferring them on merit — a two-piece look has fewer chances
+     to trip the loud-colour and pattern penalties — and is deliberately left
+     alone. If a later round wants to re-measure, those are the numbers. */
+  const dressQ = [], twoQ = [];
+  for (const c of pool2) {
+    const key = c.pieces.map(p => p.id).sort().join(",");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    (isDressCombo(c) ? dressQ : twoQ).push(c);
+    if (dressQ.length + twoQ.length >= uniqueCap * 4) break;   // enough of both to draw from
+  }
+  const nD = slotSize.get("Dresses") || 0, nT = slotSize.get("Tops") || 0;
+  const share = (nD + nT) ? nD / (nD + nT) : 0;
+  const unique = [];
+  let di = 0, ti = 0;
+  while (unique.length < uniqueCap) {
+    const dLeft = di < dressQ.length, tLeft = ti < twoQ.length;
+    if (!dLeft && !tLeft) break;
+    // Take a dress whenever the list's running dress share is under target.
+    const takeDress = dLeft && (!tLeft || (di / (unique.length + 1)) < share);
+    unique.push(takeDress ? dressQ[di++] : twoQ[ti++]);
+  }
 
   // Weighted-random sample (softmax) so results vary each call while still
   // respecting the (small) match score. High temperature → mostly random among
@@ -1269,8 +1367,17 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
   return unique.slice(0, 8);
 }
 
-// Build a simple layout array for the suggestion canvas preview
-function suggestionLayout(pieces) {
+/* Dressing order for a set of pieces: base top or dress, then its layer, then
+   bottoms, then shoes.
+
+   ⚠️ THIS IS SHARED ON PURPOSE (2026-08-04, her report: "outfit suggester
+   buttons layout doesn't match the layout of the images"). The canvas sorted its
+   pieces and the swap/lock chips underneath rendered them in raw combo order —
+   [top, bottom, shoes, layer] — so on a four-piece look the second image was the
+   layer while the second button said "Bottom". Two orderings for one list of
+   pieces is a bug waiting to be re-introduced, so there is now one function and
+   both callers use it. */
+function suggestionPieceOrder(pieces) {
   // Left slot = base top, right slot = its layer (per user convention). The layer
   // is detected the same way the swap chips are (layerPieceOf), so a layerable top
   // used as a layer also lands on the right rather than beside the base top.
@@ -1286,15 +1393,31 @@ function suggestionLayout(pieces) {
       default: return 2;
     }
   };
-  const sorted = pieces.slice().sort((a, b) => rank(a) - rank(b));
+  return pieces.slice().sort((a, b) => rank(a) - rank(b));
+}
+
+// Build a simple layout array for the suggestion canvas preview — and, when she's
+// asked for it, the default arrangement for a saved look that has none.
+function suggestionLayout(pieces) {
+  const sorted = suggestionPieceOrder(pieces);
   const grids = [
     [[.5,.5,.75]],
     [[.3,.5,.45],[.72,.5,.45]],
     [[.5,.28,.55],[.28,.72,.42],[.72,.72,.42]],
     [[.28,.28,.44],[.72,.28,.44],[.28,.72,.44],[.72,.72,.44]],
   ];
-  const pos = grids[Math.min(sorted.length - 1, 3)];
-  return sorted.map((it, i) => ({ item_id: it.id, x: pos[i][0], y: pos[i][1], s: pos[i][2] }));
+  const pos = grids[sorted.length - 1];
+  if (pos) return sorted.map((it, i) => ({ item_id: it.id, x: pos[i][0], y: pos[i][1], s: pos[i][2] }));
+  /* 5+ pieces. A suggested combo can't get here (four slots, and "＋ Layer" only
+     fires when there's no layer yet), but a SAVED look can — and the old code
+     indexed past the end of the four-piece grid and threw. Rows of three. */
+  const cols = 3, rows = Math.ceil(sorted.length / cols);
+  return sorted.map((it, i) => ({
+    item_id: it.id,
+    x: ((i % cols) + 0.5) / cols,
+    y: ((Math.floor(i / cols) + 0.5) / rows),
+    s: 0.30,
+  }));
 }
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
@@ -2068,8 +2191,9 @@ function renderSuggestSheet() {
       ${combo ? (() => {
         const layerPc = comboLayerPiece(combo);
         const ls = laundryState();
+        // Same order as the canvas above — see suggestionPieceOrder.
         return `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
-        ${combo.pieces.map(p => {
+        ${suggestionPieceOrder(combo.pieces).map(p => {
           const lk = _sugg.locked.has(p.id);
           // 🧺 marks a dirty piece that's in the combo anyway (locked/seeded,
           // 7-day re-entry, or the clean filter toggled off).
@@ -2590,12 +2714,15 @@ function openRandomLook() {
 // ---- outfit detail ----
 // Shared hero: a saved canvas layout, else a grid of piece photos.
 function lookHeroBlock(o) {
-  const lay = Array.isArray(o.layout) ? o.layout.filter(p => itemById.has(p.item_id)) : [];
+  const saved = Array.isArray(o.layout) ? o.layout.filter(p => itemById.has(p.item_id)) : [];
+  const pieces = outfitPieces(o);
+  // A saved arrangement always wins; the fallback only fills in for looks that
+  // have none, and only when she's asked for it (see lookFallbackMode).
+  const lay = saved.length ? saved : (lookFallbackLayout(pieces) || []);
   if (lay.length) return `<div class="lk-canvas">${lay.map((p, idx) => {
     const it = itemById.get(p.item_id);
     return `<div class="lk-cpiece" data-look-item="${esc(it.id)}" data-photo="${esc(it.image_path || "")}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${idx + 1}"></div>`;
   }).join("")}</div>`;
-  const pieces = outfitPieces(o);
   if (pieces.length) return `<div class="lk-hero${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) => {
     const span = (pieces.length === 3 && idx === 2) ? " span2" : "";
     return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path || "")}"></div>`;
@@ -2722,6 +2849,7 @@ function openLookDetails(id) {
       <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit arrangement</button></div>
       <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
       ${missingLvlPieces.length ? `<button class="lnk" id="lookAddLevel" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:8px">+ Add “${lookLvl}. ${esc(occLabel(lookLvl))}” to ${missingLvlPieces.length} piece${missingLvlPieces.length === 1 ? "" : "s"}</button>` : ""}
+      ${(!(Array.isArray(o.layout) && o.layout.length) && its.length >= 2) ? `<button class="lnk" id="lookDefLayout" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:4px;color:var(--muted)">Use the default arrangement instead of a collage</button>` : ""}
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
@@ -2769,6 +2897,35 @@ function openLookDetails(id) {
       } catch (e) { o.notes = prev; toast(e.message); }
     }, 900);
   });
+}
+
+/* Write the default arrangement onto ONE look (2026-08-04). The Settings toggle
+   is a lens over every layout-less look; this is the version that persists, so
+   the look then behaves like any other arranged look — the builder can edit it,
+   and turning the Settings toggle back to Collage leaves it alone.
+   Offered only when there's nothing saved to overwrite. */
+async function applyDefaultLayout(id) {
+  const o = outfitById.get(id);
+  if (!o) return;
+  const its = outfitItems(o).filter(Boolean);
+  if (its.length < 2) { toast("Not enough pieces to arrange"); return; }
+  const prev = Array.isArray(o.layout) ? o.layout : null;
+  const layout = suggestionLayout(its);
+  const write = async (lay) => {
+    o.layout = lay;
+    await rest(`/outfits?id=eq.${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify({ layout: lay }),
+    });
+    if (lookId === id && lookView === "details") openLookDetails(id);
+  };
+  try {
+    await write(layout);
+    toast("Arranged — tweak it any time in the builder", { label: "Undo", fn: async () => {
+      try { await write(prev); } catch (e) { toast(e.message); }
+    } });
+  } catch (e) { o.layout = prev; toast(e.message); }
 }
 
 // "When You Wore It" — this look's wear dates; tap a day to set its context.

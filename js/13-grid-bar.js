@@ -182,19 +182,22 @@ async function bulkToHamper() {
   } catch (e) { toast(e.message); }
 }
 
-async function bulkMarkWashed() {
+/* ⚠️ THE ✓ NO LONGER STAMPS — IT OPENS THE WASH SHEET (2026-08-04, her words:
+   "not just 'wash these' — open up a whole thing, set the date, which colors,
+   etc."). It used to stamp the selection washed as of TODAY with no way to say
+   otherwise, which is the one thing the 2026-08-03 r2 rework established you
+   can't assume: she routinely marks a wash a day or two after it ran.
+   The selection is carried in pre-ticked, so nothing she picked is lost — the
+   sheet just adds the date and the loads on top. */
+function bulkMarkWashed() {
   const ids = [...selectedIds];
   if (!ids.length) return;
-  const snap = _laundrySnapshot(ids);
-  try {
-    // The laundry SHEET filters to dirty items before stamping; here the user
-    // picked these out of the hamper by hand, so stamp exactly what she chose.
-    // stampWash clears laundry_state itself, which retires any 'hamper' override.
-    await stampWash(ids, todayStr());
-    exitSelectMode();
-    renderCloset();
-    toast(`${ids.length} marked washed`, { label: "Undo", fn: () => _restoreLaundry(snap) });
-  } catch (e) { toast(e.message); }
+  exitSelectMode();
+  renderCloset();
+  openLaundrySheet({
+    ...(activeCapsuleId ? { pool: capsuleItems(activeCapsuleId) } : {}),
+    preIds: ids,
+  });
 }
 
 // ---- bulk edit sheet ----

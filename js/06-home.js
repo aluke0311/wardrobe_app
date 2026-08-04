@@ -596,21 +596,51 @@ function maybeShowWhatsNew() {
   if (!seen || !WHATS_NEW.length) return;
   toast(`Updated · ${APP_VERSION}`, { label: "What's new →", fn: openWhatsNewSheet });
 }
+// One release rendered as a dated block of bullets. Shared by the post-update
+// sheet and the full changelog so the two can't format the same fact differently.
+function releaseNoteHtml(rel, { lead = false } = {}) {
+  return `<div style="padding:${lead ? "0" : "14px"} 0 2px">
+    <div class="muted" style="font-size:12px;font-weight:600;letter-spacing:.02em">${esc(rel.v)}</div>
+    ${(rel.notes || []).map(b => `<div style="display:flex;gap:10px;padding:7px 0;font-size:14.5px;line-height:1.45">
+      <span style="color:var(--accent);flex:none">•</span><span>${esc(b)}</span>
+    </div>`).join("")}
+  </div>`;
+}
+
 function openWhatsNewSheet() {
+  const head = RELEASE_NOTES[0] || { v: APP_VERSION, notes: WHATS_NEW };
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <span style="width:54px"></span>
       <h2>What's new</h2>
       <button class="lnk" id="wnDone" style="font-weight:700">Done</button>
     </div>
-    <div style="padding:6px 22px 26px">
-      <div class="muted" style="font-size:12px;margin-bottom:10px">${esc(APP_VERSION)}</div>
-      ${WHATS_NEW.map(b => `<div style="display:flex;gap:10px;padding:7px 0;font-size:14.5px;line-height:1.45">
-        <span style="color:var(--accent);flex:none">•</span><span>${esc(b)}</span>
-      </div>`).join("")}
+    <div style="padding:6px 22px 8px">${releaseNoteHtml(head, { lead: true })}</div>
+    <div style="padding:0 22px 26px">
+      <button class="lnk" id="wnAll" style="font-size:14px;font-weight:600;color:var(--accent);padding:6px 0">All updates →</button>
     </div>`;
   showSheet("logSheet");
   $("#wnDone").onclick = () => hideSheet("logSheet");
+  $("#wnAll").onclick = () => openChangelogSheet();
+}
+
+/* The full history (2026-08-04 r1, her ask: "a new page with all the app
+   updates so I can always see them"). Deliberately the whole array and not a
+   recent slice — the point of keeping it is that it's still there in a year. */
+function openChangelogSheet() {
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <span style="width:54px"></span>
+      <h2>All updates</h2>
+      <button class="lnk" id="clgDone" style="font-weight:700">Done</button>
+    </div>
+    <div class="muted" style="font-size:12.5px;padding:8px 22px 6px;line-height:1.45">Every release, newest first. You're on ${esc(APP_VERSION)}.</div>
+    <div style="max-height:66vh;overflow-y:auto;padding:2px 22px 8px">
+      ${RELEASE_NOTES.map((r, i) => (i ? `<div class="det-divider"></div>` : "") + releaseNoteHtml(r, { lead: i === 0 })).join("")}
+    </div>
+    <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
+  showSheet("logSheet");
+  $("#clgDone").onclick = () => hideSheet("logSheet");
 }
 
 // ---- catch-up strip (A1, 2026-07-18) ----
@@ -1539,7 +1569,7 @@ function wireTripDash(tc) {
   });
   on("[data-td-laundry]", () => {
     switchTab("closet");
-    closetHamper = true; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
+    closetHamper = true; hamperLoad = null; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
     renderCloset();
   });
   on("[data-td-unworn]", () => {

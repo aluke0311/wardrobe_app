@@ -44,7 +44,9 @@ function siblingItems() {
   // Explicit list captured at tap time (capsule/trip grid) wins.
   if (_itemSiblingIds) return _itemSiblingIds.map(id => itemById.get(id)).filter(Boolean);
   if (closetSearchQ !== null && searchResults) return searchResults;
-  if (closetHamper) return _scopedHamper();
+  // hamperViewList, not _scopedHamper: with a load chip on, swiping must stay
+  // inside the load she's looking at, or the grid and the arrows disagree.
+  if (closetHamper) return hamperViewList();
   if (closetRack) return rackItems();
   if (closetWorn) return _scopedWorn();
   if (closetCat && closetSub) return categoryGrid(closetCat, closetSub);

@@ -6,13 +6,119 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-03 r7";
-// Shown once after each update (deploy skill refreshes these alongside
-// APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
-const WHATS_NEW = [
-  "“Would there be problems if I delete this?” now answers the wardrobe question too — which contexts would get thin, and whether anything else in your closet could stand in",
-  "Fixed the rack churning: only its weekly shuffle rotates the rediscovery picks now. Installing an update or planning a week tops up coverage without reshuffling anything",
+const APP_VERSION = "2026-08-04 r1";
+
+/* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
+   recent few changes should be listed, or a new page with all the app updates
+   so I can always see them").
+
+   ⚠️ ONE LIST, TWO SURFACES. WHATS_NEW is derived from the head of this array
+   rather than maintained beside it — the post-update toast and the Settings
+   changelog can then never disagree, and there is exactly one thing for the
+   deploy skill to add to. Prepend a new `{ v, notes }` whose `v` IS the new
+   APP_VERSION; the selftest pins that they match.
+
+   Notes are user-facing sentences, not commit subjects — this is the only
+   place in the app that explains what she paid attention for. */
+const RELEASE_NOTES = [
+  { v: "2026-08-04 r1", notes: [
+    "The rack stopped filling its rediscovery slots with dress-only pieces. Heels and other clothes for days you rarely have now take at most a slot or two per category, so the rack shows you things you can actually wear this week",
+    "Every update is now listed in Settings → What's new, all the way back — not just the one that landed last",
+    "The hamper screen sorts by wash load, and both ways in (the button and Select ✓) open the full wash sheet, so you can set the date and the loads instead of just stamping today",
+    "The outfit suggester stopped skipping dresses. It was building thousands more top-and-bottom combinations than dress ones and then picking from the top of that pile, so dresses almost never survived",
+    "The buttons under a suggested outfit are now in the same order as the pieces above them",
+    "Looks without a saved arrangement can be shown in a default layout instead of a collage — Settings → Appearance, or set one look at a time from its Details page",
+  ] },
+  { v: "2026-08-03 r7", notes: [
+    "“Would there be problems if I delete this?” now answers the wardrobe question too — which contexts would get thin, and whether anything else in your closet could stand in",
+    "Fixed the rack churning: only its weekly shuffle rotates the rediscovery picks now. Installing an update or planning a week tops up coverage without reshuffling anything",
+  ] },
+  { v: "2026-08-03 r6", notes: [
+    "Flag a piece for review with a note of your own — it changes nothing, it just collects in Stats",
+    "Deleting a piece now tells you exactly what goes with it: every wear ever logged for it, and any calendar day or look that falls apart without it",
+    "Filter by rack anywhere a filter exists",
+    "Add a context the rack can't dress and it rebuilds right then, instead of waiting for Sunday",
+    "The app stopped telling you to wash things — it says what your plan does and leaves the decision to you",
+  ] },
+  { v: "2026-08-03 r5", notes: [
+    "Planning ahead knows the laundry: “clean only” now means clean on the day you're dressing for, not clean today",
+    "The wear screen got room — a card per piece, so long names stop landing on the numbers, plus your usual gap between wears, wears per month, and wears this year",
+    "Month review: how cost per wear moved for each piece, what you wore most, what came back from the deep — and every past month is browsable",
+    "The trip wash row says what your plan does and which day it runs out, instead of ordering you to wash something",
+  ] },
+  { v: "2026-08-03 r4", notes: [
+    "Plan the week is a real screen: contexts and an outfit per day, with Suggest / add a Look / Build inline",
+    "It walks the week day by day and names the day a piece runs out of clean wears — and it warns rather than quietly hiding anything",
+    "Mark a wash day and the counters reset from there",
+  ] },
+  { v: "2026-08-03 r3", notes: [
+    "Logging a wear now shows what that wear changed: cost per wear before and after for every piece, the gap it closed, and how close each piece is to the hamper",
+    "The same screen opens read-only from a calendar day or a look's wear list",
+  ] },
+  { v: "2026-08-03 r2", notes: [
+    "Laundry asks for the date first, then shows what was in the hamper on that day",
+    "Anything worn since then is listed separately, unticked — so back-dating a wash can't swallow today's clothes or quietly reset a piece's wear count",
+  ] },
+  { v: "2026-08-03 r1", notes: [
+    "The rack has three bands now — in rotation, steady, and haven't reached for lately — so the moderately-worn middle of your wardrobe stops being invisible",
+    "It grew from 46 to 58 pieces, and the rediscovery picks genuinely rotate instead of returning the same nine forever",
+    "“Worth a second look”: pieces the rack has offered three times that still haven't gone out, with four answers you pick",
+    "Tomorrow's pick comes from the rack now — it was the one screen that never used it",
+    "Ask for a context you've dressed several ways for and the app shows you the levels you've actually worn",
+  ] },
+  { v: "2026-07-30 r1-r6", notes: [
+    "Set contexts and a formality per event on a trip day, and add new contexts as you go",
+    "The pack screen leads with the items, not the schedule",
+    "Travel is a trip-wide tag rather than something stamped on the plane day",
+  ] },
+  { v: "2026-07-29 r1-r4", notes: [
+    "The trip builder: tell it the trip and it works out what to pack and how many, from past trips, past wears, the forecast and how long you'll go between washes",
+    "It won't hand you the same outfit two days running any more, and it names the day something runs out rather than saying “6 things are dirty”",
+    "Trip retrospective: what earned its weight, and what you packed and never wore — stated as a fact, never as advice",
+    "Mid-trip, it tells you what you haven't worn yet while there's still time to wear it",
+  ] },
+  { v: "2026-07-26 r1-r13", notes: [
+    "The rack: a standing pool of what's in play, which the suggester now draws from by default — always visible, always named, always one tap from the whole closet",
+    "“Things you might be wrong about”: pieces whose wear history disagrees with the formality you gave them",
+    "“Vary this look” starts from an outfit you already have",
+    "Formula chips in the suggester — rebuild a shape you keep returning to with different pieces",
+    "Workout is a formality level now, not a separate mode, so a run actually builds an outfit",
+    "A coherence pass: fewer screens printing their own title twice, one meaning per icon",
+  ] },
+  { v: "2026-07-25 r14-r22", notes: [
+    "Log where you've been, and past weather is looked up there instead of at home",
+    "One season flag, only when your season tags and what you've actually worn genuinely disagree — the guessing layer that produced the rest was deleted",
+    "Closet Review compares the seasons you set against the seasons you wear, and its one-tap answer adds rather than replaces",
+  ] },
+  { v: "2026-07-25 r1-r13", notes: [
+    "Weather memory: “you've dressed for this before”, with the outfits you wore on days like today",
+    "Milestones when you log — first outing, paid off, back from the deep, and four more",
+    "Your weekly rhythm pre-fills the planner, and never saves itself",
+    "Closet keyword search came back",
+    "Palette: the colours you own against the colours you actually wear",
+    "What's missing: which contexts are thin, and which pieces are doing the most miles",
+    "Year in pixels, and On this day on Home",
+  ] },
+  { v: "2026-07-24 r1", notes: [
+    "A wear is a DAY, everywhere. A five-piece outfit was counting as five wears in the stats and five outings for its context — every one of those numbers is now honest",
+    "The Rotation bar taps through to the two halves of the number: what you wore and what you didn't",
+  ] },
+  { v: "2026-07-21 r1-r14", notes: [
+    "The editorial redesign: warm paper and oxblood, a serif for headings, and real dark mode",
+    "Two themes to choose from in Settings",
+    "Tomorrow's pick sticks around instead of vanishing on a refresh",
+    "Edit your own categories and types",
+    "A Worn tray for the pile on the chair — worn since washing, not dirty yet",
+    "“Usually worn with”, your rhythm per piece, and how much of the closet you actually rotated",
+  ] },
+  { v: "2026-07-22 r1", notes: [
+    "Laundry control: pick the loads you ran and see exactly what's in them, back-date the wash, and override wears-per-wash per item",
+  ] },
 ];
+
+// Shown once after each update — always the head of RELEASE_NOTES, never a
+// second hand-maintained list.
+const WHATS_NEW = (RELEASE_NOTES[0] && RELEASE_NOTES[0].notes) || [];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.
 // Editable in-app since 2026-07-21: this is the DEFAULT shape; a saved

@@ -529,7 +529,16 @@ function _lnLoadItems(load, list) {
 function _lnLoadIds(load, hamper, worn) {
   return [..._lnLoadItems(load, hamper), ..._lnLoadItems(load, worn)].map(i => i.id);
 }
-function openLaundrySheet({ fromPrompt = false, pool = null } = {}) {
+/* `preLoad` / `preIds` carry a choice she has ALREADY made on the hamper screen
+   into the sheet (2026-08-04, her words: "I need the ability to select which
+   load from the hamper screen. Not just 'wash these' — open up a whole thing,
+   set the date, which colors, etc.").
+
+   ⚠️ They pre-select, they never decide. The sheet still owns the date, the
+   loads and the final Mark washed, because everything below the date depends on
+   it — that's the r2 fix, and a caller that pre-stamped a wash would walk
+   straight back into it. */
+function openLaundrySheet({ fromPrompt = false, pool = null, preLoad = null, preIds = null } = {}) {
   _lnSelIds = new Set();
   _lnActiveLoads = new Set();
   _lnFromPrompt = fromPrompt;
@@ -537,6 +546,19 @@ function openLaundrySheet({ fromPrompt = false, pool = null } = {}) {
   // Trip mode: wash the suitcase, not the closet — pool limits the hamper to
   // the passed items (capsule members). Null = whole closet, as ever.
   _lnPool = pool ? new Set(pool.map(i => i.id)) : null;
+  if (preLoad && LAUNDRY_REAL_LOADS.includes(preLoad)) {
+    const ls = laundryState();
+    const split = laundryAsOfSplit([..._lnHamper(ls), ..._lnWornPool(ls)], ls, _lnDate);
+    _lnActiveLoads.add(preLoad);
+    for (const id of _lnLoadIds(preLoad, split.hamper, split.worn)) _lnSelIds.add(id);
+  }
+  for (const id of (preIds || [])) {
+    _lnSelIds.add(id);
+    // Light the chip each piece belongs to as well, or it would be ticked and
+    // invisible — the grids only render items whose load chip is on.
+    const l = laundryLoadOf((itemById.get(id) || {}).color_family);
+    if (l) _lnActiveLoads.add(l);
+  }
   renderLaundrySheet();
   showSheet("logSheet");
 }
@@ -725,17 +747,59 @@ function _scopedWorn(ls) {
 // Full-page hamper — its own closet view (like a subcategory grid), because the
 // closet row promises "Hamper · N" and a tap should SHOW them. The wash flow
 // (load chips + date) still lives in the sheet, one tap away via "Did laundry".
+/* Which load the hamper page is showing. Session-only and reset on entry — a
+   filter that survived a trip back to the closet would be the invisible
+   narrowing the rack was approved on condition of avoiding.
+   `"__other__"` = colours no load claims (LAUNDRY_LOADS doesn't map every family,
+   and a piece with no colour at all belongs somewhere she can reach). */
+let hamperLoad = null;
+const _hamperLoadOf = (i) => laundryLoadOf(i.color_family) || "__other__";
+// The hamper as she's currently looking at it — used by the grid AND by
+// siblingItems, so swiping between pieces stays inside the load she picked.
+function hamperViewList(ls) {
+  const list = _scopedHamper(ls);
+  return hamperLoad ? list.filter(i => _hamperLoadOf(i) === hamperLoad) : list;
+}
+
 function renderClosetHamper() {
   const ls = laundryState();
-  const list = _scopedHamper(ls);
+  const all = _scopedHamper(ls);
+  const list = hamperViewList(ls);
   const sub = (i) => { const d = dirtyDays(i, ls); return d == null ? "" : d === 0 ? "today" : `${d}d`; };
+  /* Her ask, verbatim: "I need the ability to select which load from the hamper
+     screen." Same three loads as the wash sheet, off the same LAUNDRY_LOADS
+     mapping, so the page and the sheet can never disagree about what's a White. */
+  const counts = new Map();
+  for (const i of all) counts.set(_hamperLoadOf(i), (counts.get(_hamperLoadOf(i)) || 0) + 1);
+  const loadChip = (key, label) => {
+    const n = key ? (counts.get(key) || 0) : all.length;
+    if (key && !n) return "";
+    return `<button class="cap-chip${hamperLoad === key ? " on" : ""}" data-hload="${key || ""}" style="font-size:13px">${esc(label)} · ${n}</button>`;
+  };
+  const chips = all.length ? `<div style="padding:10px 16px 2px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Load</div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
+        ${loadChip(null, "Everything")}
+        ${LAUNDRY_REAL_LOADS.map(l => loadChip(l, l)).join("")}
+        ${loadChip("__other__", "Other colours")}
+      </div>
+    </div>` : "";
   const body = list.length
     ? gridHtml(list, sub)
-    : `<div class="placeholder" style="padding:40px 32px"><b>Nothing in the hamper 🎉</b>
-        <div>Pieces land here once you've worn them enough times since their last wash — or when you tap "🧺 To hamper" on an item.</div></div>`;
-  return clToolbar(`Hamper · ${list.length}`, true, false)
-    + (list.length ? `<div style="padding:10px 14px 2px"><button class="cl-capbtn" data-laundry-wash style="margin:0">🧺 Did laundry — mark these washed</button></div>
-       <div class="snote" style="padding:2px 16px 0">Ran only part of the pile? Tap <b>Select</b>, pick the ones you washed, then the ✓.</div>` : "")
+    : all.length
+      ? `<div class="placeholder" style="padding:40px 32px"><b>Nothing in this load</b>
+          <div>Tap <b>Everything</b> to see the rest of the hamper.</div></div>`
+      : `<div class="placeholder" style="padding:40px 32px"><b>Nothing in the hamper 🎉</b>
+          <div>Pieces land here once you've worn them enough times since their last wash — or when you tap "🧺 To hamper" on an item.</div></div>`;
+  // The button carries the chosen load through, so the sheet opens with that
+  // load lit and its pieces ticked instead of asking her the same question twice.
+  const washLabel = hamperLoad && hamperLoad !== "__other__" ? `🧺 Did laundry — the ${hamperLoad.toLowerCase()}` : "🧺 Did laundry…";
+  // "8 of 22" while a load chip is on — a bare total over a filtered grid reads
+  // as a miscount, which is the same complaint as an unlabelled narrowed pool.
+  return clToolbar(hamperLoad ? `Hamper · ${list.length} of ${all.length}` : `Hamper · ${all.length}`, true, false)
+    + chips
+    + (all.length ? `<div style="padding:8px 14px 2px"><button class="cl-capbtn" data-laundry-wash="${esc(hamperLoad && hamperLoad !== "__other__" ? hamperLoad : "")}" style="margin:0">${esc(washLabel)}</button></div>
+       <div class="snote" style="padding:2px 16px 0">Set the day it ran and tick the loads there. Washed only part of a load? Tap <b>Select</b>, pick those pieces, then ✓.</div>` : "")
     + body
     + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
 }

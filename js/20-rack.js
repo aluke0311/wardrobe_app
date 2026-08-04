@@ -108,6 +108,32 @@ const RACK_PUSH_LONG_DAYS = 120;// "not right now" from a reassessment — a sea
 const RACK_LOOKAHEAD_DAYS = 14; // how far ahead declared plans stock the rack
 const RACK_LEVEL_MIN = 2;       // per core slot, per level she'll actually need
 const RACK_SEEN_LIMIT = 3;      // offered this many rebuilds unworn → worth a second look
+/* ⚠️ OFF-LEVEL CEILING (2026-08-04, her report: "I do feel that I have quite a
+   lot of heels in the current rack, given that I don't dress up that often —
+   one pair from steady and three in haven't-reached-for-lately").
+
+   She was right, and the cause is structural rather than a bad number. The
+   steady and dormant bands are queues ordered by how seldom a piece has been
+   offered and how long it's been since she wore it — and a piece that only
+   covers Dressed Up and Formal is, by construction, ALWAYS overdue. So the
+   rediscovery half of a slot fills with exactly the pieces there is no upcoming
+   day for. Four of eleven shoes were heels on a rack meant to dress an ordinary
+   week.
+
+   The ceiling caps how many steady+dormant picks per slot cover NONE of the
+   levels in `rackNeededLevels()` — which is already declared upcoming plans
+   UNIONED with the levels she habitually lives at, so a wedding in the planner
+   still stocks the rack with heels the moment she declares it.
+
+   ⚠️ It applies to steady + dormant ONLY. Rotation is what she has actually
+   been reaching for, and if she wore heels last week they belong in play. The
+   formality top-up is exempt too — that only ever adds pieces that DO cover a
+   needed level.
+   ⚠️ Never zero (Math.max(1, …)): rediscovering a dressy piece has to stay
+   possible, it just can't take the whole band. And the backfill deliberately
+   ignores the ceiling — a slot with nothing else to offer should be full rather
+   than correct. */
+const RACK_OFFLEVEL_SHARE = 0.2;
 
 /* A slot quota is either the banded object above or a plain number (the trip
    builder's PACK_TRIP_QUOTA is flat, and calibrating it per-band would be a
@@ -245,6 +271,13 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     (wearCount(b.id) - wearCount(a.id)) || (a.id < b.id ? -1 : 1);
 
   const slotOf = i => (isLayer(i) && i.category === "Tops") ? "Tops" : suggestSlot(i);
+  /* Does this piece cover any level she'll actually need? See the
+     RACK_OFFLEVEL_SHARE comment — this is what keeps the rediscovery bands from
+     silting up with clothes for days she doesn't have. A piece with no
+     formality at all is imputed by itemFormalitySet, so nothing is off-level
+     merely for being untagged. */
+  const levelSet = new Set(levels);
+  const servesALevel = i => (itemFormalitySet(i) || []).some(l => levelSet.has(l));
   const ids = new Set();
   const rotation = new Set(), steady = new Set(), dormant = new Set();
 
@@ -264,9 +297,23 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     const rest = inSlot.filter(i => !chosen.has(i.id));
     const steadyPool = rest.filter(i => warmth(i) > 0).sort(byQueue);
     const dormantPool = rest.filter(i => warmth(i) === 0).sort(byQueue);
-    const inSteady = steadyPool.slice(0, band.steady);
+    /* One ceiling shared by both rediscovery bands, since the complaint is about
+       their TOTAL ("one from steady and three from haven't-reached-for"). Taking
+       in queue order and skipping past the ceiling means the next candidate gets
+       the slot — the queue keeps working, it just can't be all one kind of day. */
+    let offBudget = Math.max(1, Math.round((band.steady + band.dormant) * RACK_OFFLEVEL_SHARE));
+    const takeCapped = (queue, n) => {
+      const out = [];
+      for (const i of queue) {
+        if (out.length >= n) break;
+        if (!servesALevel(i)) { if (offBudget <= 0) continue; offBudget--; }
+        out.push(i);
+      }
+      return out;
+    };
+    const inSteady = takeCapped(steadyPool, band.steady);
     for (const i of inSteady) chosen.add(i.id);
-    const inDormant = dormantPool.slice(0, band.dormant);
+    const inDormant = takeCapped(dormantPool, band.dormant);
     for (const i of inDormant) chosen.add(i.id);
 
     /* 3. Backfill from whichever band has slack, so a thin slot still fills to
@@ -280,7 +327,13 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
         ...ranked.filter(i => warmth(i) > 0 && !chosen.has(i.id)),   // more recent
         ...dormantPool.filter(i => !chosen.has(i.id)),               // then dormant
       ];
-      for (const i of spare) {
+      /* The off-level ceiling does NOT block the backfill — a slot that can't
+         fill any other way should be full rather than correct. But it still
+         orders it: pieces the ceiling passed over go LAST, or a Shoes band with
+         four dressy candidates and one everyday pair would hand the skipped
+         heels straight back through this door. */
+      const ordered = [...spare.filter(servesALevel), ...spare.filter(i => !servesALevel(i))];
+      for (const i of ordered) {
         if (short <= 0) break;
         chosen.add(i.id);
         (warmth(i) > 0 ? inSteady : inDormant).push(i);
@@ -837,7 +890,7 @@ function renderClosetRack() {
   const body = list.length
     ? sec("In rotation", "What you've actually been reaching for.", inRot)
       + sec("Steady", "You wear these — just not this week. This band exists so the middle of your wardrobe doesn't go invisible.", inSteady)
-      + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, so you see different ones over time.", inDorm)
+      + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, and they lean toward the kinds of days you actually have — clothes for rarer occasions take a slot or two at most.", inDorm)
       + secondBlock
     : `<div class="placeholder" style="padding:40px 32px"><b>Rack not built yet</b>
         <div>It fills itself from what's in season and what you've been wearing.</div></div>`;

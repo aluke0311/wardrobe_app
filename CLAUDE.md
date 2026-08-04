@@ -224,6 +224,100 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-04 r1 — SIX REPORTS FROM USING r7.** Selftest 297 → **308**, run
+green; all 11 new cases mutation-checked red in the same session.
+
+⚠️ **THE RACK WAS FULL OF HEELS, AND THE CAUSE WAS STRUCTURAL.** Her report:
+*"quite a lot of heels in the current rack, given that I don't dress up that
+often — one from steady and three in haven't reached for lately."* The steady and
+dormant queues are ordered least-offered-first then longest-unworn, and a piece
+that only covers Dressed Up and Formal is **by construction always the most
+overdue** — so the rediscovery half of every slot silts up with clothes there is
+no upcoming day for. **`RACK_OFFLEVEL_SHARE`(0.2)** caps how many steady+dormant
+picks per slot cover NONE of `rackNeededLevels()` (Tops 2, everything else 1).
+- ⚠️ **Rotation is exempt** — if she wore heels last week they belong in play —
+  and so is the formality top-up, which only ever adds on-level pieces.
+- ⚠️ **Never zero** (`Math.max(1, …)`): rediscovering a dressy piece stays
+  possible, it just can't take the whole band. And **declaring a level lifts the
+  ceiling for it at once**, because `rackNeededLevels` already unions forward day
+  plans with her habitual levels — no special case, and pinned by a test.
+- ⚠️ **The backfill ignores the ceiling but is ORDERED by it.** A slot that can't
+  fill any other way should be full rather than correct; without the reordering
+  the skipped heels came straight back through that door.
+- ⚠️ **THE FIRST VERSION OF THE TEST COMPUTED ITS CEILING FROM
+  `RACK_OFFLEVEL_SHARE`** — so it passed with the ceiling switched off. Caught
+  during its own mutation check. **Ceilings are literals now**, same as the
+  cold-share test's hard 0.13–0.30 window.
+
+⚠️ **THE SUGGESTER WASN'T SKIPPING DRESSES — IT NEVER SAW THEM.** Her report:
+*"outfit suggester doesn't seem to like suggesting dresses."* Two independent
+causes, both structural:
+- **Enumeration arity.** The dress loop is `dresses × shoes × 3`; the two-piece
+  loop is `tops × bottoms × shoes × 3`. On a 58-piece rack that's ~200 against
+  ~5,000, and the candidate list is cut to `uniqueCap` **by score** before
+  sampling — measured **7%** of enumerated combos, and a mutation run produced
+  **0 dresses in 160 suggestions**. Fixed by **silhouette parity**: a dress
+  REPLACES a top and a bottom, so the honest target is `dresses/(dresses+tops)`,
+  and the two score-ordered queues are **interleaved** to it.
+  ⚠️ Interleave, not concatenate-and-re-sort — `pool2` is seed-first then score,
+  and re-sorting drops the seed guarantee. ⚠️ Sizes come from the new `slotSize`
+  map (**pre-sample**); both slots cap at 12, which would call 40 dresses and 200
+  tops an even split. ⚠️ `opts.all` (the pack solver) takes the plain cut —
+  parity is about what gets OFFERED, not what exists.
+- **`scoreCombo` paid for piece count.** `aff` summed over PAIRS (six for a
+  four-piece look, one for dress+shoes) and the variety salt summed over PIECES.
+  Both are **averages** now; the affinity term's 0–3 range is unchanged, so
+  `PACK_SCORE_W` needs no re-measuring.
+- **Measured after (58-piece rack, 6 dresses / 20 tops): ~23% of candidates,
+  ~37% of what's shown.** The gap is the softmax preferring them on merit — a
+  two-piece look has fewer chances to trip the loud-colour and pattern penalties
+  — and is deliberately left alone. Those are the numbers to re-measure against.
+
+**ONE DRESSING ORDER, TWO CALLERS.** Her report: *"outfit suggester buttons
+layout doesn't match the layout of the images."* The canvas sorted its pieces and
+the lock/swap chips rendered raw combo order, so on a four-piece look the second
+picture was the layer while the second button said "Bottom". **`suggestionPieceOrder`**
+is extracted and both use it. ⚠️ `suggestionLayout` also **no longer indexes past
+the end of its four-piece grid** — a saved look can hold more pieces than a combo
+ever will, and it threw; 5+ falls back to rows of three.
+
+**A CHANGELOG THAT GOES BACK (her ask: "the most recent few changes should be
+listed, or a new page with all the app updates so I can always see them").**
+**`RELEASE_NOTES`** in `js/01-config.js` — every release, newest first —
+plus `openChangelogSheet()` and a Settings card. ⚠️ **`WHATS_NEW` is DERIVED from
+`RELEASE_NOTES[0].notes`**, not maintained beside it: the post-update toast and
+the changelog can't disagree, and the deploy skill has one thing to prepend. A
+case pins that the head's `v` equals `APP_VERSION`.
+
+**THE HAMPER SORTS BY LOAD, AND BOTH WAYS IN OPEN THE SHEET.** Her words: *"I
+need the ability to select which load from the hamper screen. Not just 'wash
+these' — open up a whole thing, set the date, which colors, etc."*
+- `hamperLoad` + `hamperViewList()` — load chips off the same `LAUNDRY_LOADS`
+  mapping the sheet uses, plus an **"Other colours"** bucket so nothing is
+  unreachable. Session-only and reset on entry; `siblingItems` reads the same
+  list so swiping stays inside the load; the title reads **"8 of 22"** when
+  filtered.
+- `openLaundrySheet` gained **`preLoad` / `preIds`**. ⚠️ They pre-select, they
+  never decide — the sheet still owns the date, because everything below it
+  depends on that (the r2 fix).
+- ⚠️ **`bulkMarkWashed` no longer stamps.** Select → ✓ used to write
+  `stampWash(ids, todayStr())`, i.e. the one assumption r2 proved wrong. It opens
+  the sheet with her picks ticked and **their load chips lit** — selected-but-
+  hidden otherwise, since the grids only render pieces whose chip is on.
+
+**LOOKS WITHOUT AN ARRANGEMENT (her ask: "want the option to set a look layout to
+default rather than collage").** Two halves, deliberately:
+`LOOK_FALLBACK_KEY` + `lookFallbackMode()`/`lookFallbackLayout()` is a
+**presentation-only, store-backed** lens over every layout-less look (Settings →
+Appearance), and `applyDefaultLayout(id)` on a look's Details page **writes**
+`outfits.layout` so that one look becomes editable in the builder. ⚠️ A saved
+arrangement always wins over both.
+
+⚠️ **FOUR THINGS WERE ONLY FOUND BY RENDERING THE SCREENS** — the Settings
+what's-new blurb running to six lines of muted text, the changelog intro clipped
+under the sheet header, a four-line hamper explainer, and "Hamper · 22" printed
+over a grid of 8. Green tests said nothing about any of them.
+
 **2026-08-03 r7 — THE WARDROBE HALF, AND THE RACK CHURN I CAUSED.**
 
 **"WOULD THERE BE PROBLEMS" HAS TWO HALVES (r7).** Her correction: *"that's
@@ -1705,7 +1799,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-03 r7`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-04 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2052,7 +2146,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **297/297** (2026-08-03 r7, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **308/308** (2026-08-04 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

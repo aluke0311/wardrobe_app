@@ -3961,6 +3961,317 @@ async function run() {
     return !bad.length ? true : bad.join(" | ");
   });
 
+  /* ==================================================================
+     2026-08-04 r1 — six reports from using r7
+     ================================================================== */
+
+  // ---- the rack's off-level ceiling (her heels report) ----
+  /* Fixture shaped like the complaint: every slot has plenty of everyday pieces
+     AND a bank of dressy-only ones that sort to the FRONT of the rediscovery
+     queues (never worn, so tied on every key but the id — hence the "a_" / "z_"
+     names). That is exactly why four of eleven rack shoes were heels: a piece
+     with no upcoming day for it is, by construction, always the most overdue. */
+  const withDressyHeavyCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, cap: W.activeCapsuleId, ready: W.dataReady,
+                    rack: W.kvData.get("rack"), plan: W.kvData.get("dayplan") };
+    const slots = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"],
+                   ["Dresses","Short"],["Outerwear","Jackets"]];
+    const mk = (id, cat, sub, dressy) => ({ id, name: id, category: cat, subcategory: sub,
+      status: "Available", image_path: id + ".jpg", color_family: "Blue",
+      formality: dressy ? [6] : [2, 3], season: ["Spring","Summer","Fall","Winter"] });
+    W.items = []; W.wears = [];
+    for (const [cat, sub] of slots) {
+      for (let n = 0; n < 15; n++) {                       // recent → rotation
+        const id = `${cat}_hot_${n}`;
+        W.items.push(mk(id, cat, sub, false));
+        W.wears.push({ id: "w" + id, item_id: id, worn_on: W.shiftDate(today, -(n + 1)),
+                       outfit_id: null, context: ["Errands"], formality_for: 3 });
+      }
+      for (let n = 0; n < 20; n++) {                       // mid → steady queue
+        const a = `${cat}_mid_a_dressy_${n}`, z = `${cat}_mid_z_plain_${n}`;
+        W.items.push(mk(a, cat, sub, true), mk(z, cat, sub, false));
+        for (const id of [a, z])
+          W.wears.push({ id: "w" + id, item_id: id, worn_on: W.shiftDate(today, -(35 + (n % 10))),
+                         outfit_id: null, context: ["Errands"], formality_for: 3 });
+      }
+      for (let n = 0; n < 20; n++)                         // never worn → dormant queue
+        W.items.push(mk(`${cat}_cold_a_dressy_${n}`, cat, sub, true),
+                     mk(`${cat}_cold_z_plain_${n}`, cat, sub, false));
+    }
+    W.outfits = []; W.outfitLinks = []; W.exclusions = [];
+    W.activeCapsuleId = null; W.dataReady = true;
+    W.kvData.delete("rack"); W.kvData.delete("dayplan");
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.exclusions = saved.exclusions;
+      W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  };
+  // dressy-only pieces this rack put in the two REDISCOVERY bands, per slot
+  const offLevelPerSlot = (r) => {
+    const out = {};
+    for (const id of [...r.steady, ...r.dormant]) {
+      const i = W.itemById.get(id);
+      if (!i || (i.formality || []).includes(3)) continue;
+      const s = W.suggestSlot(i);
+      out[s] = (out[s] || 0) + 1;
+    }
+    return out;
+  };
+
+  /* ⚠️ HER REPORT, 2026-08-04: "quite a lot of heels in the current rack, given
+     that I don't dress up that often — one from steady and three in haven't
+     reached for lately." Without the ceiling this fixture hands the Shoes
+     rediscovery bands 5 dressy-only pairs out of 5 and Tops 9 out of 9. */
+  /* ⚠️ The ceilings are written out as LITERALS on purpose. Deriving them from
+     RACK_OFFLEVEL_SHARE would make the assertion move with the constant it is
+     guarding — the test passed with the ceiling effectively switched off, which
+     is the "a test that can't fail" trap in its subtlest form (caught during the
+     mutation check for this very case). Same reasoning as the cold-share test's
+     hard 0.13–0.30 window. */
+  t("the rack won't fill its rediscovery bands with clothes for days she doesn't have", () => withDressyHeavyCloset(() => {
+    const CEILING = { Tops: 2, Bottoms: 1, Dresses: 1, Shoes: 1, Outerwear: 1 };
+    const r = W.buildRack({ today });
+    const got = offLevelPerSlot(r);
+    const over = Object.entries(CEILING)
+      .filter(([slot, max]) => (got[slot] || 0) > max)
+      .map(([slot, max]) => `${slot}: ${got[slot]} > ${max}`);
+    return over.length ? over.join(" | ") : true;
+  }));
+
+  // The ceiling is never zero — rediscovering a dressy piece has to stay possible.
+  t("a dressy piece can still be a rediscovery pick", () => withDressyHeavyCloset(() => {
+    const r = W.buildRack({ today });
+    const got = offLevelPerSlot(r);
+    const total = Object.values(got).reduce((a, b) => a + b, 0);
+    return total >= 1 ? true : `no off-level piece anywhere in steady+dormant`;
+  }));
+
+  /* ⚠️ And the ceiling must LIFT the moment she declares a day for them —
+     otherwise it's the invisible-narrowing mistake with a nicer motive.
+     rackNeededLevels already reads forward day plans, so declaring a level 6
+     event makes those pieces on-level rather than special-cased. */
+  t("declaring a dressy event puts the dressy pieces back in play", () => withDressyHeavyCloset(() => {
+    const before = W.buildRack({ today });
+    const plans = {}; plans[W.shiftDate(today, 3)] = [{ contexts: ["Wedding"], level: 6, outfit: null }];
+    const after = W.buildRack({ today, plans });
+    const dressy = (r) => r.ids.filter(id => { const i = W.itemById.get(id); return i && !(i.formality || []).includes(3); }).length;
+    return dressy(after) > dressy(before)
+      ? true : `before=${dressy(before)} after=${dressy(after)} levels=${JSON.stringify(after.levels)}`;
+  }));
+
+  // ---- the suggester and dresses ----
+  const withEvenCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, cap: W.activeCapsuleId, ready: W.dataReady };
+    const slots = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"],["Dresses","Short"]];
+    W.items = [];
+    for (const [cat, sub] of slots)
+      for (let n = 0; n < 20; n++)
+        W.items.push({ id: `${cat}_${n}`, name: `${cat} ${n}`, category: cat, subcategory: sub,
+          status: "Available", image_path: `${cat}${n}.jpg`, color_family: "Blue",
+          formality: [2, 3], season: ["Spring","Summer","Fall","Winter"] });
+    W.wears = []; W.outfits = []; W.outfitLinks = []; W.exclusions = [];
+    W.activeCapsuleId = null; W.dataReady = true;
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.exclusions = saved.exclusions;
+      W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  };
+
+  /* ⚠️ HER REPORT, 2026-08-04: "outfit suggester doesn't seem to like suggesting
+     dresses". With equal numbers of dresses and tops the two loops still build
+     ~144 dress combos against ~864 two-piece ones, so cutting the top 60 by
+     score and sampling 8 left dresses at a few percent. Silhouette parity fills
+     the candidate list to dresses/(dresses+tops) instead. */
+  t("the suggester offers dresses in proportion to how many she owns", () => withEvenCloset(() => {
+    const pool = W.items.slice();
+    let dress = 0, total = 0;
+    for (let run = 0; run < 20; run++) {
+      const res = W.suggestOutfits(null, null, pool, null, null, null, false);
+      for (const c of res) { total++; if (c.pieces.some(p => p.category === "Dresses")) dress++; }
+    }
+    const share = total ? dress / total : 0;
+    return share >= 0.25 ? true : `dress share ${share.toFixed(3)} of ${total} suggestions`;
+  }));
+
+  /* The other half of the same bug: scoreCombo summed its learned-affinity term
+     over PAIRS and its variety salt over PIECES, so a four-piece look had six
+     chances to earn what dress + shoes had one chance at. Both are now averages,
+     which is what "do these go together" actually asks. */
+  t("scoreCombo doesn't pay a combo for having more pieces in it", () => {
+    const saved = { items: W.items, ip: W._itemPairFreq, cp: W._colorPairFreq, salt: W._suggSessionSalt };
+    try {
+      const cats = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"],["Outerwear","Jackets"]];
+      const its = cats.map(([c, s], n) => ({ id: "sc" + n, name: "plain " + n, category: c, subcategory: s,
+        status: "Available", image_path: "x.jpg", color_family: "Blue", formality: [2, 3],
+        season: ["Spring","Summer","Fall","Winter"] }));
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      // identical affinity on EVERY pair, so the only thing that can differ is
+      // how the term is aggregated; same colour kills the colour-pair term.
+      W._colorPairFreq = new (W.Map)();
+      W._itemPairFreq = new (W.Map)();
+      for (let a = 0; a < its.length; a++)
+        for (let b = a + 1; b < its.length; b++)
+          W._itemPairFreq.set(W._pairKey(its[a].id, its[b].id), 5);
+      W._suggSessionSalt = new (W.Map)();
+      for (const i of its) W._suggSessionSalt.set(i.id, 0);
+      W._suggSeen.clear();
+      const two = W.scoreCombo([its[0], its[2]], null, null, null);
+      const four = W.scoreCombo(its, null, null, null);
+      return Math.abs(two - four) < 1e-9 ? true : `2-piece ${two.toFixed(3)} vs 4-piece ${four.toFixed(3)}`;
+    } finally {
+      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
+      W._itemPairFreq = saved.ip; W._colorPairFreq = saved.cp; W._suggSessionSalt = saved.salt;
+    }
+  });
+
+  // ---- suggester chip order vs the picture above it ----
+  /* ⚠️ Her report: "outfit suggester buttons layout doesn't match the layout of
+     the images." The canvas sorted into dressing order and the lock/swap chips
+     under it rendered raw combo order, so on a four-piece look the second
+     picture was the layer while the second button said "Bottom". Rendered and
+     read, not asserted on the helper alone — that mismatch only exists on
+     screen. */
+  t("the suggester's piece buttons are in the same order as its pictures", () => {
+    const saved = { items: W.items, wears: W.wears, sugg: W._sugg, cap: W.activeCapsuleId,
+                    trip: W.tripModeId, ready: W.dataReady, inner: W.$("#logInner").innerHTML };
+    try {
+      const spec = [["Bottoms","Jeans"],["Shoes","Sneakers"],["Tops","Tee shirts"],["Outerwear","Jackets"]];
+      const its = spec.map(([c, s], n) => ({ id: "ord" + n, name: c + " " + n, category: c, subcategory: s,
+        status: "Available", image_path: "o" + n + ".jpg", color_family: "Blue", formality: [2, 3],
+        season: ["Spring","Summer","Fall","Winter"] }));
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      W.wears = []; W.activeCapsuleId = null; W.tripModeId = null; W.dataReady = true;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+      W._sugg = { results: [{ pieces: its, score: 1 }], idx: 0, targetLevel: null, seedItemId: null,
+        capsuleId: null, season: null, planCtx: null, activeContext: null, wx: null, useWx: false,
+        useClean: false, locked: new (W.Set)(), lockedRoles: new (W.Map)(), shapeKey: null,
+        wholeCloset: true, banned: new (W.Set)(), varyFrom: null, unworn: null };
+      W.renderSuggestSheet();
+      const root = W.$("#logInner");
+      const pics = [...root.querySelectorAll("#sgPreviewInner [data-canvas-item]")].map(e => e.dataset.canvasItem);
+      const btns = [...root.querySelectorAll("[data-slock]")].map(e => e.dataset.slock);
+      if (!pics.length || !btns.length) return `pics=${pics.length} btns=${btns.length}`;
+      return eq(btns, pics);
+    } finally {
+      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
+      W.wears = saved.wears; W._sugg = saved.sugg; W.activeCapsuleId = saved.cap;
+      W.tripModeId = saved.trip; W.dataReady = saved.ready;
+      W.$("#logInner").innerHTML = saved.inner;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  });
+
+  // ---- the default look arrangement ----
+  // A saved look can hold more pieces than a suggested combo ever will; the old
+  // four-entry grid was indexed straight off the piece count and threw past it.
+  t("the default arrangement handles a look with more than four pieces", () => {
+    const its = ["Tops","Bottoms","Shoes","Outerwear","Dresses","Tops"].map((c, n) =>
+      ({ id: "big" + n, category: c, subcategory: "x", name: "p" + n }));
+    const lay = W.suggestionLayout(its);
+    const bad = lay.filter(p => !p.item_id || typeof p.x !== "number" || typeof p.y !== "number" ||
+      typeof p.s !== "number" || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1);
+    return lay.length === its.length && !bad.length ? true : `${lay.length} entries, ${bad.length} malformed`;
+  });
+
+  t("looks without an arrangement follow the Settings choice", () => {
+    const saved = { items: W.items, outfits: W.outfits, links: W.outfitLinks,
+                    mode: W.store.getItem(W.LOOK_FALLBACK_KEY) };
+    try {
+      const its = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"]].map(([c, s], n) =>
+        ({ id: "lf" + n, name: c, category: c, subcategory: s, status: "Available", image_path: "lf" + n + ".jpg" }));
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      const plain = { id: "of_plain", layout: null, name: "plain" };
+      const arranged = { id: "of_lay", name: "arranged",
+                         layout: its.map((i, n) => ({ item_id: i.id, x: 0.5, y: 0.1 * n, s: 0.4 })) };
+      W.outfits = [plain, arranged];
+      W.outfitLinks = its.flatMap(i => [{ outfit_id: "of_plain", item_id: i.id },
+                                        { outfit_id: "of_lay", item_id: i.id }]);
+      W.buildOutfitIndexes();
+      W.setLookFallbackMode("collage");
+      const asCollage = W.outfitCollageHtml(plain, 4);
+      W.setLookFallbackMode("layout");
+      const asLayout = W.outfitCollageHtml(plain, 4);
+      const savedStays = W.outfitCollageHtml(arranged, 4);
+      return (asCollage.includes("ocollage") && !asCollage.includes("ocanvas")
+        && asLayout.includes("ocanvas") && (asLayout.match(/ocpiece/g) || []).length === its.length
+        && savedStays.includes("ocanvas"))
+        ? true
+        : `collage=${asCollage.slice(0, 40)} layout=${asLayout.slice(0, 40)}`;
+    } finally {
+      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
+      W.outfits = saved.outfits; W.outfitLinks = saved.links; W.buildOutfitIndexes();
+      if (saved.mode == null) W.store.removeItem(W.LOOK_FALLBACK_KEY);
+      else W.store.setItem(W.LOOK_FALLBACK_KEY, saved.mode);
+    }
+  });
+
+  // ---- the hamper's load filter ----
+  t("the hamper page can be narrowed to one wash load", () => {
+    const saved = { scoped: W._scopedHamper, load: W.hamperLoad };
+    try {
+      const pool = [
+        { id: "h1", color_family: "White" }, { id: "h2", color_family: "Beige" },
+        { id: "h3", color_family: "Black" }, { id: "h4", color_family: "Red" },
+        { id: "h5", color_family: null },
+      ];
+      W._scopedHamper = () => pool;
+      const ids = (l) => { W.hamperLoad = l; return W.hamperViewList().map(i => i.id); };
+      return eq([ids(null), ids("Whites"), ids("Cools"), ids("Warms"), ids("__other__")],
+                [["h1","h2","h3","h4","h5"], ["h1","h2"], ["h3"], ["h4"], ["h5"]]);
+    } finally { W._scopedHamper = saved.scoped; W.hamperLoad = saved.load; }
+  });
+
+  /* Her words: "not just 'wash these' — open up a whole thing, set the date,
+     which colors, etc." The Select → ✓ path used to stamp the selection washed
+     as of TODAY, which is the one assumption the r2 rework proved wrong. It now
+     opens the sheet with her picks carried in — and lights their load chips,
+     since the grids only render pieces whose chip is on. */
+  t("pieces picked in the hamper arrive in the wash sheet, ticked and visible", () => {
+    const saved = { items: W.items, sel: W._lnSelIds, loads: W._lnActiveLoads,
+                    pool: W._lnPool, inner: W.$("#logInner").innerHTML };
+    try {
+      const its = [{ id: "p1", name: "tee", color_family: "White", category: "Tops",
+                     subcategory: "Tee shirts", status: "Available", image_path: "p1.jpg" },
+                   { id: "p2", name: "jean", color_family: "Black", category: "Bottoms",
+                     subcategory: "Jeans", status: "Available", image_path: "p2.jpg" }];
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      W.openLaundrySheet({ preIds: ["p1", "p2"] });
+      const sel = [...W._lnSelIds].sort();
+      const loads = [...W._lnActiveLoads].sort();
+      W.hideSheet("logSheet");
+      return eq([sel, loads], [["p1", "p2"], ["Cools", "Whites"]]);
+    } finally {
+      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
+      W._lnSelIds = saved.sel; W._lnActiveLoads = saved.loads; W._lnPool = saved.pool;
+      W.$("#logInner").innerHTML = saved.inner;
+    }
+  });
+
+  // ---- the changelog ----
+  /* One list, two surfaces. WHATS_NEW is derived from the head of RELEASE_NOTES
+     so the post-update toast and Settings → All updates can never disagree, and
+     there is one thing for the deploy skill to add to. */
+  t("the changelog leads with this version, and What's new is derived from it", () => {
+    const head = W.RELEASE_NOTES[0] || {};
+    const dupes = W.RELEASE_NOTES.map(r => r.v).filter((v, i, a) => a.indexOf(v) !== i);
+    const empty = W.RELEASE_NOTES.filter(r => !r.v || !Array.isArray(r.notes) || !r.notes.length).map(r => r.v);
+    return eq([head.v === W.APP_VERSION, JSON.stringify(W.WHATS_NEW) === JSON.stringify(head.notes),
+               dupes, empty],
+              [true, true, [], []]);
+  });
+
   // ---- render summary ----
   await Promise.all(pending);
   const ul = document.getElementById("results");
