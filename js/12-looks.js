@@ -378,7 +378,7 @@ function matchesSeason(i, season) { const s = itemSeasonSet(i); return !!s && s.
 // funnel brings Storage/Archive back.
 function itemMatchesFilter(i, state, opts) {
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule, context } = state;
+          formality, retailer, acquisition, capsule, context, rack } = state;
   const st = itemStatus(i);
   if (status?.size) { if (!status.has(st)) return false; }
   else if (!opts?.noStatusDefault) { if (st !== "Available") return false; }
@@ -400,6 +400,20 @@ function itemMatchesFilter(i, state, opts) {
     const cs = itemContextMap().get(i.id);
     if (!cs || ![...context].some(c => cs.has(c))) return false;
   }
+  /* The rack, by band. "On the rack" is the union — picking it alongside a band
+     is a union too, which is what a multi-select chip group means everywhere
+     else in this sheet. */
+  if (rack?.size) {
+    const band = (typeof rackBandOf === "function") ? rackBandOf(i.id) : null;
+    const on = !!band;
+    const want = (k) => rack.has(k);
+    const ok = (want("On the rack") && on) ||
+               (want("In rotation") && band === "rotation") ||
+               (want("Steady") && band === "steady") ||
+               (want("Dormant") && band === "dormant") ||
+               (want("Off the rack") && !on);
+    if (!ok) return false;
+  }
   // "Home" is a look-level bucket, not an item level — ignore it here.
   if (formality?.size) {
     const lv = [...formality].filter(v => v !== "Home");
@@ -414,7 +428,7 @@ function itemMatchesFilter(i, state, opts) {
 function outfitMatchesFilter(o, state) {
   if (!hasActiveFilter(state)) return true;
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule, liked, context } = state;
+          formality, retailer, acquisition, capsule, liked, context, rack } = state;
   if (q) {
     const hay = [o.name, o.notes].filter(Boolean).join(" ").toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
@@ -446,6 +460,10 @@ function outfitMatchesFilter(o, state) {
     if (acquisition?.size && !its.some(i => acquisition.has(i.acquisition))) return false;
     if (category?.size && !its.some(i => category.has(i.category))) return false;
     if (subcategory?.size && !its.some(i => subcategory.has(i.subcategory))) return false;
+    /* ALL-pieces, like status and capsule: "looks I could wear off the rack
+       right now" only means something if the WHOLE look is on it. An ANY-piece
+       reading would return almost every look, which is the same as no filter. */
+    if (rack?.size && !its.every(i => itemMatchesFilter(i, { rack }, { noStatusDefault: true }))) return false;
   }
   return true;
 }
@@ -564,6 +582,17 @@ function rackLineHtml(i) {
     : `<div class="item-stat-strip" style="display:flex;justify-content:center">
         <button class="lnk" data-rack-toggle="1" style="font-size:12px;color:var(--muted)">\u{1F455} Put on the rack</button>
       </div>`;
+}
+/* Flag for review — a bookmark, nothing more (see the FLAGGED entry in
+   js/20-rack.js). Deliberately quiet: it sits under the rack line rather than
+   in the action bar, because this is a thing she does occasionally, not daily. */
+function flagLineHtml(i) {
+  const on = isFlagged(i.id);
+  const note = on ? flagNote(i.id) : "";
+  return `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:8px">
+    <button class="lnk" data-flag-open style="font-size:12px;color:${on ? "var(--accent)" : "var(--muted)"}">${on ? "\u{1F6A9} Flagged for review" : "\u{1F6A9} Flag for review"}</button>
+    ${note ? `<span class="muted" style="font-size:11.5px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(note)}</span>` : ""}
+  </div>`;
 }
 
 function relDate(d) {

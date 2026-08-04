@@ -194,6 +194,12 @@ async function saveDayPlan(date, entries) {
     all[date] = entries || [];
     return pruneDayPlan(all, todayStr());
   });
+  /* Declaring an event is exactly when the rack should learn about it — her
+     question, "if I add a context not included in the rack, will the rack
+     automatically expand/revise itself right then?" rackIsStale now compares
+     the needed levels against the ones the stored rack was built for, so this
+     is a no-op unless the plan actually introduced a level it can't dress. */
+  if (typeof rackEnsure === "function") rackEnsure().catch(() => {});
 }
 // Suggest level for a multi-context entry: every context's usual level when
 // they agree; the dressier one when they don't (safer to be the overdressed

@@ -16,6 +16,11 @@ const FILTERS = [
   ["acquisition","Acquisition", () => ["New","Secondhand","Gift"]],
   ["capsule",    "Capsule",     () => capsules.map(c => c.name).sort()],
   ["context",    "Worn for",    () => contextOptions()],
+  /* The rack as a filter dim (2026-08-03 r6, her ask: "should be able to filter
+     by rack in all places filters exist"). Bands rather than a bare yes/no —
+     "show me the dormant tops" is the question worth asking, and "On the rack"
+     is the union of the three. Derived, so it needs no storage and no upkeep. */
+  ["rack",       "The rack",    () => ["On the rack", "In rotation", "Steady", "Dormant", "Off the rack"]],
 ];
 // Per-surface filter dims: closet uses lens for status + folders for category/subcategory (not in funnel).
 // Stats includes category (useful: filter to Tops only), but not subcategory (too granular).
@@ -45,19 +50,20 @@ function newFilterState(overrides) {
   const s = { q: "", color: new Set(), fabric: new Set(), size: new Set(),
     season: new Set(), brand: new Set(), status: new Set(), category: new Set(),
     subcategory: new Set(), formality: new Set(), retailer: new Set(),
-    acquisition: new Set(), capsule: new Set(), liked: new Set(), context: new Set() };
+    acquisition: new Set(), capsule: new Set(), liked: new Set(), context: new Set(),
+    rack: new Set() };
   if (overrides) Object.assign(s, overrides);
   return s;
 }
 function hasActiveFilter(f) {
   if (f.q) return true;
   return ["color","fabric","size","season","brand","status","category","subcategory",
-          "formality","retailer","acquisition","capsule","liked","context"].some(k => f[k] instanceof Set && f[k].size > 0);
+          "formality","retailer","acquisition","capsule","liked","context","rack"].some(k => f[k] instanceof Set && f[k].size > 0);
 }
 function filterActiveCount(f) {
   let n = f.q ? 1 : 0;
   for (const k of ["color","fabric","size","season","brand","status","category","subcategory",
-                   "formality","retailer","acquisition","capsule","liked","context"]) if (f[k]?.size) n++;
+                   "formality","retailer","acquisition","capsule","liked","context","rack"]) if (f[k]?.size) n++;
   return n;
 }
 let closetFilter = newFilterState();

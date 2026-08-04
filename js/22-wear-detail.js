@@ -171,7 +171,7 @@ function wearDetailHtml(d, { live = false } = {}) {
     if (p.band === "dormant") facts.push(fact("✨ back off the rack", true));
 
     return `<button data-wd-item="${esc(i.id)}" style="display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;padding:12px 0;border-bottom:1px solid var(--line)">
-      <span style="width:58px;flex:none">${thumbHtml(i.image_path, "cthumb")}</span>
+      ${thumbHtml(i.image_path, "sthumb")}
       <span style="flex:1;min-width:0">
         <span style="display:block;font-size:14px;font-weight:600;line-height:1.3">${esc(i.name || "Untitled")}</span>
         <span style="display:block;padding-top:5px">${cpwBit}</span>

@@ -76,7 +76,7 @@
       --grabber: #4a4235;
       --bg2: #2a2419;
     }
-    img, .item-photo:not(.empty), .gphoto, .cthumb, .tm-thumb, .cc-cell { filter: brightness(.94); }
+    img, .item-photo:not(.empty), .gphoto, .cthumb, .sthumb, .tm-thumb, .cc-cell { filter: brightness(.94); }
   }
   /* ---------- sage theme (user-selectable) ---------- */
   html[data-theme="sage"] {
@@ -376,6 +376,14 @@
   .cthumb { width: 64px; height: 64px; flex: none; border-radius: 10px; background: var(--panel) center/contain no-repeat; box-shadow: 0 1px 3px rgba(33,29,26,.08); }
   .cthumb.empty { display: flex; align-items: center; justify-content: center; background-color: var(--panel); }
   .cthumb.empty svg { width: 30px; height: 30px; stroke: var(--line); stroke-width: 1.5; fill: none; }
+  /* Small list thumb. ⚠️ Exists because .cthumb is a FIXED 64px — wrapping it in
+     a narrower box does not shrink it, it overflows and lands on top of the text
+     beside it. That bug shipped twice (the Tomorrow strip in 2026-07-21, then
+     the month review + wear panel in r5). Never size a thumb by its container;
+     give it a class. */
+  .sthumb { width: 44px; height: 44px; flex: none; border-radius: 9px; background: var(--panel) center/contain no-repeat; box-shadow: 0 1px 3px rgba(33,29,26,.08); }
+  .sthumb.empty { display: flex; align-items: center; justify-content: center; background-color: var(--panel); }
+  .sthumb.empty svg { width: 22px; height: 22px; stroke: var(--line); stroke-width: 1.5; fill: none; }
   .tm-strip { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .tm-thumb { width: 48px; height: 48px; flex: none; border-radius: 8px; background: var(--panel) center/contain no-repeat; }
   .tm-thumb.empty { display: flex; align-items: center; justify-content: center; background-color: var(--panel); }

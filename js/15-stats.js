@@ -491,6 +491,7 @@ function _renderStatsView() {
   if (statsView === "rotation")    { renderStatsRotationPage(); return; }
   if (statsView === "wrapped")     { renderStatsWrapped();      return; }
   if (statsView === "month")       { renderStatsMonthPage();   return; }
+  if (statsView === "flagged")     { renderStatsFlaggedPage(); return; }
   if (statsView === "pixels")      { renderStatsPixelsPage();  return; }
   if (statsView === "palette")     { renderStatsPalettePage(); return; }
   if (statsView === "missing")     { renderStatsMissingPage(); return; }
@@ -919,6 +920,12 @@ function renderStatsMain() {
               n ? `${n} piece${n === 1 ? "" : "s"} you wear differently than you tagged` : "Nothing's arguing with you",
               "misfit");
           })()}
+          ${(() => {
+            const n = flaggedItems().length;
+            return row("Flagged for review",
+              n ? `${n} piece${n === 1 ? "" : "s"} you've set aside to think about` : "Nothing flagged — flag a piece from its photo",
+              "flagged");
+          })()}
         </div>
       </div>
 
@@ -1003,6 +1010,9 @@ function renderStatsMain() {
       }
       if (action === "month") {
         statsView = "month"; statsMonthYm = null; renderStats(); return;
+      }
+      if (action === "flagged") {
+        statsView = "flagged"; renderStats(); return;
       }
       if (action === "pixels") {
         statsView = "pixels"; statsPixelsYear = null; renderStats(); return;
@@ -2173,7 +2183,7 @@ function renderStatsMonthPage() {
   const big = (v, lbl) => `<div style="text-align:center;flex:1"><div style="font-size:30px;font-weight:800;color:var(--accent);line-height:1.1">${v}</div><div style="font-size:12px;color:var(--muted);padding-top:3px">${lbl}</div></div>`;
   const lbl = (t) => `<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">${t}</div>`;
   const row = (it, right, sub) => `<button data-mo-item="${esc(it.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:6px 0">
-      <span style="width:42px;flex:none">${thumbHtml(it.image_path, "cthumb")}</span>
+      ${thumbHtml(it.image_path, "sthumb")}
       <span style="flex:1;min-width:0">
         <span style="display:block;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
         ${sub ? `<span style="display:block;font-size:11.5px;color:var(--muted)">${esc(sub)}</span>` : ""}
@@ -2262,6 +2272,52 @@ function renderStatsMonthPage() {
     b.onclick = () => openItemFromStats(b.dataset.moItem));
   $("#statsBody").querySelectorAll("[data-mo-look]").forEach(b =>
     b.onclick = () => openLookFrom(b.dataset.moLook));
+}
+
+/* The flagged list. ⚠️ Whole-wardrobe page → no pool AND hideFilter=true, per
+   the funnel rule: a funnel that silently changed nothing would lie. */
+function renderStatsFlaggedPage() {
+  const list = flaggedItems();
+  const body = list.length ? list.map(({ item, note, at }) => {
+    const im = deleteImpact(item.id);
+    return `<div class="det-card" style="margin:0 14px 10px;padding:12px 13px">
+      <button data-fl-item="${esc(item.id)}" style="display:flex;align-items:center;gap:11px;width:100%;text-align:left">
+        ${thumbHtml(item.image_path, "sthumb")}
+        <span style="flex:1;min-width:0">
+          <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || "Untitled")}</span>
+          <span class="muted" style="display:block;font-size:11.5px">flagged ${esc(fmtDate(at))}${im && im.wearDays ? ` · ${im.wearDays} wear${im.wearDays === 1 ? "" : "s"} on record` : " · never worn"}</span>
+        </span>
+      </button>
+      ${note ? `<div style="font-size:13px;line-height:1.5;padding-top:8px;font-style:italic">“${esc(note)}”</div>` : ""}
+      <div style="padding-top:9px">${deleteImpactHtml(im)}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:11px">
+        <button class="cap-chip" data-fl-edit="${esc(item.id)}" style="font-size:12.5px">✎ Note</button>
+        <button class="cap-chip" data-fl-store="${esc(item.id)}" style="font-size:12.5px">Move to Storage</button>
+        <button class="cap-chip" data-fl-clear="${esc(item.id)}" style="font-size:12.5px;color:var(--muted)">Keep it</button>
+      </div>
+    </div>`;
+  }).join("") : `<div class="placeholder" style="padding:44px 32px"><b>Nothing flagged</b>
+      <div>Open any piece and tap “Flag for review” to set it aside. Flagging changes nothing — it just collects them here.</div></div>`;
+
+  $("#statsBody").innerHTML = statsToolbar("Flagged for review", true, false, true)
+    + `<div class="snote" style="padding:10px 16px 4px;font-size:12.5px;line-height:1.5">Pieces you've set aside to think about, with what you'd lose if you deleted them. Nothing here is a recommendation — it's your list.</div>`
+    + body + `<div style="height:34px"></div>`;
+  hydratePhotos($("#statsBody"));
+  wireStatsToolbar();
+  $("#statsBody").querySelectorAll("[data-fl-item]").forEach(b =>
+    b.onclick = () => openItemFromStats(b.dataset.flItem));
+  $("#statsBody").querySelectorAll("[data-fl-edit]").forEach(b =>
+    b.onclick = () => openFlagSheet(b.dataset.flEdit));
+  $("#statsBody").querySelectorAll("[data-fl-clear]").forEach(b =>
+    b.onclick = async () => { await clearFlag(b.dataset.flClear); renderStats(); });
+  $("#statsBody").querySelectorAll("[data-fl-store]").forEach(b =>
+    b.onclick = async () => {
+      const id = b.dataset.flStore;
+      await saveField(id, "status", "Storage");
+      await clearFlag(id);
+      toast("Moved to Storage — history kept");
+      renderStats();
+    });
 }
 
 function renderStatsContextDetailPage() {

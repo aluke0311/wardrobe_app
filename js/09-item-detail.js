@@ -109,6 +109,7 @@ function openItem(id) {
     ${workhorseBadgeHtml(i)}
     ${laundryLineHtml(i)}
     ${rackLineHtml(i)}
+    ${flagLineHtml(i)}
     ${i.image_path
       ? `<div class="item-photo" data-photo="${esc(i.image_path)}"></div>`
       : `<div class="item-photo empty"><svg viewBox="0 0 24 24" style="width:64px;height:64px;stroke:#c9beae;stroke-width:1.4;fill:none"><rect x="2" y="6" width="20" height="14" rx="2"/><circle cx="12" cy="13" r="3"/></svg></div>`}
@@ -145,6 +146,8 @@ function openItem(id) {
     await (on ? pullOntoRack(i.id) : pushOffRack(i.id));
     openItem(i.id);
   };
+  const flagBtn = body.querySelector("[data-flag-open]");
+  if (flagBtn) flagBtn.onclick = () => openFlagSheet(i.id);
   const dateEdit = body.querySelector("[data-laun-date-edit]");
   if (dateEdit) dateEdit.onclick = () => openFieldEdit(i.id, "last_washed");
   const tolEdit = body.querySelector("[data-laun-tol-edit]");
@@ -796,7 +799,19 @@ function renderFieldSheet(i, field, cfg) {
 
 // ---- Delete single item ----
 async function deleteItem(id) {
-  if (!confirm("Delete this item? This cannot be undone.")) return;
+  /* ⚠️ SAY WHAT IS ACTUALLY LOST. `wears.item_id` is ON DELETE CASCADE, so this
+     permanently deletes every wear ever logged for the piece — and the app used
+     to ask "this cannot be undone" without ever mentioning that. The data is
+     the irreplaceable asset (2026-07-18); a generic confirm was not enough. */
+  const im = (typeof deleteImpact === "function") ? deleteImpact(id) : null;
+  const parts = ["Delete this item? This cannot be undone."];
+  if (im) {
+    if (im.wearDays) parts.push(`\n• ${im.wearDays} logged wear${im.wearDays === 1 ? "" : "s"} will be deleted with it${im.firstWorn ? `, back to ${fmtDate(im.firstWorn)}` : ""}.`);
+    if (im.soloDays) parts.push(`• ${im.soloDays} calendar day${im.soloDays === 1 ? "" : "s"} will go blank.`);
+    if (im.breaks) parts.push(`• ${im.breaks} look${im.breaks === 1 ? "" : "s"} will drop below two pieces.`);
+    if (im.wearDays || im.looks) parts.push(`\nStorage keeps all of it and still takes the piece out of your closet.`);
+  }
+  if (!confirm(parts.join("\n"))) return;
   try {
     await rest(`/items?id=eq.${id}`, { method: "DELETE" });
     items = items.filter(i => i.id !== id);

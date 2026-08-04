@@ -1992,7 +1992,10 @@ async function run() {
      checking staleness. So the 7-day cadence and the season-flip guard only ran
      if she happened to visit the rack SCREEN. */
   t("a stale or old-format rack is rebuilt, a fresh one is left alone", () => withRackCloset(() => {
-    const fresh = { built: today, season: W.currentSeason(), ids: ["a"], rotation: ["a"], steady: [], dormant: [] };
+    // `levels` = what the stored rack was built to dress; without it every rack
+    // reads as stale, since a needed level would always be "new".
+    const fresh = { built: today, season: W.currentSeason(), ids: ["a"], rotation: ["a"], steady: [], dormant: [],
+                    levels: W.rackNeededLevels(today) };
     const old = { built: today, season: W.currentSeason(), ids: ["a"], cold: [] };   // pre-band shape
     const aged = { ...fresh, built: W.shiftDate(today, -(W.RACK_REBUILD_DAYS + 1)) };
     const offSeason = { ...fresh, season: "NotASeason" };
@@ -3758,6 +3761,84 @@ async function run() {
     const p = W.buildWearDelta([{ item_id: "tee", worn_on: D(0) }]).pieces[0];
     // time between wears, in both directions — the thing she asked for by name
     return eq([p.gap, p.avgGap, p.after], [10, 15, 4]);
+  }));
+
+  /* ---- flag for review + delete impact (2026-08-03 r6) ----
+     Her ask: "would there be any problems if I delete this?" ⚠️ wears.item_id is
+     ON DELETE CASCADE, so the honest answer leads with the wear history. */
+  t("the delete impact leads with the wear history it would destroy", () => withWearCloset(() => {
+    W.wears = [{ item_id: "tee", worn_on: D(-40) }, { item_id: "tee", worn_on: D(-2) },
+               { item_id: "jea", worn_on: D(-2) }];
+    const im = W.deleteImpact("tee");
+    // 2 wear-days, one of which (D-40) is the only thing logged that day
+    return eq([im.wearDays, im.soloDays, im.firstWorn], [2, 1, D(-40)]);
+  }));
+
+  t("it counts the looks that would stop being looks", () => withWearCloset(() => {
+    W.outfits = [{ id: "pair", name: "Two-piece", archived: false, rating: 1 },
+                 { id: "trio", name: "Three-piece", archived: false, rating: null }];
+    W.outfitLinks = [{ outfit_id: "pair", item_id: "tee" }, { outfit_id: "pair", item_id: "jea" },
+                     { outfit_id: "trio", item_id: "tee" }, { outfit_id: "trio", item_id: "jea" },
+                     { outfit_id: "trio", item_id: "gif" }];
+    W.wears = [];
+    W.buildOutfitIndexes();
+    const im = W.deleteImpact("tee");
+    // in 2 looks; only the 2-piece one breaks; 1 of them is hearted
+    return eq([im.looks, im.breaks, im.liked], [2, 1, 1]);
+  }));
+
+  /* ⚠️ "Doesn't change anything" is the contract she asked for this under. A
+     flag must never reach the rack, the suggester or any pool. */
+  t("flagging a piece changes nothing about how it's used", () => withRackCloset(() => {
+    const victim = W.rackItems()[0].id;
+    const before = W.buildRack({ today }).ids.length;
+    W.kvData.set("flagged", { [victim]: { at: today, note: "elbows gone" } });
+    const after = W.buildRack({ today });
+    W.openSuggestSheet();
+    const pool = W._suggPool();
+    const still = pool.some(i => i.id === victim);
+    W.kvData.delete("flagged");
+    return after.ids.length === before && after.ids.includes(victim) && still
+      ? true : `rack ${before}→${after.ids.length}, in pool=${still}`;
+  }));
+
+  /* ---- the rack as a filter dim (2026-08-03 r6) ---- */
+  t("the rack filter narrows by band, and Off the rack is its complement", () => withRackCloset(() => {
+    const S = W.Set;
+    const onRack = W.items.filter(i => W.itemMatchesFilter(i, { rack: new S(["On the rack"]) }));
+    const off = W.items.filter(i => W.itemMatchesFilter(i, { rack: new S(["Off the rack"]) }));
+    const dorm = W.items.filter(i => W.itemMatchesFilter(i, { rack: new S(["Dormant"]) }));
+    const rackIds = new Set(W.rackItems().map(i => i.id));
+    const avail = W.items.filter(i => W.itemStatus(i) === "Available");
+    return onRack.length === rackIds.size && onRack.length + off.length === avail.length &&
+           dorm.length === W.rackEffective().dormant.size && dorm.length < onRack.length
+      ? true : `on=${onRack.length} off=${off.length} avail=${avail.length} dorm=${dorm.length}`;
+  }));
+
+  /* ⚠️ Her question: "if I add a context not included in the rack, will the rack
+     automatically expand/revise itself right then?" It did NOT — rackNeededLevels
+     reads forward plans, but nothing marked the rack stale when she added one,
+     so a Wedding planned on Monday could wait until Sunday's rebuild while
+     targetLevel (a HARD filter) returned an empty sheet. */
+  t("declaring a level the rack can't dress makes it stale at once", () => withRackCloset(() => {
+    const built = W.buildRack({ today });
+    const fresh = { built: today, season: W.currentSeason(), ids: built.ids, levels: built.levels,
+                    rotation: built.rotation, steady: built.steady, dormant: built.dormant };
+    const quiet = W.rackIsStale(fresh, today);
+    // a Wedding (seed level 6) inside the lookahead window
+    W.kvData.set("dayplan", { [W.shiftDate(today, 4)]: [{ contexts: ["Wedding"], outfit: null }] });
+    const afterPlan = W.rackIsStale(fresh, today);
+    W.kvData.delete("dayplan");
+    return eq([quiet, afterPlan], [false, true]);
+  }));
+
+  t("losing a level does not churn the rack", () => withRackCloset(() => {
+    // built for MORE levels than are needed now — that must not force a rebuild
+    const built = W.buildRack({ today });
+    const fresh = { built: today, season: W.currentSeason(), ids: built.ids,
+                    levels: [...new Set([...built.levels, 7, 8])],
+                    rotation: built.rotation, steady: built.steady, dormant: built.dormant };
+    return eq(W.rackIsStale(fresh, today), false);
   }));
 
   t("no js/ module reintroduces a hardcoded white", () => {

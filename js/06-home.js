@@ -735,9 +735,13 @@ function tripDashHtml(c) {
     const nm = (i) => i && (i.name || "a piece");
     const when = first ? weekDayLabel(first.date, today) : "later in the trip";
     const rest = mtw.items.length - 1;
-    washPlanHtml = `<button class="td-laun" data-td-washplan style="align-items:flex-start">🧼
-      <span style="flex:1;line-height:1.4">Your plan wears the <b>${esc(nm(first && first.item))}</b> again ${esc(when)}, but it's out of clean wears${rest > 0 ? ` — and ${rest} other${rest === 1 ? "" : "s"} run out too` : ""}.
-        <span style="display:block;color:var(--muted);font-size:12px">Tap to mark a wash on the trip.</span></span>
+    /* ⚠️ NO INSTRUCTION (2026-08-03 r6, her words: "I don't like the app telling
+       me to wash x"). This states what the PLAN does and leaves the conclusion
+       to her — same rule as "packed 3×, worn 0×" being a fact, never advice.
+       It used to read "Wash 3 pieces for the rest of the trip" and open the
+       mark-as-washed form, which is an instruction plus a chore. */
+    washPlanHtml = `<button class="td-laun" data-td-washplan style="align-items:flex-start">🧺
+      <span style="flex:1;line-height:1.4">Your plan has the <b>${esc(nm(first && first.item))}</b> out again ${esc(when)} — that's past its wears since the last wash${rest > 0 ? `, and ${rest} other${rest === 1 ? " is" : "s are"} in the same place` : ""}.</span>
       <span style="color:var(--accent);font-weight:600">›</span></button>`;
   }
 
@@ -1211,7 +1215,7 @@ function renderWeekPlan() {
        the day, because "6 things are dirty" is not actionable and "the black
        jeans run out Thursday" is. */
     const launRow = hits.length ? `<div class="snote" style="margin-top:9px;padding:7px 9px;background:var(--panel);border-radius:9px;font-size:12.5px;line-height:1.4">
-        🧺 ${hits.map(h => `<b>${esc(h.item.name || "A piece")}</b> hits ${h.n} of ${h.tol}`).join(" · ")} — ${hits.length === 1 ? "it needs" : "they need"} a wash before this.
+        🧺 ${hits.map(h => `<b>${esc(h.item.name || "A piece")}</b> reaches ${h.n} of ${h.tol} wears`).join(" · ")}.
       </div>` : "";
 
     return `<div class="det-card" style="margin:0 16px 10px;padding:11px 13px${washOn ? ";border-color:var(--accent)" : ""}">
@@ -1228,7 +1232,7 @@ function renderWeekPlan() {
         ? `${planned} outfit${planned === 1 ? "" : "s"} planned this week.`
         : `Set each day's context, then pick the outfit whenever.`}
       ${fc.suggestWash && !isWashDay(fc.suggestWash, washAll)
-        ? ` Things start running out ${esc(weekDayLabel(fc.firstOverflow, today))} — a wash <b style="color:var(--text)">${esc(weekDayLabel(fc.suggestWash, today))}</b> would clear it.`
+        ? ` As it stands, things run past their wears from ${esc(weekDayLabel(fc.firstOverflow, today))}.`
         : fc.firstOverflow ? "" : ` Nothing runs out of clean this week.`}</div>
     </div>`;
 

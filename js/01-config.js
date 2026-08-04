@@ -6,14 +6,15 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-03 r5";
+const APP_VERSION = "2026-08-03 r6";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Planning ahead now knows the laundry — a piece today's plan will dirty is no longer suggested for tomorrow. The chip says “Clean on Thu” so you can widen it in one tap",
-  "The wear panel has room to breathe and more in it: time since last wear, your usual gap, wears per month, wears this year, and when something crosses under $1",
-  "New Month in Review under Stats — what got cheaper, what you wore most, first outings, pieces back from the deep, and how dressed up the month was. Browse any past month",
-  "The trip's wash heads-up now says which piece, which day, and why, instead of just “wash 3 pieces”",
+  "Flag any piece for review from its photo, with a note to yourself. It changes nothing — it just collects in Stats → Flagged for review, where the app tells you exactly what you'd lose by deleting it (including every logged wear, which does get deleted with the item)",
+  "Filter by the rack anywhere there's a funnel — on the rack, in rotation, steady, dormant, or off it entirely",
+  "Fixed thumbnails overlapping the text in Month in Review",
+  "Add a context the rack can't dress and it rebuilds right then, instead of waiting up to a week",
+  "The laundry rows say what's happening instead of telling you to go wash something",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

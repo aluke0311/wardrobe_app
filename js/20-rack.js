@@ -341,7 +341,21 @@ function rackIsStale(st = rackState(), today = todayStr()) {
   // than render a screen with two thirds of its sections empty.
   if (!Array.isArray(st.steady) || !Array.isArray(st.rotation)) return true;
   if (daysBetween(st.built, today) >= RACK_REBUILD_DAYS) return true;
-  return st.season !== currentSeason();   // a season flip must not wait a week
+  if (st.season !== currentSeason()) return true;   // a season flip must not wait a week
+  /* ⚠️ A NEWLY DECLARED LEVEL REBUILDS AT ONCE (2026-08-03 r6, her question:
+     "if I add a context not included in the rack, will the rack automatically
+     expand/revise itself right then?"). It did NOT. rackNeededLevels reads
+     forward day plans, but nothing marked the rack stale when she added one, so
+     a Wedding put in the planner on Monday could wait until Sunday's scheduled
+     rebuild — and since targetLevel is a HARD filter, asking for that level in
+     the meantime returned an EMPTY sheet.
+     Only a level the stored rack was never built to cover counts. Losing a
+     level (an event passing, or moving out of the 14-day window) must NOT
+     rebuild: that would churn the rack for no gain, and stability is the
+     feature. */
+  const need = rackNeededLevels(today);
+  const had = new Set(st.levels || []);
+  return need.some(lv => !had.has(lv));
 }
 /* Rebuild if due, otherwise return what's stored.
 
@@ -377,6 +391,7 @@ async function rackEnsure({ force = false } = {}) {
 
   const next = {
     built: todayStr(), season: currentSeason(),
+    levels: built.levels,
     ids: built.ids, cold: built.cold,
     rotation: built.rotation, steady: built.steady, dormant: built.dormant,
     seen,
@@ -538,6 +553,141 @@ function openRackSecondLook(id) {
   });
 }
 
+/* ===================================================================
+   FLAGGED FOR REVIEW  (2026-08-03 r6)
+
+   Her ask: "something to flag an item for potential deletion? with maybe a note
+   from me — doesn't change anything but adds to a list for review in stats. And
+   the app could tell me — would there be any problems if I delete this?"
+
+   ⚠️ "DOESN'T CHANGE ANYTHING" IS THE CONTRACT. A flag is a bookmark, not a
+   state: it must never touch suggestions, the rack, laundry, stats pools or
+   anything else. It lives in kv (zero new columns) and the ONLY thing that
+   reads it is the review list. If a future round is tempted to demote flagged
+   pieces in the suggester, that breaks the promise she made this feature under.
+
+   ⚠️ AND IT NEVER RECOMMENDS DELETING. Same tone rule as "worth a second look"
+   and "packed 3×, worn 0×": she flags, the app reports consequences, she
+   decides. There is no "you should get rid of this" anywhere in here.
+   =================================================================== */
+const FLAG_KEY = "flagged";
+function flaggedAll() { const v = kvData.get(FLAG_KEY); return v && typeof v === "object" ? v : {}; }
+const isFlagged = (id) => !!flaggedAll()[id];
+const flagNote = (id) => (flaggedAll()[id] || {}).note || "";
+function flaggedItems() {
+  const all = flaggedAll();
+  return Object.keys(all)
+    .map(id => ({ item: itemById.get(id), ...all[id] }))
+    .filter(x => x.item)
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
+}
+async function setFlag(id, note) {
+  await kvUpdate(FLAG_KEY, prev => {
+    const m = { ...(prev && typeof prev === "object" ? prev : {}) };
+    m[id] = { at: (m[id] && m[id].at) || todayStr(), note: note || "" };
+    return m;
+  });
+}
+async function clearFlag(id) {
+  await kvUpdate(FLAG_KEY, prev => {
+    const m = { ...(prev && typeof prev === "object" ? prev : {}) }; delete m[id]; return m;
+  });
+}
+
+/* "Would there be any problems if I delete this?" — the honest answer, derived.
+
+   ⚠️ THE BIG ONE IS THE WEAR HISTORY. `wears.item_id` is
+   `references items(id) ON DELETE CASCADE` (schema.sql), so deleting a piece
+   permanently deletes every wear ever logged for it. Those days stop existing
+   in her stats, her streaks and her calendar. The data is the irreplaceable
+   asset here, and nothing in the app said this before. */
+function deleteImpact(id) {
+  const i = itemById.get(id);
+  if (!i) return null;
+  const days = new Set(wears.filter(w => w.item_id === id && w.worn_on).map(w => w.worn_on));
+  // Days where this is the ONLY thing logged — deleting it erases the day.
+  let soloDays = 0;
+  for (const d of days) {
+    const others = new Set(wears.filter(w => w.worn_on === d && w.item_id !== id).map(w => w.item_id));
+    if (!others.size) soloDays++;
+  }
+  const looks = outfits.filter(o => (outfitItemMap.get(o.id) || []).includes(id));
+  // outfit_items cascades too, so a 2-piece look becomes a 1-piece look — which
+  // the app outlaws (createLookFromItems guards <2).
+  const breaks = looks.filter(o => (outfitItemMap.get(o.id) || []).length <= 2);
+  const liked = looks.filter(o => o.rating === 1);
+  const caps = capsules.filter(c => (capsuleLinkMap.get(c.id) || []).some(l => l.item_id === id));
+  const exc = exclusions.filter(e => e.item_a === id || e.item_b === id);
+  return {
+    item: i, wearDays: days.size, soloDays,
+    firstWorn: [...days].sort()[0] || null,
+    looks: looks.length, breaks: breaks.length, breakLooks: breaks, liked: liked.length,
+    capsules: caps.length, capsuleNames: caps.map(c => c.name),
+    exclusions: exc.length,
+    onRack: !!rackBandOf(id),
+    price: i.price, cpw: costPerWear(i),
+  };
+}
+function deleteImpactHtml(im) {
+  if (!im) return "";
+  const line = (txt, warn) => `<div style="font-size:13px;line-height:1.5;padding:3px 0;${warn ? "color:var(--text)" : "color:var(--muted)"}">${warn ? "⚠️ " : "· "}${txt}</div>`;
+  const bits = [];
+  if (im.wearDays) bits.push(line(`<b>${im.wearDays} logged wear${im.wearDays === 1 ? "" : "s"} would be deleted with it</b>${im.firstWorn ? `, going back to ${esc(fmtDate(im.firstWorn))}` : ""}. That history can't be recovered.`, true));
+  else bits.push(line("No wears logged, so no history would be lost."));
+  if (im.soloDays) bits.push(line(`${im.soloDays} day${im.soloDays === 1 ? "" : "s"} in your calendar would go blank — it's the only thing logged on ${im.soloDays === 1 ? "that day" : "those days"}.`, true));
+  if (im.breaks) bits.push(line(`${im.breaks} look${im.breaks === 1 ? "" : "s"} would drop below two pieces and stop being ${im.breaks === 1 ? "a look" : "looks"}.`, true));
+  if (im.looks) bits.push(line(`It's in ${im.looks} look${im.looks === 1 ? "" : "s"}${
+    im.liked ? (im.looks === 1 ? ", which you've hearted" : `, ${im.liked} of them hearted`) : ""}.`));
+  if (im.capsules) bits.push(line(`It's packed in ${esc(im.capsuleNames.slice(0, 3).join(", "))}${im.capsules > 3 ? ` +${im.capsules - 3}` : ""}.`));
+  if (im.exclusions) bits.push(line(`${im.exclusions} “don't wear together” pair${im.exclusions === 1 ? "" : "s"} would go with it.`));
+  if (im.onRack) bits.push(line("It's on the rack right now."));
+  if (im.cpw != null) bits.push(line(`At ${esc(money(im.price))} it's earned its way to ${esc(money(im.cpw))} a wear.`));
+  /* The alternative, stated plainly. Storage keeps every wear, every look and
+     every number, and takes the piece out of the closet and out of suggestions —
+     which is what "I'm done with this" usually actually means. */
+  return `<div>${bits.join("")}</div>
+    <div class="snote" style="margin-top:10px;padding:9px 11px;background:var(--panel);border-radius:10px;font-size:12.5px;line-height:1.5">
+      <b>Storage does most of this without losing anything.</b> It takes the piece out of your closet and out of suggestions, and keeps every wear, look and number attached to it.
+    </div>`;
+}
+
+/* The flag sheet: a note, and the consequences, in one place. */
+function openFlagSheet(id) {
+  const i = itemById.get(id);
+  if (!i) return;
+  const im = deleteImpact(id);
+  const on = isFlagged(id);
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="flagCancel">Cancel</button>
+      <h2>${on ? "Flagged for review" : "Flag for review"}</h2>
+      <button class="lnk" id="flagSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;padding:2px 16px 12px">
+      ${thumbHtml(i.image_path, "sthumb")}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</div>
+        <div class="muted" style="font-size:12.5px">Nothing changes — it just joins a list you can review in Stats.</div>
+      </div>
+    </div>
+    <div style="padding:0 16px 12px">
+      <textarea class="det-notes-ta" id="flagNote" placeholder="Why? (optional — e.g. never fits right, elbows worn through)">${esc(flagNote(id))}</textarea>
+    </div>
+    <div style="padding:0 16px 10px">
+      <div class="section-label">If you did delete it</div>
+      ${deleteImpactHtml(im)}
+    </div>
+    ${on ? `<div style="padding:12px 16px 0"><button class="btn btn-sec" id="flagRemove">Remove the flag</button></div>` : ""}
+    <div style="height:max(env(safe-area-inset-bottom),18px)"></div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  const done = () => { hideSheet("logSheet"); if (detailId === id) openItem(id); else if (statsView === "flagged") renderStats(); };
+  $("#flagCancel").onclick = () => hideSheet("logSheet");
+  $("#flagSave").onclick = async () => { await setFlag(id, $("#flagNote").value.trim()); toast("Flagged for review"); done(); };
+  const rm = $("#flagRemove");
+  if (rm) rm.onclick = async () => { await clearFlag(id); toast("Flag removed"); done(); };
+}
+
 // ---- the rack screen (closet shelf, same shape as Worn / Hamper) ----
 function renderClosetRack() {
   const list = rackItems();
@@ -565,7 +715,7 @@ function renderClosetRack() {
          <div style="font-size:12.5px;padding-top:2px">On the rack ${RACK_SEEN_LIMIT}+ times and still not worn. Not a verdict — just worth asking why.</div></div>
        <div style="padding:6px 16px 0">
          ${second.slice(0, 12).map(({ item, n }) => `<button data-rsecond="${esc(item.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 0;border-bottom:1px solid var(--line)">
-           <span style="width:46px;flex:none">${thumbHtml(item.image_path, "cthumb")}</span>
+           ${thumbHtml(item.image_path, "sthumb")}
            <span style="flex:1;min-width:0">
              <span style="display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name || "Untitled")}</span>
              <span class="muted" style="display:block;font-size:12px">offered ${n}× · not worn</span>
