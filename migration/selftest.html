@@ -3802,6 +3802,74 @@ async function run() {
       ? true : `rack ${before}→${after.ids.length}, in pool=${still}`;
   }));
 
+  /* ---- the WARDROBE half of the delete question (2026-08-03 r7) ----
+     Her correction: "would there be problems — that's great — but also I meant
+     more, gaps in my wardrobe etc." r6 answered only the data question. */
+  const withGapCloset = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    byId: W.itemById, caps: W.capsules, links: W.capsuleLinks, exc: W.exclusions };
+    const mk = (id, cat, sub, fml) => ({ id, name: id, category: cat, subcategory: sub,
+      status: "Available", image_path: id + ".jpg", formality: fml,
+      season: ["Spring", "Summer", "Fall", "Winter"] });
+    W.items = [];
+    // plenty of casual everything…
+    for (let n = 0; n < 6; n++) {
+      W.items.push(mk("top" + n, "Tops", "Tee shirts", [3]));
+      W.items.push(mk("bot" + n, "Bottoms", "Jeans", [3]));
+      W.items.push(mk("sho" + n, "Shoes", "Sneakers", [3]));
+    }
+    // …but exactly THREE pairs of dressy shoes, the binding slot for Symphony
+    for (let n = 0; n < 3; n++) W.items.push(mk("heel" + n, "Shoes", "Heels", [6]));
+    for (let n = 0; n < 5; n++) {
+      W.items.push(mk("blouse" + n, "Tops", "Blouses", [6]));
+      W.items.push(mk("skirt" + n, "Bottoms", "Skirts", [6]));
+    }
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    // Symphony is level 6 by seed and needs GAP_MIN_CTX_DAYS logged days
+    W.wears = [];
+    for (let n = 0; n < 8; n++)
+      W.wears.push({ item_id: "heel0", worn_on: `2026-05-0${(n % 9) + 1}`, context: ["Symphony"], formality_for: 6 });
+    W.outfits = []; W.outfitLinks = []; W.capsules = []; W.capsuleLinks = []; W.exclusions = [];
+    W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildExcludeSet();
+    W._thinBaseMemo = null;
+    try { return fn(); } finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.itemById = saved.byId;
+      W.capsules = saved.caps; W.capsuleLinks = saved.links; W.exclusions = saved.exc;
+      W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildExcludeSet();
+      W._thinBaseMemo = null;
+    }
+  };
+
+  t("deleting a piece that carries a context's binding slot is flagged", () => withGapCloset(() => {
+    // 3 dressy shoes is exactly GAP_SLOT_FLOOR; removing one drops Symphony to 2
+    const g = W.deleteGaps("heel0");
+    const hit = g.hits.find(h => h.ctx === "Symphony");
+    return hit && hit.slot === "Shoes" && hit.from === 3 && hit.to === 2 && hit.crosses
+      ? true : `hits=${JSON.stringify(g.hits)}`;
+  }));
+
+  /* ⚠️ A context is only as served as its BINDING slot — twelve tops don't help
+     if one pair of shoes covers the level. A piece in a slot that isn't binding
+     must not be reported, or every deletion looks alarming. */
+  t("deleting from a slot that isn't the binding one says nothing", () => withGapCloset(() => {
+    const g = W.deleteGaps("blouse0");    // 5 dressy tops, shoes are the constraint
+    return g.hits.length === 0 ? true : `unexpected hits: ${JSON.stringify(g.hits)}`;
+  }));
+
+  t("it says whether anything else could stand in", () => withGapCloset(() => {
+    const heels = W.deleteGaps("heel0");      // 2 other pairs cover level 6
+    const solo = (() => {
+      W.items.push({ id: "gown", name: "gown", category: "Dresses", subcategory: "Long",
+                     status: "Available", image_path: "g.jpg", formality: [8], season: ["Winter"] });
+      W.itemById.set("gown", W.items[W.items.length - 1]);
+      const g = W.deleteGaps("gown");
+      W.items.pop(); W.itemById.delete("gown");
+      return g;
+    })();
+    return eq([heels.standIns, heels.unique, solo.standIns, solo.unique], [2, false, 0, true]);
+  }));
+
   /* ---- the rack as a filter dim (2026-08-03 r6) ---- */
   t("the rack filter narrows by band, and Off the rack is its complement", () => withRackCloset(() => {
     const S = W.Set;
@@ -3830,6 +3898,46 @@ async function run() {
     const afterPlan = W.rackIsStale(fresh, today);
     W.kvData.delete("dayplan");
     return eq([quiet, afterPlan], [false, true]);
+  }));
+
+  /* ⚠️ She reported "the rack has updated a bunch just tonight". `seen` is the
+     ORDERING of steady + dormant, so incrementing it reshuffles 26 of 58 slots.
+     r1 made rackEnsure run at boot and on every suggester open, and r6 let a new
+     formality level mark the rack stale — so STRUCTURAL rebuilds started
+     spending rotation ticks, and installing two updates in an evening visibly
+     churned the rack. Only the 7-day cadence (or her own "Rebuild now") rotates.
+     ⚠️ Tested through the pure decision rather than through rackEnsure: driving
+     the async write path needs a `rest` stub, and two async cases stubbing the
+     same global observe each other (see the harness notes). */
+  t("only the weekly cadence rotates the bands", () => {
+    const fresh = { built: today };
+    const aged = { built: W.shiftDate(today, -(W.RACK_REBUILD_DAYS + 1)) };
+    const exact = { built: W.shiftDate(today, -W.RACK_REBUILD_DAYS) };
+    return eq([
+      W.rackShouldRotate(fresh, today, false),   // structural: top up, don't rotate
+      W.rackShouldRotate(fresh, today, true),    // "Rebuild now": she asked for it
+      W.rackShouldRotate(aged, today, false),    // the cadence
+      W.rackShouldRotate(exact, today, false),   // exactly due
+      W.rackShouldRotate({}, today, false),      // no rack yet
+    ], [false, true, true, true, true]);
+  });
+
+  /* And the consequence that matters: with the queue counter untouched, a
+     structural rebuild returns the SAME steady and dormant picks. */
+  t("a rebuild that doesn't rotate returns the same bands", () => withRackCloset(() => {
+    // A rack that has already had one cadence tick.
+    const seen = {};
+    for (const id of W.buildRack({ today }).offered) seen[id] = 1;
+    const a = W.buildRack({ today, seen });
+    // Structural rebuild: the counter is NOT advanced, so the picks must hold.
+    const structural = W.buildRack({ today, seen });
+    // Cadence rebuild: the counter advances, so they must move on.
+    const next = { ...seen };
+    for (const id of a.offered) next[id] = (next[id] || 0) + 1;
+    const rotated = W.buildRack({ today, seen: next });
+    const same = JSON.stringify(structural.dormant) === JSON.stringify(a.dormant);
+    const moved = JSON.stringify(rotated.dormant) !== JSON.stringify(a.dormant);
+    return same && moved ? true : `same=${same} moved=${moved}`;
   }));
 
   t("losing a level does not churn the rack", () => withRackCloset(() => {

@@ -372,25 +372,55 @@ function rackIsStale(st = rackState(), today = todayStr()) {
    kvUpdate applies to kvData synchronously (persisting in the background), so
    callers that can't await — openSuggestSheet is synchronous — still see the
    fresh rack on this very render. */
+/* Split out so it is testable without driving the whole async write path — and
+   so the rule has a name. True = this rebuild may advance the rotation queue. */
+function rackShouldRotate(st = rackState(), today = todayStr(), force = false) {
+  if (force) return true;                       // only ever the "Rebuild now" button
+  const prev = st && st.built;
+  if (!prev) return true;                       // no rack yet: the first one rotates
+  return daysBetween(prev, today) >= RACK_REBUILD_DAYS;
+}
 async function rackEnsure({ force = false } = {}) {
   const st = rackState();
   if (!force && !rackIsStale(st)) return st;
+  const today = todayStr();
   const prevBuilt = st.built || null;
   const built = buildRack({ wx: (_homeWx && _homeWx.date === todayStr()) ? _homeWx.wx : null });
 
-  /* The seen-counter: how many rebuilds each piece has been offered in
-     steady/dormant without being worn. Reset first — if she wore it while the
-     PREVIOUS rack was standing, the offer worked and the count starts over. */
+  /* ⚠️ NOT EVERY REBUILD IS A ROTATION (fixed 2026-08-03 r7, she reported "the
+     rack has updated a bunch just tonight").
+
+     `seen` counts how many times a piece has been OFFERED to her and not worn,
+     and it is also the ORDERING of the steady and dormant bands — so
+     incrementing it reshuffles 26 of the 58 slots. That is correct at the weekly
+     cadence, which is the pace she was promised.
+
+     But r1 made rackEnsure run at boot and on every suggester open, and r6 made
+     a newly declared formality level mark the rack stale and had saveDayPlan
+     call it. So rebuilds went from "only if she opens the rack screen" to
+     several an evening — and each one spent a rotation tick. Planning a week,
+     or simply installing two updates, visibly churned the rack.
+
+     Structural rebuilds (a new level to cover, a season flip, a stored-format
+     migration) must top up COVERAGE without advancing the queue. Only the 7-day
+     cadence rotates, and only the cadence moves `built` — otherwise an unrelated
+     trigger would also postpone the next real rotation by up to a week.
+     ⚠️ `force` DOES rotate: that is only ever the "Rebuild now" button, which is
+     her asking for exactly this. */
+  const cadence = rackShouldRotate(st, today, force);
+
   const seen = { ...rackSeen() };
   for (const id of Object.keys(seen)) {
     if (!itemById.get(id)) { delete seen[id]; continue; }        // deleted piece
     const lw = lastWorn(id);
-    if (prevBuilt && lw && lw >= prevBuilt) delete seen[id];
+    if (prevBuilt && lw && lw >= prevBuilt) delete seen[id];     // she wore it: the offer worked
   }
-  for (const id of built.offered) seen[id] = (seen[id] || 0) + 1;
+  if (cadence) for (const id of built.offered) seen[id] = (seen[id] || 0) + 1;
 
   const next = {
-    built: todayStr(), season: currentSeason(),
+    built: cadence ? today : (prevBuilt || today),
+    revised: today,                 // last recomputed at all — for the screen
+    season: currentSeason(),
     levels: built.levels,
     ids: built.ids, cold: built.cold,
     rotation: built.rotation, steady: built.steady, dormant: built.dormant,
@@ -427,7 +457,7 @@ function rackItems() {
 }
 const rackStamp = () => {
   const st = rackState();
-  return `${st.built || ""}|${(st.ids || []).length}|${(st.pinned || []).length}|${Object.keys(st.pushed || {}).length}|${items.length}`;
+  return `${st.built || ""}|${st.revised || ""}|${(st.ids || []).length}|${(st.pinned || []).length}|${Object.keys(st.pushed || {}).length}|${items.length}`;
 };
 const isOnRack = (id) => rackItems().some(i => i.id === id);
 const rackColdSet = () => rackEffective().cold;
@@ -626,8 +656,67 @@ function deleteImpact(id) {
     exclusions: exc.length,
     onRack: !!rackBandOf(id),
     price: i.price, cpw: costPerWear(i),
+    gaps: deleteGaps(id),
   };
 }
+/* The other half of "would there be problems if I delete this?" — the WARDROBE
+   half (2026-08-03 r7, her correction: "I meant more — gaps in my wardrobe etc").
+   r6 answered the data question (history, looks, calendar days) and stopped.
+
+   ⚠️ Reuses buildThinSpots by running it TWICE — the whole closet, then the
+   closet minus this piece — and diffing. That is the only way this can't drift
+   from the "What's missing" page, which is already the app's answer to "where
+   am I thin". A second, parallel coverage derivation would have been free to
+   disagree with it.
+   ⚠️ A context is only as served as its BINDING slot (twelve tops don't help if
+   one pair of shoes covers the level), so only a piece that moves the thinnest
+   slot is worth mentioning. Everything else is noise. */
+/* ⚠️ Memo scoped to ONE render pass, not the session. buildThinSpots walks
+   contexts × the whole closet and the flagged list calls this per card, so the
+   baseline is worth computing once — but a stamp on items.length can't see a
+   formality or season edit, and a stale baseline would report a gap that isn't
+   there. Callers clear it (`_thinBaseMemo = null`) before rendering. */
+let _thinBaseMemo = null;
+function _thinBase(avail) {
+  if (_thinBaseMemo) return _thinBaseMemo;
+  return (_thinBaseMemo = buildThinSpots(avail));
+}
+function deleteGaps(id) {
+  const i = itemById.get(id);
+  if (!i) return null;
+  const avail = items.filter(x => itemStatus(x) === "Available");
+  const before = _thinBase(avail);
+  const after = buildThinSpots(avail.filter(x => x.id !== id));
+  const bMap = new Map(before.map(r => [r.ctx, r]));
+  const hits = [];
+  for (const r of after) {
+    const b = bMap.get(r.ctx);
+    if (!b || r.thinnest.n >= b.thinnest.n) continue;   // it wasn't carrying this
+    hits.push({
+      ctx: r.ctx, lvl: r.lvl, slot: r.thinnest.slot,
+      from: b.thinnest.n, to: r.thinnest.n,
+      // Crossing the floor is the difference between "one fewer" and "a problem".
+      crosses: b.thinnest.n >= GAP_SLOT_FLOOR && r.thinnest.n < GAP_SLOT_FLOOR,
+    });
+  }
+  hits.sort((a, b) => (b.crosses - a.crosses) || (a.to - b.to));
+
+  /* "Could something else do its job?" — same slot, covers every level this one
+     covers, and overlaps on at least one season. Deliberately strict: a piece
+     that covers FEWER levels isn't a stand-in for this one. */
+  const slot = suggestSlot(i);
+  const lv = itemFormalitySet(i) || [];
+  const seas = itemSeasonSet(i) || [];
+  const standIns = slot ? avail.filter(x => {
+    if (x.id === id || isNoSuggest(x) || suggestSlot(x) !== slot) return false;
+    const xl = itemFormalitySet(x) || [];
+    if (!lv.every(l => xl.includes(l))) return false;
+    const xs = itemSeasonSet(x) || [];
+    return !seas.length || !xs.length || seas.some(s => xs.includes(s));
+  }) : [];
+  return { hits, standIns: standIns.length, slot, levels: lv, unique: slot && standIns.length === 0 };
+}
+
 function deleteImpactHtml(im) {
   if (!im) return "";
   const line = (txt, warn) => `<div style="font-size:13px;line-height:1.5;padding:3px 0;${warn ? "color:var(--text)" : "color:var(--muted)"}">${warn ? "⚠️ " : "· "}${txt}</div>`;
@@ -642,10 +731,28 @@ function deleteImpactHtml(im) {
   if (im.exclusions) bits.push(line(`${im.exclusions} “don't wear together” pair${im.exclusions === 1 ? "" : "s"} would go with it.`));
   if (im.onRack) bits.push(line("It's on the rack right now."));
   if (im.cpw != null) bits.push(line(`At ${esc(money(im.price))} it's earned its way to ${esc(money(im.cpw))} a wear.`));
+
+  /* The wardrobe half. Kept in its own block under its own heading, because
+     "you'd lose 6 wears" and "you'd be short of Symphony shoes" are different
+     kinds of answer and running them together buries the second one. */
+  const g = im.gaps;
+  let gapHtml = "";
+  if (g) {
+    const gb = [];
+    if (g.hits.length) {
+      for (const h of g.hits.slice(0, 4)) {
+        gb.push(line(`<b>${esc(h.ctx)}</b> would be down to <b>${h.to}</b> ${esc(String(h.slot).toLowerCase())} at ${esc(occLabel(h.lvl))}${h.crosses ? " — that's below what it takes to build around" : ""}.`, h.crosses));
+      }
+    }
+    if (g.unique) gb.push(line(`Nothing else in your closet covers the same ${esc(String(g.slot).toLowerCase())} at ${esc((g.levels || []).map(l => occLabel(l)).filter(Boolean).join(" / ") || "that level")}.`, true));
+    else if (g.standIns) gb.push(line(`${g.standIns} other piece${g.standIns === 1 ? "" : "s"} could stand in for it — same slot, same levels, overlapping season.`));
+    if (!gb.length) gb.push(line("Nothing in your rotation gets thin without it."));
+    gapHtml = `<div class="section-label" style="margin-top:12px">And in the wardrobe</div><div>${gb.join("")}</div>`;
+  }
   /* The alternative, stated plainly. Storage keeps every wear, every look and
      every number, and takes the piece out of the closet and out of suggestions —
      which is what "I'm done with this" usually actually means. */
-  return `<div>${bits.join("")}</div>
+  return `<div>${bits.join("")}</div>${gapHtml}
     <div class="snote" style="margin-top:10px;padding:9px 11px;background:var(--panel);border-radius:10px;font-size:12.5px;line-height:1.5">
       <b>Storage does most of this without losing anything.</b> It takes the piece out of your closet and out of suggestions, and keeps every wear, look and number attached to it.
     </div>`;
@@ -655,6 +762,7 @@ function deleteImpactHtml(im) {
 function openFlagSheet(id) {
   const i = itemById.get(id);
   if (!i) return;
+  _thinBaseMemo = null;
   const im = deleteImpact(id);
   const on = isFlagged(id);
   $("#logInner").innerHTML = `
@@ -674,7 +782,7 @@ function openFlagSheet(id) {
       <textarea class="det-notes-ta" id="flagNote" placeholder="Why? (optional — e.g. never fits right, elbows worn through)">${esc(flagNote(id))}</textarea>
     </div>
     <div style="padding:0 16px 10px">
-      <div class="section-label">If you did delete it</div>
+      <div class="section-label">What you'd lose</div>
       ${deleteImpactHtml(im)}
     </div>
     ${on ? `<div style="padding:12px 16px 0"><button class="btn btn-sec" id="flagRemove">Remove the flag</button></div>` : ""}
@@ -697,8 +805,9 @@ function renderClosetRack() {
   const band = (set) => [...set].map(id => byId.get(id)).filter(Boolean);
   const inRot = band(eff.rotation), inSteady = band(eff.steady), inDorm = band(eff.dormant);
   const due = st.built ? Math.max(0, RACK_REBUILD_DAYS - daysBetween(st.built, todayStr())) : 0;
+  const shown = st.revised || st.built;
   const note = st.built
-    ? `Put together ${st.built === todayStr() ? "today" : fmtDate(st.built)} from what's in season and what you've been reaching for${due ? ` · refreshes itself in ${due} day${due === 1 ? "" : "s"}` : " · due a refresh"}.`
+    ? `Last shuffled ${st.built === todayStr() ? "today" : fmtDate(st.built)}${due ? ` · next in ${due} day${due === 1 ? "" : "s"}` : " · due now"}${shown && shown !== st.built ? ` · topped up ${shown === todayStr() ? "today" : fmtDate(shown)}` : ""}.`
     : `Derived from what's in season and what you've been reaching for.`;
 
   /* Three labelled sections, because the bands ARE the picture of the wardrobe —

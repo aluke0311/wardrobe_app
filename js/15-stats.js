@@ -2277,6 +2277,7 @@ function renderStatsMonthPage() {
 /* The flagged list. ⚠️ Whole-wardrobe page → no pool AND hideFilter=true, per
    the funnel rule: a funnel that silently changed nothing would lie. */
 function renderStatsFlaggedPage() {
+  _thinBaseMemo = null;   // one baseline per render pass — see _thinBase
   const list = flaggedItems();
   const body = list.length ? list.map(({ item, note, at }) => {
     const im = deleteImpact(item.id);

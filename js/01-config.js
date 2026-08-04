@@ -6,15 +6,12 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-03 r6";
+const APP_VERSION = "2026-08-03 r7";
 // Shown once after each update (deploy skill refreshes these alongside
 // APP_VERSION — 2-4 user-facing bullets for the CURRENT release batch).
 const WHATS_NEW = [
-  "Flag any piece for review from its photo, with a note to yourself. It changes nothing — it just collects in Stats → Flagged for review, where the app tells you exactly what you'd lose by deleting it (including every logged wear, which does get deleted with the item)",
-  "Filter by the rack anywhere there's a funnel — on the rack, in rotation, steady, dormant, or off it entirely",
-  "Fixed thumbnails overlapping the text in Month in Review",
-  "Add a context the rack can't dress and it rebuilds right then, instead of waiting up to a week",
-  "The laundry rows say what's happening instead of telling you to go wash something",
+  "“Would there be problems if I delete this?” now answers the wardrobe question too — which contexts would get thin, and whether anything else in your closet could stand in",
+  "Fixed the rack churning: only its weekly shuffle rotates the rediscovery picks now. Installing an update or planning a week tops up coverage without reshuffling anything",
 ];
 
 // category -> subcategories. Keep in sync with migration/import.py TAXONOMY.

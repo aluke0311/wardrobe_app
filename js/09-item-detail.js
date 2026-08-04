@@ -809,6 +809,9 @@ async function deleteItem(id) {
     if (im.wearDays) parts.push(`\n• ${im.wearDays} logged wear${im.wearDays === 1 ? "" : "s"} will be deleted with it${im.firstWorn ? `, back to ${fmtDate(im.firstWorn)}` : ""}.`);
     if (im.soloDays) parts.push(`• ${im.soloDays} calendar day${im.soloDays === 1 ? "" : "s"} will go blank.`);
     if (im.breaks) parts.push(`• ${im.breaks} look${im.breaks === 1 ? "" : "s"} will drop below two pieces.`);
+    const crossing = im.gaps && im.gaps.hits.find(h => h.crosses);
+    if (crossing) parts.push(`• ${crossing.ctx} would drop to ${crossing.to} ${String(crossing.slot).toLowerCase()} at ${occLabel(crossing.lvl)}.`);
+    else if (im.gaps && im.gaps.unique) parts.push(`• Nothing else in your closet covers the same slot at the same levels.`);
     if (im.wearDays || im.looks) parts.push(`\nStorage keeps all of it and still takes the piece out of your closet.`);
   }
   if (!confirm(parts.join("\n"))) return;
