@@ -224,6 +224,79 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-04 r3+r4 — HOW THE RACK, TRIPS AND CAPSULES INTERACT.** Her question,
+then three asks out of it. Selftest 316 → **322**, run green; all 6 new cases
+mutation-checked red in the same session. r3 shipped the features, r4 fixed three
+real defects the suite then found in them — **she asked that work DEPLOY FIRST
+and be tested after**, so that a usage cap can't leave her with nothing.
+
+⚠️ **THE RACK DIDN'T KNOW HER OWN WEEK.** Two questions, both answered "no":
+*"I make a planned outfit, and the rack resets after that — do those pieces stay
+in (or get added to) the rack?"* and *"if I wear something not on the rack, does
+it get added?"* `rackNeededLevels` reads forward day plans for their **LEVELS
+ONLY**, so planning Thursday's outfit stocked *a* level-4 top and said nothing
+about the top she picked; and a piece worn yesterday tops rotation by warmth but
+only at the NEXT rebuild — and **wearing something marked nothing stale**, so
+"next" was up to 7 days away. **`rackForcedIds`** forces both sets in
+(`RACK_RECENT_DAYS` 14 back, `RACK_LOOKAHEAD_DAYS` 14 forward). `RACK_ALGO` → 3.
+- ⚠️ **STRUCTURAL, never a rotation tick** (the r7 churn lesson). Forced pieces
+  join **ROTATION**, not the offered bands, so they can't inflate `seen` — she is
+  not "passing over" a shirt she is wearing.
+- ⚠️ **THEY DISPLACE, THEY DO NOT PILE ON.** Adding on top grew the fixture's
+  Dresses 6 → 15 and Shoes 11 → 16 — which turns the stratified rack back into a
+  top-N, and the slot quotas are the whole reason it can build an outfit. A
+  forced piece takes a rotation SEAT; the slot's coldest ordinary member steps
+  out. **Pins are never displaced or counted** (pinning bypasses quotas by design).
+- ⚠️ **THE FORCED SET MUST BE SATISFIABLE, or it is an infinite rebuild every
+  boot.** First version capped nothing and let `buildRack` trim the overflow, so
+  `rackIsStale` found a forced piece missing → rebuild → trim → forever. On the
+  phone that reads as *the rack churning*. **The cap lives in `rackForcedIds`**
+  (the slot's rotation band, commitments first then recency); a case pins that
+  everything it returns survives into the rack.
+- ⚠️ **A PUSHED-OFF piece is excluded** — she said not now, and wearing it once
+  doesn't overrule that. **Season is deliberately NOT applied.** A caller with a
+  restricted `pool` (the pack solver) drops anything outside it.
+- ⚠️ **THE RANKING MUST READ ITS OWN `wearRows`.** It ordered by `rackWarmth`,
+  which closes over the global `wears` — so an injected wear was invisible and a
+  piece worn YESTERDAY ranked at warmth 0 and fell off the cap. `buildRack` is
+  documented as injectable; **a ranking that quietly isn't makes the fixture and
+  the phone disagree.**
+
+⚠️ **THE RACK ROTATED WHILE SHE WAS AWAY, AND THE TICK MEASURED NOTHING.** During
+a trip the **suitcase IS the pool** (`_suggPool` hands the capsule branch the
+whole sheet), so a day-7 rotation mid-trip incremented `seen` for ~26 pieces in a
+closet she wasn't standing in. They weren't passed over — she never had the
+chance to decline them. Two trips a year and "worth a second look" fills with
+pieces whose only crime was a holiday. **`rackShouldRotate` counts HOME days**
+via **`rackHomeDaysSince`** + the existing `awayRanges()`, and never rotates
+mid-trip. No new state. **This is the r7 measure-vs-mechanism lesson arriving
+through yet another unaudited trigger — when you add one, audit them all.**
+
+**TRIP DATES ARE EDITABLE (`editCapsuleDates`).** Her ask: *"I need to be able to
+change vacation dates — e.g. I accidentally made this trip one day too long."*
+There was no way to: `_capForm` exists only during CREATE and the detail page
+offered Rename and nothing else — while the dates drive trip phase, the by-day
+planner, the pack solver, `awayRanges()` and the recap. A **Dates** action beside
+Rename. ⚠️ **It reverts the OLD range's weather correction before applying the
+new one** — shortening a trip otherwise leaves a day she was actually home
+carrying another climate's temperatures, which is the r19 rule (a correction
+outliving the answer that justified it) and poisons season bands downstream.
+Same revert-then-correct order `removeWhereEntry` already uses.
+
+**LOCATIONS RENDER FOR ANY TRIP, not just a fully dated one.** The section was
+gated on `start_date && end_date`, so a trip missing an end date hid the only ×
+that removes a location — *"I need to be able to remove locations the app has
+identified"*. The weather half now says it needs dates instead of vanishing.
+
+⚠️ **TWO PROCESS LESSONS, both already in this file and both repeated.**
+① **`.cap-actions` overflowed the phone sideways** with its 5th button — a
+no-wrap flex row, and flex items don't shrink below their content. Green tests
+said nothing; **measuring the rendered row did**. It now wraps
+(`flex: 1 1 88px`). ② **The "everything forced survives" case was VACUOUS** on
+first write — it passed under a mutation that dropped forced pieces, because the
+plain fixture never has to displace anything. It now loads the recent window
+deliberately. **Its own mutation check is the only reason that was caught.**
+
 **2026-08-04 r2 — REVIEWING r1 ANTAGONISTICALLY, AFTER "I JUST REFRESHED AFTER
 THE UPDATE AND IT STILL HAS LOTS OF HEELS???"** She was right and r1 was mostly
 not applied. Selftest 308 → **316**, run green; all 8 new cases mutation-checked
@@ -1871,7 +1944,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-04 r2`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-04 r4`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2218,7 +2291,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **316/316** (2026-08-04 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **322/322** (2026-08-04 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
