@@ -750,6 +750,7 @@ function wireEvents() {
     const capLook = e.target.closest("[data-cap-look]");
     if (capLook) { looksLens = "All"; looksFolder = null; return openLookFrom(capLook.dataset.capLook); }
     if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
+    if (e.target.closest("[data-cap-dates]")) return editCapsuleDates(capsuleId);
     if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
     if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);
     if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);

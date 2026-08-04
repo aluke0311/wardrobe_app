@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 2;   // 2 = off-level ceiling (2026-08-04)
+const RACK_ALGO = 3;   // 3 = declared + lived pieces are forced in (2026-08-04 r3)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -124,6 +124,7 @@ const RACK_REBUILD_DAYS = 7;    // stability is a feature; don't reshuffle daily
 const RACK_PUSH_DAYS = 42;      // a push-out expires, so a summer no doesn't haunt October
 const RACK_PUSH_LONG_DAYS = 120;// "not right now" from a reassessment — a season, not a month
 const RACK_LOOKAHEAD_DAYS = 14; // how far ahead declared plans stock the rack
+const RACK_RECENT_DAYS = 14;    // …and how far BACK a real wear keeps a piece in play
 const RACK_LEVEL_MIN = 2;       // per core slot, per level she'll actually need
 const RACK_SEEN_LIMIT = 3;      // offered this many rebuilds unworn → worth a second look
 const RACK_SECOND_LOOK_DAYS = 14; // …AND in front of her this long. See rackPassedOver.
@@ -231,6 +232,78 @@ function rackNeededLevels(today = todayStr(), plans = null, wearRows = null) {
   }
   [...byLevel.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).forEach(([lv]) => levels.add(lv));
   return [...levels].sort((a, b) => a - b);
+}
+
+/* ⚠️ PIECES SHE HAS DECLARED OR ACTUALLY WORN ARE ALWAYS IN PLAY (2026-08-04 r3).
+
+   Two questions from her, and the honest answer to both was "no, it doesn't":
+     "I make a planned outfit, and the rack resets after that — do those pieces
+      stay in (or get added to) the rack?"
+     "If I wear something not on the rack, does it get added?"
+
+   Neither was true. `rackNeededLevels` reads forward day plans for their
+   LEVELS ONLY — so planning Thursday's outfit stocked the rack with *a* level-4
+   top and had nothing to say about the specific top she chose, which could be
+   sitting in dormant or off the rack entirely. And a piece she wore yesterday
+   ranks top of the rotation band by warmth, but only at the NEXT rebuild — and
+   wearing something marks nothing stale, so "next" was up to seven days away.
+
+   The rack claims to be "what's in play right now". A look she has committed to
+   for Thursday and a shirt she put on this morning are the two least ambiguous
+   things in play there are; leaving them out was the rack disagreeing with her
+   about her own week.
+
+   ⚠️ This is a STRUCTURAL trigger, like a season flip or a new level: it tops
+   coverage up and must never spend a rotation tick (the r7 churn lesson). These
+   pieces join ROTATION, not the offered bands, so they cannot inflate `seen` —
+   she is plainly not passing over a shirt she is wearing.
+
+   ⚠️ It mirrors buildRack's own eligibility so the set is always SATISFIABLE.
+   rackIsStale asks "is anything forced missing from the stored rack?", and an
+   unsatisfiable answer there is an infinite rebuild every boot. In particular a
+   PUSHED-OFF piece is excluded: she said not now, and wearing it once does not
+   overrule that. Season is deliberately NOT applied — she wore it, so whatever
+   the band says about the weather is beside the point. */
+function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
+                         pushed = null } = {}) {
+  const rows = wearRows || wears;
+  const all = plans || dayPlanAll();
+  const push = pushed || rackPushedSet(today);
+  const out = new Set();
+  const ok = (id) => {
+    const i = itemById.get(id);
+    return !!(i && itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i) &&
+              i.category !== "Workout" && !push.has(id));
+  };
+  // Declared: the pieces of a look she has actually assigned to a day ahead.
+  for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
+    const d = shiftDate(today, k);
+    for (const e of (all[d] || [])) {
+      if (!e || !e.outfit) continue;
+      for (const id of (outfitItemMap.get(e.outfit) || [])) if (ok(id)) out.add(id);
+    }
+  }
+  // Lived: anything she reached for herself in the last RACK_RECENT_DAYS.
+  const floor = shiftDate(today, -RACK_RECENT_DAYS);
+  for (const w of rows) {
+    if (!w || !w.item_id || !w.worn_on) continue;
+    if (w.worn_on < floor || w.worn_on > today) continue;
+    if (ok(w.item_id)) out.add(w.item_id);
+  }
+  return out;
+}
+
+/* Days between two dates that she was actually HOME — see rackShouldRotate. */
+function rackHomeDaysSince(from, today = todayStr(), ranges = null) {
+  const total = daysBetween(from, today);
+  if (total <= 0) return total;
+  // A rack this old should rotate whatever the travel log says; don't walk a year.
+  if (total > 400) return total;
+  const rs = ranges || ((typeof awayRanges === "function") ? awayRanges() : []);
+  if (!rs.length) return total;
+  let home = 0;
+  for (let k = 1; k <= total; k++) if (!awayRangeFor(shiftDate(from, k), rs)) home++;
+  return home;
 }
 
 // How "warm" a piece is: 1 = worn today, 0 = not worn inside RACK_WARM_DAYS.
@@ -402,6 +475,12 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     }
   }
 
+  /* Declared and lived pieces, forced in exactly like a pin — see rackForcedIds.
+     They land in ROTATION so they never count as an unmet offer. */
+  for (const id of rackForcedIds({ today, plans, wearRows: rows, pushed: push })) {
+    ids.add(id); dormant.delete(id); steady.delete(id); rotation.add(id);
+  }
+
   const slots = new Map();
   for (const id of ids) {
     const i = itemById.get(id);
@@ -441,7 +520,17 @@ function rackIsStale(st = rackState(), today = todayStr()) {
      feature. */
   const need = rackNeededLevels(today);
   const had = new Set(st.levels || []);
-  return need.some(lv => !had.has(lv));
+  if (need.some(lv => !had.has(lv))) return true;
+  /* ⚠️ Same idea one level down: a piece she has PLANNED or WORN and that isn't
+     on the stored rack tops it up now rather than in six days. Structural — see
+     rackForcedIds, and note rackShouldRotate keeps this from spending a tick.
+     Satisfiable by construction: buildRack forces the identical set in. */
+  const forced = rackForcedIds({ today });
+  if (forced.size) {
+    const have = new Set(st.ids);
+    for (const id of forced) if (!have.has(id)) return true;
+  }
+  return false;
 }
 /* Rebuild if due, otherwise return what's stored.
 
@@ -460,11 +549,28 @@ function rackIsStale(st = rackState(), today = todayStr()) {
    fresh rack on this very render. */
 /* Split out so it is testable without driving the whole async write path — and
    so the rule has a name. True = this rebuild may advance the rotation queue. */
-function rackShouldRotate(st = rackState(), today = todayStr(), force = false) {
+/* ⚠️ THE CADENCE COUNTS DAYS SHE WAS HOME (2026-08-04 r3).
+
+   `seen` counts how many rebuilds a piece has been OFFERED and not worn, and it
+   is also the queue ordering. But during a trip the suitcase IS the pool —
+   _suggPool hands the capsule branch the whole sheet and the rack is not
+   consulted at all — so a rotation that fires on day 7 of a trip to Spain
+   increments `seen` for ~26 pieces hanging in a closet she is 5,000 miles from.
+   They weren't passed over. She never had the chance to decline them. Two trips
+   a year and "worth a second look" fills with pieces whose only crime was that
+   she went on holiday — the exact corruption r7 named (a counter that is both a
+   measure and a mechanism) arriving through one more unaudited trigger.
+
+   awayRanges() already unions dated trips' locations with the hand-entered
+   wherelog, so this needs no new state. Away days simply don't count toward the
+   cadence, and a rotation never lands mid-trip. */
+function rackShouldRotate(st = rackState(), today = todayStr(), force = false, ranges = null) {
   if (force) return true;                       // only ever the "Rebuild now" button
   const prev = st && st.built;
   if (!prev) return true;                       // no rack yet: the first one rotates
-  return daysBetween(prev, today) >= RACK_REBUILD_DAYS;
+  const rs = ranges || ((typeof awayRanges === "function") ? awayRanges() : []);
+  if (awayRangeFor(today, rs)) return false;    // never rotate mid-trip
+  return rackHomeDaysSince(prev, today, rs) >= RACK_REBUILD_DAYS;
 }
 async function rackEnsure({ force = false } = {}) {
   const st = rackState();

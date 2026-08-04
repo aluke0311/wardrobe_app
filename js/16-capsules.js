@@ -317,7 +317,14 @@ function renderCapsuleDetail() {
   }
 
   let wxHtml = "";
-  if (trip && c.start_date && c.end_date) {
+  /* ⚠️ Locations render for ANY trip, not only a fully dated one (2026-08-04 r3,
+     her ask: "I need to be able to remove locations the app has identified").
+     This was gated on start_date && end_date, so a trip missing an end date hid
+     the whole section — and with it the only × that can remove a location. A
+     list you can't get to is a list you can't correct. Weather still needs the
+     dates; that half says so instead of vanishing. */
+  if (trip) {
+    const dated = !!(c.start_date && c.end_date);
     const locs = c.locations || [];
     const locRows = locs.map((l, i) => {
       const range = (l.from || l.to) ? `${l.from ? fmtDate(l.from) : "start"} – ${l.to ? fmtDate(l.to) : "end"}` : "Whole trip";
@@ -330,18 +337,19 @@ function renderCapsuleDetail() {
         <button class="loc-del" data-loc-del="${i}" aria-label="Remove location">×</button>
       </div>`;
     }).join("");
-    const wxContent = locs.length
+    const wxContent = (dated && locs.length)
       ? `<div id="wxStrip"><div class="wx-loading muted">Loading weather…</div></div>`
       : `<div id="wxStrip"></div>`;
     wxHtml = `<div class="wx-section">
       <div class="wx-sec-hdr">
         <div class="wx-sec-title">Locations</div>
         <div style="display:flex;gap:6px;align-items:center">
-          ${locs.length ? `<button class="wx-add-btn" data-wx-refresh aria-label="Refresh weather"><svg viewBox="0 0 24 24" style="width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;vertical-align:-2px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg></button>` : ""}
+          ${dated && locs.length ? `<button class="wx-add-btn" data-wx-refresh aria-label="Refresh weather"><svg viewBox="0 0 24 24" style="width:15px;height:15px;stroke:currentColor;stroke-width:2;fill:none;vertical-align:-2px"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg></button>` : ""}
           <button class="wx-add-btn" data-loc-add>＋ Add</button>
         </div>
       </div>
       ${locRows || `<div class="wx-no-locs">No locations yet — add one to see weather.</div>`}
+      ${!dated && locs.length ? `<div class="wx-no-locs">Set the trip dates to see weather for these.</div>` : ""}
       ${wxContent}
     </div>`;
   }
@@ -450,6 +458,7 @@ function renderCapsuleDetail() {
     <div class="cap-footer">
       <div class="cap-actions">
         <button class="cap-act2" data-cap-rename>Rename</button>
+        ${trip ? `<button class="cap-act2" data-cap-dates>Dates</button>` : ""}
         <button class="cap-act2" data-cap-dup>Duplicate</button>
         <button class="cap-act2" data-cap-share>Share list</button>
         <button class="cap-act2" data-cap-arch>${isCapsuleArchived(capsuleId) ? "Unarchive" : "Archive"}</button>
@@ -914,6 +923,71 @@ function renameCapsule(id) {
       renderCapsules();
       toast("Renamed");
     } catch (e) { c.name = prev; toast(e.message); }
+  };
+}
+
+/* ---- edit a dated trip's dates (reuses #logSheet) ----------------------
+   Her ask: "I need to be able to change vacation dates — e.g. I accidentally
+   made this trip one day too long." There was no way to. `_capForm` only exists
+   during CREATE, and the detail page offered Rename but nothing for the dates,
+   so a trip typed wrong stayed wrong forever — while its dates drive trip phase,
+   the by-day planner, the pack solver, awayRanges() and the recap.
+
+   ⚠️ THE OLD RANGE'S WEATHER CORRECTION MUST BE UNDONE (the r19 rule). An away
+   day gets its host city's temperatures written over the home reading; shorten
+   the trip and that day is one she was actually home, still carrying Spain's
+   weather — a correction outliving the answer that justified it, which poisons
+   season bands and every derivation downstream. revertAwayWeather re-applies any
+   surviving overlapping range itself, so revert-then-correct is safe and is the
+   same order removeWhereEntry already uses. */
+function editCapsuleDates(id) {
+  const c = capsuleById.get(id);
+  if (!c) return;
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="cdCancel">Cancel</button>
+      <h2>Trip dates</h2>
+      <button class="lnk" id="cdSave" style="font-weight:700">Save</button>
+    </div>
+    <div style="padding:18px 18px 30px">
+      <div class="cap-dates">
+        <div><label class="fld">Start</label><input class="inp" type="date" id="cdStart" value="${esc(c.start_date || "")}"></div>
+        <div><label class="fld">End</label><input class="inp" type="date" id="cdEnd" value="${esc(c.end_date || "")}"></div>
+      </div>
+      <div class="pack-warn-note" style="padding:12px 0 0">Nothing you've already logged moves — wears keep their own dates. Days outside the new range simply stop counting as trip days.</div>
+    </div>`;
+  showSheet("logSheet");
+  $("#cdCancel").onclick = () => { hideSheet("logSheet"); };
+  $("#cdSave").onclick = async () => {
+    const s = $("#cdStart").value || null;
+    const e = $("#cdEnd").value || null;
+    if (s && e && e < s) { toast("The end date is before the start"); return; }
+    if (s === (c.start_date || null) && e === (c.end_date || null)) { hideSheet("logSheet"); return; }
+    hideSheet("logSheet");
+    const prevS = c.start_date || null, prevE = c.end_date || null;
+    // The ranges the OLD dates justified, before we overwrite them. Pass [] for
+    // the log so this is the trip's own contribution and never the wherelog's.
+    const oldRanges = (prevS && prevE && typeof awayRanges === "function")
+      ? awayRanges([], [{ ...c, start_date: prevS, end_date: prevE }]) : [];
+    c.start_date = s; c.end_date = e;   // optimistic
+    try {
+      await rest(`/capsules?id=eq.${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({ start_date: s, end_date: e }),
+      });
+      _planWxLoadedFor = null;          // the weather strip is keyed on the old span
+      for (const r of oldRanges) { try { await revertAwayWeather(r); } catch (_) {} }
+      if (s && e && typeof correctAwayWeather === "function") {
+        for (const r of awayRanges([], [c])) correctAwayWeather(r);  // fire-and-forget
+      }
+      // Away days no longer count toward the rack's cadence — see rackShouldRotate.
+      if (typeof rackEnsure === "function") rackEnsure();
+      renderCapsules();
+      toast("Dates updated");
+    } catch (err) {
+      c.start_date = prevS; c.end_date = prevE;
+      toast(err.message);
+    }
   };
 }
 
