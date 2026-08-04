@@ -224,6 +224,63 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-03 r6 — FIVE MORE.**
+
+⚠️ **THE MONTH-REVIEW OVERLAP WAS THE DOCUMENTED `.cthumb` TRAP, REPEATED.**
+`.cthumb` is a **FIXED 64px**, so wrapping it in a 42px span doesn't shrink it —
+it overflows onto the text beside it. This is already in Known gotchas from
+2026-07-21 (`_planThumbStrip`) and r5 did it again in **three** places (month
+review 42px, wear panel 58px, rack second-look 46px). There is now a real
+**`.sthumb`** class (44px, its own empty state, in the dark-mode filter list).
+**Never size a thumb by its container.**
+
+**FLAG FOR REVIEW (r6).** Her ask: *"something to flag an item for potential
+deletion? with maybe a note from me — doesn't change anything but adds to a list
+for review in stats. And the app could tell me — would there be any problems if I
+delete this?"* `kv "flagged"` = `{id: {at, note}}`; `isFlagged`/`flagNote`/
+`setFlag`/`clearFlag`/`flaggedItems`, `flagLineHtml` on the item photo view,
+`openFlagSheet`, and `statsView "flagged"` + a Clothing Stats row.
+- ⚠️ **"DOESN'T CHANGE ANYTHING" IS THE CONTRACT.** A flag is a bookmark, never a
+  state: it must not reach the rack, the suggester, laundry or any stats pool. A
+  case pins that flagging alters neither the rack nor `_suggPool`. If a later
+  round wants to demote flagged pieces in the suggester, that breaks the promise
+  this shipped under.
+- ⚠️ **`deleteImpact(id)` — and the answer is worse than the app ever admitted.**
+  `wears.item_id` is `references items(id) ON DELETE CASCADE`, so deleting a
+  piece **permanently deletes every wear ever logged for it**, blanks any
+  calendar day where it was the only thing worn, and drops 2-piece looks below
+  the minimum the app enforces elsewhere. `deleteItem`'s confirm said only "this
+  cannot be undone". It now names the numbers, and both surfaces point at
+  **Storage**, which keeps all of it.
+- ⚠️ **Never a recommendation.** Same tone rule as "worth a second look" and
+  "packed 3×, worn 0×": she flags, the app reports consequences, she decides.
+
+**FILTER BY RACK, EVERYWHERE (r6).** Her ask, verbatim: *"should be able to
+filter by rack in all places filters exist."* A `rack` dim on the shared
+`FILTERS` array, so every funnel inherits it: On the rack · In rotation · Steady
+· Dormant · Off the rack. ⚠️ For LOOKS it is **ALL-pieces** (like status and
+capsule) — an ANY-piece reading matches nearly every look, i.e. no filter at all.
+⚠️ Adding a dim means four places: `FILTERS`, `newFilterState`, `hasActiveFilter`
+and `filterActiveCount`.
+
+⚠️ **A NEWLY DECLARED LEVEL NOW REBUILDS THE RACK AT ONCE (r6).** Her question:
+*"if I add a context not included in the rack, will the rack automatically
+expand/revise itself right then?"* **It did not.** `rackNeededLevels` reads
+forward day plans, but nothing marked the rack STALE when she added one, so a
+Wedding planned on Monday could wait until Sunday's scheduled rebuild — and
+`targetLevel` is a HARD filter, so asking for that level meanwhile returned an
+**empty sheet**. The rack now stores the `levels` it was built for, `rackIsStale`
+compares them against `rackNeededLevels()`, and `saveDayPlan` calls `rackEnsure`.
+⚠️ **Losing a level deliberately does NOT rebuild** — that would churn the rack
+for no gain, and stability is the feature.
+
+**NO MORE WASH ORDERS (r6).** Her words: *"I don't like the app telling me to
+wash x."* The trip row and the week-planner cards now state what the PLAN does
+("Your plan has the white tee out again Thursday — that's past its wears since
+the last wash") and stop. Same rule as "packed 3×, worn 0×" being a fact, never
+advice. ⚠️ Note this is the SECOND round on that trip row; the first only
+reworded the instruction rather than removing it.
+
 **2026-08-03 r5 — FOUR REPORTS FROM USING r1–r4.**
 
 ⚠️ **PLANNING AHEAD NOW KNOWS THE LAUNDRY — the tank-top bug.** Her report: she
@@ -1604,7 +1661,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-03 r5`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-03 r6`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -1643,6 +1700,13 @@ the rest (plus outfit-only `liked`, since `itemMatchesFilter` never sees it — 
 the shared `funnelBtnHtml(id, state)` button+badge.
 
 ## Known gotchas
+
+- **⚠️ `.cthumb` is a FIXED 64px — a narrower wrapper does NOT shrink it**, it
+  overflows and lands on top of whatever is beside it. Bitten twice: the Tomorrow
+  strip (2026-07-21, fixed with its own `.tm-thumb`) and then THREE new lists in
+  2026-08-03 r5 (month review, wear panel, rack second-look), which she reported
+  as "text overlaps with the images". **Use `.sthumb` (44px) for list rows and
+  never size a thumb by its container.** Any new thumb size = a new class.
 
 - **⚠️ A full-width `<button>` needs an explicit `width`. `display:block` is not
   enough** (2026-07-26). Form controls size to their content regardless of
@@ -1944,7 +2008,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **286/286** (2026-08-03 r5, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **292/292** (2026-08-03 r6, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
