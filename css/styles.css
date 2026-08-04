@@ -579,8 +579,12 @@
   .cap-footer { padding: 24px 14px 30px; }
   .cap-del { width: 100%; padding: 13px; border-radius: 12px; background: var(--surface);
     border: 1px solid var(--line); color: var(--danger); font-weight: 600; font-size: 15px; }
-  .cap-actions { display: flex; gap: 10px; margin-bottom: 10px; }
-  .cap-act2 { flex: 1; padding: 13px; border-radius: 12px; background: var(--surface);
+  /* ⚠️ WRAPS. A trip gained a 5th action (Dates) in 2026-08-04 r3, and flex
+     items don't shrink below their content, so a no-wrap row overflowed the
+     screen sideways instead of reflowing. Basis + min-width means any number of
+     these lay out in even rows. */
+  .cap-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+  .cap-act2 { flex: 1 1 88px; min-width: 88px; padding: 13px; border-radius: 12px; background: var(--surface);
     border: 1px solid var(--line); color: var(--ink); font-weight: 600; font-size: 15px; }
   /* packing progress + tick */
   .cap-pack { margin: 12px 14px 0; }

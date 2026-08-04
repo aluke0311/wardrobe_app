@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-04 r3";
+const APP_VERSION = "2026-08-04 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,7 +21,7 @@ const APP_VERSION = "2026-08-04 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
-  { v: "2026-08-04 r3", notes: [
+  { v: "2026-08-04 r4", notes: [
     "A piece you've worn in the last two weeks is now on the rack, and so is every piece of an outfit you've planned for the next two weeks. Before this the rack only knew what LEVEL your plans needed, not which clothes you'd actually chosen — and wearing something off the rack didn't put it there until the next weekly rebuild",
     "The rack no longer rotates while you're away. Its \"worth a second look\" list counts how often a piece was offered and passed over, and a rebuild during a trip was counting clothes hanging in a closet you weren't standing in",
     "You can change a trip's dates after making it — Dates, next to Rename on the trip. Weather for any day that's no longer part of the trip is put back to what it was at home",

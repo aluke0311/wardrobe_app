@@ -1992,11 +1992,17 @@ async function run() {
      checking staleness. So the 7-day cadence and the season-flip guard only ran
      if she happened to visit the rack SCREEN. */
   t("a stale or old-format rack is rebuilt, a fresh one is left alone", () => withRackCloset(() => {
-    // `levels` = what the stored rack was built to dress; without it every rack
-    // reads as stale, since a needed level would always be "new".
-    const fresh = { built: today, season: W.currentSeason(), ids: ["a"], rotation: ["a"], steady: [], dormant: [],
-                    algo: W.RACK_ALGO, levels: W.rackNeededLevels(today) };
-    const old = { built: today, season: W.currentSeason(), ids: ["a"], cold: [] };   // pre-band shape
+    /* `levels` = what the stored rack was built to dress; without it every rack
+       reads as stale, since a needed level would always be "new".
+       ⚠️ The baseline must be a rack buildRack ACTUALLY BUILDS, not a hand-written
+       `ids:["a"]`. Since 2026-08-04 r3 a stored rack missing a piece she has worn
+       or planned is stale on purpose, and a one-item fixture rack is missing all
+       of them — so this case would fail for a reason it isn't testing. */
+    const b = W.buildRack({ today });
+    const fresh = { built: today, season: W.currentSeason(), ids: b.ids, rotation: b.rotation,
+                    steady: b.steady, dormant: b.dormant,
+                    algo: W.RACK_ALGO, levels: b.levels };
+    const old = { built: today, season: W.currentSeason(), ids: b.ids, cold: [] };   // pre-band shape
     const aged = { ...fresh, built: W.shiftDate(today, -(W.RACK_REBUILD_DAYS + 1)) };
     const offSeason = { ...fresh, season: "NotASeason" };
     return eq([W.rackIsStale(fresh, today), W.rackIsStale(old, today),
@@ -3940,6 +3946,102 @@ async function run() {
     const moved = JSON.stringify(rotated.dormant) !== JSON.stringify(a.dormant);
     return same && moved ? true : `same=${same} moved=${moved}`;
   }));
+
+  /* Her two questions, 2026-08-04: "I make a planned outfit, and the rack resets
+     after that — do those pieces stay in (or get added to) the rack?" and "if I
+     wear something not on the rack, does it get added?" Both answers were no. */
+  t("a piece she planned for next week is forced onto the rack", () => withRackCloset(() => {
+    const before = W.buildRack({ today });
+    const off = W.items.find(i => !before.ids.includes(i.id) && W.suggestSlot(i) === "Tops" &&
+                                  W.itemStatus(i) === "Available" && i.image_path);
+    if (!off) return "fixture drift: every eligible top is already on the rack";
+    // a look she has assigned to a day inside the lookahead window
+    W.outfitItemMap.set("plan-look", [off.id]);
+    const plans = { [W.shiftDate(today, 4)]: [{ contexts: ["Church"], outfit: "plan-look" }] };
+    const after = W.buildRack({ today, plans });
+    const forced = W.rackForcedIds({ today, plans });
+    W.outfitItemMap.delete("plan-look");
+    return after.ids.includes(off.id) && forced.has(off.id) &&
+           // it joins ROTATION, so it can never be counted as an unmet offer
+           after.rotation.includes(off.id) && !after.offered.includes(off.id)
+      ? true : `planned piece ${off.id} not forced in`;
+  }));
+
+  t("a piece she wore yesterday is forced onto the rack", () => withRackCloset(() => {
+    const before = W.buildRack({ today });
+    const off = W.items.find(i => !before.ids.includes(i.id) && W.suggestSlot(i) === "Tops" &&
+                                  W.itemStatus(i) === "Available" && i.image_path);
+    if (!off) return "fixture drift: every eligible top is already on the rack";
+    const rows = [...W.wears, { item_id: off.id, worn_on: W.shiftDate(today, -1), formality_for: 3 }];
+    const after = W.buildRack({ today, wearRows: rows });
+    return after.ids.includes(off.id) ? true : `worn piece ${off.id} not forced in`;
+  }));
+
+  /* ⚠️ The bug the first version of this shipped with: rackForcedIds returned
+     more than buildRack could keep, so rackIsStale found a forced piece missing
+     on EVERY boot and rebuilt forever. The two must agree by construction. */
+  t("everything rackForcedIds returns actually survives into the rack", () => withRackCloset(() => {
+    /* ⚠️ Load the recent window up deliberately. Against the plain fixture
+       nothing has to be displaced, so this assertion passes without exercising
+       the trim at all — it was vacuous on the first attempt and its own mutation
+       check is what showed that. Wearing every top inside the window forces far
+       more than a slot's rotation band can hold, which is the real case. */
+    const tops = W.items.filter(i => W.suggestSlot(i) === "Tops" &&
+                                     W.itemStatus(i) === "Available" && i.image_path);
+    const rows = [...W.wears];
+    tops.forEach((i, n) => rows.push({ item_id: i.id, worn_on: W.shiftDate(today, -(n % 13) - 1),
+                                       formality_for: 3 }));
+    const forced = W.rackForcedIds({ today, wearRows: rows });
+    if (!forced.size) return "fixture drift: nothing was forced";
+    const built = W.buildRack({ today, wearRows: rows });
+    const have = new Set(built.ids);
+    const missing = [...forced].filter(id => !have.has(id));
+    return missing.length ? `forced but dropped: ${missing.join(",")}` : true;
+  }));
+
+  /* ⚠️ Forcing must not turn the stratified rack back into a top-N — the slot
+     quotas are what let it build an outfit at all. Literals, not a formula
+     derived from the constants (the r1 lesson: that test passed with the
+     ceiling switched off). */
+  t("forcing pieces in does not blow past the slot quotas", () => withRackCloset(() => {
+    const r = W.buildRack({ today });
+    const bySlot = {};
+    for (const id of r.ids) {
+      const i = W.itemById.get(id);
+      if (!i) continue;
+      const s = (W.isLayer(i) && i.category === "Tops") ? "Tops" : W.suggestSlot(i);
+      bySlot[s] = (bySlot[s] || 0) + 1;
+    }
+    // formality top-ups may add on top, so these are generous ceilings, not equalities
+    const ceiling = { Tops: 26, Bottoms: 18, Dresses: 9, Shoes: 15, Outerwear: 10 };
+    const over = Object.entries(ceiling).filter(([s, n]) => (bySlot[s] || 0) > n);
+    return over.length ? `slot over ceiling: ${JSON.stringify(bySlot)}` : true;
+  }));
+
+  /* ⚠️ During a trip the suitcase IS the pool, so a rotation tick spent while
+     she is away counts ~26 pieces as "offered and passed over" that she could
+     not physically have reached. See rackShouldRotate. */
+  t("the rack does not rotate while she is away", () => {
+    const st = { built: W.shiftDate(today, -30) };   // long overdue by the plain cadence
+    const away = [{ from: W.shiftDate(today, -3), to: W.shiftDate(today, 3),
+                    name: "Madrid", lat: 40.4, lon: -3.7 }];
+    const homeCadence = W.rackShouldRotate(st, today, false, []);
+    const midTrip = W.rackShouldRotate(st, today, false, away);
+    // and her own "Rebuild now" still works from anywhere
+    const forced = W.rackShouldRotate(st, today, true, away);
+    return eq([homeCadence, midTrip, forced], [true, false, true]);
+  });
+
+  t("away days do not count toward the rack's cadence", () => {
+    const from = W.shiftDate(today, -10);
+    // home the whole time: 10 elapsed days are 10 home days
+    const allHome = W.rackHomeDaysSince(from, today, []);
+    // away for 6 of them leaves 4 — under RACK_REBUILD_DAYS, so no rotation
+    const away = [{ from: W.shiftDate(today, -8), to: W.shiftDate(today, -3),
+                    name: "Madrid", lat: 40.4, lon: -3.7 }];
+    const someAway = W.rackHomeDaysSince(from, today, away);
+    return eq([allHome, someAway], [10, 4]);
+  });
 
   t("losing a level does not churn the rack", () => withRackCloset(() => {
     // built for MORE levels than are needed now — that must not force a rebuild

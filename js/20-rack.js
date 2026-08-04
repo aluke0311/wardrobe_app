@@ -258,37 +258,82 @@ function rackNeededLevels(today = todayStr(), plans = null, wearRows = null) {
    pieces join ROTATION, not the offered bands, so they cannot inflate `seen` —
    she is plainly not passing over a shirt she is wearing.
 
-   ⚠️ It mirrors buildRack's own eligibility so the set is always SATISFIABLE.
-   rackIsStale asks "is anything forced missing from the stored rack?", and an
-   unsatisfiable answer there is an infinite rebuild every boot. In particular a
-   PUSHED-OFF piece is excluded: she said not now, and wearing it once does not
-   overrule that. Season is deliberately NOT applied — she wore it, so whatever
-   the band says about the weather is beside the point. */
+   ⚠️ IT MIRRORS buildRack's ELIGIBILITY *AND* CAPS ITSELF PER SLOT, because the
+   set has to be SATISFIABLE. rackIsStale asks "is anything forced missing from
+   the stored rack?" — so anything this returns, buildRack must be able to keep.
+   The first version capped nothing and let buildRack trim the overflow back out,
+   which meant the two disagreed by construction: every boot found a forced piece
+   missing, rebuilt, trimmed it again, and would have rebuilt forever. (The
+   selftest caught it; on the phone it would have looked like the rack churning.)
+   So the cap is the slot's ROTATION band, ranked commitments-first then by
+   recency — the same order rotation already ranks by.
+
+   ⚠️ A PUSHED-OFF piece is excluded: she said not now, and wearing it once does
+   not overrule that. Season is deliberately NOT applied — she wore it, so what
+   the band thinks of the weather is beside the point. And when a caller builds
+   from a restricted pool (the pack solver), a piece outside that pool was never
+   a candidate and is dropped. */
 function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
-                         pushed = null } = {}) {
+                         pushed = null, quota = null, pool = null } = {}) {
   const rows = wearRows || wears;
   const all = plans || dayPlanAll();
   const push = pushed || rackPushedSet(today);
-  const out = new Set();
+  const inPool = pool ? new Set(pool.map(i => i && i.id)) : null;
+  const declared = new Set();
+  const raw = new Set();
   const ok = (id) => {
     const i = itemById.get(id);
     return !!(i && itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i) &&
-              i.category !== "Workout" && !push.has(id));
+              i.category !== "Workout" && !push.has(id) && (!inPool || inPool.has(id)));
   };
   // Declared: the pieces of a look she has actually assigned to a day ahead.
   for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
     const d = shiftDate(today, k);
     for (const e of (all[d] || [])) {
       if (!e || !e.outfit) continue;
-      for (const id of (outfitItemMap.get(e.outfit) || [])) if (ok(id)) out.add(id);
+      for (const id of (outfitItemMap.get(e.outfit) || [])) {
+        if (ok(id)) { raw.add(id); declared.add(id); }
+      }
     }
   }
-  // Lived: anything she reached for herself in the last RACK_RECENT_DAYS.
+  /* Lived: anything she reached for herself in the last RACK_RECENT_DAYS.
+     ⚠️ The most recent day is recorded HERE, from `rows`, rather than read back
+     out of rackWarmth/lastWorn — those close over the global `wears` and would
+     ignore an injected wearRows, which is exactly how the first version of this
+     dropped a piece worn yesterday: it ranked at warmth 0 and fell off the cap.
+     buildRack is documented as injectable; a ranking that quietly isn't makes
+     the fixture and the phone disagree. */
   const floor = shiftDate(today, -RACK_RECENT_DAYS);
+  const recentAt = new Map();
   for (const w of rows) {
     if (!w || !w.item_id || !w.worn_on) continue;
     if (w.worn_on < floor || w.worn_on > today) continue;
-    if (ok(w.item_id)) out.add(w.item_id);
+    if (!ok(w.item_id)) continue;
+    raw.add(w.item_id);
+    const prev = recentAt.get(w.item_id);
+    if (!prev || w.worn_on > prev) recentAt.set(w.item_id, w.worn_on);
+  }
+
+  // Cap per slot — see the warning above. A commitment outranks recency.
+  const Q = quota || RACK_SLOT_QUOTA;
+  const slotOf = i => (isLayer(i) && i.category === "Tops") ? "Tops" : suggestSlot(i);
+  const bySlot = new Map();
+  for (const id of raw) {
+    const i = itemById.get(id);
+    if (!i) continue;
+    const s = slotOf(i);
+    if (!s || !Q[s]) continue;           // a slot the rack has no structure for
+    if (!bySlot.has(s)) bySlot.set(s, []);
+    bySlot.get(s).push(i);
+  }
+  const out = new Set();
+  for (const [slot, list] of bySlot) {
+    const band = rackBands(Q[slot]);
+    list.sort((a, b) =>
+      ((declared.has(b.id) ? 1 : 0) - (declared.has(a.id) ? 1 : 0)) ||
+      String(recentAt.get(b.id) || "").localeCompare(String(recentAt.get(a.id) || "")) ||
+      (a.id < b.id ? -1 : 1));
+    for (const i of list.slice(0, band.rotation)) out.add(i.id);
   }
   return out;
 }
@@ -475,10 +520,48 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     }
   }
 
-  /* Declared and lived pieces, forced in exactly like a pin — see rackForcedIds.
-     They land in ROTATION so they never count as an unmet offer. */
-  for (const id of rackForcedIds({ today, plans, wearRows: rows, pushed: push })) {
+  /* Declared and lived pieces — see rackForcedIds. They join ROTATION, so they
+     never count as an unmet offer and can't inflate `seen`.
+
+     ⚠️ THEY DISPLACE, THEY DO NOT PILE ON (caught by the quota cases the first
+     time this shipped). Adding them on top grew the fixture's Dresses slot from
+     6 to 15 and Shoes from 11 to 16 — which quietly turns a stratified rack back
+     into the top-N it exists not to be. The slot quotas are the reason the rack
+     can build an outfit at all ("a 58-piece rack that happens to be 45 tops
+     cannot"), so a forced piece takes a rotation seat rather than adding one:
+     the slot's coldest ordinary member steps out, and the rack stays its size.
+     Where more pieces are forced than the slot's rotation band holds, the most
+     recent win — which is the same rule rotation already ranks by.
+     ⚠️ Pins are never displaced and never counted: pinning deliberately bypasses
+     quotas, and trimming to a quota that pins had inflated would drop pieces the
+     derivation actually chose. */
+  const forced = rackForcedIds({ today, plans, wearRows: rows, pushed: push, quota: QUOTA, pool });
+  const touchedSlots = new Set();
+  for (const id of forced) {
+    const i = itemById.get(id);
+    if (!i || ids.has(id)) continue;
+    const s = slotOf(i) || "Other";
+    if (!QUOTA[s]) continue;              // a slot the rack has no structure for
     ids.add(id); dormant.delete(id); steady.delete(id); rotation.add(id);
+    touchedSlots.add(s);
+  }
+  for (const slot of touchedSlots) {
+    const band = rackBands(QUOTA[slot]);
+    const inSlot = () => [...rotation]
+      .filter(id => !pin.has(id))
+      .map(id => itemById.get(id))
+      .filter(i => i && slotOf(i) === slot);
+    let over = inSlot().length - band.rotation;
+    if (over <= 0) continue;
+    /* Only ordinary members are ever dropped, coldest first. rackForcedIds caps
+       itself at exactly this band, so dropping the non-forced is always enough —
+       and a forced piece surviving is the whole point of forcing it. */
+    const droppable = inSlot().filter(i => !forced.has(i.id)).sort(byRecent).reverse();
+    for (const victim of droppable) {
+      if (over <= 0) break;
+      rotation.delete(victim.id); ids.delete(victim.id);
+      over--;
+    }
   }
 
   const slots = new Map();
