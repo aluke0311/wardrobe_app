@@ -224,6 +224,78 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-04 r2 — REVIEWING r1 ANTAGONISTICALLY, AFTER "I JUST REFRESHED AFTER
+THE UPDATE AND IT STILL HAS LOTS OF HEELS???"** She was right and r1 was mostly
+not applied. Selftest 308 → **316**, run green; all 8 new cases mutation-checked
+red in the same session. **Four defects, and the biggest was not the rack.**
+
+⚠️ **① THE STORED RACK HAD NO IDEA THE DERIVATION COULD CHANGE.** `rackIsStale`
+asks four questions and none of them can see that the CODE that built the stored
+rack is not the code now running — so r1's ceiling **never ran once**, and would
+not have for up to seven days. **Every deploy touching `buildRack` silently
+shipped nothing until the cadence caught up.** **`RACK_ALGO`** (stored as
+`st.algo`) fixes it; bump it whenever buildRack's SELECTION changes (quotas,
+bands, shares, ceilings, ordering) and **not** for copy or a new reader.
+⚠️ It is a **STRUCTURAL** trigger — tops up coverage, must NOT spend a rotation
+tick or move `built`, exactly like a season flip (the r7 churn lesson).
+**The general rule: derived state cached across deploys needs a version stamp,
+or a shipped fix is invisible until something unrelated invalidates it.**
+
+⚠️ **② THE BACKFILL HANDED THE SKIPPED HEELS STRAIGHT BACK.** r1 let the backfill
+ignore the ceiling ("full beats correct"). Harmless on the synthetic fixture,
+where every slot had everyday spares; **on a real wardrobe it is the common
+case** — most shoes she hasn't worn in 60 days ARE the dressy ones, so the
+ceiling took 1, the slot came up short, and the backfill put the rest back. A
+mutation run reproduced her exact report: **4 dressy-only pairs in the
+rediscovery bands.** The ceiling binds the backfill too and **a slot may now run
+SHORT** — 54 that reflects her week beats 58 padded with clothes for days she
+doesn't have. Level coverage is unaffected: the formality top-up is exempt and
+runs after.
+
+⚠️ **③ THE SUGGESTER NEVER ENFORCED ITS OWN DOCUMENTED COHESION RULE — the
+biggest find, and nothing to do with the rack.** "An outfit is valid at level L
+iff every piece's set contains L" has been in the design model from the start and
+was **only ever applied through the `targetLevel` POOL filter**. With no level
+asked for — the DEFAULT — there was no cohesion floor at all: a `[6,8]` heel
+could join a `[2,3]` tee and `[3,4]` jeans, three pieces with **no level in
+common**. `formalityOk` sounds like it covers this and does not; it isolates
+pure-utility and nothing else. `scoreCombo`'s versatility bonus merely declined
+to *reward* it — ~2 points against a spread of 2.5–5.5, so it lost a coin-flip
+rather than the argument. **Measured: 53 of 96 suggestions paired heels with a
+tee.** **`comboSharesALevel`** is that sentence as a function, enforced in all
+three combo loops **and in `swapSuggestionPiece` / `addSuggestionLayer`** — an
+invariant the engine holds and the edit paths don't is one she can walk out of.
+- ⚠️ Unknown beats invented (no derivable set never blocks); all-function-wear is
+  exempt (level 1 answers to the TAG — re-checking sets here is the r12 bug).
+- ⚠️ **No-op when `targetLevel` is set**, so the pack solver is untouched
+  (`packCandidates` always passes `occ.level`).
+
+⚠️ **④ AND FIXING ①–③ REINTRODUCED THE 2026-07-19 EMPTY-SHEET BUG — found by
+MEASURING, not by reading.** Keeping rare-day clothes off the rack means tapping
+"6. Dressed Up" out of the blue hit `targetLevel`'s HARD filter against a rack
+with no heels: on a realistic 216-piece closet, **level 3 gave 8 results and
+level 6 gave 0**. **`poolCoversLevel(lv, pool)`** ("can this pool BUILD at this
+level" — shoes plus a dress or a top and a bottom, not "owns something dressy")
++ a rescue in `planningPool` that widens to the whole closet, with the pool chip
+naming the level that forced it. Rescue-only; it never narrows.
+
+**ALSO: "worth a second look" was about taps, not weeks.** Her words: *"I may
+often hit refresh on the rack."* Every "Rebuild now" is a rotation, so it
+increments `seen` for all ~26 offered pieces — correct as a QUEUE CURSOR, nonsense
+as a MEASURE: three taps in one evening would fill the list with pieces she never
+got the chance to decline. **`seenAt`** records the first offer and
+**`RACK_SECOND_LOOK_DAYS`(14)** is required alongside the count. This is the r7
+"counter that is both measure and mechanism" lesson arriving through **the one
+trigger r7 deliberately exempted** — check the exemptions too.
+
+⚠️ **THE FIXTURE LESSON, TWICE IN TWO ROUNDS.** r1's ceiling test passed against
+a fixture where every slot had plenty of everyday spares, so it never exercised
+the backfill path that was the real bug; and the r2 rescue test first passed
+against `withRackCloset`, whose every-tenth-item dressy seeding puts a level-6
+piece in ROTATION so that rack CAN dress 6. **A fixture that is tidier than her
+closet tests the code you meant to write, not the code she runs.** Both cases now
+carry an explicit guard clause that fails loudly if the fixture drifts back.
+
 **2026-08-04 r1 — SIX REPORTS FROM USING r7.** Selftest 297 → **308**, run
 green; all 11 new cases mutation-checked red in the same session.
 
@@ -1799,7 +1871,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-04 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-04 r2`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2146,7 +2218,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **308/308** (2026-08-04 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **316/316** (2026-08-04 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

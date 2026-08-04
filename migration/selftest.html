@@ -1995,7 +1995,7 @@ async function run() {
     // `levels` = what the stored rack was built to dress; without it every rack
     // reads as stale, since a needed level would always be "new".
     const fresh = { built: today, season: W.currentSeason(), ids: ["a"], rotation: ["a"], steady: [], dormant: [],
-                    levels: W.rackNeededLevels(today) };
+                    algo: W.RACK_ALGO, levels: W.rackNeededLevels(today) };
     const old = { built: today, season: W.currentSeason(), ids: ["a"], cold: [] };   // pre-band shape
     const aged = { ...fresh, built: W.shiftDate(today, -(W.RACK_REBUILD_DAYS + 1)) };
     const offSeason = { ...fresh, season: "NotASeason" };
@@ -3891,6 +3891,7 @@ async function run() {
   t("declaring a level the rack can't dress makes it stale at once", () => withRackCloset(() => {
     const built = W.buildRack({ today });
     const fresh = { built: today, season: W.currentSeason(), ids: built.ids, levels: built.levels,
+                    algo: W.RACK_ALGO,
                     rotation: built.rotation, steady: built.steady, dormant: built.dormant };
     const quiet = W.rackIsStale(fresh, today);
     // a Wedding (seed level 6) inside the lookahead window
@@ -3944,6 +3945,7 @@ async function run() {
     // built for MORE levels than are needed now — that must not force a rebuild
     const built = W.buildRack({ today });
     const fresh = { built: today, season: W.currentSeason(), ids: built.ids,
+                    algo: W.RACK_ALGO,
                     levels: [...new Set([...built.levels, 7, 8])],
                     rotation: built.rotation, steady: built.steady, dormant: built.dormant };
     return eq(W.rackIsStale(fresh, today), false);
@@ -4270,6 +4272,232 @@ async function run() {
     return eq([head.v === W.APP_VERSION, JSON.stringify(W.WHATS_NEW) === JSON.stringify(head.notes),
                dupes, empty],
               [true, true, [], []]);
+  });
+
+  /* ==================================================================
+     2026-08-04 r2 — reviewing r1 antagonistically, after "I just
+     refreshed after the update, and it still has lots of heels???"
+     ================================================================== */
+
+  /* ⚠️ THE REASON THE HEELS SURVIVED r1. rackIsStale asked four questions and
+     none of them could see that the CODE that built the stored rack was not the
+     code now running — so a rack built yesterday stayed on screen unchanged for
+     up to seven days, and the new ceiling never ran once. Any deploy that
+     changes buildRack's selection ships nothing without this. */
+  t("a rack built by an older derivation is rebuilt, not left sitting there", () => withRackCloset(() => {
+    const built = W.buildRack({ today });
+    const base = { built: today, season: W.currentSeason(), ids: built.ids, levels: built.levels,
+                   rotation: built.rotation, steady: built.steady, dormant: built.dormant };
+    const current = { ...base, algo: W.RACK_ALGO };
+    const older = { ...base, algo: W.RACK_ALGO - 1 };
+    const unstamped = { ...base };                      // written before RACK_ALGO existed
+    return eq([W.rackIsStale(current, today), W.rackIsStale(older, today), W.rackIsStale(unstamped, today)],
+              [false, true, true]);
+  }));
+
+  /* ⚠️ The other reason. r1 let the backfill ignore the ceiling ("full beats
+     correct"), which is harmless on a fixture where every slot has everyday
+     spares and inverts the fix on a real wardrobe — where the pieces she hasn't
+     worn in 60 days ARE the dressy ones. The ceiling took one, the slot came up
+     short, and the backfill put the rest straight back.
+     Fixture: a Shoes slot whose ONLY rediscovery candidates are dressy. */
+  const withDressyOnlyShoes = (fn) => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, cap: W.activeCapsuleId, ready: W.dataReady,
+                    rack: W.kvData.get("rack"), plan: W.kvData.get("dayplan") };
+    const mk = (id, cat, sub, dressy) => ({ id, name: id, category: cat, subcategory: sub,
+      status: "Available", image_path: id + ".jpg", color_family: "Blue",
+      formality: dressy ? [6] : [2, 3], season: ["Spring","Summer","Fall","Winter"] });
+    W.items = []; W.wears = [];
+    // enough everyday pieces elsewhere that only Shoes is under pressure
+    for (const [cat, sub] of [["Tops","Tee shirts"],["Bottoms","Jeans"],["Dresses","Short"],["Outerwear","Jackets"]])
+      for (let n = 0; n < 40; n++) {
+        const id = `${cat}_${n}`;
+        W.items.push(mk(id, cat, sub, false));
+        if (n < 20) W.wears.push({ id: "w" + id, item_id: id, worn_on: W.shiftDate(today, -(n + 1)),
+                                   outfit_id: null, context: ["Errands"], formality_for: 3 });
+      }
+    for (let n = 0; n < 7; n++) {           // 7 everyday pairs, all worn recently
+      const id = `Shoes_hot_${n}`;
+      W.items.push(mk(id, "Shoes", "Sneakers", false));
+      W.wears.push({ id: "w" + id, item_id: id, worn_on: W.shiftDate(today, -(n + 1)),
+                     outfit_id: null, context: ["Errands"], formality_for: 3 });
+    }
+    for (let n = 0; n < 25; n++)            // …and 25 dressy pairs, none worn
+      W.items.push(mk(`Shoes_heel_${n}`, "Shoes", "Heels", true));
+    W.outfits = []; W.outfitLinks = []; W.exclusions = [];
+    W.activeCapsuleId = null; W.dataReady = true;
+    W.kvData.delete("rack"); W.kvData.delete("dayplan");
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try { return fn(); }
+    finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.exclusions = saved.exclusions;
+      W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  };
+
+  t("a rack slot runs short rather than padding itself with heels", () => withDressyOnlyShoes(() => {
+    const r = W.buildRack({ today });
+    const heels = [...r.steady, ...r.dormant]
+      .filter(id => { const i = W.itemById.get(id); return i && i.subcategory === "Heels"; }).length;
+    const shoes = r.ids.filter(id => { const i = W.itemById.get(id); return i && W.suggestSlot(i) === "Shoes"; }).length;
+    // ceiling for Shoes (steady 3 + dormant 2) is 1; the slot may come up under
+    // its quota of 11, and that is the point rather than a shortfall to fix
+    if (heels > 1) return `${heels} dressy-only pairs in the rediscovery bands`;
+    return shoes < W.rackQuotaTotal(W.RACK_SLOT_QUOTA.Shoes)
+      ? true : `slot filled to ${shoes} — it should have been allowed to run short`;
+  }));
+
+  // Running short must never cost level coverage: the formality top-up is
+  // exempt from the ceiling and runs after it, so a declared dressy day still
+  // gets shoes it can actually use.
+  t("running a slot short still leaves a declared dressy day dressable", () => withDressyOnlyShoes(() => {
+    const plans = {}; plans[W.shiftDate(today, 3)] = [{ contexts: ["Wedding"], level: 6, outfit: null }];
+    const r = W.buildRack({ today, plans });
+    const canDress6 = r.ids.map(id => W.itemById.get(id))
+      .filter(i => i && W.suggestSlot(i) === "Shoes" && (W.itemFormalitySet(i) || []).includes(6)).length;
+    return canDress6 >= W.RACK_LEVEL_MIN ? true : `only ${canDress6} shoes cover level 6`;
+  }));
+
+  /* ⚠️ Her words: "I may often hit refresh on the rack." Every Rebuild now is a
+     rotation, so it increments `seen` for all ~26 offered pieces — right as a
+     queue cursor, nonsense as a measure. Three taps in an evening would fill
+     "worth a second look" with pieces she never got the chance to decline. */
+  t("worth a second look is about weeks, not about tapping Rebuild now", () => withRackCloset(() => {
+    const saved = W.kvData.get("rack");
+    try {
+      const ids = W.buildRack({ today }).offered.slice(0, 3);
+      const seen = {}, freshAt = {}, oldAt = {};
+      for (const id of ids) {
+        seen[id] = W.RACK_SEEN_LIMIT;
+        freshAt[id] = today;                                          // three taps tonight
+        oldAt[id] = W.shiftDate(today, -(W.RACK_SECOND_LOOK_DAYS + 1)); // three weeks of Sundays
+      }
+      W.kvData.set("rack", { seen, seenAt: freshAt });
+      const tonight = W.rackPassedOver(W.RACK_SEEN_LIMIT, today).length;
+      W.kvData.set("rack", { seen, seenAt: oldAt });
+      const overWeeks = W.rackPassedOver(W.RACK_SEEN_LIMIT, today).length;
+      return eq([tonight, overWeeks > 0], [0, true]);
+    } finally {
+      if (saved === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved);
+    }
+  }));
+
+  /* ⚠️ THE RULE THE APP DOCUMENTED AND NEVER ENFORCED. "An outfit is valid at
+     level L iff every piece's set contains L" was only ever applied through the
+     targetLevel POOL filter — so with no level asked for, which is the default,
+     nothing stopped a [6,8] heel joining a [2,3] tee and [3,4] jeans. Three
+     pieces with no level in common: an outfit the app's own model says does not
+     exist. This is the other half of "still lots of heels". */
+  t("pieces with no formality level in common are not an outfit", () => {
+    const mk = (id, cat, sub, f) => ({ id, name: id, category: cat, subcategory: sub, formality: f });
+    const tee = mk("t", "Tops", "Tee shirts", [2, 3]);
+    const jean = mk("b", "Bottoms", "Jeans", [3, 4]);
+    const heel = mk("h", "Shoes", "Heels", [6, 8]);
+    const flat = mk("f", "Shoes", "Flats", [3, 4, 5]);
+    const blazer = mk("z", "Outerwear", "Blazers", [5, 6, 7]);
+    const bare = mk("n", "Shoes", "Flats", null);   // nothing derivable → never blocks
+    const saved = { items: W.items };
+    try {
+      W.items = [tee, jean, heel, flat, blazer, bare];
+      W.itemById = new Map(W.items.map(i => [i.id, i]));
+      return eq([W.comboSharesALevel([tee, jean, flat]),   // share 3
+                 W.comboSharesALevel([tee, jean, heel]),   // share nothing
+                 W.comboSharesALevel([tee, jean, flat, blazer]), // blazer starts at 5
+                 W.comboSharesALevel([jean, flat, blazer]),      // share nothing (4 vs 5)
+                 W.comboSharesALevel([tee, jean, bare]),   // unknown never invents a clash
+                 W.comboSharesALevel([heel])],             // a lone piece is always fine
+                [true, false, false, false, true, true]);
+    } finally {
+      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
+    }
+  });
+
+  // …and the engine actually applies it, on an untargeted ask — the default.
+  t("the suggester stops pairing dressy shoes with an everyday outfit", () => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, cap: W.activeCapsuleId, ready: W.dataReady };
+    try {
+      const mk = (id, cat, sub, f) => ({ id, name: id, category: cat, subcategory: sub, formality: f,
+        status: "Available", image_path: id + ".jpg", color_family: "Blue",
+        season: ["Spring","Summer","Fall","Winter"] });
+      const its = [];
+      for (let n = 0; n < 6; n++) {
+        its.push(mk("tee" + n, "Tops", "Tee shirts", [2, 3]));
+        its.push(mk("jean" + n, "Bottoms", "Jeans", [2, 3]));
+        its.push(mk("heel" + n, "Shoes", "Heels", [6, 8]));
+      }
+      its.push(mk("sneak", "Shoes", "Sneakers", [2, 3]));   // the one coherent pairing
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      W.wears = []; W.outfits = []; W.outfitLinks = []; W.exclusions = [];
+      W.activeCapsuleId = null; W.dataReady = true;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+      let withHeels = 0, total = 0;
+      for (let k = 0; k < 12; k++)
+        for (const c of W.suggestOutfits(null, null, its, null, null, null, false)) {
+          total++;
+          if (c.pieces.some(p => p.subcategory === "Heels")) withHeels++;
+        }
+      return (total > 0 && withHeels === 0) ? true : `${withHeels} of ${total} suggestions paired heels with a tee`;
+    } finally {
+      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
+      W.wears = saved.wears; W.outfits = saved.outfits; W.outfitLinks = saved.outfitLinks;
+      W.exclusions = saved.exclusions; W.activeCapsuleId = saved.cap; W.dataReady = saved.ready;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  });
+
+  /* ⚠️ THE OFF-LEVEL CEILING REINTRODUCED THE 2026-07-19 EMPTY-SHEET BUG, and I
+     found it by measuring rather than by reading. Keeping clothes for rare days
+     off the rack means tapping "6. Dressed Up" out of the blue — nothing in the
+     planner, just looking — hit targetLevel's HARD filter against a rack with no
+     heels on it. Measured on a realistic 216-piece closet: level 3 gave a full
+     8 results, level 6 gave 0. Widening is rescue-only and the chip names it. */
+  /* ⚠️ Uses withDressyOnlyShoes, NOT withRackCloset: the latter seeds a dressy
+     piece every tenth item in every slot, and index 0 is worn recently enough to
+     sit in ROTATION, so that rack CAN dress level 6 and the case would pass
+     without testing anything. The guard clause below says so out loud rather
+     than reporting a silent success if the fixture ever drifts back. */
+  t("a level the rack can't dress widens to the closet; one it can does not", () => withDressyOnlyShoes(() => {
+    const rack = W.rackItems();
+    const rackCovers3 = W.poolCoversLevel(3, rack);
+    const rackCovers6 = W.poolCoversLevel(6, rack);
+    const pool3 = W.planningPool({ level: 3 });
+    const pool6 = W.planningPool({ level: 6 });
+    const allN = W.items.filter(i => W.itemStatus(i) === "Available").length;
+    if (rackCovers6) return "fixture no longer isolates the case — the rack can dress level 6";
+    /* Last assertion: this fixture's WHOLE CLOSET can't dress level 6 either
+       (its only [6] pieces are shoes), so the sheet is still empty — and that is
+       the right answer, because it is now the closet's answer rather than the
+       rack quietly withholding. The rescue producing real results was measured
+       separately on a realistic 216-piece closet: level 6 went 0 → 8. */
+    return eq([rackCovers3, pool3.length === rack.length, pool6.length === allN,
+               W.poolCoversLevel(6, W.items.filter(i => W.itemStatus(i) === "Available"))],
+              [true, true, true, false]);
+  }));
+
+  t("poolCoversLevel means 'can build an outfit', not 'owns something dressy'", () => {
+    const mk = (id, cat, sub, f) => ({ id, category: cat, subcategory: sub, formality: f, status: "Available" });
+    const top = mk("t", "Tops", "Blouses", [6]);
+    const bottom = mk("b", "Bottoms", "Pants", [6]);
+    const shoe = mk("s", "Shoes", "Heels", [6]);
+    const dress = mk("d", "Dresses", "Cocktail", [6]);
+    const saved = { items: W.items };
+    try {
+      W.items = [top, bottom, shoe, dress];
+      W.itemById = new Map(W.items.map(i => [i.id, i]));
+      return eq([W.poolCoversLevel(6, [top, bottom, shoe]),  // top+bottom+shoes
+                 W.poolCoversLevel(6, [dress, shoe]),        // dress+shoes
+                 W.poolCoversLevel(6, [top, bottom]),        // no shoes → no outfit
+                 W.poolCoversLevel(6, [dress]),              // no shoes → no outfit
+                 W.poolCoversLevel(6, [top, shoe]),          // no bottom, no dress
+                 W.poolCoversLevel(null, [])],               // no level asked → always fine
+                [true, true, false, false, false, true]);
+    } finally { W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i])); }
   });
 
   // ---- render summary ----

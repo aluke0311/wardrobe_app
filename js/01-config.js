@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-04 r1";
+const APP_VERSION = "2026-08-04 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-04 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-04 r2", notes: [
+    "The rack now notices when the app itself has changed how racks are built. That's why the heels survived the last update — your stored rack was fine by every check it had, so it sat there unchanged, and the new rule never ran",
+    "Outfits must now share a formality level to be suggested at all. The app has always said an outfit only works at a level every piece can be worn at, but it only enforced that when you asked for a specific level — so on an ordinary day it could pair dressy heels with a tee and jeans",
+    "A rack slot is allowed to come up short rather than pad itself with clothes for days you don't have. Filling to the quota was quietly putting the heels back",
+    "“Worth a second look” now needs a piece to have been in front of you for a couple of weeks, not just offered three times. Tapping Rebuild now a few times in an evening was counting as three chances to wear it",
+  ] },
   { v: "2026-08-04 r1", notes: [
     "The rack stopped filling its rediscovery slots with dress-only pieces. Heels and other clothes for days you rarely have now take at most a slot or two per category, so the rack shows you things you can actually wear this week",
     "Every update is now listed in Settings → What's new, all the way back — not just the one that landed last",

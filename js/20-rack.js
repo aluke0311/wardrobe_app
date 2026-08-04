@@ -87,6 +87,24 @@
    =================================================================== */
 
 const RACK_KEY = "rack";
+/* ⚠️ THE STORED RACK HAD NO IDEA THE DERIVATION COULD CHANGE (2026-08-04 r2).
+
+   Her report, the evening the off-level ceiling shipped: "I just refreshed after
+   the update, and it still has lots of heels???" It did, and nothing was wrong
+   with the ceiling — it never ran. `rackIsStale` asks four questions (is there a
+   rack, is it the current format, is it a week old, has the season or a declared
+   level changed) and none of them can see that the CODE that built it is not the
+   code running now. So a rack built yesterday stays on screen, unchanged, for up
+   to seven days after any change to how racks are built — and every deploy that
+   touches this file silently ships nothing until the cadence catches up.
+
+   Bump RACK_ALGO whenever buildRack's SELECTION changes (quotas, bands, shares,
+   ceilings, ordering). Not for copy, not for the screen, not for a new reader.
+   ⚠️ It is a STRUCTURAL trigger: it tops up coverage and must NOT spend a
+   rotation tick or move the `built` anchor, exactly like a season flip — the
+   r7 churn lesson. She should get the corrected rack on the next load, not a
+   reshuffled one. */
+const RACK_ALGO = 2;   // 2 = off-level ceiling (2026-08-04)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -108,6 +126,7 @@ const RACK_PUSH_LONG_DAYS = 120;// "not right now" from a reassessment — a sea
 const RACK_LOOKAHEAD_DAYS = 14; // how far ahead declared plans stock the rack
 const RACK_LEVEL_MIN = 2;       // per core slot, per level she'll actually need
 const RACK_SEEN_LIMIT = 3;      // offered this many rebuilds unworn → worth a second look
+const RACK_SECOND_LOOK_DAYS = 14; // …AND in front of her this long. See rackPassedOver.
 /* ⚠️ OFF-LEVEL CEILING (2026-08-04, her report: "I do feel that I have quite a
    lot of heels in the current rack, given that I don't dress up that often —
    one pair from steady and three in haven't-reached-for-lately").
@@ -327,14 +346,25 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
         ...ranked.filter(i => warmth(i) > 0 && !chosen.has(i.id)),   // more recent
         ...dormantPool.filter(i => !chosen.has(i.id)),               // then dormant
       ];
-      /* The off-level ceiling does NOT block the backfill — a slot that can't
-         fill any other way should be full rather than correct. But it still
-         orders it: pieces the ceiling passed over go LAST, or a Shoes band with
-         four dressy candidates and one everyday pair would hand the skipped
-         heels straight back through this door. */
-      const ordered = [...spare.filter(servesALevel), ...spare.filter(i => !servesALevel(i))];
-      for (const i of ordered) {
+      /* ⚠️ THE BACKFILL USED TO HAND THE SKIPPED HEELS STRAIGHT BACK (fixed
+         2026-08-04 r2 — it is why the ceiling barely moved her real rack).
+
+         r1 let the backfill ignore the ceiling, reasoning that "a slot that
+         can't fill any other way should be full rather than correct". On the
+         SYNTHETIC fixture that was harmless, because every slot had plenty of
+         everyday spares. On a real wardrobe it is the common case and it
+         inverts the fix: most shoes she hasn't worn in 60 days ARE the dressy
+         ones, so the ceiling took 1, the slot came up short, and the backfill
+         put two more back — the ordering below only decided which heels.
+
+         The ceiling binds here too, and a slot is allowed to run SHORT. A rack
+         of 54 that reflects her week beats a rack of 58 padded with clothes for
+         days she doesn't have; "58" was never the promise. Level coverage does
+         not depend on this — the formality top-up below is exempt and runs
+         after, so a declared Dressed Up day still gets its shoes. */
+      for (const i of spare) {
         if (short <= 0) break;
+        if (!servesALevel(i)) { if (offBudget <= 0) continue; offBudget--; }
         chosen.add(i.id);
         (warmth(i) > 0 ? inSteady : inDormant).push(i);
         short--;
@@ -393,6 +423,9 @@ function rackIsStale(st = rackState(), today = todayStr()) {
   // A rack stored before the three-band rework has no bands — rebuild rather
   // than render a screen with two thirds of its sections empty.
   if (!Array.isArray(st.steady) || !Array.isArray(st.rotation)) return true;
+  // Built by an older derivation → rebuild now rather than show her last week's
+  // answer to a question the app has since changed its mind about. See RACK_ALGO.
+  if ((st.algo || 1) !== RACK_ALGO) return true;
   if (daysBetween(st.built, today) >= RACK_REBUILD_DAYS) return true;
   if (st.season !== currentSeason()) return true;   // a season flip must not wait a week
   /* ⚠️ A NEWLY DECLARED LEVEL REBUILDS AT ONCE (2026-08-03 r6, her question:
@@ -463,21 +496,37 @@ async function rackEnsure({ force = false } = {}) {
   const cadence = rackShouldRotate(st, today, force);
 
   const seen = { ...rackSeen() };
+  /* ⚠️ WHEN a piece was first offered, not just how often (2026-08-04 r2). Her
+     words: "I may often hit refresh on the rack." Every "Rebuild now" is a
+     rotation, so it increments `seen` for all ~26 offered pieces — correct as a
+     QUEUE CURSOR (that's what makes the button give her different picks) and
+     nonsense as a MEASURE: three taps in one evening would put 26 pieces in
+     "worth a second look" claiming they'd been offered three times and passed
+     over. They hadn't. She never got the chance to decline them.
+     This is the r7 lesson — one counter doing a measure's job and a mechanism's
+     job — arriving through the one trigger r7 deliberately exempted. The cursor
+     keeps counting taps; the QUESTION now needs elapsed time as well. */
+  const seenAt = { ...(rackState().seenAt || {}) };
   for (const id of Object.keys(seen)) {
-    if (!itemById.get(id)) { delete seen[id]; continue; }        // deleted piece
+    if (!itemById.get(id)) { delete seen[id]; delete seenAt[id]; continue; }   // deleted piece
     const lw = lastWorn(id);
-    if (prevBuilt && lw && lw >= prevBuilt) delete seen[id];     // she wore it: the offer worked
+    // she wore it: the offer worked, so the clock and the count both start over
+    if (prevBuilt && lw && lw >= prevBuilt) { delete seen[id]; delete seenAt[id]; }
   }
-  if (cadence) for (const id of built.offered) seen[id] = (seen[id] || 0) + 1;
+  if (cadence) for (const id of built.offered) {
+    seen[id] = (seen[id] || 0) + 1;
+    if (!seenAt[id]) seenAt[id] = today;
+  }
 
   const next = {
+    algo: RACK_ALGO,
     built: cadence ? today : (prevBuilt || today),
     revised: today,                 // last recomputed at all — for the screen
     season: currentSeason(),
     levels: built.levels,
     ids: built.ids, cold: built.cold,
     rotation: built.rotation, steady: built.steady, dormant: built.dormant,
-    seen,
+    seen, seenAt,
     pinned: [...rackPinnedSet()], pushed: rackState().pushed || {},
   };
   _rackMemo = null;
@@ -536,10 +585,21 @@ const RACK_BAND_LABEL = { rotation: "In rotation", steady: "Steady", dormant: "H
    0×": the sweater offered three times may simply be waiting for a cold snap.
    There is deliberately no "get rid of this" recommendation and never a
    purchase suggestion. */
-function rackPassedOver(limit = RACK_SEEN_LIMIT) {
+function rackPassedOver(limit = RACK_SEEN_LIMIT, today = todayStr()) {
   const seen = rackSeen();
+  const seenAt = rackState().seenAt || {};
   return Object.entries(seen)
-    .filter(([, n]) => n >= limit)
+    .filter(([id, n]) => {
+      if (n < limit) return false;
+      /* ⚠️ AND it has to have been in front of her for a WHILE. "Offered three
+         times and still not worn" is a claim about weeks; without this it can be
+         a claim about one evening of tapping Rebuild now (see the seenAt note in
+         rackEnsure). A piece with no recorded first-offer is legacy state from
+         before this existed — trust the count for those rather than hiding a
+         list she's already been using. */
+      const at = seenAt[id];
+      return !at || daysBetween(at, today) >= RACK_SECOND_LOOK_DAYS;
+    })
     .map(([id, n]) => ({ item: itemById.get(id), n }))
     .filter(x => x.item && itemStatus(x.item) === "Available")
     .sort((a, b) => (b.n - a.n) || ((a.item.name || "") < (b.item.name || "") ? -1 : 1));

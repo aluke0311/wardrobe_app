@@ -996,6 +996,27 @@ const WX_COLD_F = 50;
 const wmoIsWet = code => code != null &&
   ((code >= 51 && code <= 67) || (code >= 71 && code <= 77) || (code >= 80 && code <= 86) || code >= 95);
 
+/* Do these pieces have a formality level IN COMMON? The app's design model has
+   always said an outfit is valid at level L iff every piece's set contains L —
+   this is that sentence, as a function. See the long note at its call site in
+   suggestOutfits for why it took until 2026-08-04 r2 to actually be enforced.
+   ⚠️ Unknown beats invented: a piece with no derivable set never blocks a combo.
+   ⚠️ An all-function-wear combo is exempt — level 1 is answered by the TAG
+   (isFunctionWear), not by the set, and re-checking sets here brings back the
+   r12 bug where a run wouldn't build because the running shoes were [2,3]. */
+function comboSharesALevel(its) {
+  if (!its || its.length < 2) return true;
+  if (its.every(isFunctionWear)) return true;
+  let common = null;
+  for (const p of its) {
+    const s = itemFormalitySet(p) || [];
+    if (!s.length) return true;
+    common = common === null ? new Set(s) : new Set(s.filter(l => common.has(l)));
+    if (!common.size) return false;
+  }
+  return true;
+}
+
 function scoreCombo(its, target, season = null, wx = null) {
   let s = 0;
   // dismissal memory: gently penalize combos already shown this session
@@ -1197,6 +1218,33 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
     return !its.some(isPureFunc) || its.every(isFunctionWear);
   };
+  /* ⚠️ THE COHESION RULE WAS DOCUMENTED BUT NEVER ENFORCED (2026-08-04 r2).
+
+     CLAUDE.md's design model has said from the start: "outfit valid at level L
+     iff every piece's set contains L". In practice that was only ever enforced
+     by the `targetLevel` POOL filter above — so with no level asked for, which
+     is the DEFAULT and by far the commonest case, there was no cohesion floor at
+     all. `formalityOk` sounds like it covers this and does not: it isolates
+     pure-utility pieces and nothing else.
+
+     The result: a heel imputed [6,8] could be offered with a tee at [2,3] and
+     jeans at [3,4] — three pieces with NO level in common, an outfit the app's
+     own model says does not exist. Nothing rejected it; `scoreCombo`'s
+     versatility bonus merely declined to reward it, worth about 2 points against
+     a spread of roughly 2.5–5.5, so it lost a coin-flip rather than the argument.
+     This is the other half of "still lots of heels" — the rack decides what's in
+     play, but this is what let them into an ordinary Tuesday's outfit.
+
+     ⚠️ It can only ever narrow the UNTARGETED case: when targetLevel is set the
+     pool filter has already guaranteed every piece contains it, so the
+     intersection is non-empty by construction and this is a no-op.
+     ⚠️ Pure-utility combos are exempt — they pass formalityOk as a set and
+     level 1 is their shared level anyway, but a gear piece rescued into level 1
+     by the TAG (running shoes at [2,3]) genuinely may not contain 1, and
+     re-filtering it here would resurrect the r12 "workout builds nothing" bug.
+     Defined at module scope as comboSharesALevel so the per-piece swap and
+     "＋ Layer" enforce the identical rule — an invariant the engine holds and
+     the edit paths don't is an invariant she can walk straight out of. */
 
   const combos = [];
 
@@ -1205,7 +1253,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
     for (const sh of shoes) {
       for (const ow of [null, ...outerwear.slice(0, 2)]) {
         const its = [d, sh, ...(ow ? [ow] : [])];
-        if (!exFree(its) || !formalityOk(its)) continue;
+        if (!exFree(its) || !formalityOk(its) || !comboSharesALevel(its)) continue;
         combos.push({ pieces: its, score: scoreCombo(its, targetLevel, season, wx) });
       }
     }
@@ -1217,7 +1265,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
       if (isExcluded(t.id, bt.id)) continue;
       for (const sh of shoes.slice(0, 6)) {
         const its3 = [t, bt, sh];
-        if (!exFree(its3) || !formalityOk(its3)) continue;
+        if (!exFree(its3) || !formalityOk(its3) || !comboSharesALevel(its3)) continue;
         combos.push({ pieces: its3, score: scoreCombo(its3, targetLevel, season, wx) });
         for (const ow of outerwear.slice(0, 2)) {
           if (ow.id === t.id) continue;  // a layerable top can't be its own layer
@@ -1225,7 +1273,7 @@ function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = nul
           // a top-as-layer only goes over a non-layerable base (2026-07-19).
           if (ow.category === "Tops" && isLayer(t)) continue;
           const its4 = [t, bt, sh, ow];
-          if (exFree(its4) && formalityOk(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel, season, wx) });
+          if (exFree(its4) && formalityOk(its4) && comboSharesALevel(its4)) combos.push({ pieces: its4, score: scoreCombo(its4, targetLevel, season, wx) });
         }
       }
     }
@@ -1573,13 +1621,38 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
    the card had never once used the rack — the one surface that shows an outfit
    without being asked was the one drawing from all 476 pieces. Two spellings of
    one rule is how that happens, so now there is one. */
+/* Can this pool actually BUILD at a level? Not "does it contain something
+   dressy" — the engine always fills Shoes plus either a dress or a top and a
+   bottom, so anything less is a pool that returns an empty sheet. */
+function poolCoversLevel(lv, pool) {
+  if (!lv) return true;
+  const has = (slot) => pool.some(i => suggestSlot(i) === slot && (itemFormalitySet(i) || []).includes(lv));
+  return has("Shoes") && (has("Dresses") || (has("Tops") && has("Bottoms")));
+}
+
 function planningPool({ capsuleId = null, level = null, wholeCloset = false } = {}) {
   if (capsuleId) return capsuleItems(capsuleId).filter(i => itemStatus(i) === "Available");
   // Level 1 (Utility) draws from the whole closet, never the rack: buildRack
   // excludes the Workout category on purpose, so a rack filtered to gear can
   // never form an outfit (r12, reported the day the rack shipped).
   if (level === 1 || wholeCloset) return items.filter(i => itemStatus(i) === "Available");
-  return rackItems();
+  const rack = rackItems();
+  /* ⚠️ A LEVEL THE RACK CAN'T DRESS WIDENS TO THE CLOSET (2026-08-04 r2).
+
+     The off-level ceiling deliberately keeps clothes for rare days off the rack,
+     and `rackNeededLevels` only stocks a level she has DECLARED or habitually
+     lives at. Which means tapping "6. Dressed Up" out of the blue — no wedding
+     in the planner, just looking — hit targetLevel's HARD filter against a rack
+     with no heels in it and returned NOTHING. Measured on a realistic 216-piece
+     closet before this: level 3 gave a full 8 results, level 6 gave 0.
+
+     That is the 2026-07-19 capsule bug arriving through a smaller pool, and it
+     is the exact failure the rack's own header warns about — I reintroduced it
+     while fixing the heels. Widening is rescue-only (it never narrows), and the
+     pool chip says which level forced it, so the app is never quietly wide
+     either. */
+  if (level && !poolCoversLevel(level, rack)) return items.filter(i => itemStatus(i) === "Available");
+  return rack;
 }
 function _suggBasePool() {
   // Inside a trip, "build from what's still in the bag" narrows one step further
@@ -1710,6 +1783,12 @@ function suggestPoolChipHtml() {
   }
   const rackN = rackItems().length;
   const allN = items.filter(i => itemStatus(i) === "Available").length;
+  /* The rack couldn't dress the level she asked for, so planningPool widened for
+     her. Say which level did it — a pool that silently changed size is the one
+     thing she made a condition of approving the rack. Not a button: there is
+     nothing useful to narrow back TO, since the rack returns nothing here. */
+  if (_sugg.targetLevel && _sugg.targetLevel !== 1 && !poolCoversLevel(_sugg.targetLevel, rackItems()))
+    return `<span class="cap-chip" style="font-size:13px;opacity:.7">Whole closet · ${allN} — nothing on the rack dresses ${esc(occLabel(_sugg.targetLevel))}</span>`;
   return _sugg.wholeCloset
     ? `<button class="cap-chip" data-spool style="font-size:13px" title="Back to the rack">Whole closet · ${allN} \u2192 rack</button>`
     : `<button class="cap-chip on" data-spool style="font-size:13px" title="Widen to the whole closet">\u{1F455} Rack · ${rackN} \u2192 all ${allN}</button>`;
@@ -1940,6 +2019,10 @@ function swapSuggestionPiece(pieceId) {
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
   });
+  // Same cohesion rule the engine builds under — otherwise swapping shoes on a
+  // casual outfit could drop in a Formal-only heel the engine would never have
+  // paired with it, and the edit path becomes the way around the invariant.
+  cands = cands.filter(i => comboSharesALevel([...others, i]));
   if (!cands.length) { toast(`No other ${(asLayer ? "layer" : suggSlotLabel(old).toLowerCase())} fits`); return; }
   const pick = cands[Math.floor(Math.random() * cands.length)];
   combo.pieces = combo.pieces.map(p => p.id === pieceId ? pick : p);
@@ -2013,6 +2096,9 @@ function addSuggestionLayer() {
     const hasFunc = test.some(isPureFunc);
     return !hasFunc || test.every(p => (itemFormalitySet(p) || []).includes(1));
   });
+  // Cohesion, same as the engine and the per-piece swap: a [5,6,7] blazer is not
+  // a layer for a [2,3] tee, however much the season and the weather agree.
+  cands = cands.filter(i => comboSharesALevel([...combo.pieces, i]));
   if (!cands.length) { toast("No layer fits this look"); return; }
   combo.pieces = [...combo.pieces, cands[Math.floor(Math.random() * cands.length)]];
   renderSuggestSheet();
