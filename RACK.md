@@ -147,6 +147,40 @@ Formality top-ups take the real total toward 65.
   on suggester open — both cheap, since on six days out of seven `rackIsStale` is
   a date comparison that returns false.
 
+### 4e. The churn that followed (r7)
+
+She reported, the same evening: *"I feel like the rack has updated a bunch just
+tonight — why would that have happened?"* She was right, and it was caused by
+4d's fix.
+
+`seen` does two jobs, and that is usually a virtue — but it is both a **measure**
+("how many times has she been offered this without wearing it") and a
+**mechanism** (the ordering of steady + dormant). Advancing it reshuffles 26 of
+58 slots. That's correct once a week; it is not correct several times an evening.
+
+And 4d made rebuilds far more frequent: boot, every suggester open, plus r6's
+"a newly declared formality level marks the rack stale" with `saveDayPlan`
+calling `rackEnsure`. So installing two updates and planning a week produced four
+or five rebuilds, each spending a rotation tick.
+
+**`rackShouldRotate(st, today, force)`** separates them:
+
+| trigger | tops up coverage | rotates the queue | moves `built` |
+|---|---|---|---|
+| 7-day cadence | yes | **yes** | yes |
+| "Rebuild now" (her own tap) | yes | **yes** | yes |
+| new level declared | yes | no | no |
+| season flip | yes | no | no |
+| stored-format migration | yes | no | no |
+
+⚠️ `built` must not move on a structural rebuild, or an unrelated trigger
+postpones the next real rotation by up to a week. `revised` records the top-up
+for the screen instead.
+
+**The transferable lesson:** when one number is both a measure and a mechanism,
+audit everything that can increment it. A counter that means "times offered"
+stops meaning that the moment a schema migration can bump it.
+
 ## 5. "Worth a second look" — the tone rule
 
 ⚠️ **It states a fact and asks a question. It never guesses why.**

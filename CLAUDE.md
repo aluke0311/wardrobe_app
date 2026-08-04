@@ -224,6 +224,50 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-03 r7 — THE WARDROBE HALF, AND THE RACK CHURN I CAUSED.**
+
+**"WOULD THERE BE PROBLEMS" HAS TWO HALVES (r7).** Her correction: *"that's
+great — but also I meant more, gaps in my wardrobe etc."* r6 answered only the
+DATA question. **`deleteGaps(id)`** answers the wardrobe one by running
+`buildThinSpots` **twice** — the whole closet, then the closet minus this piece —
+and diffing. ⚠️ Reuse, not a parallel derivation: it can't drift from the
+"What's missing" page, which is already the app's answer to "where am I thin".
+⚠️ **Only a piece that moves a context's BINDING slot is reported** (twelve tops
+don't help if one pair of shoes covers the level), or every deletion looks
+alarming. Plus a **stand-in count** — same slot, covers every level this one
+covers, overlapping season; deliberately strict, since a piece covering FEWER
+levels is not a replacement. `_thinBaseMemo` is scoped to ONE render pass
+(callers null it), because a stamp on `items.length` can't see a formality edit.
+
+⚠️ **THE RACK WAS CHURNING, AND IT WAS MY DOING (r7).** Her report: *"I feel
+like the rack has updated a bunch just tonight — why would that have happened?"*
+`seen` is the **ORDERING** of steady + dormant, so incrementing it reshuffles 26
+of the 58 slots. That is right at the weekly cadence she was promised. But r1
+made `rackEnsure` run at boot AND on every suggester open, and r6 made a newly
+declared level mark the rack stale AND had `saveDayPlan` call it — so rebuilds
+went from "only if she opens the rack screen" to several an evening, and **every
+one of them spent a rotation tick.** Two deploys plus a week-planning session
+churned it repeatedly.
+- **`rackShouldRotate(st, today, force)`** splits the two ideas. Only the 7-day
+  cadence — or her own "Rebuild now" — advances the queue and moves the `built`
+  anchor. **Structural rebuilds (a new level, a season flip, a stored-format
+  migration) top up COVERAGE and leave the picks alone.**
+- ⚠️ `built` is the cadence anchor and must NOT move on a structural rebuild, or
+  an unrelated trigger postpones the next real rotation by up to a week.
+  **`revised`** records the top-up for the screen, and is in `rackStamp()` so the
+  memo still invalidates.
+- **The general lesson:** when one counter is both a MEASURE ("how often has she
+  been offered this") and a MECHANISM (the queue order), anything that advances
+  it for a technical reason corrupts the measure. Check what else can fire it.
+
+⚠️ **TWO OF THE FIRST TEST ATTEMPTS HERE WERE WRONG, NOT THE CODE** — worth
+knowing because both are documented traps: an async case wrapped in the
+**synchronous** `withRackCloset` (its `finally` restores state before the body
+finishes), two `ta` cases stubbing `rest` concurrently (they observe each
+other), and a "doesn't rotate" assertion that compared a rotated state against
+an unrotated one. Rewritten around a pure decision function, which is also how
+the rule got a name.
+
 **2026-08-03 r6 — FIVE MORE.**
 
 ⚠️ **THE MONTH-REVIEW OVERLAP WAS THE DOCUMENTED `.cthumb` TRAP, REPEATED.**
@@ -1661,7 +1705,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-03 r6`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-03 r7`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2008,7 +2052,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **292/292** (2026-08-03 r6, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **297/297** (2026-08-03 r7, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
