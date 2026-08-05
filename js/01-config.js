@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r3";
+const APP_VERSION = "2026-08-05 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,10 @@ const APP_VERSION = "2026-08-05 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r4", notes: [
+    "A suggested outfit can have a piece taken OUT, not just swapped — the ✕ beside each piece. Shoes off an outfit you'll wear at home is a real outfit, and the app already treats a shoeless look as \"Home\". It won't let you take out something that would leave no dress and no top + bottom",
+    "Editing a look's pieces no longer means a trip through the builder: swipe a piece left on the look's Details page to remove it, and ＋ Add a piece to put one in",
+  ] },
   { v: "2026-08-05 r3", notes: [
     "A Clean / 🧺 Hamper / All row now sits at the top of the closet and of every add-an-item picker, always visible — no going into the filters to find it. It's the same filter underneath, so the funnel and the row can't disagree",
   ] },

@@ -2091,6 +2091,57 @@ function banSuggestionPiece(pieceId) {
   }
 }
 
+/* ⚠️ REMOVE ≠ BAN (2026-08-05, her ask: "I want to be able to remove an item
+   from a suggested outfit entirely — eg shoes from an outfit I'll wear at
+   home").
+
+   ⃠ bans a piece and then finds a REPLACEMENT for its slot, because the engine's
+   whole job is to fill slots. That's the wrong answer for shoes: the app already
+   models a shoeless look as "worn at home" (outfitBucket returns "home", and
+   outfitIncomplete never requires shoes), so an outfit with the shoes taken out
+   is a legitimate outfit, not a broken one.
+
+   ⚠️ It refuses to break the one rule the app does enforce everywhere else: a
+   look needs a dress, or a top and a bottom (outfitIncomplete). So removing a
+   core piece is offered as a swap instead — otherwise "Wear this today" would
+   write a look the app itself would flag on the health check.
+
+   The removal lives on the COMBO only. It is not a ban and not a lock: a
+   reshuffle brings the slot back, which is right — she removed the shoes from
+   THIS outfit, not from her closet. */
+/* Would removing this piece still leave a wearable outfit? Same rule as
+   removeSuggestionPiece, extracted so the chip is only drawn where it works —
+   a control that always toasts an error is worse than no control. */
+function suggCanRemove(combo, p) {
+  if (!combo) return false;
+  const rest = combo.pieces.filter(x => x.id !== p.id);
+  if (rest.length < 2) return false;
+  outfitItemMap.set("__probe__", rest.map(x => x.id));
+  const bad = outfitIncomplete({ id: "__probe__" });
+  outfitItemMap.delete("__probe__");
+  return !bad;
+}
+function removeSuggestionPiece(pieceId) {
+  const combo = _sugg.results[_sugg.idx];
+  if (!combo) return;
+  const rest = combo.pieces.filter(p => p.id !== pieceId);
+  if (rest.length < 2) { toast("An outfit needs at least two pieces"); return; }
+  // Reuse the app's own completeness rule rather than restating it here.
+  const stub = { id: "__probe__" };
+  outfitItemMap.set("__probe__", rest.map(p => p.id));
+  const incomplete = outfitIncomplete(stub);
+  outfitItemMap.delete("__probe__");
+  if (incomplete) { toast("That would leave no dress and no top + bottom — swap it instead"); return; }
+  const gone = combo.pieces.find(p => p.id === pieceId);
+  combo.pieces = rest;
+  _sugg.locked.delete(pieceId);
+  renderSuggestSheet();
+  toast(`${(gone && gone.name) || "Piece"} removed from this outfit`, { label: "Undo", fn: () => {
+    const c = _sugg.results[_sugg.idx];
+    if (c && gone && !c.pieces.some(p => p.id === gone.id)) { c.pieces.push(gone); renderSuggestSheet(); }
+  } });
+}
+
 function addSuggestionLayer() {
   const combo = _sugg.results[_sugg.idx];
   if (!combo) return;
@@ -2305,6 +2356,7 @@ function renderSuggestSheet() {
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
             <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>✨ ${esc(lbl)}</button>
             ${p.id === _sugg.seedItemId ? "" : `<button class="cap-chip" data-sban="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Not this piece today">⃠</button>`}
+            ${suggCanRemove(combo, p) ? `<button class="cap-chip" data-sdrop="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Take it out of this outfit">✕</button>` : ""}
           </span>`;
         }).join("")}
         ${!layerPc
@@ -2312,7 +2364,7 @@ function renderSuggestSheet() {
           : (_sugg.locked.has(layerPc.id) ? "" : `<button class="cap-chip" data-sunlayer="${esc(layerPc.id)}" style="font-size:12px">× Layer</button>`)}
       </div>`;
       })() : ""}
-      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it · ⃠ hides it this session${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
+      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it · ⃠ swaps it out · ✕ takes it out${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
       ${suggestStarvationNote()}
       ${suggestLevelDoorHtml()}
@@ -2414,6 +2466,10 @@ function renderSuggestSheet() {
   // C1 "not this": session-ban + immediate replacement.
   $("#logInner").querySelectorAll("[data-sban]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); banSuggestionPiece(b.dataset.sban); };
+  });
+  // …and its opposite: take the piece OUT, leaving the slot empty.
+  $("#logInner").querySelectorAll("[data-sdrop]").forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); removeSuggestionPiece(b.dataset.sdrop); };
   });
 
   // Zero-state door: add a covering closet piece to the capsule, then re-roll.
@@ -2917,16 +2973,33 @@ function openLookDetails(id) {
   const lookLvl = BUCKET_RANGES[outfitBucket(o)];
   const missingLvlPieces = its.filter(it => !(itemFormalitySet(it) || []).includes(lookLvl));
 
+  /* ⚠️ SWIPE LEFT TO DROP A PIECE (2026-08-05, her ask: "I want to be able to
+     edit an outfit as in add or remove a piece with fewer clicks — like slide
+     left from a wear page"). Editing a look's pieces used to mean opening the
+     builder, finding the piece, deleting it and saving: four screens for one
+     removal. The rows are already here and the swipe idiom is already in the
+     app (calendar wear cards), so it costs one gesture.
+     ⚠️ It writes outfit_items directly and leaves `layout` alone — a stale
+     layout entry for a removed piece is harmless (layoutCanvasHtml only draws
+     pieces the look still has) and rewriting it here would fight the builder. */
   const pieceRows = its.map((it, idx) => `
     ${idx > 0 ? '<div class="det-divider"></div>' : ""}
-    <button class="det-row" data-occ-item="${esc(it.id)}" style="align-items:center">
-      <span class="det-piece-thumb" data-piece-open="${esc(it.id)}" data-photo="${esc(it.image_path || "")}"></span>
-      <span style="flex:1;min-width:0">
-        <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
-        <span style="display:block;color:var(--muted);font-size:12px;margin-top:2px">${esc(pieceFormalityLabel(it))}</span>
-      </span>
-      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-    </button>`).join("");
+    <div class="lk-swipe" data-lk-swipe="${esc(it.id)}">
+      <div class="lk-swipe-acts">
+        <button class="cal-act cal-act-del" data-lk-drop="${esc(it.id)}">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+          Remove
+        </button>
+      </div>
+      <button class="det-row lk-swipe-inner" data-occ-item="${esc(it.id)}" style="align-items:center">
+        <span class="det-piece-thumb" data-piece-open="${esc(it.id)}" data-photo="${esc(it.image_path || "")}"></span>
+        <span style="flex:1;min-width:0">
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name || "Untitled")}</span>
+          <span style="display:block;color:var(--muted);font-size:12px;margin-top:2px">${esc(pieceFormalityLabel(it))}</span>
+        </span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>`).join("");
 
   const body = $("#looksBody");
   body.innerHTML = `
@@ -2951,6 +3024,8 @@ function openLookDetails(id) {
 
       <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit arrangement</button></div>
       <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
+      <button class="lnk" id="lookAddPiece" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;color:var(--accent)">＋ Add a piece</button>
+      <div class="muted" style="font-size:11.5px;text-align:center">Swipe a piece left to take it out.</div>
       ${missingLvlPieces.length ? `<button class="lnk" id="lookAddLevel" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:8px">+ Add “${lookLvl}. ${esc(occLabel(lookLvl))}” to ${missingLvlPieces.length} piece${missingLvlPieces.length === 1 ? "" : "s"}</button>` : ""}
       ${its.length >= 2 ? `<button class="lnk" id="lookDefLayout" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:4px;color:var(--muted)">${(Array.isArray(o.layout) && o.layout.length) ? "Reset to the default arrangement" : "Use the default arrangement instead of a collage"}</button>` : ""}
 
@@ -2982,6 +3057,12 @@ function openLookDetails(id) {
   $("#itemBar").hidden = true;
   hydratePhotos(body);
   scrollToTop();
+  wireLookPieceSwipe(body);
+  const addPc = $("#lookAddPiece");
+  if (addPc) addPc.onclick = () => openLookAddPieceSheet(id);
+  body.querySelectorAll("[data-lk-drop]").forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); removeLookPiece(id, b.dataset.lkDrop); };
+  });
 
   // notes auto-save (direct PATCH; skip re-render so typing isn't interrupted)
   const ta = $("#lookNotes");
@@ -2999,6 +3080,110 @@ function openLookDetails(id) {
         });
       } catch (e) { o.notes = prev; toast(e.message); }
     }, 900);
+  });
+}
+
+/* ---- one-gesture piece editing on a look's Details page (2026-08-05) ------
+   Both of these write outfit_items directly and then buildOutfitIndexes(), which
+   is what resets the `_bucket` caches so formality re-derives. Neither touches
+   `wears`: a look's PIECES are what it is now, its WEARS are what happened, and
+   conflating them is how history gets rewritten. The builder's own wear-sync
+   offer is the deliberate, asked-for exception and stays where it is. */
+async function removeLookPiece(lookId_, itemId) {
+  const o = outfitById.get(lookId_);
+  if (!o) return;
+  const cur = outfitItemMap.get(lookId_) || [];
+  if (cur.length <= 2) { toast("A look needs at least two pieces"); return; }
+  try {
+    await rest(`/outfit_items?outfit_id=eq.${lookId_}&item_id=eq.${itemId}`, { method: "DELETE" });
+    outfitLinks = outfitLinks.filter(l => !(l.outfit_id === lookId_ && l.item_id === itemId));
+    buildOutfitIndexes();
+    openLookDetails(lookId_);
+    const it = itemById.get(itemId);
+    toast(`${(it && it.name) || "Piece"} removed`, { label: "Undo", fn: () => addLookPiece(lookId_, itemId) });
+  } catch (e) { toast(e.message); }
+}
+async function addLookPiece(lookId_, itemId) {
+  if ((outfitItemMap.get(lookId_) || []).includes(itemId)) return;
+  try {
+    await rest("/outfit_items", {
+      method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
+      body: JSON.stringify([{ outfit_id: lookId_, item_id: itemId }]),
+    });
+    outfitLinks = outfitLinks.concat([{ outfit_id: lookId_, item_id: itemId }]);
+    buildOutfitIndexes();
+    openLookDetails(lookId_);
+  } catch (e) { toast(e.message); }
+}
+/* The add picker. A flat searchable list rather than the builder's folder drill
+   — this is a one-piece correction, and the whole point is fewer taps. */
+function openLookAddPieceSheet(lookId_) {
+  let q = "";
+  const render = () => {
+    const have = new Set(outfitItemMap.get(lookId_) || []);
+    const pool = items
+      .filter(i => itemStatus(i) === "Available" && !have.has(i.id))
+      .filter(i => !q || itemMatchesText(i, q))
+      .slice(0, 60);
+    $("#logInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="lapCancel">Cancel</button>
+        <h2>Add a piece</h2>
+        <span style="width:52px"></span>
+      </div>
+      <div style="padding:8px 16px 0"><input class="inp" id="lapQ" placeholder="Search your closet…" value="${esc(q)}" autocomplete="off"></div>
+      <div style="padding:8px 10px 20px">${pool.length
+        ? `<div class="igrid">${pool.map(i => `<button class="gtile" data-lap="${esc(i.id)}">
+             <div class="gthumb" data-photo="${esc(i.image_path || "")}"></div>
+             <div class="gname">${esc(i.name || "Untitled")}</div>
+           </button>`).join("")}</div>`
+        : `<div class="center muted" style="padding:28px 0">Nothing matches.</div>`}</div>`;
+    hydratePhotos($("#logInner"));
+    $("#lapCancel").onclick = () => hideSheet("logSheet");
+    const inp = $("#lapQ");
+    let t;
+    inp.oninput = () => { q = inp.value; clearTimeout(t); t = setTimeout(() => { render(); const a = $("#lapQ"); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); } }, 220); };
+    $("#logInner").querySelectorAll("[data-lap]").forEach(b => b.onclick = async () => {
+      hideSheet("logSheet");
+      await addLookPiece(lookId_, b.dataset.lap);
+      toast("Added to the look");
+    });
+  };
+  render();
+  showSheet("logSheet");
+}
+// Swipe mechanics shared with the capsule list; one action, so W is 70.
+function wireLookPieceSwipe(root) {
+  (root || document).querySelectorAll("[data-lk-swipe]").forEach(card => {
+    const inner = card.querySelector(".lk-swipe-inner");
+    const acts = card.querySelector(".lk-swipe-acts");
+    if (!inner || !acts) return;
+    const W = 70;
+    let startX = 0, startY = 0, opened = false, tracking = false, axis = null;
+    card.addEventListener("touchstart", e => {
+      startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+      tracking = true; axis = null;
+      inner.style.transition = "none"; acts.style.transition = "none";
+    }, { passive: true });
+    card.addEventListener("touchmove", e => {
+      if (!tracking) return;
+      const dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY;
+      if (!axis) { if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return; axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y"; }
+      if (axis !== "x") return;
+      const off = Math.max(-W, Math.min(0, (opened ? -W : 0) + dx));
+      inner.style.transform = `translateX(${off}px)`;
+      acts.style.transform = `translateX(${100 + (off / W * 100)}%)`;
+    }, { passive: true });
+    card.addEventListener("touchend", e => {
+      if (!tracking) return;
+      tracking = false;
+      if (axis !== "x") return;
+      const dx = e.changedTouches[0].clientX - startX;
+      inner.style.transition = "transform .25s ease"; acts.style.transition = "transform .25s ease";
+      opened = opened ? dx < 30 : dx < -50;
+      inner.style.transform = opened ? `translateX(-${W}px)` : "translateX(0)";
+      acts.style.transform = opened ? "translateX(0)" : "translateX(100%)";
+    }, { passive: true });
   });
 }
 

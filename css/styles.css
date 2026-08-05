@@ -488,6 +488,12 @@
   .rv-done b { display: block; font: 500 20px/1.3 var(--serif); color: var(--text); margin-bottom: 6px; }
   .rv-fieldrow .fcount.rv-cnt { color: var(--accent); font-weight: 600; }
 
+  /* Swipe-left on a look's piece row — same mechanics as .cap-swipe. */
+  .lk-swipe { position: relative; overflow: hidden; }
+  .lk-swipe-acts { position: absolute; right: 0; top: 0; bottom: 0; display: flex;
+    transform: translateX(100%); transition: transform .25s ease; }
+  .lk-swipe-inner { position: relative; width: 100%; transition: transform .25s ease; background: var(--surface); }
+
   /* ---------- capsules ---------- */
   .cap-tabbar { display: flex; gap: 8px; padding: 10px 14px 0; }
   .cap-tabbar button { flex: 1; padding: 10px; border-radius: 11px; border: 1px solid var(--line);
