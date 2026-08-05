@@ -21,6 +21,13 @@ const FILTERS = [
      "show me the dormant tops" is the question worth asking, and "On the rack"
      is the union of the three. Derived, so it needs no storage and no upkeep. */
   ["rack",       "The rack",    () => ["On the rack", "In rotation", "Steady", "Dormant", "Off the rack"]],
+  /* Laundry as a real dim (2026-08-05, her ask: "I want a filter at the top when
+     I add an item like available but that is clean/clean + hamper/all — and I
+     want it showing always so I don't have to click in to the filters to find
+     it"). So it lives BOTH here, for the funnel, and as an always-visible chip
+     row (laundryLensHtml). Derived from wears + last_washed like everything
+     else in the laundry model; zero storage. */
+  ["laundry",    "Laundry",     () => ["Clean", "In the hamper", "Worn, not dirty yet"]],
 ];
 // Per-surface filter dims: closet uses lens for status + folders for category/subcategory (not in funnel).
 // Stats includes category (useful: filter to Tops only), but not subcategory (too granular).
@@ -51,21 +58,70 @@ function newFilterState(overrides) {
     season: new Set(), brand: new Set(), status: new Set(), category: new Set(),
     subcategory: new Set(), formality: new Set(), retailer: new Set(),
     acquisition: new Set(), capsule: new Set(), liked: new Set(), context: new Set(),
-    rack: new Set() };
+    rack: new Set(), laundry: new Set() };
   if (overrides) Object.assign(s, overrides);
   return s;
 }
 function hasActiveFilter(f) {
   if (f.q) return true;
   return ["color","fabric","size","season","brand","status","category","subcategory",
-          "formality","retailer","acquisition","capsule","liked","context","rack"].some(k => f[k] instanceof Set && f[k].size > 0);
+          "formality","retailer","acquisition","capsule","liked","context","rack",
+          "laundry"].some(k => f[k] instanceof Set && f[k].size > 0);
 }
 function filterActiveCount(f) {
   let n = f.q ? 1 : 0;
   for (const k of ["color","fabric","size","season","brand","status","category","subcategory",
-                   "formality","retailer","acquisition","capsule","liked","context","rack"]) if (f[k]?.size) n++;
+                   "formality","retailer","acquisition","capsule","liked","context","rack",
+                   "laundry"]) if (f[k]?.size) n++;
   return n;
 }
+
+/* ---- the always-visible laundry lens (2026-08-05) ------------------------
+   Her ask, verbatim: "I want a filter at the top when I add an item like
+   available but that is clean/clean + hamper/all — and I want it showing always
+   so I don't have to click in to the filters and find it to get it."
+
+   ⚠️ IT IS ABOUT LAUNDRY ONLY, and deliberately does NOT touch status. Both
+   surfaces that show it already have a status lens sitting right beside it
+   (closetLens; the picker's Available/Storage/All chips), so widening status
+   from here would give her two controls fighting over one value. "All" here
+   therefore means "no laundry narrowing" — which is also what her "clean +
+   hamper" describes, so the middle option is the hamper on its own instead.
+   That's strictly more than she asked for and nothing she asked for is lost.
+
+   State lives in the ordinary filter object, so the funnel and this row can
+   never disagree and clearing the funnel clears this too. */
+const LAUNDRY_LENS = [
+  ["clean", "Clean"],
+  ["hamper", "🧺 Hamper"],
+  ["all", "All"],
+];
+function laundryLensOf(state) {
+  const L = state.laundry;
+  if (L?.size === 1 && L.has("Clean")) return "clean";
+  if (L?.size === 1 && L.has("In the hamper")) return "hamper";
+  return "all";
+}
+function setLaundryLens(state, mode) {
+  state.laundry = new Set(mode === "clean" ? ["Clean"] : mode === "hamper" ? ["In the hamper"] : []);
+}
+function laundryLensHtml(id, state, onChange = null) {
+  _laundryLensFns[id] = { state, onChange };
+  const cur = laundryLensOf(state);
+  return `<div class="cap-catbar laundry-lens" data-laundry-lens="${esc(id)}" style="padding-top:6px">
+    ${LAUNDRY_LENS.map(([k, lbl]) =>
+      `<button class="cap-chip${cur === k ? " on" : ""}" data-laun-lens="${k}">${lbl}</button>`).join("")}
+  </div>`;
+}
+/* id -> {state, onChange}: ONE delegated listener serves every surface, the same
+   registry idiom as _funnelClearFns. Registered by laundryLensHtml itself, so a
+   new surface can't render the row and forget to wire it. */
+const _laundryLensFns = {};
+const LAUNDRY_LENS_DEFAULT_RENDER = {
+  closet: () => renderCloset(),
+  picker: () => renderCapsules(),
+};
+
 let closetFilter = newFilterState();
 let statsFilter  = newFilterState();
 let looksFilter  = newFilterState();

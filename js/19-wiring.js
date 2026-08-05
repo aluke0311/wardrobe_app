@@ -459,6 +459,21 @@ function wireEvents() {
     reg.onClear();
   }, true);
 
+  /* The always-visible laundry lens, same registry idiom and same reason for
+     capture phase: it renders inside surfaces (the picker, the closet grid) that
+     install their own body.onclick delegation. */
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-laun-lens]");
+    if (!btn) return;
+    const row = btn.closest("[data-laundry-lens]");
+    const reg = row && _laundryLensFns[row.dataset.laundryLens];
+    if (!reg) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setLaundryLens(reg.state, btn.dataset.launLens);
+    (reg.onChange || LAUNDRY_LENS_DEFAULT_RENDER[row.dataset.laundryLens] || (() => {}))();
+  }, true);
+
   // login
   $("#loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();

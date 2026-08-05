@@ -746,6 +746,7 @@ function renderCalClothingPicker() {
       const trip = tripCapsule();
       const scope = trip ? `<button class="cap-chip${_pickTripScope ? " on" : ""}" data-pick-tripscope>✈️ Suitcase only</button>` : "";
       return `<div class="cap-catbar" style="padding-top:6px">${scope}${b("Available","Available")}${b("Storage","Storage")}${b("All","All")}</div>`; })()}
+    ${laundryLensHtml("calpick", pickerFilter, renderCalClothingPicker)}
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px 2px;gap:8px">
       <span style="font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</span>
       <div style="display:flex;gap:8px;align-items:center">

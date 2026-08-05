@@ -1350,6 +1350,7 @@ function renderCapsulePicker() {
       ${funnelBtnHtml("capPickFilter", pickerFilter, () => renderCapsules())}
     </div>
     <div id="capPickLens" class="cap-catbar" style="padding-top:6px">${lensBtn("Available","Available")}${lensBtn("Storage","Storage")}${lensBtn("All","All")}</div>
+    ${laundryLensHtml("picker", pickerFilter)}
     <div style="padding:4px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
     <div id="capPickResults">${capsulePickSuggestHtml()}${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(pickerPool())}</div>`;
 }

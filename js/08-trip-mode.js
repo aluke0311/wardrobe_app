@@ -501,7 +501,8 @@ function renderClosetRoot() {
   // that quietly narrows the suggester has to be somewhere she can go and look.
   const rackRow = activeCapsuleId ? ""
     : `<button class="cl-capbtn" data-rack>\u{1F455} The rack \u00b7 ${rackItems().length} in play</button>`;
-  return clToolbar("Closet", false, true) + top + capFilter + rackRow + launRow + `<div class="frows">${rows}</div>`;
+  return clToolbar("Closet", false, true) + laundryLensHtml("closet", closetFilter)
+    + top + capFilter + rackRow + launRow + `<div class="frows">${rows}</div>`;
 }
 
 // ---- laundry sheet ----
@@ -892,7 +893,8 @@ function renderClosetCategory(cat) {
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   // categories with no subcategory taxonomy (Other) jump straight to a grid
-  return clToolbar(cat, true, true) + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(sortItems(inCat)));
+  return clToolbar(cat, true, true) + laundryLensHtml("closet", closetFilter)
+    + (rows ? hdr + `<div class="frows">${rows}</div>` : hdr + gridHtml(sortItems(inCat)));
 }
 
 function categoryGrid(cat, sub) {
@@ -938,7 +940,8 @@ function renderCloset() {
     body.innerHTML = renderClosetWorn();
   } else if (closetCat && closetSub) {
     const label = closetSub === "__all__" ? "All" : closetSub === "__other__" ? "Other" : closetSub;
-    body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true) + gridHtml(categoryGrid(closetCat, closetSub))
+    body.innerHTML = clToolbar(`${closetCat} · ${label}`, true, true)
+      + laundryLensHtml("closet", closetFilter) + gridHtml(categoryGrid(closetCat, closetSub))
       + `<div style="padding:18px 0 32px;text-align:center"><button class="lnk" id="clRootJump" style="color:var(--muted);font-size:14px">Closet</button></div>`;
   } else if (closetCat) {
     body.innerHTML = renderClosetCategory(closetCat);

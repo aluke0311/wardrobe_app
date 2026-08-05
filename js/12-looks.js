@@ -378,7 +378,7 @@ function matchesSeason(i, season) { const s = itemSeasonSet(i); return !!s && s.
 // funnel brings Storage/Archive back.
 function itemMatchesFilter(i, state, opts) {
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule, context, rack } = state;
+          formality, retailer, acquisition, capsule, context, rack, laundry } = state;
   const st = itemStatus(i);
   if (status?.size) { if (!status.has(st)) return false; }
   else if (!opts?.noStatusDefault) { if (st !== "Available") return false; }
@@ -412,6 +412,18 @@ function itemMatchesFilter(i, state, opts) {
                (want("Steady") && band === "steady") ||
                (want("Dormant") && band === "dormant") ||
                (want("Off the rack") && !on);
+    if (!ok) return false;
+  }
+  /* Laundry, derived (see laundryLensHtml). ⚠️ `dirty` here is the app's own
+     definition — wear-days since last_washed at or past tolerance, plus the
+     one-time overrides — so an Infinity-tolerance piece (shoes, coats) is never
+     in the hamper and correctly survives a "Clean" filter. */
+  if (laundry?.size) {
+    const dirty = (typeof isDirty === "function") ? isDirty(i) : false;
+    const wornNot = (typeof isWornNotDirty === "function") ? isWornNotDirty(i) : false;
+    const ok = (laundry.has("Clean") && !dirty) ||
+               (laundry.has("In the hamper") && dirty) ||
+               (laundry.has("Worn, not dirty yet") && wornNot);
     if (!ok) return false;
   }
   // "Home" is a look-level bucket, not an item level — ignore it here.
