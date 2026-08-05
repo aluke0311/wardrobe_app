@@ -1052,7 +1052,13 @@ function openQuickContextSheet(date, idx, { onDone = null } = {}) {
 }
 
 function tomorrowCardHtml() { return dayCardHtml(shiftDate(todayStr(), 1), { label: "Tomorrow" }); }
-function todayCardHtml() { return dayCardHtml(todayStr(), { label: "Today", isToday: true }); }
+/* ⚠️ Suppressed in trip mode: the trip dash already IS today, with today's
+   planned looks and a one-tap "Wore it". Two cards for one day is the
+   duplication todayPlanRowsHtml avoided the same way. */
+function todayCardHtml() {
+  if (tripModeId) return "";
+  return dayCardHtml(todayStr(), { label: "Today", isToday: true });
+}
 function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
   if (!dataReady) return "";
   const trip = _tmTripCtx(tm);

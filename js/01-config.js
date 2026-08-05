@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r7";
+const APP_VERSION = "2026-08-05 r8";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,9 @@ const APP_VERSION = "2026-08-05 r7";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r8", notes: [
+    "The Today card stays out of the way during a trip — the trip dash already is today",
+  ] },
   { v: "2026-08-05 r7", notes: [
     "Plan the week lives inside the Calendar tab now — Month / Plan the week at the top, sharing the same day view. It's no longer a screen you can only reach from a link at the bottom of the Tomorrow card",
     "You can set a day's context from the week screen even when the outfit is already picked, and clear one entry, a whole day, or the whole week from there",
