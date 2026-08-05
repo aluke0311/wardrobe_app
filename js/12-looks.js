@@ -1577,6 +1577,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
   _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
   _sugg.tmPick = null;                // set only by openTomorrowRevise
+  _sugg.packOcc = null;               // set only by packOpenSuggest
   _sugg.varyFrom = null;              // set only by openVaryLook
   // Default pool is THE RACK (2026-07-26). Her four conditions when she approved
   // the narrowing: the rack is always a visible screen, the suggester always
@@ -2380,6 +2381,19 @@ function renderSuggestSheet() {
     <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>✨ Try again</button></div>`}`;
 
   $("#sgClose").onclick = () => {
+    /* Opened from a pack occasion (2026-08-05, her ask: "I should be able to
+       open the outfit suggester for any of those and have it revise from the
+       packing list or from outside of it"). Whatever it ends as becomes that
+       occasion's outfit. The pool starts at the suitcase and the sheet's own
+       one-tap widen is the "or from outside of it" — no second control. */
+    if (_sugg.packOcc) {
+      const c = _sugg.results[_sugg.idx];
+      const { cid, occId } = _sugg.packOcc;
+      _sugg.packOcc = null;
+      hideSheet("logSheet");
+      if (c) packSetOccasionOutfit(cid, occId, c.pieces.map(p => p.id));
+      return;
+    }
     // Opened from the Tomorrow card: whatever it ends as is what the card keeps.
     if (_sugg.tmPick) {
       const c = _sugg.results[_sugg.idx];

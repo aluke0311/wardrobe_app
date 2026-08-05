@@ -253,7 +253,11 @@ function packSlate(c, { plans = null, wearRows = null, today = null, tripContext
 
   // ③ Her selection. Spread evenly over the free days; a day can carry two
   //    occasions, which is why demand is a multiset rather than a day grid.
-  const picked = (Array.isArray(tripContexts) && tripContexts.length)
+  /* ⚠️ AN EMPTY ARRAY IS A DECISION; only null/undefined means "she hasn't said".
+     Falling back on `.length` handed the proposal back to someone who had just
+     cleared the list — which is one of the ways contexts she never chose kept
+     turning up in the outfits (2026-08-05). */
+  const picked = Array.isArray(tripContexts)
     ? tripContexts
     : packSuggestTripContexts(c, { wearRows: rows, today });
   const free = slate.filter(s => !s.occasions.length);
@@ -1584,6 +1588,20 @@ function packEnsureSolve(st, { force = false } = {}) {
     wxFor: packWxFor(st.c), K: st.K, washDays: packWashDays(st.c),
     pinned: [...st.keeps], locked: packLockedFromRecord(st.cid),
   });
+  /* ⚠️ INVERSION ① IS NOT SELF-ENFORCING AFTER A SOLVE (2026-08-05, her report:
+     "it has hiking boots in a workout context that are not listed in the items
+     screen"). She was right and the pieces really weren't in the bag.
+
+     `packCandidates` draws LEVEL 1 from the whole closet rather than the rack —
+     deliberately, because her running shoes are Sneakers at [2,3] and a Utility
+     occasion has no shoes otherwise. So a solve can legitimately choose a piece
+     that was never in `st.pack`, and nothing put it back: `bySlot` (the items
+     screen) is derived from `st.pack`, which the solver doesn't touch.
+
+     The pack IS the union of the outfits' pieces. Saying so here is the whole
+     of inversion ①, and it's what keeps the two screens from disagreeing. */
+  packRepack(st);
+  packRegroup(st);
   return st.res;
 }
 /* The pack's outfits are shown on the by-day planner and the trip dash now, so
@@ -1945,6 +1963,8 @@ function openPackContexts({ back = null } = {}) {
         <div style="width:48px"></div>
       </div>
       <div class="sheet-note">Tick everything you'll do on this trip. Each one can have its own formality just for this trip — a Party/Shower you'll do Dressed Up stays Dressed Up here without changing it everywhere else.</div>
+      ${!packTripContexts(cid) && chosen.length ? `<div class="pack-warn-note" style="padding:0 16px 6px">These ${chosen.length} are the app's guess from your history, not your choices yet. Untick anything that isn't happening.</div>` : ""}
+      ${chosen.length ? `<div style="padding:0 16px 8px"><button class="lnk" id="pcClear" style="font-size:13px;color:var(--muted);font-weight:600">Clear all and start from nothing</button></div>` : ""}
       <div class="center muted" style="font-size:12.5px;padding:0 16px 8px">${total} day${total === 1 ? "" : "s"} accounted for, of ${days} · the two travel days are added for you</div>
       ${picked.map(row).join("")}
       ${picked.length && rest.length ? `<div class="stats-sec-hdr" style="padding:10px 16px 4px"><div class="t" style="font-size:14px">Everything else</div></div>` : ""}
@@ -1958,6 +1978,11 @@ function openPackContexts({ back = null } = {}) {
       <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
 
     const save = async (next) => { await setPackTripContexts(cid, next); render(); };
+    const clearBtn = $("#pcClear");
+    /* ⚠️ Clearing stores an EMPTY LIST, not null — null means "never chosen" and
+       packSlate would hand her the proposal straight back. An empty list is a
+       decision, and the slate then holds only the plane days plus her floor. */
+    if (clearBtn) clearBtn.onclick = () => save([]);
     const list = () => JSON.parse(JSON.stringify(packTripContexts(cid) || packSuggestTripContexts(c)));
 
     $("#pcDone").onclick = async () => {
@@ -2337,15 +2362,147 @@ function packLeftOutHtml(st) {
 
 /* Outfits mode: on demand, and always built from the pack she's actually taking.
    This is where the solver still earns its keep, and where "other options" lives. */
+/* ---- the outfits screen (2026-08-05) --------------------------------------
+   Her report: "The outfits and the packing list don't correspond to each other.
+   The outfits and the list of occasions and the formalities don't correspond.
+   Each occasion/formality bucket which I give a number to should have that many
+   proposed outfits in a bucket in the outfit list."
+
+   ⚠️ THE BUCKET IS THE UNIT, NOT THE DAY. What she declares is "1 day
+   Party/shower → Dressed Up, 2 days Friends → Polished Casual" — a multiset of
+   occasions with counts. The screen used to render the PLACED view (one card
+   per day), which is a derived detail the solver needs for the laundry schedule
+   and she never asked for: it spread her three occasions across seven dated
+   cards, mixed her selections in with the plane days and the floor filler, and
+   made the counts impossible to check against what she'd asked for. Demand was
+   already right; the presentation was answering a different question.
+
+   So: one section per bucket, holding exactly the number of outfits she asked
+   for, with the count stated. The by-day view survives underneath, collapsed,
+   because the laundry schedule genuinely is per-date.
+
+   ⚠️ Buckets are keyed on (context, level) — the same pair she sets — so
+   "Party/shower → Dressed Up" and "Party/shower → Polished Casual" are two
+   buckets and not a contradiction. Anything the solver added for its own
+   reasons (the two plane days, the floor filler for a day with nothing on it)
+   is in its own clearly-labelled section, never mixed into hers. */
 function packOutfitsModeHtml(st) {
   packEnsureSolve(st);
-  return packDaysHtml(st);
+  return packBucketsHtml(st) + packDaysFoldHtml(st);
+}
+
+// The header for a bucket, and the order they appear in.
+const PACK_BUCKET_ORDER = { selected: 0, declared: 1, flight: 2, floor: 3 };
+function packBucketKey(o) {
+  if (o.source === "flight") return "flight";
+  if (o.source === "floor") return "floor";
+  return `${o.source}|${o.context || ""}|${o.level || ""}`;
+}
+function packBucketsHtml(st) {
+  const { demand, res } = st;
+  const groups = new Map();
+  for (const o of demand) {
+    const k = packBucketKey(o);
+    if (!groups.has(k)) groups.set(k, { source: o.source, context: o.context, level: o.level, occs: [] });
+    groups.get(k).occs.push(o);
+  }
+  const list = [...groups.values()].sort((a, b) =>
+    (PACK_BUCKET_ORDER[a.source] ?? 9) - (PACK_BUCKET_ORDER[b.source] ?? 9) ||
+    String(a.context || "").localeCompare(String(b.context || "")));
+
+  const asked = packTripContexts(st.cid);
+  const summary = `<div class="pack-bucket-sum">
+    ${asked && asked.length
+      ? `You asked for ${asked.map(e => `<b>${esc(e.ctx)}</b> × ${e.n || 1}`).join(" · ")}.`
+      : `The app proposed these from your history — tap “What's happening” to make them yours.`}
+    <button class="lnk" data-pack-ctx style="font-size:13px;font-weight:600;color:var(--accent);padding:2px 0">Change what's happening</button>
+  </div>`;
+
+  const sections = list.map(g => {
+    const n = g.occs.length;
+    let title, sub;
+    if (g.source === "flight") {
+      title = "Travel days";
+      sub = `${n} outfit${n === 1 ? "" : "s"} · added for you, the days you fly`;
+    } else if (g.source === "floor") {
+      title = "Everything else";
+      sub = `${n} day${n === 1 ? "" : "s"} with nothing declared — dressed at the level you usually live at`;
+    } else if (g.source === "declared") {
+      title = [g.context, OCCASION_LADDER[(g.level || 1) - 1]].filter(Boolean).join(" · ");
+      sub = `${n} outfit${n === 1 ? "" : "s"} · a fixed event you put on the calendar`;
+    } else {
+      title = [g.context, OCCASION_LADDER[(g.level || 1) - 1]].filter(Boolean).join(" · ");
+      sub = `${n} outfit${n === 1 ? "" : "s"}`;
+    }
+    return `<div class="pack-bucket">
+      <div class="pack-bucket-hd"><b>${esc(title)}</b><span>${esc(sub)}</span></div>
+      ${g.occs.map(o => packOccCardHtml(st, o, { showDate: true })).join("")}
+    </div>`;
+  }).join("");
+  return summary + (sections || `<div class="center muted" style="padding:24px 16px">Nothing to dress yet — tap “What's happening”.</div>`);
+}
+
+/* ONE card, used by the bucket view, the by-day view and the by-day planner, so
+   the three can never drift apart in markup or in handlers. `alsoFor` carries
+   the same-day merge the day view does; the bucket view never merges, because
+   two occasions she asked for are two outfits she asked for. */
+function packOccCardHtml(st, occ, { showDate = false } = {}) {
+  const rec = packRecord(st.cid);
+  const lockedSet = new Set(rec.locked || []);
+  const { res } = st;
+  const cd = res.assign.get(occ.id);
+  const opts = res.options.get(occ.id) || 0;
+  const unmet = res.unmet.some(u => u.occId === occ.id);
+  const labels = [occ.context, ...(occ.alsoFor || []).map(o => o.context)].filter(Boolean);
+  const label = labels.length ? labels.join(" + ") : (OCCASION_LADDER[(occ.level || 1) - 1] || "Something");
+  const topLvl = Math.max(occ.level || 1, ...(occ.alsoFor || []).map(o => o.level || 1));
+  const lvl = OCCASION_LADDER[topLvl - 1] || "";
+  const when = showDate && occ.date ? `<small class="pack-occ-when">${esc(planDayLabel(occ.date))}</small>` : "";
+  if (unmet || !cd) {
+    return `<div class="pack-occ gap">
+      <div class="pack-occ-hd"><b>${esc(label)}</b><span>${esc(lvl)}</span></div>
+      ${when}
+      <div class="pack-occ-gap">Nothing available covers this.</div>
+      <div class="pack-occ-acts">
+        <button class="plan-act" data-pack-suggest="${esc(occ.id)}">✨ Suggest one</button>
+      </div>
+    </div>`;
+  }
+  const pieces = cd.pieces.length ? cd.pieces : cd.ids.map(id => itemById.get(id)).filter(Boolean);
+  return `<div class="pack-occ${lockedSet.has(occ.id) ? " locked" : ""}">
+    <div class="pack-occ-hd">
+      <b>${esc(label)}</b>
+      <span>${esc(lvl)}${packOptLabel(opts)}${lockedSet.has(occ.id) ? " · 🔒" : ""}</span>
+    </div>
+    ${when}
+    <div class="pack-pieces">
+      ${pieces.map(i => `<button class="pack-piece" data-pack-swap="${esc(i.id)}" data-pack-occ="${esc(occ.id)}">
+        ${thumbHtml(i.image_path, "pack-pthumb")}
+        <div class="pack-pname">${esc(i.name || "Untitled")}</div>
+      </button>`).join("")}
+    </div>
+    <div class="pack-occ-acts">
+      <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
+      <button class="plan-act" data-pack-suggest="${esc(occ.id)}">Suggester…</button>
+      ${opts > 1 ? `<button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>` : ""}
+      <button class="plan-act" data-pack-lock="${esc(occ.id)}">${lockedSet.has(occ.id) ? "Unlock" : "🔒 Lock"}</button>
+    </div>
+  </div>`;
+}
+
+// The by-day view, now folded away under the buckets — it exists for the
+// laundry schedule, which is the one thing that genuinely needs dates.
+let _packDaysOpen = false;
+function packDaysFoldHtml(st) {
+  return `<button class="frow" data-pack-daysfold style="margin:14px 14px 0;border-radius:14px">
+      <span style="flex:1;text-align:left">📅 Day by day · ${st.slate.length} days</span>
+      <svg class="chev" viewBox="0 0 24 24" style="${_packDaysOpen ? "transform:rotate(90deg)" : ""}"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    ${_packDaysOpen ? packDaysHtml(st) : ""}`;
 }
 
 function packDaysHtml(st) {
   const { c, slate, demand, res } = st;
-  const rec = packRecord(st.cid);
-  const lockedSet = new Set(rec.locked || []);
   return slate.map(s => {
     const all = demand.filter(o => o.date === s.date);
     /* ⚠️ Two occasions on one day that end up in the SAME clothes are one
@@ -2364,41 +2521,7 @@ function packDaysHtml(st) {
       occs.push(merged);
     }
     const isLaun = planLaundryDay(c, s.date);
-    const cards = occs.map(occ => {
-      const cd = res.assign.get(occ.id);
-      const opts = res.options.get(occ.id) || 0;
-      const unmet = res.unmet.some(u => u.occId === occ.id);
-      const labels = [occ.context, ...(occ.alsoFor || []).map(o => o.context)].filter(Boolean);
-      const label = labels.length ? labels.join(" + ") : (OCCASION_LADDER[(occ.level || 1) - 1] || "Something");
-      // Merged contexts can sit at different levels; name the dressiest, since
-      // that's the one the outfit had to clear.
-      const topLvl = Math.max(occ.level || 1, ...(occ.alsoFor || []).map(o => o.level || 1));
-      const lvl = OCCASION_LADDER[topLvl - 1] || "";
-      if (unmet || !cd) {
-        return `<div class="pack-occ gap">
-          <div class="pack-occ-hd"><b>${esc(label)}</b><span>${esc(lvl)}</span></div>
-          <div class="pack-occ-gap">Nothing available covers this.</div>
-        </div>`;
-      }
-      const pieces = cd.pieces.length ? cd.pieces : cd.ids.map(id => itemById.get(id)).filter(Boolean);
-      return `<div class="pack-occ${lockedSet.has(occ.id) ? " locked" : ""}">
-        <div class="pack-occ-hd">
-          <b>${esc(label)}</b>
-          <span>${esc(lvl)}${packOptLabel(opts)}${lockedSet.has(occ.id) ? " · 🔒" : ""}</span>
-        </div>
-        <div class="pack-pieces">
-          ${pieces.map(i => `<button class="pack-piece" data-pack-swap="${esc(i.id)}" data-pack-occ="${esc(occ.id)}">
-            ${thumbHtml(i.image_path, "pack-pthumb")}
-            <div class="pack-pname">${esc(i.name || "Untitled")}</div>
-          </button>`).join("")}
-        </div>
-        <div class="pack-occ-acts">
-          <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
-          ${opts > 1 ? `<button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>` : ""}
-          <button class="plan-act" data-pack-lock="${esc(occ.id)}">${lockedSet.has(occ.id) ? "Unlock" : "🔒 Lock"}</button>
-        </div>
-      </div>`;
-    }).join("");
+    const cards = occs.map(occ => packOccCardHtml(st, occ)).join("");
     return `<div class="plan-day">
       <div class="plan-day-hd">
         <div class="plan-day-date">${esc(planDayLabel(s.date))}<small>${esc(s.date)}${s.leg && s.leg.loc ? " · " + esc(s.leg.loc.name) : ""}</small></div>
@@ -2735,6 +2858,52 @@ function openPackOptionsSheet(occId) {
       hideSheet("logSheet"); renderCapsules(); toast("Set");
     };
   });
+}
+
+/* ---- the real suggester, per occasion (2026-08-05) -------------------------
+   Her ask: "I should be able to open the outfit suggester for any of those and
+   have it revise from the packing list or from outside of it."
+
+   ⚠️ It reuses the suggester rather than growing a second one — same rule as the
+   solver (see the header). The pool is scoped to the trip capsule, so it opens
+   on the SUITCASE, and the sheet's existing pool chip is the one-tap widen to
+   the whole closet. Nothing new to learn and nothing that can drift.
+
+   ⚠️ It does NOT re-enter the solver (inversion ③). It sets one occasion's
+   outfit, exactly like packApplySwap, and marks it locked so a later re-solve
+   doesn't undo the choice she just made by hand. */
+function packOpenSuggest(occId) {
+  const st = packStateReady();
+  if (!st) return;
+  const occ = st.demand.find(o => o.id === occId);
+  if (!occ) return;
+  /* ⚠️ NO planCtx. Passing one would make "Wear this today" run the plan branch
+     and write `capsules.plan` — the exact bulk-look creation the pack was built
+     to avoid (r5). The occasion's level and season are set directly instead, and
+     the writeback happens on close via _sugg.packOcc. */
+  openSuggestSheet(null, st.cid, null);
+  _sugg.targetLevel = occ.level || null;
+  _sugg.season = seasonOf(occ.date || todayStr());
+  _sugg.packOcc = { cid: st.cid, occId };
+  // The level/season were set after the sheet's own first generate, so re-run it.
+  _sugg.idx = 0;
+  _sugg.results = suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season,
+                                 _suggWx(), null, _suggCleanArg(), null, null);
+  renderSuggestSheet();
+}
+async function packSetOccasionOutfit(cid, occId, ids) {
+  const st = packStateReady(cid);
+  if (!st || !st.res || !ids || ids.length < 2) return;
+  const clean = [...new Set(ids)].filter(id => itemById.has(id)).sort();
+  st.res.assign.set(occId, { ids: clean, pieces: clean.map(id => itemById.get(id)).filter(Boolean), score: 0 });
+  // Inversion ①: whatever the outfit uses is now in the bag.
+  packRepack(st);
+  packRegroup(st);
+  packRefresh(st);
+  await savePackRecord(cid, { locked: packMarkLocked(cid, occId) });
+  await packPersist(cid);
+  renderCapsules();
+  toast("Set — anything new is in the bag");
 }
 
 async function packToggleLock(occId) {

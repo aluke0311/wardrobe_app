@@ -494,6 +494,15 @@
     transform: translateX(100%); transition: transform .25s ease; }
   .lk-swipe-inner { position: relative; width: 100%; transition: transform .25s ease; background: var(--surface); }
 
+  /* Pack: the outfit list, grouped by the buckets she declared. */
+  .pack-bucket-sum { margin: 10px 14px 4px; padding: 10px 12px; border-radius: 12px;
+    background: var(--panel); font-size: 13px; line-height: 1.5; color: var(--muted); }
+  .pack-bucket { margin: 12px 0 0; }
+  .pack-bucket-hd { padding: 6px 16px 4px; display: flex; flex-direction: column; gap: 2px; }
+  .pack-bucket-hd b { font-family: var(--serif); font-size: 17px; color: var(--ink); }
+  .pack-bucket-hd span { font-size: 12.5px; color: var(--muted); }
+  .pack-occ-when { display: block; padding: 0 12px 4px; font-size: 11.5px; color: var(--muted); }
+
   /* ---------- capsules ---------- */
   .cap-tabbar { display: flex; gap: 8px; padding: 10px 14px 0; }
   .cap-tabbar button { flex: 1; padding: 10px; border-radius: 11px; border: 1px solid var(--line);

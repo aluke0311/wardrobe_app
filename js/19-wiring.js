@@ -749,6 +749,10 @@ function wireEvents() {
     if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
     const packLock = e.target.closest("[data-pack-lock]");
     if (packLock) return packToggleLock(packLock.dataset.packLock);
+    const packSug = e.target.closest("[data-pack-suggest]");
+    if (packSug) return packOpenSuggest(packSug.dataset.packSuggest);
+    if (e.target.closest("[data-pack-ctx]")) return openPackContexts();
+    if (e.target.closest("[data-pack-daysfold]")) { _packDaysOpen = !_packDaysOpen; return renderCapsules(); }
     // The by-day planner shows the pack's outfits too, so this fires from there.
     const packWore = e.target.closest("[data-pack-wore]");
     if (packWore) { e.stopPropagation(); return packWoreOccasion(packWore.dataset.packWore, packWore.dataset.packDate); }
