@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-04 r5";
+const APP_VERSION = "2026-08-04 r6";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,13 @@ const APP_VERSION = "2026-08-04 r5";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-04 r6", notes: [
+    "The pack won't put in something that's out of season for every leg of the trip. It was only ever the rack that filtered by season, and the bag is chosen partly outside the rack — which is how snow boots got packed for a summer trip",
+    "It now weighs how much you actually wear a piece: wear-days at home and on past trips, not just \"worn recently\". A shoe worn once last week used to score the same as one you wear constantly, so specialist pairs kept winning slots over your everyday ones",
+    "One trip counts as evidence now. Something you wore nearly every day of your last trip used to be invisible until you'd taken it on two",
+    "The plane day stops offering silhouettes you've never flown in. Your flights are tagged Travel like the rest of the trip, so it reads the first and last day of past trips instead — if you've never worn a dress on a plane, it won't suggest one",
+    "\"Doesn't fit any occasion on this trip\" was often the wrong thing to say — usually the piece is fine and nothing else in the bag goes with it yet. It now says which",
+  ] },
   { v: "2026-08-04 r5", notes: [
     "Build a pack no longer puts in clothes there's no day for. Once every formality level had enough to wear, the leftover slots were being filled by whatever you'd worn recently — so the bag picked up pieces and then told you they didn't fit any occasion on the trip. A slot is allowed to come up short instead, and says so",
     "Workout days build now. Your running shoes are Sneakers at an everyday formality with a gear tag, so the pack was asking \"does this say level 1\" and getting no — it never packed the shoes a workout day needs, then reported the day as uncoverable",

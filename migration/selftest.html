@@ -2668,6 +2668,117 @@ async function run() {
     },
   }));
 
+  /* ---- 2026-08-04 r6: season and weather gate the BAG, not just the outfits -
+     Reported: the pack "put in snow boots, which is crazy and I haven't worn in
+     years". packFill took a wxFor argument and never used it, so the only season
+     gating anywhere was whatever buildRack applied — and the level-1 branch
+     bypasses the rack by design. Measured before the fix: snow boots were the
+     SECOND shoe picked for a Summer trip, with rackWarmth 0 and no wears. */
+  t("a piece out of season for every leg never reaches the bag", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const demand = [
+      { id: "a", date: D(1), level: 3, context: "Friends", contexts: ["Friends"] },
+      { id: "b", date: D(3), level: 4, context: "Date Night", contexts: ["Date Night"] },
+      { id: "c", date: D(5), level: 3, context: "Friends", contexts: ["Friends"] },
+    ];
+    const pool = ["snow", "birks", "tee", "jean"];
+    // ⚠️ Guard: the case is only meaningful if the trip really is out of season
+    // for the boots AND they'd otherwise be attractive (they span more levels).
+    const season = W.seasonOf(D(1));
+    if (W.inSeasonWx(W.itemById.get("snow"), season, null)) return `fixture drifted — snow boots are in season in ${season}`;
+    const fill = W.packFill({ Tops: 1, Bottoms: 1, Dresses: 0, Shoes: 2, Outerwear: 0 },
+      { c, demand, rack: { ids: pool, cold: [], legs: 1 } });
+    const shoes = fill.bySlot.Shoes || [];
+    return !shoes.includes("snow")
+      ? true : `packed ${JSON.stringify(shoes)} for a ${season} trip`;
+  }, {
+    replace: (add) => {
+      add("snow", "Shoes", "Boots", [3, 4, 5]).season = ["Winter"];
+      add("birks", "Shoes", "Sandals", [3]).season = ["Spring", "Summer", "Fall"];
+      add("tee", "Tops", "Tee shirts", [3, 4]);
+      add("jean", "Bottoms", "Jeans", [3, 4]);
+    },
+  }));
+
+  /* Reported: it reached for specialist shoes "before ever thinking to suggest
+     my birkenstocks, which I wore almost every day of my last trip and wear all
+     the time at home too". rackWarmth is recency ONLY (a shoe worn once three
+     days ago scores the same as one worn thirty times) and travelProven needs
+     two trips, so neither half of that sentence counted for anything. */
+  t("the shoe she actually wears beats a specialist that spans one more level", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const demand = [
+      { id: "a", date: D(1), level: 3, context: "Friends", contexts: ["Friends"] },
+      { id: "b", date: D(2), level: 3, context: "Friends", contexts: ["Friends"] },
+      { id: "c", date: D(3), level: 3, context: "Friends", contexts: ["Friends"] },
+    ];
+    const pool = ["birks", "wide", "tee", "jean"];
+    // ⚠️ Guard: `wide` must genuinely span MORE demanded levels, or the breadth
+    // term isn't being overcome and this passes for the wrong reason.
+    const nd = (id) => [3].filter(lv => W.packCoversLevel(W.itemById.get(id), lv)).length;
+    if (nd("wide") < nd("birks")) return "fixture drifted — the specialist isn't the broader piece";
+    const fill = W.packFill({ Tops: 1, Bottoms: 1, Dresses: 0, Shoes: 1, Outerwear: 0 },
+      { c, demand, rack: { ids: pool, cold: [], legs: 1 } });
+    return (fill.bySlot.Shoes || [])[0] === "birks"
+      ? true : `picked ${JSON.stringify(fill.bySlot.Shoes)} over the everyday shoe`;
+  }, {
+    replace: (add) => {
+      add("birks", "Shoes", "Sandals", [3]);
+      add("wide", "Shoes", "Flats", [2, 3, 4, 5]);   // spans more bands
+      add("tee", "Tops", "Tee shirts", [3]);
+      add("jean", "Bottoms", "Jeans", [3]);
+    },
+    wears: (ws) => {
+      // Worn constantly at home; the specialist was worn once, more recently.
+      for (let n = 0; n < 30; n++) ws.push({ id: "bk" + n, item_id: "birks", worn_on: D(-(n * 2 + 2)), context: ["Errands"], formality_for: 3 });
+      ws.push({ id: "wd1", item_id: "wide", worn_on: D(-1), context: ["Errands"], formality_for: 3 });
+    },
+  }));
+
+  /* Reported: "a very casual dress for a plane ride when I'd never wear a dress
+     on a plane". The context was translated to a level and then discarded.
+     ⚠️ Her plane days are tagged "Travel" (auto-stamped on every trip wear), so
+     the honest source is the FIRST AND LAST DATE of past trips. */
+  t("a silhouette she has never flown in isn't offered for the plane day", () => {
+    const trips = [-120, -90, -60].map((s, k) => ({ id: "t" + k, name: "t" + k, kind: "packing",
+      start_date: D(s), end_date: D(s + 6), locations: [], plan: {} }));
+    const c = packTrip(5);
+    return withPackCloset(() => {
+      const flight = { id: "f", date: D(1), level: 3, context: "Flight", contexts: ["Flight"], source: "flight" };
+      const other = { id: "n", date: D(3), level: 3, context: "Friends", contexts: ["Friends"] };
+      const pool = ["tee", "jean", "snk", "sundress"];
+      const fit = W.packOccasionSlotFit(flight);
+      if (!fit) return "no plane-day history was derived — the fixture's trips aren't being read";
+      const onPlane = W.packCandidates(flight, pool, { all: true });
+      const onOther = W.packCandidates(other, pool, { all: true });
+      // ⚠️ Both halves matter: it must REMOVE the dress from the plane day and
+      // leave an ordinary day alone, or this is just a broken enumerator.
+      return !onPlane.some(cd => cd.ids.includes("sundress"))
+          && onPlane.length
+          && onOther.some(cd => cd.ids.includes("sundress"))
+        ? true : `plane=${onPlane.length} withDress=${onPlane.some(cd => cd.ids.includes("sundress"))} other=${onOther.some(cd => cd.ids.includes("sundress"))}`;
+    }, {
+      capsules: trips.concat([c]),
+      replace: (add) => {
+        add("tee", "Tops", "Tee shirts", [2, 3]);
+        add("jean", "Bottoms", "Jeans", [2, 3]);
+        add("snk", "Shoes", "Sneakers", [2, 3]);
+        add("sundress", "Dresses", "Short", [2, 3]);
+      },
+      wears: (ws) => {
+        trips.forEach((tc, k) => {
+          const ds = W.tripDates(tc);
+          [ds[0], ds[ds.length - 1]].forEach((d, j) =>
+            ["tee", "jean", "snk"].forEach(id =>
+              ws.push({ id: `pl${k}${j}${id}`, item_id: id, worn_on: d, context: ["Travel"], formality_for: 3 })));
+          // Mid-trip she DOES wear the dress — so it's the plane day specifically.
+          ds.slice(1, -1).forEach((d, j) => ["sundress", "snk"].forEach(id =>
+            ws.push({ id: `md${k}${j}${id}`, item_id: id, worn_on: d, context: ["Travel"], formality_for: 3 })));
+        });
+      },
+    });
+  });
+
   /* ---- 2026-08-04 r5: the pack IS the plan ---------------------------------
      Her ask: "I don't want to have to say send to the trip, I want it to just
      build and all those editing options to always be available." The by-day

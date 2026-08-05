@@ -357,14 +357,36 @@ function packRack(c, slate, { pool = null, wearRows = null, wxFor = null,
 function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_CANDIDATES_PER_OCC,
                                         seed = 1, all = false } = {}) {
   const avail = (pool || items).filter(i => itemStatus(i) === "Available");
-  const base = occ.level === 1 ? avail : rackIds.map(id => itemById.get(id)).filter(i => i && itemStatus(i) === "Available");
+  let base = occ.level === 1 ? avail : rackIds.map(id => itemById.get(id)).filter(i => i && itemStatus(i) === "Available");
   if (!base.length) return [];
+
+  /* ⚠️ THE LEVEL IS NOT THE OCCASION (2026-08-04 r6). Reported: it offered "a
+     very casual dress for a plane ride when I'd never wear a dress on a plane".
+     Nothing was wrong by the rules the solver had — a casual dress clears
+     level 2 — because the context is translated to a level and then thrown
+     away, which is the same discard contextFormalityLevel was written to fix
+     for the suggester. Her history answers it directly: on the plane days of
+     every past trip she has never once worn a dress.
+     Rescue-shaped, like inSeasonWx: it only ever REMOVES a silhouette she has
+     never worn for this occasion, and if the narrowed pool can't build, the
+     unfiltered one is used instead (below) — a pool that returns nothing is
+     worse than a pool that returns something imperfect. */
+  const fit = packOccasionSlotFit(occ);
+  const wide = base;
+  if (fit && fit.size) base = base.filter(i => {
+    const s = packSlotOf(i);
+    return !s || fit.has(s);
+  });
+  if (!base.length) base = wide;
   const day = occ.date || (occ.leg && occ.leg.dates[0]) || todayStr();
   const wx = wxFor ? wxFor(day) : null;
   const season = seasonOf(day);
-  const raw = packWithSeed(seed ^ packHash(occ.id || day), () =>
-    suggestOutfits(occ.level, null, base, season, wx, null, false, null, null,
+  const enumerate = (p) => packWithSeed(seed ^ packHash(occ.id || day), () =>
+    suggestOutfits(occ.level, null, p, season, wx, null, false, null, null,
                    { all: true, uniqueCap: PACK_ENUM_CAP }));
+  let raw = enumerate(base);
+  // The rescue half of the context filter: never trade an answer for a purer one.
+  if (!raw.length && base !== wide) raw = enumerate(wide);
   const out = raw.map(cmb => ({
     ids: cmb.pieces.map(p => p.id).sort(),
     pieces: cmb.pieces,
@@ -372,6 +394,70 @@ function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_
   }));
   out.sort((a, b) => (b.score - a.score) || (a.ids.join() < b.ids.join() ? -1 : 1));
   return all ? out : packDiversify(out, limit);
+}
+
+/* ---- what she actually wears FOR an occasion (2026-08-04 r6) --------------
+   Which SLOTS she has really worn for this kind of day, or null when there
+   isn't enough history to say anything. Slots, deliberately, NOT subcategories:
+   "I'd never wear a dress on a plane" is a silhouette rule and it is the one
+   she can state. Blocking at subcategory level would also rule out the specific
+   jeans she happens not to have flown in, which is not a rule she holds.
+
+   ⚠️ THE PLANE DAY IS NOT TAGGED "Flight". tripWearContext auto-stamps every
+   wear of a trip with "Travel", and Travel is a trip-wide fact, so asking what
+   she wears for Travel returns everything she wears on holiday — dresses very
+   much included — and would block nothing. The honest source for a plane day is
+   the FIRST AND LAST DATE of past trips, which is exactly when she flew. That's
+   derived from dates the app already has, with no new tagging asked of her.
+
+   ⚠️ One pass over `wears` per call, and packCandidates is called once per
+   (level, leg, band) group — not per candidate. Calling itemContexts in a
+   candidate loop is the documented items × wears trap that got context scoring
+   thrown out of packFill; don't move this inside one. */
+const PACK_CTX_MIN_DAYS = 4;   // days of evidence before a silhouette is ruled out
+
+function packOccasionSlotFit(occ, { wearRows = null, caps = null, today = null } = {}) {
+  if (!occ) return null;
+  const rows = wearRows || wears;
+  const ctxs = (occ.contexts || []).filter(c => c && c !== TRIP_CONTEXT);
+  const isFlight = occ.source === "flight" || ctxs.includes(PACK_FLIGHT_CONTEXT);
+
+  let days;
+  if (isFlight) {
+    // The days she was actually on a plane: each past trip's first and last.
+    const planeDays = new Set();
+    for (const c of completedTrips(caps, today)) {
+      const ds = tripDates(c);
+      if (!ds.length) continue;
+      planeDays.add(ds[0]);
+      planeDays.add(ds[ds.length - 1]);
+    }
+    days = rows.filter(w => planeDays.has(w.worn_on));
+  } else {
+    if (!ctxs.length) return null;
+    const want = new Set(ctxs);
+    days = rows.filter(w => ctxArr(w).some(x => want.has(x)));
+  }
+
+  const distinct = new Set(days.map(w => w.worn_on));
+  if (distinct.size < PACK_CTX_MIN_DAYS) return null;   // not enough to speak
+  const slots = new Set();
+  for (const w of days) {
+    // ⚠️ A wear can outlive its item (deleted piece, or a fixture that doesn't
+    // define one) — suggestSlot reads .category and throws on undefined.
+    const it = itemById.get(w.item_id);
+    if (!it) continue;
+    const s = packSlotOf(it);
+    if (s) slots.add(s);
+  }
+  /* ⚠️ A slot she has never worn for this occasion is only meaningful if the
+     TOP HALF is still dressable without it — otherwise "she never wears a dress
+     to work" would also delete tops-and-bottoms on a day she has only ever worn
+     dresses. Require a complete silhouette before the set is allowed to narrow
+     anything, and say nothing at all when the history is one-sided. */
+  const topHalf = slots.has("Dresses") || (slots.has("Tops") && slots.has("Bottoms"));
+  if (!topHalf || !slots.has("Shoes")) return null;
+  return slots;
 }
 
 /* Trim a candidate list to `limit` while spanning as many distinct PIECES as
@@ -953,6 +1039,45 @@ function packSubCounts(slot, n, { caps = null, today = null } = {}) {
   return out;
 }
 
+/* ---- how much she ACTUALLY wears a piece (2026-08-04 r6) ------------------
+   Reported: the pack reached for beach sandals, hiking boots and snow boots
+   "before ever thinking to suggest my birkenstocks, which I wore almost every
+   day of my last trip and wear all the time at home too".
+
+   Both halves of that sentence are evidence the app already holds and was
+   throwing away at the moment it chose what to pack:
+   ⚠️ `rackWarmth` is RECENCY ONLY, 0–1 over 60 days — a shoe worn once three
+      days ago scores 0.95 and one worn thirty times scores 0.98. At weight 10
+      it could never outrank `set.length * 6`, so a specialist that happens to
+      span one more formality band beat her everyday shoe on breadth alone.
+   ⚠️ `travelProven` needs `TRIP_MEMORY_MIN`(2) trips AND worn-on-every-one, so
+      "worn almost every day of my last trip" — the single strongest signal she
+      has — counted for exactly nothing.
+
+   So: wear-DAYS (never rows — the 2026-07-24 rule), log-scaled so 30 days beats
+   3 decisively while 300 doesn't run away with it, and trip days weighted double
+   because this is a suitcase. Returns ONE pass over `wears`, built once per
+   packFill call — `wearCount` inside the candidate loop would be the documented
+   items × wears comparator trap. */
+function packWearSignals({ wearRows = null, caps = null, today = null } = {}) {
+  const rows = wearRows || wears;
+  const away = new Set();
+  for (const c of completedTrips(caps, today)) for (const d of tripDates(c)) away.add(d);
+  const home = countByDay(rows, w => (w.item_id ? [w.item_id] : []));
+  const trip = countByDay(rows.filter(w => away.has(w.worn_on)), w => (w.item_id ? [w.item_id] : []));
+  return { home, trip };
+}
+function packAffinity(id, sig) {
+  if (!sig) return 0;
+  return Math.log1p(sig.home.get(id) || 0) + 2 * Math.log1p(sig.trip.get(id) || 0);
+}
+/* ⚠️ Weighted to beat a one- or two-band BREADTH difference (6 points a band)
+   but never a real coverage deficit (`fill * 100`) — an occasion nothing else
+   can dress still outranks her favourite shoe, which is the whole guarantee
+   packCoverage exists to keep. Re-measure both if either scale changes. */
+const PACK_AFFINITY_W = 10;
+const PACK_RECENCY_W = 4;     // was 10, and was carrying weight it couldn't hold
+
 /* Fill the counts with actual items.
    Greedy per slot, scoring each candidate on what it ADDS: formality levels the
    slot can't yet reach, then contexts, then proven-on-past-trips, then warmth.
@@ -967,6 +1092,8 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
   const skip = new Set(banned || []);
   const proven = new Set((travelProven(buildTravelStats(c ? capsules.filter(x => x.id !== c.id) : null)) || [])
     .map(e => e.item && e.item.id).filter(Boolean));
+  // ONE pass over wears for the whole fill — see packWearSignals.
+  const sig = packWearSignals({ caps: c ? capsules.filter(x => x.id !== c.id) : null });
   const wantLevels = [...new Set(dem.map(o => o.level).filter(Boolean))];
 
   const avail = (pool || items).filter(i => itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i));
@@ -974,10 +1101,36 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
   // Level 1 (Utility) draws from the whole closet, never the rack — the rack
   // excludes the Workout category on purpose. Same precedence as _suggBasePool.
   const needsUtility = wantLevels.includes(1);
+
+  /* ⚠️ SEASON AND WEATHER GATE THE BAG, NOT JUST THE OUTFITS (2026-08-04 r6).
+     Reported: the pack "put in snow boots, which is crazy and I haven't worn in
+     years". packFill took a `wxFor` argument and never used it — the only season
+     gating anywhere was whatever buildRack happened to apply, and the level-1
+     branch above bypasses the rack entirely by design. Measured on a Summer
+     trip: snow boots were the SECOND shoe picked, with rackWarmth 0 and no
+     wears, while inSeasonWx(snow, "Summer") was already false. So the bag could
+     hold pieces packCandidates would then refuse to build an outfit from —
+     which is the worst of both, because packCoverage reports the gap the bag
+     itself caused.
+     ⚠️ Eligible on ANY leg, not all: Madrid-then-Javea is two climates and a
+     piece that only serves the cold half still earns its place. Same reason
+     packRack unions a rack per leg.
+     ⚠️ inSeasonWx is rescue-shaped — unknown season is eligible, and a real
+     forecast can rescue an out-of-season piece — so this narrows only what is
+     genuinely wrong for every climate on the trip. */
+  const legs = c ? packLegsOrWhole(c) : [];
+  const legSeasons = legs.map(leg => {
+    const d0 = (leg.dates && leg.dates[0]) || null;
+    return { season: d0 ? seasonOf(d0) : null, wx: (d0 && wxFor) ? wxFor(d0) : null };
+  });
+  const seasonOk = (i) => !legSeasons.length ||
+    legSeasons.some(({ season, wx }) => !season || inSeasonWx(i, season, wx));
+
   const candidates = avail.filter(i =>
     !skip.has(i.id) &&
     (rackSet.has(i.id) || (needsUtility && isFunctionWear(i))) &&
-    (i.category !== "Workout" || needsUtility));
+    (i.category !== "Workout" || needsUtility) &&
+    (keep.has(i.id) || seasonOk(i)));   // her keeps are never second-guessed
 
   const bySlot = {};
   const packIds = new Set();
@@ -1088,7 +1241,8 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
         const s = fill * 100 + set.length * 6
           - (subsUsed.get(i.subcategory) || 0) * 12
           + (proven.has(i.id) ? 25 : 0)
-          + rackWarmth(i.id) * 10
+          + packAffinity(i.id, sig) * PACK_AFFINITY_W
+          + rackWarmth(i.id) * PACK_RECENCY_W
           + (rack && rack.cold && rack.cold.includes(i.id) ? 4 : 0);
         if (s > bestScore) { bestScore = s; best = i; }
       }
@@ -1369,7 +1523,8 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
   if (!resolve && Array.isArray(rec.pieces) && rec.pieces.length) {
     pack = rec.pieces.filter(id => itemById.has(id));           // her pack, as left
   } else {
-    pack = packFill(targets, { c, demand, rack, pinned: [...keeps], subTargets, banned: [...banned] }).pack;
+    pack = packFill(targets, { c, demand, rack, pinned: [...keeps], subTargets,
+                               banned: [...banned], wxFor: packWxFor(c) }).pack;
   }
 
   _packState = { cid, c, slate, demand, rack, counts, targets, subTargets,
@@ -1535,7 +1690,7 @@ async function packSetTarget(slot, n) {
     const held = st.bySlot[slot] || [];
     const filled = packFill(only, {
       c: st.c, demand: st.demand, rack: st.rack, pinned: held,
-      subTargets: st.subTargets, banned: [...st.banned],
+      subTargets: st.subTargets, banned: [...st.banned], wxFor: packWxFor(st.c),
     });
     for (const id of filled.bySlot[slot] || []) if (!st.pack.includes(id)) st.pack.push(id);
     /* ⚠️ Say so when ＋ can't add. Since a piece serving no occasion is never
@@ -1579,7 +1734,7 @@ async function packSwapOne(itemId) {
   const only = {}; for (const s of PACK_COUNT_SLOTS) only[s] = s === slot ? (st.targets[slot] || held.length + 1) : 0;
   const filled = packFill(only, {
     c: st.c, demand: st.demand, rack: st.rack, pinned: held,
-    subTargets: st.subTargets, banned: [...st.banned],
+    subTargets: st.subTargets, banned: [...st.banned], wxFor: packWxFor(st.c),
   });
   const next = filled.bySlot[slot] || [];
   if (next.length <= held.length) {
@@ -1625,7 +1780,7 @@ async function packRerollSlot(slot) {
   // Session-only exclusion: a reroll shouldn't permanently ban what it replaces.
   const filled = packFill(only, {
     c: st.c, demand: st.demand, rack: st.rack, pinned: held,
-    subTargets: st.subTargets, banned: [...st.banned, ...current],
+    subTargets: st.subTargets, banned: [...st.banned, ...current], wxFor: packWxFor(st.c),
   });
   const next = filled.bySlot[slot] || [];
   const fresh = next.filter(id => !current.includes(id));
@@ -1682,7 +1837,7 @@ async function packSwapSelected() {
     const only = {}; for (const s of PACK_COUNT_SLOTS) only[s] = s === slot ? (st.targets[slot] || 0) : 0;
     const filled = packFill(only, {
       c: st.c, demand: st.demand, rack: st.rack, pinned: st.bySlot[slot] || [],
-      subTargets: st.subTargets, banned: [...st.banned],
+      subTargets: st.subTargets, banned: [...st.banned], wxFor: packWxFor(st.c),
     });
     for (const id of filled.bySlot[slot] || []) if (!st.pack.includes(id)) st.pack.push(id);
     packRegroup(st);
@@ -2054,7 +2209,7 @@ function packSlotsHtml(st) {
       if (!i) return "";
       const kept = st.keeps.has(id);
       const sel = _packSel.has(id);
-      const why = packItemWhy(i, optionFor.get(id));
+      const why = packItemWhy(i, optionFor.get(id), st.demand);
       return `<div class="pack-bagrow${packedSet.has(id) ? " on" : ""}"${sel ? ` style="background:var(--panel2)"` : ""}>
         <button class="pack-tick" data-pack-sel="${esc(id)}" aria-label="Select">${sel ? "✓" : ""}</button>
         ${thumbHtml(i.image_path, "pack-pthumb")}
@@ -2110,12 +2265,27 @@ function packSlotsHtml(st) {
    is simply part of the pack. Here the honest fact is which occasions it can
    serve, plus the laundry ceiling when it actually binds. A piece that serves
    NOTHING says so, because that's the one worth swapping. */
-function packItemWhy(i, labels) {
+function packItemWhy(i, labels, demand) {
   const bits = [];
   const named = labels && labels.size ? [...labels] : [];
   if (named.length === 1) bits.push(`for ${named[0]}`);
   else if (named.length > 1) bits.push(`for ${named.slice(0, 2).join(" / ")}${named.length > 2 ? ` +${named.length - 2}` : ""}`);
-  else bits.push("doesn't fit any occasion on this trip");
+  else {
+    /* ⚠️ TWO DIFFERENT FACTS, and the old line told her the wrong one
+       (2026-08-04 r6, reported: "still seeing 'doesn't fit any occasion'").
+       `labels` is empty whenever the piece appears in no COMPLETE in-pack
+       outfit — which is usually not "wrong for this trip" but "nothing in the
+       bag pairs with it". Since r5 the fill can't choose an off-level piece at
+       all, so a piece reaching this branch is normally one she added herself,
+       kept, or that survives in a pack built by the older algorithm. Saying
+       "doesn't fit any occasion" about a shirt she deliberately packed is the
+       app arguing with the suitcase. Check the level directly and say which. */
+    const levels = [...new Set((demand || []).map(o => o.level).filter(Boolean))];
+    const servesALevel = levels.some(lv => packCoversLevel(i, lv));
+    bits.push(levels.length && !servesALevel
+      ? "no day on this trip is dressed like this"
+      : "nothing else in the bag goes with it yet");
+  }
   const tol = wearTolerance(i);
   if (tol !== Infinity && tol <= 2) bits.push(`${tol} wear${tol === 1 ? "" : "s"} per wash`);
   return bits.join(" · ");

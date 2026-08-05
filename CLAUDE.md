@@ -227,6 +227,74 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-04 r6 — FOUR MORE REPORTS FROM THE SAME FEATURE.** Selftest 327 →
+**330**, run green; all 3 new cases mutation-checked red in the same session,
+each reproducing her exact words. ⚠️ **Every one of these was a case of the app
+holding the evidence and not consulting it at the moment it chose.**
+
+⚠️ **SEASON AND WEATHER GATE THE BAG, NOT JUST THE OUTFITS.** Her report: the
+pack *"put in snow boots, which is crazy and I haven't worn in years"*.
+**`packFill` took a `wxFor` argument and never used it** — the ONLY season gating
+anywhere was whatever `buildRack` applied, and the level-1 branch bypasses the
+rack by design (r5). Measured before the fix on a Summer trip: snow boots were
+the **SECOND shoe picked**, `rackWarmth` 0, zero wears, while
+`inSeasonWx(snow, "Summer")` was already false — so the bag could hold pieces
+`packCandidates` would then refuse to build with, and `packCoverage` reported the
+gap the bag itself had caused. ⚠️ Eligible on **ANY leg**, not all (Madrid-then-
+Javea is two climates). ⚠️ **Her keeps are exempt** — a pinned piece is a
+decision, not a candidate. `wxFor` is now threaded through all five `packFill`
+callers.
+
+⚠️ **`rackWarmth` IS RECENCY ONLY, AND IT WAS CARRYING WEIGHT IT COULDN'T HOLD.**
+Her report: it reached for beach sandals and hiking boots *"before ever thinking
+to suggest my birkenstocks, which I wore almost every day of my last trip and
+wear all the time at home too"*. Both halves of that sentence were evidence the
+app had and discarded: `rackWarmth` is 0–1 over 60 days, so a shoe worn ONCE
+three days ago scored 0.95 and one worn thirty times scored 0.98 — at weight 10
+it could never outrank `set.length * 6`, and a specialist spanning one more
+formality band won on breadth alone. And `travelProven` needs `TRIP_MEMORY_MIN`
+(2) trips **and** worn-on-every-one, so one trip of daily wear counted for
+nothing. **`packWearSignals`/`packAffinity`** = wear-DAYS (never rows), log-scaled,
+trip days weighted double, ONE pass built per `packFill` call — ⚠️ `wearCount`
+inside the candidate loop is the documented items × wears trap that got context
+scoring thrown out of this very function. `PACK_AFFINITY_W`(10) beats a one- or
+two-band breadth difference but **never a real `fill * 100` deficit**: an occasion
+nothing else can dress still outranks her favourite shoe. `PACK_RECENCY_W` 10 → 4.
+
+⚠️ **THE LEVEL IS NOT THE OCCASION.** Her report: *"a very casual dress for a
+plane ride when I'd never wear a dress on a plane"*, and *"weird combinations for
+certain events"*. Nothing was wrong by the solver's rules — a casual dress clears
+level 2 — because **the context is translated to a level and then thrown away**,
+the same discard `contextFormalityLevel` was written to fix for the suggester.
+**`packOccasionSlotFit(occ)`** answers it from her own history and
+`packCandidates` filters the pool with it.
+- ⚠️ **THE PLANE DAY IS NOT TAGGED "Flight".** `tripWearContext` auto-stamps
+  every trip wear with **Travel**, which is trip-WIDE — asking what she wears for
+  Travel returns everything she wears on holiday, dresses included, and would
+  block nothing. The honest source is the **FIRST AND LAST DATE of past trips**,
+  which is exactly when she flew. Derived from dates already stored; no new
+  tagging asked of her.
+- ⚠️ **SLOTS, not subcategories.** "I'd never wear a dress on a plane" is a
+  silhouette rule and it's the one she can state; blocking at subcategory level
+  would also rule out the specific jeans she happens not to have flown in.
+- ⚠️ **Rescue-shaped, like `inSeasonWx`** — it only REMOVES a silhouette she has
+  never worn for this occasion, needs `PACK_CTX_MIN_DAYS`(4) days of evidence,
+  and if the narrowed pool enumerates nothing the unfiltered pool is used
+  instead. It also **says nothing at all unless the history shows a complete
+  silhouette** (top half + shoes), or "she never wears a dress to work" would
+  delete tops-and-bottoms on a day she has only ever worn dresses.
+
+⚠️ **"DOESN'T FIT ANY OCCASION ON THIS TRIP" WAS USUALLY THE WRONG FACT.** She
+still saw it after r5. `packItemWhy`'s labels come from `packItemsOptionMap`,
+which is empty whenever a piece is in no COMPLETE in-pack outfit — normally
+"nothing in the bag goes with it yet", not "wrong for this trip". Since r5 the
+fill cannot choose an off-level piece at all, so a piece reaching that branch is
+usually one she added, kept, or that survives in a pack built by the older
+algorithm. It now checks the level directly and says which of the two it is.
+⚠️ **A stored pack is NOT re-filled on open** (`rec.pieces` wins, inversion ③),
+so pieces chosen by an older algorithm persist until "Start over from the app's
+numbers" — that is deliberate, and it's why the copy had to be right.
+
 **2026-08-04 r5 — THREE REPORTS ABOUT BUILD-A-PACK.** Selftest 322 → **327**, run
 green; all 5 new cases mutation-checked red in the same session (two of them
 reproducing her exact words). ⚠️ A FOURTH report — the trip recap counting a wear
@@ -2014,7 +2082,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-04 r5`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-04 r6`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2361,7 +2429,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **327/327** (2026-08-04 r5, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **330/330** (2026-08-04 r6, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
