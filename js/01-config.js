@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r12";
+const APP_VERSION = "2026-08-05 r13";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-05 r12";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r13", notes: [
+    "For packing, two outfits that differ only in shoes are now the same outfit. The solver treated any differing piece as a new outfit, so changing shoes was the cheapest possible way to satisfy \"don\'t repeat\" and \"give her options\" — one small piece added and every repetition penalty reset, without the outfit looking any different",
+    "\"Other options\" and the option count are per look too. Twelve options could be the same top and jeans twelve times over with different shoes, and that\'s what the number on the card was counting",
+    "Sharing the same jeans under a different top is still fine — that\'s the point of packing light. What\'s ruled out is two outfits that read identically",
+  ] },
   { v: "2026-08-05 r12", notes: [
     "A piece with no formality level below 6 cannot be on the rack unless you have PLANNED something at that level. Before this, your habitual levels also let one in — so if 6 was among the three levels you wear most, every pair of heels you own was exempt and the rule did nothing. Habit is not a plan",
     "Wearing something dressy no longer puts it back on the rack either. A piece worn in the last two weeks is normally forced in, which meant one dressy evening put the heels back for a fortnight — exactly the stretch you are least likely to need them again. Planning still works: a planned outfit containing them is a plan",

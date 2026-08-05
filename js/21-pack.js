@@ -489,33 +489,68 @@ function packDiversify(list, limit) {
     let bi = 0, bs = -Infinity;
     for (let k = 0; k < pool.length; k++) {
       const cd = pool[k];
-      const overlap = cd.ids.reduce((n, id) => n + (use.get(id) || 0), 0);
-      const s = cd.score - overlap * 3;
+      /* ⚠️ Reusing a LOOK costs far more than reusing a shoe — otherwise the
+         cheapest way to look diverse is to change footwear, which is the thing
+         she reported. Shoes still carry a small penalty so the strip doesn't
+         show the identical pair eight times. */
+      const overlap = cd.ids.reduce((n, id) => {
+        const it = itemById.get(id);
+        const w = (it && suggestSlot(it) === "Shoes") ? 1 : 4;
+        return n + (use.get(id) || 0) * w;
+      }, 0);
+      const lookSeen = use.get("look:" + packLookKey(cd.ids)) || 0;
+      const s = cd.score - overlap * 3 - lookSeen * 40;
       if (s > bs) { bs = s; bi = k; }
     }
     const cd = pool.splice(bi, 1)[0];
     out.push(cd);
     for (const id of cd.ids) use.set(id, (use.get(id) || 0) + 1);
+    const lk = "look:" + packLookKey(cd.ids);
+    use.set(lk, (use.get(lk) || 0) + 1);
   }
   return out;
 }
 
-/* ---- distinctness (D2) --------------------------------------------------
-   Any piece differing makes two outfits distinct, so a second pair of shoes is
-   a cheap way to buy options and the optimiser reaches for it on merit rather
-   than because a hardcoded floor told it to. ⚠️ Selftest case 12 is what proves
-   this holds on a Javea-shaped trip; if it goes red, D2 is wrong and needs the
-   visible-core variant — do not paper over it with a per-slot minimum. */
+/* ---- distinctness (D2, revised to the VISIBLE CORE 2026-08-05) -----------
+   Her rule: "an outfit cannot be exactly the same except shoes. I need
+   different outfits for each slot."
+
+   D2 originally said any differing piece makes two outfits distinct, reasoning
+   that a second pair of shoes is then a cheap way to buy options and the
+   optimiser would reach for it on merit. It reached for it constantly, because
+   it IS the cheapest edit available: swapping shoes adds one small piece and
+   resets every repetition penalty at once, so the solver could satisfy "K
+   options per occasion" and "don't repeat outfits" without ever changing what
+   the outfit actually looks like. Two occasions came back in the same top and
+   the same jeans and the app called them different.
+
+   ⚠️ The D2 comment named this outcome and named the fix — "needs the visible
+   core variant" — so this is the documented escape hatch being taken, not a
+   patch over it. THE LOOK IS EVERYTHING BUT THE SHOES. Two outfits sharing a
+   look are the same outfit for every purpose that counts repetition:
+   distinctness, the option count, and the solver's repeat penalties.
+
+   ⚠️ It is deliberately NOT "every slot must differ". Reusing the same jeans
+   all week is the point of packing light and the reason repetition is charged
+   on the visible half only; what she is objecting to is two outfits that read
+   identically, and a shared bottom under a different top does not. */
+const packLookIds = (ids) => (ids || [])
+  .filter(id => { const i = itemById.get(id); return !i || suggestSlot(i) !== "Shoes"; })
+  .slice().sort();
+const packLookKey = (ids) => packLookIds(ids).join(",");
 function packDistinct(a, b) {
-  return (a.ids || []).join(",") !== (b.ids || []).join(",");
+  return packLookKey(a.ids) !== packLookKey(b.ids);
 }
 
 // How many distinct valid outfits an occasion can make from a given pack.
 function packOptionCount(occ, packIds, opts = {}) {
   const list = packCandidates(occ, [...packIds], { ...opts, all: true, pool: opts.packPool || null });
   const inside = list.filter(c => c.ids.every(id => packIds.has ? packIds.has(id) : packIds.includes(id)));
+  // ⚠️ Counted by LOOK, so five shoe permutations of one outfit are one option.
+  // This is also what makes the tightness dial mean what it says: K is "options
+  // per occasion", and it was being satisfied by changes of footwear.
   const seen = new Set();
-  for (const c of inside) seen.add(c.ids.join(","));
+  for (const c of inside) seen.add(packLookKey(c.ids));
   return seen.size;
 }
 
@@ -706,7 +741,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
             if (tol === Infinity || usedToday.has(id)) continue;
             if (seedOf(id, it) + 1 > tol) over++;
           }
-          const key = cd.ids.join(",");
+          const key = packLookKey(cd.ids);   // ⚠️ by LOOK — see packDistinct
           // A violation outweighs several new pieces: packing one more tee beats
           // wearing a dirty one, which is the whole reason she asked for this.
           const cost = over * 5000
@@ -720,7 +755,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
           if (cost < bestCost) { bestCost = cost; pick = cd; }
         }
         chosen.set(occ.id, pick);
-        const pickKey = pick.ids.join(",");
+        const pickKey = packLookKey(pick.ids);
         if (prevDayCombos.has(pickKey)) repeatTally += 150;
         else if (usedCombos.has(pickKey)) repeatTally += 40;
         todayCombos.add(pickKey);
@@ -2884,8 +2919,14 @@ function openPackOptionsSheet(occId) {
   if (!occ) return;
   const inPack = new Set(st.res.pack);
   const cur = st.res.assign.get(occId);
+  /* ⚠️ One row per LOOK. Before this the sheet's twelve "other options" could be
+     the same top and jeans twelve times over with different shoes, which is
+     what "20 options" was really counting. */
+  const seenLook = new Set();
   const list = packCandidates(occ, st.res.pack, { wxFor: packWxFor(st.c), all: true })
-    .filter(x => x.ids.every(id => inPack.has(id))).slice(0, 12);
+    .filter(x => x.ids.every(id => inPack.has(id)))
+    .filter(x => { const k = packLookKey(x.ids); if (seenLook.has(k)) return false; seenLook.add(k); return true; })
+    .slice(0, 12);
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="packOptCancel">Close</button>
