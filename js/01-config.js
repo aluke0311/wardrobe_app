@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r1";
+const APP_VERSION = "2026-08-05 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,10 @@ const APP_VERSION = "2026-08-05 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r2", notes: [
+    "The rack stopped being the suitcase you just unpacked. It ranked purely on how recently you wore something, so for two months after a trip the ~20 pieces you packed owned rotation and everything you were wearing at home the week before you left ranked behind them. It now ranks on when you last wore a piece AT HOME",
+    "Putting a piece on the rack no longer keeps it there forever. A keep clears the moment you wear it — at which point it stays in on merit — or after 60 days at home if you never do, so your additions are respected without permanently taking a slot the rack needs. The item screen says how long a keep has left",
+  ] },
   { v: "2026-08-05 r1", notes: [
     "The rack size is yours now — Settings → Rack size. It scales every category and keeps the 20% you haven't reached for lately, so a bigger rack is a bigger working wardrobe rather than just more tops",
     "Trips and capsules are two tabs, and ＋ New is at the top of the list instead of under it",

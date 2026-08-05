@@ -225,7 +225,70 @@ function rackState() {
   const v = kvData.get(RACK_KEY);
   return v && typeof v === "object" ? v : {};
 }
-function rackPinnedSet() { return new Set(rackState().pinned || []); }
+/* ⚠️ A PIN EXPIRES, AND THAT'S THE ANSWER TO "does it stay forever?"
+   (2026-08-05, her question: "when I add something, does it stay forever? How
+   can we respect my additions while also rotating the rack?").
+
+   It used to stay forever, and the two goals really do fight: pins bypass the
+   slot quotas, so every permanent pin is a seat the stratified rack no longer
+   controls. Enough of them and the rack stops being a rack.
+
+   A pin now ends one of two ways, and both of them respect the addition:
+     · she WEARS it — the pin has done its whole job, and a piece worn recently
+       stays in rotation on merit through rackWarmth and rackForcedIds. Clearing
+       it here is not dropping the piece, it's handing it back to the ordinary
+       machinery.
+     · RACK_PIN_DAYS pass without a wear — she put it in front of herself, had a
+       season to reach for it, and didn't. It rejoins the queues (where seen/
+       dormant will offer it again) rather than holding a seat indefinitely.
+
+   ⚠️ Counted in HOME days, like rackShouldRotate — a pin shouldn't burn down
+   while she's away and can't act on it.
+   Legacy entries are bare id strings in an array; they're read as pinned-today
+   so nothing she's pinned so far disappears on this deploy. */
+const RACK_PIN_DAYS = 60;
+function rackPinnedMap() {
+  const raw = rackState().pinned;
+  const out = {};
+  if (Array.isArray(raw)) for (const v of raw) {
+    if (typeof v === "string") out[v] = null;                 // legacy: no date
+    else if (v && v.id) out[v.id] = v.d || null;
+  }
+  return out;
+}
+function rackPinnedSet(today = todayStr(), wearRows = null) {
+  const rows = wearRows || wears;
+  const map = rackPinnedMap();
+  const ids = Object.keys(map);
+  if (!ids.length) return new Set();
+  const want = new Set(ids);
+  // One pass for "worn since the pin" — never items × wears.
+  const wornSince = new Map();
+  for (const w of rows) {
+    if (!w || !w.item_id || !w.worn_on || !want.has(w.item_id)) continue;
+    const prev = wornSince.get(w.item_id);
+    if (!prev || w.worn_on > prev) wornSince.set(w.item_id, w.worn_on);
+  }
+  const ranges = (typeof awayRanges === "function") ? awayRanges() : [];
+  const out = new Set();
+  for (const id of ids) {
+    const at = map[id];
+    if (!at) { out.add(id); continue; }             // legacy / undated pin
+    const worn = wornSince.get(id);
+    if (worn && worn >= at) continue;               // job done; merit takes over
+    if (rackHomeDaysSince(at, today, ranges) >= RACK_PIN_DAYS) continue;
+    out.add(id);
+  }
+  return out;
+}
+// How long a pin has left, for the item view's rack line. null = not pinned.
+function rackPinDaysLeft(id, today = todayStr()) {
+  const at = rackPinnedMap()[id];
+  if (at === undefined) return null;
+  if (!at) return RACK_PIN_DAYS;
+  const ranges = (typeof awayRanges === "function") ? awayRanges() : [];
+  return Math.max(0, RACK_PIN_DAYS - rackHomeDaysSince(at, today, ranges));
+}
 /* Push-outs expire on their own so the rack can't be permanently narrowed by a
    decision she made in another season and forgot about. Two durations: the
    ordinary nudge (RACK_PUSH_DAYS) and the longer "not right now" from a
@@ -354,11 +417,20 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
      dropped a piece worn yesterday: it ranked at warmth 0 and fell off the cap.
      buildRack is documented as injectable; a ranking that quietly isn't makes
      the fixture and the phone disagree. */
+  /* ⚠️ AWAY DAYS DON'T COUNT AS "reached for" (2026-08-05, same report as
+     rackWarmth). Coming home from a ten-day trip, every one of the last 14 days
+     is a trip day, so this forced the entire suitcase into rotation and
+     displaced the coldest ordinary member of every slot to do it — the rack
+     became the bag she just unpacked. What she chose to WEAR at home is the
+     signal; what she chose to PACK is a different decision, and travelProven
+     already reads it. */
   const floor = shiftDate(today, -RACK_RECENT_DAYS);
+  const awayR = (typeof awayRanges === "function") ? awayRanges() : [];
   const recentAt = new Map();
   for (const w of rows) {
     if (!w || !w.item_id || !w.worn_on) continue;
     if (w.worn_on < floor || w.worn_on > today) continue;
+    if (awayR.length && awayRangeFor(w.worn_on, awayR)) continue;
     if (!ok(w.item_id)) continue;
     raw.add(w.item_id);
     const prev = recentAt.get(w.item_id);
@@ -402,11 +474,43 @@ function rackHomeDaysSince(from, today = todayStr(), ranges = null) {
   return home;
 }
 
-// How "warm" a piece is: 1 = worn today, 0 = not worn inside RACK_WARM_DAYS.
-function rackWarmth(itemId, today = todayStr()) {
-  const last = lastWorn(itemId);
-  if (!last) return 0;
-  const d = daysBetween(last, today);
+/* How "warm" a piece is: 1 = worn today, 0 = not worn inside RACK_WARM_DAYS.
+
+   ⚠️ A TRIP WEAR IS NOT A HOME WEAR (2026-08-05, her report: "the most worn
+   stuff on my rack is almost exclusively what I brought on my trip that I just
+   got back from — would love some things from before I left, which fit the
+   current climate better").
+
+   She was right and the cause is arithmetic. Warmth is pure recency, and a
+   ten-day trip writes ten days of wears for ~20 pieces at the very top of the
+   window. So for the whole 60 days after a trip, the suitcase OWNS rotation —
+   32 of the 58 seats — and every piece she was wearing at home the week before
+   she left is ranked behind it. Two trips a year and the rack is a suitcase
+   most of the time.
+
+   The fix is to rank on the most recent wear AT HOME, and fall back to the trip
+   wear plus a penalty when a piece has only ever been worn away. Not zero: a
+   piece she wore every day of a trip is genuinely in play, and erasing it would
+   just invert the bug. The penalty puts it behind anything she's reached for at
+   home inside the window and ahead of everything she hasn't.
+
+   ⚠️ It reads its OWN wearRows (the r3 lesson — a ranking that quietly closes
+   over the global makes the fixture and the phone disagree). */
+const RACK_AWAY_PENALTY_DAYS = 21;
+function rackWarmth(itemId, today = todayStr(), { wearRows = null, away = null } = {}) {
+  const rows = wearRows || wears;
+  const rs = away || ((typeof awayRanges === "function") ? awayRanges() : []);
+  let lastHome = null, lastAny = null;
+  for (const w of rows) {
+    if (w.item_id !== itemId || !w.worn_on) continue;
+    if (!lastAny || w.worn_on > lastAny) lastAny = w.worn_on;
+    if (rs.length && awayRangeFor(w.worn_on, rs)) continue;
+    if (!lastHome || w.worn_on > lastHome) lastHome = w.worn_on;
+  }
+  if (!lastAny) return 0;
+  let d;
+  if (lastHome) d = daysBetween(lastHome, today);
+  else d = daysBetween(lastAny, today) + RACK_AWAY_PENALTY_DAYS;
   if (d < 0 || d > RACK_WARM_DAYS) return 0;
   return (RACK_WARM_DAYS - d) / RACK_WARM_DAYS;
 }
@@ -446,7 +550,8 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   /* Deterministic ordering: same inputs, same rack. Stability is the point —
      she should come to recognise it, and a rack that reshuffles every open is
      just a random sample with extra steps. */
-  const warmth = i => rackWarmth(i.id, today);
+  const awayR = (typeof awayRanges === "function") ? awayRanges() : [];
+  const warmth = i => rackWarmth(i.id, today, { wearRows: rows, away: awayR });
   const likedRank = i => (liked.has(i.id) ? 1 : 0);
   const seenOf = i => seenMap[i.id] || 0;
   // Rotation: purely how recently she reached for it. Liked only breaks ties.
@@ -771,7 +876,7 @@ async function rackEnsure({ force = false } = {}) {
     ids: built.ids, cold: built.cold,
     rotation: built.rotation, steady: built.steady, dormant: built.dormant,
     seen, seenAt,
-    pinned: [...rackPinnedSet()], pushed: rackState().pushed || {},
+    pinned: rackState().pinned || [], pushed: rackState().pushed || {},
   };
   _rackMemo = null;
   await kvUpdate(RACK_KEY, prev => ({ ...(prev || {}), ...next }));
@@ -864,12 +969,16 @@ async function pullOntoRack(id) {
   if (!i) return;
   await kvUpdate(RACK_KEY, prev => {
     const st = prev && typeof prev === "object" ? prev : {};
-    const pinned = new Set(st.pinned || []); pinned.add(id);
+    // Store the date so the pin can expire — see rackPinnedSet.
+    const pinned = (Array.isArray(st.pinned) ? st.pinned : [])
+      .map(v => (typeof v === "string" ? { id: v, d: null } : v))
+      .filter(v => v && v.id !== id);
+    pinned.push({ id, d: todayStr() });
     const pushed = { ...(st.pushed || {}) }; delete pushed[id];
     const seen = { ...(st.seen || {}) }; delete seen[id];
     const ids = new Set(st.ids || []); ids.add(id);
     const rotation = new Set(st.rotation || []); rotation.add(id);
-    return { ...st, pinned: [...pinned], pushed, seen, ids: [...ids], rotation: [...rotation] };
+    return { ...st, pinned, pushed, seen, ids: [...ids], rotation: [...rotation] };
   });
   _rackMemo = null;
   toast(`${i.name || "Piece"} is on the rack`);
@@ -881,11 +990,12 @@ async function pushOffRack(id, { days = RACK_PUSH_DAYS, quiet = false } = {}) {
   if (!i) return;
   await kvUpdate(RACK_KEY, prev => {
     const st = prev && typeof prev === "object" ? prev : {};
-    const pinned = new Set(st.pinned || []); pinned.delete(id);
+    const pinned = (Array.isArray(st.pinned) ? st.pinned : [])
+      .filter(v => (typeof v === "string" ? v : (v && v.id)) !== id);
     const pushed = { ...(st.pushed || {}), [id]: { d: todayStr(), n: days } };
     const seen = { ...(st.seen || {}) }; delete seen[id];
     const drop = (a) => (a || []).filter(x => x !== id);
-    return { ...st, pinned: [...pinned], pushed, seen, ids: drop(st.ids),
+    return { ...st, pinned, pushed, seen, ids: drop(st.ids),
              rotation: drop(st.rotation), steady: drop(st.steady),
              dormant: drop(st.dormant), cold: drop(st.cold) };
   });

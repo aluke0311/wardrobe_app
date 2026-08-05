@@ -576,7 +576,12 @@ function rackLineHtml(i) {
   const pinned = rackPinnedSet().has(i.id);
   return on
     ? `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:14px">
-        <span style="color:var(--accent)">\u{1F455} On the rack${pinned ? " · kept" : ""}</span>
+        <span style="color:var(--accent)">\u{1F455} On the rack${pinned ? ` · kept${(() => {
+          // Say when a keep runs out, so "does it stay forever?" is answered on
+          // the screen rather than in a changelog. Wearing it clears it early.
+          const left = rackPinDaysLeft(i.id);
+          return left == null ? "" : ` for ${left} more day${left === 1 ? "" : "s"}`;
+        })()}` : ""}</span>
         <button class="lnk" data-rack-toggle="0" style="font-size:13px;color:var(--muted)">Not right now</button>
       </div>`
     : `<div class="item-stat-strip" style="display:flex;justify-content:center">
