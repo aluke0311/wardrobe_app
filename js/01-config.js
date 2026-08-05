@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r5";
+const APP_VERSION = "2026-08-05 r6";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-05 r5";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r6", notes: [
+    "Today has its own card on Home, the same one Tomorrow gets: your planned outfit if you have one, a suggested outfit if you don't, the weather, and \"you've dressed for this before\". A dropdown context button sits next to the outfit — setting it re-levels the suggestion",
+    "Nothing on Home is hidden behind \"2 more things\" any more. Everything that wants your attention is just on the page",
+    "A \"Keep off the rack\" toggle on any piece, next to \"Don't suggest in outfits\". Narrower on purpose: the piece is still suggested when you ask for its level or it's in a capsule — it just never takes one of the rack's standing slots",
+    "Pieces that ONLY work at Dressed Up and above stay off the rack unless you've declared a day for them. The cap on dressy pieces was right for a blazer that also does a work day and wrong for a gown, which has no ordinary day to be in play for. Put a wedding in the planner and they come straight back",
+  ] },
   { v: "2026-08-05 r5", notes: [
     "The outfits screen is organised by the buckets you declare, not by day. One section per context → formality, holding exactly the number of outfits you asked for, with the count on it. The plane days and any day you declared nothing are in their own labelled sections instead of mixed in with your choices. Day by day is still there, folded underneath, where the laundry schedule lives",
     "Every occasion now has a Suggester… button: the real outfit suggester, opening on the suitcase, with the usual one-tap widen to your whole closet. Whatever you leave it on becomes that occasion's outfit",

@@ -953,6 +953,14 @@ const LAYER_TAG = "layer";  // a top that doubles as a layer (e.g. a button-up o
 // Exclusion from normal days comes from formality [1]-only, never from the tag.
 const GEAR_WORKOUT_TAG = "gear:workout";
 const GEAR_RAIN_TAG = "gear:rain";
+/* "Don't put this on the rack" (2026-08-05, her ask: "I also want a 'don't add
+   to rack' option like the don't suggest option").
+   ⚠️ It is NARROWER than no-suggest and that's the point: the piece stays fully
+   suggestible when she asks for its level, when it's in a capsule, when it's
+   seeded or locked — it just never takes one of the rack's standing seats.
+   A push-off expires (RACK_PUSH_DAYS) because it's a mood; this doesn't,
+   because it's a judgement about the piece. */
+const NO_RACK_TAG = "no-rack";
 // ⚠️ MENDING WAS REMOVED 2026-07-26 r8. Offered 12 analytical/utility features
 // to cut, she kept 11 and dropped this one — she was never going to run a repair
 // audit. The "mend" tag may STILL EXIST on items in the live DB; it is an unread
@@ -963,6 +971,7 @@ function isNoSuggest(i) { return !!i && (i.tags || []).includes(NO_SUGGEST_TAG);
 function isLayer(i) { return !!i && (i.tags || []).includes(LAYER_TAG); }
 function isWorkoutGear(i) { return !!i && (i.tags || []).includes(GEAR_WORKOUT_TAG); }
 function isRainGear(i) { return !!i && (i.tags || []).includes(GEAR_RAIN_TAG); }
+function isNoRack(i) { return !!i && (i.tags || []).includes(NO_RACK_TAG); }
 async function setItemTag(id, tag, on) {
   const i = itemById.get(id); if (!i) return;
   const tags = (i.tags || []).filter(t => t !== tag);
@@ -976,6 +985,7 @@ async function setNoSuggest(id, on) { return setItemTag(id, NO_SUGGEST_TAG, on);
 async function setLayer(id, on) { return setItemTag(id, LAYER_TAG, on); }
 async function setWorkoutGear(id, on) { return setItemTag(id, GEAR_WORKOUT_TAG, on); }
 async function setRainGear(id, on) { return setItemTag(id, GEAR_RAIN_TAG, on); }
+async function setNoRack(id, on) { return setItemTag(id, NO_RACK_TAG, on); }
 
 // Slot a piece falls into for suggestions. Cardigans dress like outerwear,
 // so they never fill the "shirt" slot. Workout subcats map to real slots for

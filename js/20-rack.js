@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 4;   // 4 = size dial + away-aware warmth (2026-08-05 r1)
+const RACK_ALGO = 5;   // 5 = no-rack tag + dress-only excluded (2026-08-05 r6)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -205,6 +205,10 @@ const RACK_SECOND_LOOK_DAYS = 14; // …AND in front of her this long. See rackP
    ignores the ceiling — a slot with nothing else to offer should be full rather
    than correct. */
 const RACK_OFFLEVEL_SHARE = 0.2;
+/* At or above this level, a piece that covers NOTHING else is dress-only — see
+   the dressOnly filter in buildRack. 6 = Dressed Up, so a [6,7,8] gown is out
+   and a [5,6] blazer (which also does a normal work day) stays. */
+const RACK_DRESSY_FLOOR = 6;
 
 /* A slot quota is either the banded object above or a plain number (the trip
    builder's PACK_TRIP_QUOTA is flat, and calibrating it per-band would be a
@@ -397,7 +401,12 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
   const raw = new Set();
   const ok = (id) => {
     const i = itemById.get(id);
+    // ⚠️ "Keep off the rack" wins over forcing too — a piece she has explicitly
+    // excluded must not come back in through having been worn. Dress-only is
+    // NOT re-checked here: forcing means she planned or wore it, which is the
+    // "unless I select that as a need" case arriving as a fact.
     return !!(i && itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i) &&
+              !isNoRack(i) &&
               i.category !== "Workout" && !push.has(id) && (!inPool || inPool.has(id)));
   };
   // Declared: the pieces of a look she has actually assigned to a day ahead.
@@ -541,11 +550,37 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   // offer something the engine would refuse. Laundry is NOT considered — see header.
   const base = (pool || items).filter(i =>
     i && itemStatus(i) === "Available" && i.image_path &&
-    !isNoSuggest(i) &&
+    !isNoSuggest(i) && !isNoRack(i) &&
     i.category !== "Workout" && !push.has(i.id));
 
-  const eligible = base.filter(i => inSeasonWx(i, seas, wx));
   const levels = rackNeededLevels(today, plans, rows);
+  /* ⚠️ DRESS-ONLY PIECES ARE OFF THE RACK UNLESS SHE ASKS (2026-08-05, her
+     words: "let's never include pieces that only work for formal occasions in
+     the rack unless I select that as a need").
+
+     RACK_OFFLEVEL_SHARE already capped these at a slot or two, and that was the
+     right shape for a piece that covers Dressed Up AND something ordinary. It's
+     the wrong answer for a piece that covers NOTHING BUT the top of the ladder:
+     a gown has no ordinary day to be in play for, so any share of it above zero
+     is the rack spending a seat on a day she doesn't have. The ceiling is now a
+     floor of zero for those.
+
+     ⚠️ "Unless I select that as a need" is exactly rackNeededLevels — which is
+     her declared upcoming plans unioned with the levels she habitually lives at
+     — so declaring a wedding brings the gowns back the same day, through the
+     machinery that already existed. No new switch, and no special case.
+     ⚠️ Pins and forced pieces are exempt by construction (they bypass the pool
+     filters), so a gown she has pinned or is wearing this week still shows. */
+  const levelSet0 = new Set(levels);
+  const dressOnly = i => {
+    const set = itemFormalitySet(i) || [];
+    if (!set.length) return false;                     // unknown beats invented
+    if (!set.every(l => l >= RACK_DRESSY_FLOOR)) return false;
+    return !set.some(l => levelSet0.has(l));           // she has declared one → keep
+  };
+  const baseNoGowns = base.filter(i => !dressOnly(i));
+
+  const eligible = baseNoGowns.filter(i => inSeasonWx(i, seas, wx));
 
   /* Deterministic ordering: same inputs, same rack. Stability is the point —
      she should come to recognise it, and a rack that reshuffles every open is

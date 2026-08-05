@@ -379,6 +379,11 @@ function openItemDetails(id) {
           <span class="det-lbl" style="flex:1;min-width:0">Rain gear<span class="det-sub" style="display:block">only suggested on wet days</span></span>
           <span class="tgl${isRainGear(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
         </button>
+        <div class="det-divider"></div>
+        <button class="det-row" id="detNoRack" style="width:100%;text-align:left">
+          <span class="det-lbl" style="flex:1;min-width:0">Keep off the rack<span class="det-sub" style="display:block">still suggested when you ask for its level — just never in play by default</span></span>
+          <span class="tgl${isNoRack(i) ? " on" : ""}"><span class="tgl-knob"></span></span>
+        </button>
       </div>
 
     </div>
@@ -397,6 +402,14 @@ function openItemDetails(id) {
   const rmImg = $("#detRemoveImg");
   if (rmImg) rmImg.onclick = () => removeItemPhoto(i.id);
 
+  const noRack = $("#detNoRack");
+  if (noRack) noRack.onclick = async (e) => {
+    const next = !isNoRack(i);
+    e.currentTarget.querySelector(".tgl").classList.toggle("on", next);
+    await setNoRack(i.id, next);
+    // The rack's own membership check can't see a tag change, so invalidate.
+    if (typeof rackEnsure === "function") { _rackMemo = null; rackEnsure().catch(() => {}); }
+  };
   $("#detNoSuggest").onclick = async (e) => {
     const next = !isNoSuggest(i);
     e.currentTarget.querySelector(".tgl")?.classList.toggle("on", next);  // instant feedback

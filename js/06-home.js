@@ -915,6 +915,15 @@ function tmPickSet(date, idx, pieces) {
     return all;
   });
 }
+// Drop a sticky generated pick — used when the day's context changes, since the
+// pick was generated for a level that is no longer the one being asked for.
+function tmPickClear(date, idx) {
+  kvUpdate(TM_PICK_KEY, prev => {
+    const all = JSON.parse(JSON.stringify(prev && typeof prev === "object" ? prev : {}));
+    if (all[date]) { delete all[date][String(idx)]; if (!Object.keys(all[date]).length) delete all[date]; }
+    return all;
+  });
+}
 /* ⚠️ `pool` is the TRIP suitcase or null. A null pool used to fall through to
    suggestOutfits' own default — the whole Available closet — so the Tomorrow
    card was the one outfit surface that never used the rack (fixed 2026-08-03,
@@ -971,9 +980,81 @@ function _tmTripCtx(date) {
   if (date < c.start_date || date > c.end_date) return null;
   return c;
 }
-function tomorrowCardHtml() {
+/* ---- the day card, for TODAY and for TOMORROW (2026-08-05) ----------------
+   Her ask: "I want to see my planned outfit for today in the app page. Could be
+   just like the tomorrow plan, including you've dressed for this before, but for
+   today. It should have the planned outfit or if no planned outfit, then a
+   suggested outfit with dropdown context button next to it."
+
+   ⚠️ ONE function, two dates. Today's card used to be a single `logged-row`
+   ("Planned: <name> ✓") with no picture, no weather, no precedent and no way to
+   revise — while tomorrow got the full card. Building a second card would have
+   meant two things to keep in step; this is the same card with the date passed
+   in, so anything added to one is in both by construction.
+   The `data-tm-date` attribute is what makes that safe: every handler used to
+   recompute `shiftDate(todayStr(), 1)` for itself, which is precisely the
+   assumption that stops a shared card from working. */
+/* The dropdown context button (2026-08-05, her words: "a suggested outfit with
+   dropdown context button next to it").
+
+   ⚠️ It writes the day plan, so setting a context here is the same act as
+   setting it in the planner — one source of truth, and the suggestion re-levels
+   itself because entrySuggestLevel reads those contexts. It is NOT a filter on
+   the card, which would have been a second, invisible notion of "today's
+   context" living beside the real one.
+   ⚠️ Creating an entry for a day that had none is deliberate and is the whole
+   feature: "I want to be able to set context always". */
+function quickCtxChipHtml(date, idx, contexts) {
+  const cs = (contexts || []).filter(Boolean);
+  const lbl = cs.length ? cs.join(", ") : "Set context";
+  return `<button class="cap-chip${cs.length ? " on" : ""}" data-qctx="${esc(date)}|${idx}" style="font-size:12px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(lbl)} ▾</button>`;
+}
+function openQuickContextSheet(date, idx) {
+  const render = () => {
+    const plan = dayPlan(date);
+    const cur = new Set(((plan[idx] || {}).contexts) || []);
+    const opts = contextOptions();
+    $("#logInner").innerHTML = `
+      <div class="sheet-hdr">
+        <button class="lnk" id="qcDone" style="font-weight:700">Done</button>
+        <h2>${esc(planDayLabel(date))}</h2>
+        <div style="width:48px"></div>
+      </div>
+      <div class="sheet-note">What's happening. The outfit re-levels itself to match.</div>
+      <div class="sheet-chips" style="padding:0 16px 16px">
+        ${opts.map(c => `<button class="cap-chip${cur.has(c) ? " on" : ""}" data-qc="${esc(c)}">${esc(c)}</button>`).join("")}
+      </div>
+      ${cur.size ? `<div style="padding:0 16px 18px"><button class="lnk" id="qcClear" style="font-size:13px;color:var(--muted);font-weight:600">Clear the context for this day</button></div>` : ""}
+      <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
+    $("#qcDone").onclick = () => { hideSheet("logSheet"); renderHome(); };
+    const write = async (next) => {
+      const plan2 = dayPlan(date).map(e => ({ ...e }));
+      while (plan2.length <= idx) plan2.push({ contexts: [], outfit: null });
+      plan2[idx].contexts = next;
+      // A cleared entry with no outfit is nothing at all — drop it rather than
+      // leave an empty row the planner then has to render.
+      const cleaned = plan2.filter(e => (e.contexts || []).length || e.outfit);
+      await saveDayPlan(date, cleaned);
+      // The level changed, so the sticky generated pick is now the wrong answer.
+      tmPickClear(date, idx);
+      render();
+    };
+    $("#logInner").querySelectorAll("[data-qc]").forEach(b => b.onclick = () => {
+      const c = b.dataset.qc, next = new Set(cur);
+      if (next.has(c)) next.delete(c); else next.add(c);
+      write([...next]);
+    });
+    const clr = $("#qcClear");
+    if (clr) clr.onclick = () => write([]);
+  };
+  render();
+  showSheet("logSheet");
+}
+
+function tomorrowCardHtml() { return dayCardHtml(shiftDate(todayStr(), 1), { label: "Tomorrow" }); }
+function todayCardHtml() { return dayCardHtml(todayStr(), { label: "Today", isToday: true }); }
+function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
   if (!dataReady) return "";
-  const tm = shiftDate(todayStr(), 1);
   const trip = _tmTripCtx(tm);
   // Trip days synthesize entries from the trip plan; ordinary days use kv.
   const entries = trip
@@ -981,31 +1062,46 @@ function tomorrowCardHtml() {
     : dayPlan(tm);
   // A trip day with nothing planned still gets one generated suggestion —
   // scoped to the suitcase, like every other trip-mode suggestion.
-  const genEntries = entries.length ? entries : (trip ? [{ contexts: [], outfit: null }] : []);
+  /* ⚠️ Today ALWAYS generates when nothing is planned — "the planned outfit or
+     if no planned outfit, then a suggested outfit". Tomorrow deliberately keeps
+     its empty state: an unasked-for suggestion for tomorrow is noise, whereas
+     today is the question she opens the app to answer. */
+  const genEntries = entries.length ? entries : ((trip || isToday) ? [{ contexts: [], outfit: null }] : []);
   const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
   const wx = _dpWx(tm);
   const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
   const hdr = `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 2px 8px">
-    <div style="font-size:13px;font-weight:600;color:var(--muted)">Tomorrow · ${esc(planDayLabel(tm))}${wxBit}${trip ? " · ✈️" : ""}</div>
-    <button class="lnk" data-tm-edit style="font-size:12.5px">${entries.length ? "✎ Edit" : "＋ Plan"}</button>
+    <div style="font-size:13px;font-weight:600;color:var(--muted)">${esc(label)} · ${esc(planDayLabel(tm))}${wxBit}${trip ? " · ✈️" : ""}</div>
+    <button class="lnk" data-tm-edit data-tm-date="${esc(tm)}" style="font-size:12.5px">${entries.length ? "✎ Edit" : "＋ Plan"}</button>
   </div>`;
   let body = "";
   if (!genEntries.length) {
-    body = `<button data-tm-edit style="width:100%;text-align:left;font-size:13.5px;color:var(--muted);padding:2px">Nothing planned — tap to set tomorrow's context or outfit.</button>`;
+    body = `<button data-tm-edit data-tm-date="${esc(tm)}" style="width:100%;text-align:left;font-size:13.5px;color:var(--muted);padding:2px">Nothing planned — tap to set ${isToday ? "today" : "tomorrow"}'s context or outfit.</button>`;
   } else {
     body = genEntries.map((e, idx) => {
       const ctxs = (e.contexts || []).join(", ");
       const o = e.outfit ? outfitById.get(e.outfit) : null;
-      if (o) return `<button data-tm-look="${esc(o.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:4px 0">
-        <span style="width:48px;flex:none">${outfitCollageHtml(o, 4)}</span>
-        <span style="flex:1;min-width:0">
-          <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
-          ${ctxs ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs)}</span>` : ""}
-        </span>
-      </button>`;
+      if (o) {
+        const worn = isToday && planWorn(tm, o.id);
+        return `<div style="padding:4px 0">
+          <button data-tm-look="${esc(o.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left">
+            <span style="width:48px;flex:none">${outfitCollageHtml(o, 4)}</span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
+              ${ctxs ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs)}</span>` : ""}
+            </span>
+          </button>
+          <div style="display:flex;align-items:center;gap:6px;padding-top:6px;flex-wrap:wrap">
+            ${quickCtxChipHtml(tm, idx, e.contexts)}
+            ${isToday && !trip ? (worn
+              ? `<span class="muted" style="font-size:12px">✓ Logged</span>`
+              : `<button class="cap-chip" data-tp-wear="${idx}" style="font-size:12px">✓ Wore it</button>`) : ""}
+          </div>
+        </div>`;
+      }
       const pieces = tomorrowGenPieces(tm, e, pool, idx);
       if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found${trip ? " in the suitcase" : ""}; tap ✨ to dig.</div>
-        <div style="display:flex;gap:6px;padding:2px 0"><button class="cap-chip" data-tm-refine="${idx}">✨ Suggest</button></div>`;
+        <div style="display:flex;gap:6px;padding:2px 0;flex-wrap:wrap">${quickCtxChipHtml(tm, idx, e.contexts)}<button class="cap-chip" data-tm-refine="${idx}" data-tm-date="${esc(tm)}">✨ Suggest</button></div>`;
       // Name the pool, always — same non-negotiable as the suggester's pool chip.
       const lvl = e.level || entrySuggestLevel(e.contexts);
       const from = trip ? "from the suitcase"
@@ -1013,11 +1109,13 @@ function tomorrowCardHtml() {
         : `from the rack · clean`;
       const why = [ctxs || (lvl ? occLabel(lvl) : ""), from].filter(Boolean).join(" · ");
       return `<div style="padding:4px 0">
-        <button data-tm-open="${idx}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>
-        <div style="display:flex;align-items:center;gap:8px;padding-top:6px">
-          <span class="muted" style="font-size:12px;flex:1;min-width:0;line-height:1.35">${esc(why)}</span>
-          <button class="cap-chip" data-tm-keep="${idx}" style="font-size:12px" title="Save as a real look on the plan">📌 Keep</button>
-          <button class="cap-chip" data-tm-reroll="${idx}" style="font-size:12px" title="Try a different one">✨</button>
+        <button data-tm-open="${idx}" data-tm-date="${esc(tm)}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>
+        <div class="muted" style="font-size:12px;padding-top:6px;line-height:1.35">${esc(why)}</div>
+        <div style="display:flex;align-items:center;gap:6px;padding-top:6px;flex-wrap:wrap">
+          ${quickCtxChipHtml(tm, idx, e.contexts)}
+          <button class="cap-chip" data-tm-keep="${idx}" data-tm-date="${esc(tm)}" style="font-size:12px" title="Save as a real look on the plan">📌 Keep</button>
+          <button class="cap-chip" data-tm-reroll="${idx}" data-tm-date="${esc(tm)}" style="font-size:12px" title="Try a different one">✨</button>
+          ${isToday && !trip ? `<button class="cap-chip" data-tm-wearnow="${idx}" data-tm-date="${esc(tm)}" style="font-size:12px">✓ Wore it</button>` : ""}
         </div>
       </div>`;
     }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
@@ -1025,25 +1123,11 @@ function tomorrowCardHtml() {
   // Precedent (Round C): what she actually wore the last times it felt like this.
   const mem = trip ? "" : wxMemoryRowHtml(wx, [...new Set(genEntries.flatMap(e => e.contexts || []))], { compact: true });
   // Plan-ahead lives INSIDE the card now — Home had too many stacked rows.
-  const foot = tripModeId ? "" :
+  const foot = (tripModeId || isToday) ? "" :
     `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
       <button class="lnk" data-plan-ahead style="font-size:12.5px;color:var(--muted)">📅 Plan the week ›</button>
     </div>`;
   return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}${mem}${foot}</div>`;
-}
-function todayPlanRowsHtml() {
-  if (!dataReady || tripModeId) return "";
-  const today = todayStr();
-  return dayPlan(today).map((e, idx) => {
-    const o = e.outfit ? outfitById.get(e.outfit) : null;
-    if (!o || planWorn(today, o.id)) return "";
-    const ctxs = (e.contexts || []).join(", ");
-    return `<button class="logged-row" data-tp-wear="${idx}">
-      <span class="lr-check">📅</span>
-      <span class="lr-text">Planned: ${esc(outfitName(o))}${ctxs ? " · " + esc(ctxs) : ""}</span>
-      <span class="lr-plus">✓</span>
-    </button>`;
-  }).join("");
 }
 /* ===================================================================
    PLAN THE WEEK  (2026-08-03)
@@ -1325,7 +1409,6 @@ function openWeekPlanSheet() { switchTab("week"); }
 
 // Session-only: whether the folded Home attention rows are expanded. Not
 // persisted — a fresh open should be calm again.
-let _homeAttnOpen = false;
 function renderHome() {
   const tiles = HOME_TILES.map(t => `
     <button class="tile ${t.wide ? "wide" : ""}" data-go="${t.tab}">
@@ -1413,27 +1496,29 @@ function renderHome() {
      fold into a single quiet line. The log CTA and the Tomorrow card are NOT in
      here — they're the daily loop, not interruptions. In trip mode the dash IS
      the one thing, so everything else folds. */
+  /* ⚠️ THE FOLD IS GONE (2026-08-05, her words: "I don't want things hidden
+     behind 'two more things' — just keep scrolling on home").
+
+     The hierarchy was built on the premise that only one thing may ask for
+     attention. That premise was mine, not hers, and the cost turned out to be
+     real: a row she'd have acted on (the laundry prompt, a missed day) could sit
+     behind a link that says nothing about what's under it, so the app looked
+     calm by hiding work. Scrolling is cheap; a hidden prompt is a prompt that
+     doesn't happen. In trip mode the dash still takes over — that's a different
+     rule and she hasn't asked to change it. */
   const attention = [catchup, laun, bk, wxb].filter(Boolean);
-  const shown = tc ? [] : attention.slice(0, 1);
-  const rest = attention.slice(shown.length);
-  const attnHtml = shown.join("") + (!rest.length ? "" : _homeAttnOpen
-    ? rest.join("") + `<div class="center" style="padding:2px 0 6px"><button class="lnk" id="homeAttnLess" style="font-size:12.5px;color:var(--muted)">Show less</button></div>`
-    : `<div class="center" style="padding:6px 0"><button class="lnk" id="homeAttnMore" style="font-size:12.5px;color:var(--muted)">${rest.length} more thing${rest.length === 1 ? "" : "s"} ›</button></div>`);
+  const attnHtml = tc ? "" : attention.join("");
 
   // Below everything, and only on the days it has something: a delight row, not
   // an attention row, so it stays out of the folding group above.
   const otd = (dataReady && !tripModeId) ? onThisDayHtml(today) : "";
 
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${todayPlanRowsHtml()}${ask}${cta}${tomorrowCardHtml()}${attnHtml}${otd}`;
+  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${ask}${cta}${todayCardHtml()}${tomorrowCardHtml()}${attnHtml}${otd}`;
   hydratePhotos($("#homeBody"));
   wireWxMemory($("#homeBody"));
   $("#homeBody").querySelectorAll("[data-otd]").forEach(b => {
     b.onclick = () => { switchTab("calendar"); calendarDay = b.dataset.otd; renderCalendarDay($("#calendarBody")); };
   });
-  const attnMore = $("#homeAttnMore");
-  if (attnMore) attnMore.onclick = () => { _homeAttnOpen = true; renderHome(); };
-  const attnLess = $("#homeAttnLess");
-  if (attnLess) attnLess.onclick = () => { _homeAttnOpen = false; renderHome(); };
   const wxFill = $("#homeWxFill");
   if (wxFill) wxFill.onclick = async () => {
     wxFill.disabled = true; wxFill.textContent = "Looking up…";
@@ -1449,12 +1534,34 @@ function renderHome() {
   $("#homeBody").querySelectorAll("[data-tp-wear]").forEach(b => {
     b.onclick = () => wearPlannedEntry(todayStr(), +b.dataset.tpWear);
   });
+  // ⚠️ Every one of these used to recompute tomorrow's date for itself. The card
+  // is shared by Today and Tomorrow now, so the DATE comes off the button.
+  const tmDate = (b) => b.dataset.tmDate || shiftDate(todayStr(), 1);
   $("#homeBody").querySelectorAll("[data-tm-edit]").forEach(b => {
     b.onclick = () => {
-      const tm = shiftDate(todayStr(), 1), trip = _tmTripCtx(tm);
+      const tm = tmDate(b), trip = _tmTripCtx(tm);
       // Trip days are planned in the trip's own by-day planner.
       if (trip) { switchTab("capsules"); return openTripPlan(trip.id); }
       openDayPlanSheet(tm);
+    };
+  });
+  $("#homeBody").querySelectorAll("[data-qctx]").forEach(b => {
+    b.onclick = () => {
+      const [d, i] = b.dataset.qctx.split("|");
+      openQuickContextSheet(d, +i);
+    };
+  });
+  // "Wore it" on a generated (not yet saved) outfit: save it, then log it.
+  $("#homeBody").querySelectorAll("[data-tm-wearnow]").forEach(b => {
+    b.onclick = async () => {
+      const tm = tmDate(b), idx = +b.dataset.tmWearnow;
+      const pieces = tomorrowGenPieces(tm, dayPlan(tm)[idx] || {}, null, idx);
+      if (!pieces) return;
+      b.disabled = true;
+      // wearSuggestedCombo takes a combo and always logs TODAY — which is
+      // exactly right here, since this button only renders on the Today card.
+      try { await wearSuggestedCombo({ pieces }); }
+      catch (e) { toast(e.message); b.disabled = false; }
     };
   });
   $("#homeBody").querySelectorAll("[data-tm-look]").forEach(b => {
@@ -1462,17 +1569,17 @@ function renderHome() {
   });
   $("#homeBody").querySelectorAll("[data-tm-refine]").forEach(b => {
     b.onclick = () => {
-      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmRefine, trip = _tmTripCtx(tm);
+      const tm = tmDate(b), idx = +b.dataset.tmRefine, trip = _tmTripCtx(tm);
       if (trip) return openSuggestSheet(null, trip.id, { capsuleId: trip.id, date: tm });
       openSuggestSheet(null, null, _dpSuggestCtx(tm, idx, (dayPlan(tm)[idx] || {}).contexts));
     };
   });
   $("#homeBody").querySelectorAll("[data-tm-open]").forEach(b => {
-    b.onclick = () => openTomorrowRevise(shiftDate(todayStr(), 1), +b.dataset.tmOpen);
+    b.onclick = () => openTomorrowRevise(tmDate(b), +b.dataset.tmOpen);
   });
   $("#homeBody").querySelectorAll("[data-tm-reroll]").forEach(b => {
     b.onclick = () => {
-      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmReroll, trip = _tmTripCtx(tm);
+      const tm = tmDate(b), idx = +b.dataset.tmReroll, trip = _tmTripCtx(tm);
       const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
       tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool, idx, true);  // force
       renderHome();
@@ -1480,7 +1587,7 @@ function renderHome() {
   });
   $("#homeBody").querySelectorAll("[data-tm-keep]").forEach(b => {
     b.onclick = async () => {
-      const tm = shiftDate(todayStr(), 1), idx = +b.dataset.tmKeep, trip = _tmTripCtx(tm);
+      const tm = tmDate(b), idx = +b.dataset.tmKeep, trip = _tmTripCtx(tm);
       const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
       const pieces = tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool, idx);
       if (!pieces) return;
@@ -1489,7 +1596,7 @@ function renderHome() {
         const oid = await saveComboAsOutfit(pieces);
         if (trip) await addPlanLook(trip.id, tm, oid);
         else await addKvPlanLook(tm, oid, idx);
-        toast("Planned for tomorrow");
+        toast(tm === todayStr() ? "Planned for today" : "Planned for tomorrow");
         renderHome();
       } catch (e) { toast(e.message); b.disabled = false; }
     };
