@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 6;   // 6 = dressy-lean ceiling (2026-08-05 r9)
+const RACK_ALGO = 7;   // 7 = dress-only needs a PLAN, not a habit (2026-08-05 r12)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -495,12 +495,25 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
      already reads it. */
   const floor = shiftDate(today, -RACK_RECENT_DAYS);
   const awayR = (typeof awayRanges === "function") ? awayRanges() : [];
+  /* ⚠️ WEARING IS NOT PLANNING (2026-08-05). Her rule for dress-only pieces is
+     "unless I have planned something that requires that level", and forcing a
+     piece in because she wore it last week is the one remaining door that let a
+     [6,8] pair back onto the rack after a single dressy evening — which is
+     exactly the week she is LEAST likely to need them again. The DECLARED half
+     of this function is untouched: a planned outfit containing heels is a plan. */
+  const declared0 = rackDeclaredLevels(today, all, rows);
+  const dressOnlyLived = (id) => {
+    const set = itemFormalityBase(itemById.get(id)) || [];
+    if (!set.length || !set.every(l => l >= RACK_DRESSY_FLOOR)) return false;
+    return !set.some(l => declared0.has(l));
+  };
   const recentAt = new Map();
   for (const w of rows) {
     if (!w || !w.item_id || !w.worn_on) continue;
     if (w.worn_on < floor || w.worn_on > today) continue;
     if (awayR.length && awayRangeFor(w.worn_on, awayR)) continue;
     if (!ok(w.item_id)) continue;
+    if (dressOnlyLived(w.item_id)) continue;
     raw.add(w.item_id);
     const prev = recentAt.get(w.item_id);
     if (!prev || w.worn_on > prev) recentAt.set(w.item_id, w.worn_on);
@@ -614,6 +627,7 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     i.category !== "Workout" && !push.has(i.id));
 
   const levels = rackNeededLevels(today, plans, rows);
+  const declaredSet0 = rackDeclaredLevels(today, plans, rows);
   /* ⚠️ DRESS-ONLY PIECES ARE OFF THE RACK UNLESS SHE ASKS (2026-08-05, her
      words: "let's never include pieces that only work for formal occasions in
      the rack unless I select that as a need").
@@ -625,18 +639,21 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
      is the rack spending a seat on a day she doesn't have. The ceiling is now a
      floor of zero for those.
 
-     ⚠️ "Unless I select that as a need" is exactly rackNeededLevels — which is
-     her declared upcoming plans unioned with the levels she habitually lives at
-     — so declaring a wedding brings the gowns back the same day, through the
-     machinery that already existed. No new switch, and no special case.
-     ⚠️ Pins and forced pieces are exempt by construction (they bypass the pool
-     filters), so a gown she has pinned or is wearing this week still shows. */
-  const levelSet0 = new Set(levels);
+     ⚠️ "UNLESS I HAVE PLANNED SOMETHING THAT REQUIRES THAT LEVEL" — her exact
+     words, 2026-08-05, and this is now read literally. It used to exempt on
+     rackNeededLevels, which is declared plans UNIONED WITH her top three lived
+     levels; if 6 was among those three, every [6,8] piece she owned was exempt
+     and the rule did nothing. Only a DECLARED plan lifts it now
+     (rackDeclaredLevels — a forward day plan, an anchor event, a trip's
+     contexts). Habit is not a plan.
+     ⚠️ A PIN still shows: pinning is her saying "keep this in", which outranks
+     any rule here. What no longer counts is merely having WORN it — see
+     rackForcedIds, where the same filter is applied to the lived half. */
   const dressOnly = i => {
     const set = itemFormalityBase(i) || [];   // ⚠️ un-nudged — see itemFormalityBase
     if (!set.length) return false;                     // unknown beats invented
     if (!set.every(l => l >= RACK_DRESSY_FLOOR)) return false;
-    return !set.some(l => levelSet0.has(l));           // she has declared one → keep
+    return !set.some(l => declaredSet0.has(l));        // she has PLANNED one → keep
   };
   const baseNoGowns = base.filter(i => !dressOnly(i));
 
@@ -665,7 +682,7 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
      formality at all is imputed by itemFormalitySet, so nothing is off-level
      merely for being untagged. */
   const levelSet = new Set(levels);
-  const declaredSet = rackDeclaredLevels(today, plans, rows);
+  const declaredSet = declaredSet0;
   const typical = rackTypicalLevel(rows);
   /* One predicate for the ceiling: a piece is "for a day she doesn't have" if it
      serves no needed level AT ALL, or if its floor is above an ordinary day.

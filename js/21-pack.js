@@ -320,11 +320,21 @@ function packDemand(slate) {
 }
 // The slate as a dayplan-shaped object, so buildRack's rackNeededLevels can
 // read the trip's declared levels without a second code path.
+/* ⚠️ CARRY THE LEVEL, don't make the rack re-derive it (2026-08-05). Entries
+   went over as contexts only, so rackNeededLevels/rackDeclaredLevels fell back
+   to contextFormalityLevel — her HISTORY's usual level for that context — and
+   threw away the level she set FOR THIS TRIP. A "Party/shower · Dressed Up"
+   she'd declared arrived at the rack as whatever she usually wears to a
+   party/shower, which is the exact discard contextFormalityLevel was written to
+   fix for the suggester. Both readers check `e.level` first.
+   ⚠️ Occasions with a level but no context are included now too — they are
+   still a declared level, and dropping them under-declares the trip. */
 function packSlateAsPlans(slate) {
   const out = {};
   for (const s of slate || []) {
-    const entries = (s.occasions || []).filter(o => (o.contexts || []).length)
-      .map(o => ({ contexts: o.contexts, outfit: null }));
+    const entries = (s.occasions || [])
+      .filter(o => (o.contexts || []).length || o.level)
+      .map(o => ({ contexts: o.contexts || [], level: o.level || null, outfit: null }));
     if (entries.length) out[s.date] = entries;
   }
   return out;

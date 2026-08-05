@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r11";
+const APP_VERSION = "2026-08-05 r12";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-05 r11";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r12", notes: [
+    "A piece with no formality level below 6 cannot be on the rack unless you have PLANNED something at that level. Before this, your habitual levels also let one in — so if 6 was among the three levels you wear most, every pair of heels you own was exempt and the rule did nothing. Habit is not a plan",
+    "Wearing something dressy no longer puts it back on the rack either. A piece worn in the last two weeks is normally forced in, which meant one dressy evening put the heels back for a fortnight — exactly the stretch you are least likely to need them again. Planning still works: a planned outfit containing them is a plan",
+    "A pin still overrides all of this — keeping a piece on the rack is you saying so",
+    "A trip\'s formality now reaches the rack as the level you set for that trip, not the level you usually wear to that kind of thing",
+  ] },
   { v: "2026-08-05 r11", notes: [
     "Lean / normal / cushion now actually changes the bag, and here\'s why it didn\'t: the app works out how many of each thing to pack from what you\'ve packed on real trips before — and you pack generously, so on a week-long trip every single category was already hitting its ceiling. Normal and cushion produced identical bags. That ceiling is now what \"normal\" means, and cushion is allowed past it while lean goes under it. Measured on a 7-day trip at your rates: 26 / 34 / 43 pieces",
     "Changing the tightness also wasn\'t re-solving the outfits — it rebuilt the bag and kept the previous setting\'s outfits, then hit an error working out the toast, silently",
