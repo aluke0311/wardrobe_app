@@ -108,9 +108,13 @@ function calStreak() {
   return streak;
 }
 
+/* Month · Plan the week, in one tab (2026-08-05 — see renderWeekPlan's header).
+   The day view is shared by both, so a day tapped from either lands here. */
+let calendarMode = "month";   // "month" | "week" — session-only
 function renderCalendar() {
   const body = $('#calendarBody');
   if (calendarDay) renderCalendarDay(body);
+  else if (calendarMode === "week") renderWeekPlan(body, { embedded: true });
   else renderCalendarMonth(body);
 }
 
@@ -168,6 +172,7 @@ function renderCalendarMonth(body) {
     </div>`;
 
   body.innerHTML = `<div class="tabbody">
+    ${weekModeBarHtml()}
     <div class="cal-nav">
       <button class="cal-nav-btn" id="calPrev"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
       <div class="cal-month-lbl"><strong>${CAL_MONTHS[month]}</strong> <em>${year}</em></div>
@@ -179,6 +184,8 @@ function renderCalendarMonth(body) {
   </div>`;
 
   body.onclick = e => {
+    const modeBtn = e.target.closest('[data-calmode]');
+    if (modeBtn) { calendarMode = modeBtn.dataset.calmode; return renderCalendar(); }
     if (e.target.closest('#calPrev')) {
       calendarMonth--; if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
       renderCalendarMonth(body); return;

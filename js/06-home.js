@@ -1009,7 +1009,7 @@ function quickCtxChipHtml(date, idx, contexts) {
   const lbl = cs.length ? cs.join(", ") : "Set context";
   return `<button class="cap-chip${cs.length ? " on" : ""}" data-qctx="${esc(date)}|${idx}" style="font-size:12px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(lbl)} ▾</button>`;
 }
-function openQuickContextSheet(date, idx) {
+function openQuickContextSheet(date, idx, { onDone = null } = {}) {
   const render = () => {
     const plan = dayPlan(date);
     const cur = new Set(((plan[idx] || {}).contexts) || []);
@@ -1026,7 +1026,7 @@ function openQuickContextSheet(date, idx) {
       </div>
       ${cur.size ? `<div style="padding:0 16px 18px"><button class="lnk" id="qcClear" style="font-size:13px;color:var(--muted);font-weight:600">Clear the context for this day</button></div>` : ""}
       <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
-    $("#qcDone").onclick = () => { hideSheet("logSheet"); renderHome(); };
+    $("#qcDone").onclick = () => { hideSheet("logSheet"); (onDone || renderHome)(); };
     const write = async (next) => {
       const plan2 = dayPlan(date).map(e => ({ ...e }));
       while (plan2.length <= idx) plan2.push({ contexts: [], outfit: null });
@@ -1299,7 +1299,24 @@ function plannedDirtyBy(date, { plans = null, wearRows = null, today = null, was
   return out;
 }
 
-function renderWeekPlan() {
+/* ---- PLAN THE WEEK, now a view inside the Calendar tab (2026-08-05) --------
+   Her words: "I feel like the week plan just needs to be overall more
+   integrated. Maybe a whole second tab within the calendar tab?"
+
+   It was its own top-level screen reachable only from a link at the bottom of
+   the Tomorrow card — so the week you planned and the days you lived were in
+   two different places, and nothing about the calendar told you a plan existed.
+   Month / Week is now a segmented control at the top of the Calendar tab, and
+   the day view is shared: tapping a day from either lands in the same place.
+   ⚠️ #tab-week still exists and still renders this, because switchTab("week")
+   is a real path; it just isn't the way in any more. */
+function weekModeBarHtml() {
+  return `<div class="cap-tabbar" style="padding:8px 14px 2px">
+    <button data-calmode="month" class="${calendarMode === "month" ? "on" : ""}">Month</button>
+    <button data-calmode="week" class="${calendarMode === "week" ? "on" : ""}">Plan the week</button>
+  </div>`;
+}
+function renderWeekPlan(target = null, { embedded = false } = {}) {
   const today = todayStr();
   const dates = [...Array(WEEK_PLAN_DAYS)].map((_, n) => shiftDate(today, n));
   const rhythm = weeklyRhythm();
@@ -1321,28 +1338,60 @@ function renderWeekPlan() {
       const ctxs = (e.contexts || []).join(", ");
       const lvl = e.level || entrySuggestLevel(e.contexts);
       const sub = [ctxs, lvl ? occLabel(lvl) : ""].filter(Boolean).join(" · ");
-      if (o) return `<div style="display:flex;align-items:center;gap:10px;padding-top:8px">
-        <button data-wk-look="${esc(o.id)}" style="width:52px;flex:none">${outfitCollageHtml(o, 4)}</button>
-        <button data-wk-look="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
-          <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
-          ${sub ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(sub)}</span>` : ""}
-        </button>
-        <div class="cap-chip" data-wk-edit="${esc(d)}" style="flex:none;font-size:12px">✎</div>
+      /* ⚠️ THE CONTEXT CHIP IS ON EVERY ROW, planned outfit or not (2026-08-05,
+         her report: "I also want to be able to set context always — I set the
+         context at the beginning of this week, things changed, and now they're
+         wrong"). A row with an outfit used to offer only ✎, which opens the
+         whole day sheet; changing one context was four taps and a screen. */
+      const ctxChip = quickCtxChipHtml(d, idx, e.contexts);
+      if (o) return `<div style="padding-top:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button data-wk-look="${esc(o.id)}" style="width:52px;flex:none">${outfitCollageHtml(o, 4)}</button>
+          <button data-wk-look="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
+            <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
+            ${sub ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(sub)}</span>` : ""}
+          </button>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:6px">
+          ${ctxChip}
+          <button class="cap-chip" data-wk-edit="${esc(d)}" style="font-size:12px">✎ Day</button>
+          <button class="cap-chip" data-wk-delentry="${esc(d)}|${idx}" style="font-size:12px;color:var(--danger)">✕</button>
+        </div>
       </div>`;
+      /* ⚠️ "outfit still to pick" was a LIE on any day she'd logged from
+         somewhere else (her report). The plan is an intention and `wears` is
+         what happened; the screen only ever read the first. It now reads both,
+         and a logged day says so. */
+      const logged = loggedOnDay(d);
       return `<div style="padding-top:8px">
-        ${sub ? `<div style="font-size:12.5px;color:var(--muted);padding-bottom:5px">${esc(sub)} — outfit still to pick</div>` : ""}
+        ${sub ? `<div style="font-size:12.5px;color:var(--muted);padding-bottom:5px">${esc(sub)}${logged ? "" : " — outfit still to pick"}</div>` : ""}
+        ${logged ? `<button class="logged-row" data-wk-day="${esc(d)}" style="margin:0 0 6px;width:100%">
+            <span class="lr-check">✓</span>
+            <span class="lr-text">Wore ${esc(logged)}</span>
+            <span class="lr-plus">›</span>
+          </button>` : ""}
         <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${ctxChip}
           <button class="cap-chip" data-wk-sugg="${esc(d)}|${idx}" style="font-size:12.5px">✨ Suggest</button>
           <button class="cap-chip" data-wk-pick="${esc(d)}|${idx}" style="font-size:12.5px">＋ Look</button>
           <button class="cap-chip" data-wk-build="${esc(d)}|${idx}" style="font-size:12.5px">✎ Build</button>
+          <button class="cap-chip" data-wk-delentry="${esc(d)}|${idx}" style="font-size:12.5px;color:var(--danger)">✕</button>
         </div>
       </div>`;
-    }).join("") : `<div style="padding-top:8px">
+    }).join("") : (() => {
+      const logged = loggedOnDay(d);
+      return `<div style="padding-top:8px">
+      ${logged ? `<button class="logged-row" data-wk-day="${esc(d)}" style="margin:0 0 6px;width:100%">
+          <span class="lr-check">✓</span><span class="lr-text">Wore ${esc(logged)}</span><span class="lr-plus">›</span>
+        </button>` : ""}
       <div style="font-size:12.5px;color:var(--muted);padding-bottom:6px">${rh
         ? `Usually <b style="color:var(--text)">${esc(rh.contexts.join(" · "))}</b> — tap to start there.`
-        : "Nothing planned."}</div>
-      <button class="cap-chip" data-wk-edit="${esc(d)}" style="font-size:12.5px">＋ Plan this day</button>
-    </div>`;
+        : logged ? "" : "Nothing planned."}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${quickCtxChipHtml(d, 0, [])}
+        <button class="cap-chip" data-wk-edit="${esc(d)}" style="font-size:12.5px">＋ Plan this day</button>
+      </div>
+    </div>`; })();
 
     /* The laundry line is the point of the whole screen: it names the pieces and
        the day, because "6 things are dirty" is not actionable and "the black
@@ -1354,7 +1403,10 @@ function renderWeekPlan() {
     return `<div class="det-card" style="margin:0 16px 10px;padding:11px 13px${washOn ? ";border-color:var(--accent)" : ""}">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
         <div style="font-size:13.5px;font-weight:600">${esc(label)}<span style="font-weight:400;color:var(--muted)">${esc(wxBit)}</span></div>
-        <button class="cap-chip${washOn ? " on" : ""}" data-wk-wash="${esc(d)}" style="flex:none;font-size:12px" title="Mark a wash day">🧺 ${washOn ? "Wash day" : "Wash?"}</button>
+        <div style="display:flex;gap:5px;flex:none">
+          <button class="cap-chip${washOn ? " on" : ""}" data-wk-wash="${esc(d)}" style="font-size:12px" title="Mark a wash day">🧺 ${washOn ? "Wash day" : "Wash?"}</button>
+          ${entries.length ? `<button class="cap-chip" data-wk-delday="${esc(d)}" style="font-size:12px;color:var(--muted)" title="Clear this day">✕</button>` : ""}
+        </div>
       </div>
       ${bodyRows}${launRow}
     </div>`;
@@ -1367,45 +1419,101 @@ function renderWeekPlan() {
       ${fc.suggestWash && !isWashDay(fc.suggestWash, washAll)
         ? ` As it stands, things run past their wears from ${esc(weekDayLabel(fc.firstOverflow, today))}.`
         : fc.firstOverflow ? "" : ` Nothing runs out of clean this week.`}</div>
+      ${dates.some(d => dayPlan(d).length) ? `<button class="lnk" id="wkClearAll" style="font-size:12.5px;color:var(--muted);font-weight:600;padding:6px 0 0">Clear the whole week's plan</button>` : ""}
     </div>`;
 
-  $("#weekBody").innerHTML = `<div class="tabbody">
+  const root = target || $("#weekBody");
+  const inner = `${embedded ? weekModeBarHtml() : ""}${head}${dates.map(card).join("")}<div style="height:40px"></div>`;
+  // ⚠️ .tabbody carries the bottom padding that keeps content clear of the tab
+  // bar — the embedded view needs it just as much as the standalone screen.
+  root.innerHTML = embedded ? `<div class="tabbody">${inner}</div>` : `<div class="tabbody">
     <div class="cltoolbar"><button class="lnk" id="wkBack" style="font-size:15px">Back</button>
       <div style="flex:1;text-align:center;font-size:16px;font-weight:600">Plan the week</div>
       <div style="width:48px"></div></div>
-    ${head}
-    ${dates.map(card).join("")}
-    <div style="height:40px"></div>
+    ${inner}
   </div>`;
-  hydratePhotos($("#weekBody"));
+  hydratePhotos(root);
 
-  $("#wkBack").onclick = () => switchTab("home");
-  const re = () => renderWeekPlan();
-  $("#weekBody").querySelectorAll("[data-wk-wash]").forEach(b =>
+  const back = $("#wkBack");
+  if (back) back.onclick = () => switchTab("home");
+  /* ⚠️ The month view installs `body.onclick` and this view replaces its
+     innerHTML, so the mode bar must carry its own handler here — the calendar's
+     delegation is per-render and does not survive into this one. */
+  root.querySelectorAll("[data-calmode]").forEach(b => b.onclick = () => {
+    calendarMode = b.dataset.calmode;
+    renderCalendar();
+  });
+  const re = () => (embedded ? renderCalendar() : renderWeekPlan());
+  root.querySelectorAll("[data-wk-wash]").forEach(b =>
     b.onclick = async () => { await toggleWashDay(b.dataset.wkWash); re(); });
-  $("#weekBody").querySelectorAll("[data-wk-edit]").forEach(b =>
+  root.querySelectorAll("[data-wk-edit]").forEach(b =>
     b.onclick = () => openDayPlanSheet(b.dataset.wkEdit));
-  $("#weekBody").querySelectorAll("[data-wk-look]").forEach(b =>
+  root.querySelectorAll("[data-wk-look]").forEach(b =>
     b.onclick = () => openLookFrom(b.dataset.wkLook));
   const split = (v) => { const [d, i] = v.split("|"); return [d, +i]; };
-  $("#weekBody").querySelectorAll("[data-wk-sugg]").forEach(b => b.onclick = () => {
+  root.querySelectorAll("[data-wk-sugg]").forEach(b => b.onclick = () => {
     const [d, idx] = split(b.dataset.wkSugg);
     openSuggestSheet(null, null, _dpSuggestCtx(d, idx, (dayPlan(d)[idx] || {}).contexts));
   });
-  $("#weekBody").querySelectorAll("[data-wk-pick]").forEach(b => b.onclick = () => {
+  root.querySelectorAll("[data-wk-pick]").forEach(b => b.onclick = () => {
     const [d, idx] = split(b.dataset.wkPick);
     openPlanLookPickerKv(d, idx);
     showSheet("logSheet");
   });
-  $("#weekBody").querySelectorAll("[data-wk-build]").forEach(b => b.onclick = () => {
+  root.querySelectorAll("[data-wk-build]").forEach(b => b.onclick = () => {
     const [d, idx] = split(b.dataset.wkBuild);
     openBuilder(null, null, { kv: true, date: d, entryIdx: idx });
   });
+  root.querySelectorAll("[data-qctx]").forEach(b => b.onclick = () => {
+    const [dd, ii] = b.dataset.qctx.split("|");
+    openQuickContextSheet(dd, +ii, { onDone: re });
+  });
+  root.querySelectorAll("[data-wk-day]").forEach(b => b.onclick = () => {
+    switchTab("calendar"); calendarDay = b.dataset.wkDay; renderCalendar();
+  });
+  // Drop ONE entry from a day; drop the whole day; drop the week.
+  root.querySelectorAll("[data-wk-delentry]").forEach(b => b.onclick = async () => {
+    const [d, idx] = split(b.dataset.wkDelentry);
+    const next = dayPlan(d).filter((_, k) => k !== idx);
+    await saveDayPlan(d, next);
+    tmPickClear(d, idx);
+    re();
+  });
+  root.querySelectorAll("[data-wk-delday]").forEach(b => b.onclick = async () => {
+    const d = b.dataset.wkDelday;
+    await saveDayPlan(d, []);
+    for (let k = 0; k < 4; k++) tmPickClear(d, k);
+    re();
+    toast("Day cleared");
+  });
+  const clearAll = $("#wkClearAll");
+  if (clearAll) clearAll.onclick = async () => {
+    if (!confirm("Clear every planned context and outfit for the next 7 days? Anything you've already logged is kept.")) return;
+    for (const d of dates) { if (dayPlan(d).length) { await saveDayPlan(d, []); for (let k = 0; k < 4; k++) tmPickClear(d, k); } }
+    re();
+    toast("Week cleared");
+  };
+}
+
+/* What she actually wore on a date, for the planner's "still to pick" line.
+   Names the look when there is one, otherwise counts pieces. Returns "" for an
+   unlogged day so callers can just test it. */
+function loggedOnDay(d) {
+  const rows = wears.filter(w => w.worn_on === d);
+  if (!rows.length) return "";
+  const oid = (rows.find(w => w.outfit_id) || {}).outfit_id;
+  const o = oid ? outfitById.get(oid) : null;
+  if (o) return outfitName(o);
+  const n = new Set(rows.map(w => w.item_id)).size;
+  return `${n} piece${n === 1 ? "" : "s"}`;
 }
 
 /* The old sheet is gone — "Plan the week" is a real screen now (see above).
    Kept as the one named entry point so every caller still says what it means. */
-function openWeekPlanSheet() { switchTab("week"); }
+function openWeekPlanSheet() {
+  calendarMode = "week"; calendarDay = null;
+  switchTab("calendar");
+}
 
 // Session-only: whether the folded Home attention rows are expanded. Not
 // persisted — a fresh open should be calm again.

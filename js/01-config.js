@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r6";
+const APP_VERSION = "2026-08-05 r7";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-05 r6";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r7", notes: [
+    "Plan the week lives inside the Calendar tab now — Month / Plan the week at the top, sharing the same day view. It's no longer a screen you can only reach from a link at the bottom of the Tomorrow card",
+    "You can set a day's context from the week screen even when the outfit is already picked, and clear one entry, a whole day, or the whole week from there",
+    "\"Outfit still to pick\" was a lie on any day you'd logged from somewhere else — the screen only read the plan, never what you actually wore. It reads both now and says what you wore",
+  ] },
   { v: "2026-08-05 r6", notes: [
     "Today has its own card on Home, the same one Tomorrow gets: your planned outfit if you have one, a suggested outfit if you don't, the weather, and \"you've dressed for this before\". A dropdown context button sits next to the outfit — setting it re-levels the suggestion",
     "Nothing on Home is hidden behind \"2 more things\" any more. Everything that wants your attention is just on the page",
