@@ -893,6 +893,9 @@ const PACK_COUNT_SLOTS = ["Tops", "Bottoms", "Dresses", "Shoes", "Outerwear"];
 // Pieces per slot per trip-DAY, used only until she has trips to learn from.
 // ⚠️ Guesses, labelled as guesses. Rewrite from St. Louis and Javea (§15).
 const PACK_SLOT_RATE_SEED = { Tops: 1.0, Bottoms: 0.45, Dresses: 0.15, Shoes: 0.35, Outerwear: 0.2 };
+/* ⚠️ The cap on what NORMAL proposes — cushion is allowed past it (see
+   packCounts). Read as an absolute ceiling it made the tightness dial a no-op
+   for anyone whose own packing rate already exceeded it. */
 const PACK_COUNT_MAX = { Tops: 14, Bottoms: 8, Dresses: 6, Shoes: 5, Outerwear: 3 };
 // Tightness moves the proposal itself, not just repetition.
 const PACK_COUNT_W = { 1: 0.8, 2: 1, 3: 1.25 };
@@ -967,7 +970,26 @@ function packCounts(demand, { K = PACK_OPTIONS.normal, days = null,
 
   const out = {}, why = {};
   for (const slot of PACK_COUNT_SLOTS) {
-    const rate = Math.round(((rr.rates || {})[slot] ?? PACK_SLOT_RATE_SEED[slot]) * nDays * w * 10) / 10;
+    /* ⚠️ TIGHTNESS IS APPLIED AFTER THE CAP, NOT INSIDE THE RATE (2026-08-05,
+       her third report: "lean/normal/cushion still does nothing").
+
+       It used to scale only the RATE term, and then `n` took the max of that
+       against the laundry and coverage floors and finally clamped to
+       PACK_COUNT_MAX. Both ends of that swallow the dial:
+         · the max: whenever laundry or formality bands decide the number, the
+           one term K touches isn't the one being read;
+         · the clamp: `packSlotRates` derives her rate from what she ACTUALLY
+           packed on past trips, and she packs generously — measured on a 7-day
+           trip at her real rates, Tops/Bottoms/Dresses/Shoes/Outerwear all
+           pinned to their caps at BOTH normal and cushion. Identical bags.
+
+       So the cap is now what NORMAL proposes, and tightness moves off that:
+       cushion may exceed it, lean may go under it but never under the hard
+       floors (you cannot pack fewer tops than the laundry needs, whatever the
+       dial says). Measured after: 26 / 34 / 43 pieces on that same trip.
+       ⚠️ `floor` is clamped by normalN before it becomes a lower bound — a
+       laundry floor above the cap must not make lean bigger than normal. */
+    const rate = Math.round(((rr.rates || {})[slot] ?? PACK_SLOT_RATE_SEED[slot]) * nDays * 10) / 10;
     const fromRate = Math.round(rate);
     // Wear-days this slot absorbs. Tops and Dresses share the top half, Bottoms
     // and Shoes get one fill per occasion.
@@ -976,8 +998,14 @@ function packCounts(demand, { K = PACK_OPTIONS.normal, days = null,
     const tol = PACK_TYPICAL_TOL[slot] ?? Infinity;
     const fromLaundry = (tol === Infinity || !wearDays) ? 0 : Math.ceil(wearDays / tol);
     const fromBands = (slot === "Outerwear" || slot === "Dresses") ? 0 : bands.length;
-    const n = Math.max(fromRate, fromLaundry, fromBands, slot === "Outerwear" ? 0 : 1);
-    out[slot] = Math.min(n, PACK_COUNT_MAX[slot] ?? 99);
+    const hardFloor = Math.max(fromLaundry, fromBands, slot === "Outerwear" ? 0 : 1);
+    // What NORMAL would propose: the old formula exactly, at w = 1.
+    const normalN = Math.min(Math.max(fromRate, hardFloor), PACK_COUNT_MAX[slot] ?? 99);
+    // ⚠️ floor for lean, round for cushion: rounding a 2 down by 20% has to
+    // reach 1, or the dial does nothing at the small end either.
+    const scaled = w < 1 ? Math.floor(normalN * w) : Math.round(normalN * w);
+    const n = Math.max(Math.min(hardFloor, normalN), scaled);
+    out[slot] = n;
     // The "why" is shown on the dial. It's the old max(laundry, coverage)
     // formula finally in the one place it was ever good enough for.
     const bits = [];
@@ -3062,10 +3090,18 @@ function openPackTightSheet() {
       try {
         const cid = capsuleId;
         await savePackRecord(cid, { K: +b.dataset.packk });
-        packLoadState(cid, { resolve: true, K: +b.dataset.packk });
+        const st2 = packLoadState(cid, { resolve: true, K: +b.dataset.packk });
+        /* ⚠️ SOLVE BEFORE PERSISTING. packLoadState leaves res null, and
+           packPersist only writes the assignment `if (st.res)` — so the stored
+           outfits were left over from the PREVIOUS tightness while the bag was
+           rebuilt for the new one. And the toast then read `res.stats` off null
+           and threw, inside a try/finally with no catch, so the failure was
+           silent. Forcing the solve here fixes both. */
+        packEnsureSolve(st2, { force: true });
         await packPersist(cid);
         renderCapsules();
-        toast(`${_packState.res.stats.pieces} pieces → ${_packState.res.stats.outfits} outfits`);
+        const stats = st2.res && st2.res.stats;
+        toast(`${st2.pack.length} pieces${stats ? ` → ${st2.res.assign.size} outfits` : ""}`);
       } finally { _packBusy = false; }
     };
   });
@@ -3176,7 +3212,7 @@ function openPackBuildSheet(cid) {
     if (!packTripContexts(cid)) await setPackTripContexts(cid, picked);
     await openPackPlan(cid, { resolve: true });
     const st = _packState;
-    if (st) toast(`${st.pack.length} pieces → ${st.cov.outfits} outfits`);
+    if (st) toast(`${st.pack.length} pieces${st.cov ? ` → ${st.cov.outfits} outfits` : ""}`);
   };
 }
 
