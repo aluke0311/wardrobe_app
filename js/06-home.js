@@ -727,9 +727,28 @@ function tripDashHtml(c) {
         ${planWorn(today, oid) ? `<span class="tdl-worn">✓ Worn</span>` : `<button class="tdl-wore" data-td-wore="${esc(oid)}">Wore it</button>`}
       </div>`;
     }).join("");
+    /* The pack's outfit for today, with no "send to the plan" step in between
+       (2026-08-04 r5). Same derivation the by-day planner uses; tapping the
+       card opens the planner, where every editing option lives. */
+    const packToday = (typeof packPlanByDate === "function") ? packPlanByDate(c) : null;
+    const packRows = ((packToday && packToday.get(today)) || []).map(e => {
+      const pieces = e.cd.pieces.length ? e.cd.pieces : e.cd.ids.map(id => itemById.get(id)).filter(Boolean);
+      const label = [e.occ.context, ...e.alsoFor.map(o => o.context)].filter(Boolean).join(" + ")
+        || (OCCASION_LADDER[(e.occ.level || 1) - 1] || "Today");
+      /* ⚠️ .tdl-collage is a FIXED 56px box and .pack-pthumb is a FIXED 62px
+         thumb — dropping four of those in here is the documented .cthumb trap
+         (they don't shrink, they overflow onto the name beside them). Its own
+         2×2 class at 26px, per "any new thumb size is a new class". */
+      return `<div class="td-look" data-td-plandate="${esc(today)}">
+        <div class="tdl-collage tdl-mini">${pieces.slice(0, 4).map(i => thumbHtml(i.image_path, "tdl-minith")).join("")}</div>
+        <div class="tdl-name">${esc(label)} <span style="font-weight:400;color:var(--muted)">· from your pack</span></div>
+        <button class="tdl-wore" data-td-packwore="${esc(e.occ.id)}">Wore it</button>
+      </div>`;
+    }).join("");
     planHtml = `<div class="td-plan">
       <div class="td-plan-lbl">Today${laundryDay ? " · 🧺 laundry day" : ""}</div>
-      ${rows || `<div class="muted" style="font-size:13.5px;padding:2px 0 4px">Nothing planned for today.</div>`}
+      ${rows}${packRows}
+      ${rows || packRows ? "" : `<div class="muted" style="font-size:13.5px;padding:2px 0 4px">Nothing planned for today.</div>`}
     </div>`;
   }
 
@@ -1590,6 +1609,15 @@ function wireTripDash(tc) {
     el.onclick = async (e) => {
       e.stopPropagation();
       await planWoreIt(todayStr(), el.dataset.tdWore);
+      renderHome();
+    };
+  });
+  // The pack's own outfit for today — materialises the look at wear time.
+  body.querySelectorAll("[data-td-packwore]").forEach(el => {
+    el.onclick = async (e) => {
+      e.stopPropagation();
+      capsuleId = tc.id;
+      await packWoreOccasion(el.dataset.tdPackwore, todayStr());
       renderHome();
     };
   });

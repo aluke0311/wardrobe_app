@@ -151,8 +151,11 @@ for different RULES it has forked the engine and ① is broken.
   distant declared event out of today's rack; **don't widen it** for this feature.
 - ⚠️ **`packSyncMembers` never un-packs something already ticked** `packed=true` —
   it's physically in the bag.
-- **`capsules.plan` is written ONLY by an explicit "send to the by-day plan".**
-  Auto-creating ~13 look records per solve would flood her Looks list.
+- ⚠️ **`capsules.plan` was written ONLY by an explicit "send to the by-day plan"
+  — THAT BUTTON IS GONE (r5).** The reason survives: still no bulk look creation,
+  ~13 records per solve would flood her Looks list. The by-day plan now READS the
+  pack record (`packPlanByDate`) and one look is materialised per outfit she says
+  she wore. See the r5 entry.
 - **Honest partial (§9), not a smaller silent pack:** "8 of 10 occasions covered",
   each named with its date and reason. That's the r12 "looked like a partial
   result" bug guarded against. Gaps offer the nearest coverable level and **never
@@ -223,6 +226,73 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
 - **Rejected in the same conversation:** a weather-vs-packing retrospective ("you
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
+
+**2026-08-04 r5 — THREE REPORTS ABOUT BUILD-A-PACK.** Selftest 322 → **327**, run
+green; all 5 new cases mutation-checked red in the same session (two of them
+reproducing her exact words). ⚠️ A FOURTH report — the trip recap counting a wear
+from a day she'd removed by editing the dates — is **NOT FIXED and not
+reproduced**: `tripRecapData` bounds on `[start_date, through=end_date]` and
+`packGrade` on `tripDates(c)`, both verified live against a capsule ending 07-24
+with a wear on 07-25 (`unpacked: []`, empty `outsideDays`), and `editCapsuleDates`
+mutates the same object both readers use. Don't "fix" it blind; get the trip's
+current dates first.
+
+⚠️ **`packCoversLevel(i, lv)` — LEVEL 1 ANSWERS TO `isFunctionWear`, NOT TO THE
+FORMALITY SET.** Her report: build-a-pack *"is unable to build workout items for
+the trip"*. Her running shoes are subcategory **Sneakers at [2,3] with the
+`gear:workout` tag** — she wears them casually too — so `packFill` asking "does
+the set contain 1" credited **nothing** to a Utility occasion, never packed the
+shoes, and `packCoverage` then reported the day uncoverable. `packBlockingSlot`
+had the identical bug and so named the wrong slot. `packCandidates` and
+`packSwapCandidates` were already asking it correctly; the rule is now ONE
+function used by all four (`packFill`'s `canReach`/`noteCover`/scoring,
+`packBlockingSlot`, `packRemovalOrder`, `packUniqueCoverIds`). **This is exactly
+the trap `isFunctionWear` was created to close (2026-07-26 r13) arriving in a
+function that hadn't heard of it — when you add a level-1 reader, audit them all.**
+
+⚠️ **A PIECE THAT SERVES NO OCCASION ON THE TRIP IS NEVER PACKED; THE SLOT RUNS
+SHORT.** Her report: the pack *"is putting items in that don't match the
+contexts/formalities for the trip (and admitting that they don't match)"*. Both
+halves were true and the second was the app being honest about the first: once
+every demanded level had laundry capacity, `fill` went to **0 for every remaining
+candidate** and `packFill`'s score fell through to `rackWarmth`, so the tail of
+each slot filled with whatever she'd worn lately — and `packItemWhy` duly printed
+*"doesn't fit any occasion on this trip"*. Same call as the rack's off-level
+ceiling (r2): **54 that reflects her week beats 58 padded with clothes for days
+she doesn't have.** ⚠️ Guarded on `needAt.size` — with no levels in demand there
+is nothing to be off-level FROM and the gate would empty every slot. ⚠️ The
+shortfall is SPOKEN, twice: the slot's why-line reads "3 short — nothing else you
+own fits this trip's days", and ＋ toasts rather than silently doing nothing.
+
+⚠️ **THE PACK *IS* THE PLAN — `packSendToPlan` IS GONE.** Her ask: *"I don't want
+to have to say send to the trip, I want it to just build and all those editing
+options to always be available."* The solve lived in `kv "pack:<cid>"` while the
+by-day planner, the trip dash and "Wore it" all read `capsules.plan`, which
+**only that one button ever wrote** — so a built pack was invisible everywhere she
+lives during a trip until she found it, and pressing it dumped ~13 auto-created
+looks into her Looks list (which is why it needed a confirm).
+- **`packPlanByDate(c)`** reads the record directly; `packPlanCardsHtml` renders
+  the day cards with the **same `data-pack-*` hooks** as the pack screen, so
+  swap / ✨ Another / Other options / 🔒 Lock work there with no second set of
+  handlers to drift. Rendered by `renderCapsulePlan` and the Home trip dash.
+- ⚠️ **THE OLD GATE'S REASON IS STILL RIGHT; only the gate was wrong.** Nothing
+  writes `capsules.plan` or creates an outfit on a solve. **`packWoreOccasion`**
+  materialises ONE look at the moment she says she wore it (same create-or-merge
+  as `wearSuggestedCombo`) and adds it to the plan. Do not reinstate a bulk send.
+- ⚠️ **Materialised days are matched by ITEM SET, never a stored flag** — a plan
+  look whose pieces are this occasion's pieces IS this occasion, however it got
+  there (including packs sent by the old button). Derived, so it can't go stale,
+  and removing the look brings the pack's card back.
+- ⚠️ **`packEnsureSolve` REHYDRATES BEFORE RE-SOLVING** (inversion ③, now
+  load-bearing): a screen that only wants to DISPLAY the plan must not re-enter
+  the solver and reshuffle days she never touched. It solves only when the stored
+  assignment no longer describes the trip. **`packStateReady(cid)`** loads state
+  + rehydrates for handlers now reachable from screens that never opened the pack.
+- ⚠️ **The `.cthumb` trap, caught by rendering it:** `.tdl-collage` is a fixed
+  56px box and `.pack-pthumb` a fixed 62px thumb — four of those spill over the
+  name beside them. New **`.tdl-mini`/`.tdl-minith`** (26px, in the dark-mode
+  filter list). Reading the render also caught a card header printing
+  "Casual · Casual" (a context-less occasion is already named by its level).
 
 **2026-08-04 r3+r4 — HOW THE RACK, TRIPS AND CAPSULES INTERACT.** Her question,
 then three asks out of it. Selftest 316 → **322**, run green; all 6 new cases
@@ -1944,7 +2014,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-04 r4`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-04 r5`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2291,7 +2361,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **322/322** (2026-08-04 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **327/327** (2026-08-04 r5, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

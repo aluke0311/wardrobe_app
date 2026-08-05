@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-04 r4";
+const APP_VERSION = "2026-08-04 r5";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-04 r4";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-04 r5", notes: [
+    "Build a pack no longer puts in clothes there's no day for. Once every formality level had enough to wear, the leftover slots were being filled by whatever you'd worn recently — so the bag picked up pieces and then told you they didn't fit any occasion on the trip. A slot is allowed to come up short instead, and says so",
+    "Workout days build now. Your running shoes are Sneakers at an everyday formality with a gear tag, so the pack was asking \"does this say level 1\" and getting no — it never packed the shoes a workout day needs, then reported the day as uncoverable",
+    "The pack's outfits are just on your by-day plan and today's trip screen. No \"send to the plan\" step, and every editing option — swap a piece, another outfit, other options, lock — is there too. A look only gets saved to your Looks when you say you wore it",
+  ] },
   { v: "2026-08-04 r4", notes: [
     "A piece you've worn in the last two weeks is now on the rack, and so is every piece of an outfit you've planned for the next two weeks. Before this the rack only knew what LEVEL your plans needed, not which clothes you'd actually chosen — and wearing something off the rack didn't put it there until the next weekly rebuild",
     "The rack no longer rotates while you're away. Its \"worth a second look\" list counts how often a piece was offered and passed over, and a rebuild during a trip was counting clothes hanging in a closet you weren't standing in",

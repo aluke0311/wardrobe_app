@@ -29,6 +29,12 @@ evenings. No per-slot floor, no shoe cap.
    because weekday rhythm had already taken every day.
 5. **`capsules.plan` is written only by an explicit action.** §5 called the plan
    pass optional; auto-creating ~13 look records per solve would flood Looks.
+   ⚠️ **REVISED 2026-08-04 r5, at her request** — *"I don't want to have to say
+   send to the trip, I want it to just build and all those editing options to
+   always be available."* The explicit action (`packSendToPlan`) is GONE. The
+   decision it protected is NOT: still no bulk creation. The by-day planner and
+   the trip dash read the pack record directly (`packPlanByDate`), and exactly
+   one look is materialised per outfit she says she wore (`packWoreOccasion`).
 
 **⚠️ SIX defects were found by RENDERING THE SCREEN AND READING IT, none by the
 tests** — the same lesson as the 181px button, now six times over in one feature.

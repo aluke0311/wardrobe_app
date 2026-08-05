@@ -76,7 +76,7 @@
       --grabber: #4a4235;
       --bg2: #2a2419;
     }
-    img, .item-photo:not(.empty), .gphoto, .cthumb, .sthumb, .tm-thumb, .cc-cell { filter: brightness(.94); }
+    img, .item-photo:not(.empty), .gphoto, .cthumb, .sthumb, .tdl-minith, .tm-thumb, .cc-cell { filter: brightness(.94); }
   }
   /* ---------- sage theme (user-selectable) ---------- */
   html[data-theme="sage"] {
@@ -313,6 +313,11 @@
   .td-look .tdl-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .td-look .tdl-wore { flex: none; font-size: 13px; font-weight: 600; color: var(--accent); padding: 6px 12px; border: 1px solid var(--accent); border-radius: 18px; }
   .td-look .tdl-worn { flex: none; font-size: 13px; font-weight: 600; color: #2f9e5e; }
+  /* The pack's own outfit on the dash: a 2x2 of its pieces inside the same
+     56px box. Its own size class — never size a thumb by its container. */
+  .td-look .tdl-mini { display: grid; grid-template-columns: 26px 26px; gap: 4px; }
+  .tdl-minith { width: 26px; height: 26px; border-radius: 6px; background-color: var(--panel);
+    background-size: contain; background-position: center; background-repeat: no-repeat; }
   .trip-dash .td-chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px 12px; }
   .trip-dash .td-laun { display: flex; align-items: center; gap: 8px; width: calc(100% - 28px); margin: 0 14px; padding: 9px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; font-size: 13.5px; text-align: left; }
   .td-days { display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 2px 14px 12px; scrollbar-width: none; }

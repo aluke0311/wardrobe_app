@@ -809,6 +809,22 @@ const PACK_COUNT_W = { 1: 0.8, 2: 1, 3: 1.25 };
 
 const packSlotOf = (i) => (i && isLayer(i) && i.category === "Tops") ? "Tops" : suggestSlot(i);
 
+/* Does this piece serve an occasion at level `lv`?
+   ⚠️ LEVEL 1 ANSWERS TO isFunctionWear, NOT to the formality set, and getting
+   that wrong is why a workout day would not build (2026-08-04 r5, reported).
+   Her running shoes are subcategory Sneakers at formality [2,3] carrying the
+   `gear:workout` tag — she wears them casually too — so asking "does the set
+   contain 1" credits NOTHING to a Utility occasion. packFill then never packed
+   the shoes that would dress it, packCoverage duly found no outfit, and
+   packBlockingSlot named a slot that wasn't the problem.
+   packCandidates and packSwapCandidates already asked it this way; this is that
+   same sentence in ONE place so the four cannot drift. Same reason
+   isFunctionWear itself exists — see the ACTIVITY MODE note in CLAUDE.md. */
+function packCoversLevel(i, lv) {
+  if (!i || !lv) return false;
+  return lv === 1 ? isFunctionWear(i) : (itemFormalitySet(i) || []).includes(lv);
+}
+
 /* Pieces per slot per day, learned from her own completed trips (of this
    character when there are enough of them), falling back to the seed. Returns
    `source` so the UI can label a guess as a guess. */
@@ -1004,7 +1020,7 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
        cocktail dress that reaches the level and left the gap it existed to
        prevent. When no top in the pool reaches a level, dresses carry it whole —
        and vice versa. Found by pinning Party/Shower to Dressed Up. */
-    const canReach = (list, lv) => list.some(i => (itemFormalitySet(i) || []).includes(lv));
+    const canReach = (list, lv) => list.some(i => packCoversLevel(i, lv));
     const topsPool = candidates.filter(i => packSlotOf(i) === "Tops");
     const dressPool = candidates.filter(i => packSlotOf(i) === "Dresses");
     const topHalfShare = (lv) => {
@@ -1025,10 +1041,12 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
       return t === Infinity ? 99 : t;
     };
     const haveAt = new Map();
+    // ⚠️ Walks the DEMANDED levels asking packCoversLevel, not the piece's own
+    // set — that's what lets a gear-tagged sneaker count toward a Utility day.
     const noteCover = (i) => {
       const cap = capacityOf(i);
-      for (const lv of (itemFormalitySet(i) || [])) {
-        if (needAt.has(lv)) haveAt.set(lv, (haveAt.get(lv) || 0) + cap);
+      for (const lv of needAt.keys()) {
+        if (packCoversLevel(i, lv)) haveAt.set(lv, (haveAt.get(lv) || 0) + cap);
       }
     };
     chosen.forEach(noteCover);
@@ -1042,7 +1060,23 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
         if (subWant && !(subWant[i.subcategory] > 0)) continue;
         // Never pick something that can't co-exist with what's already in.
         if (chosen.some(x => isExcluded(x.id, i.id))) continue;
-        const set = (itemFormalitySet(i) || []).filter(lv => needAt.has(lv));
+        const set = [...needAt.keys()].filter(lv => packCoversLevel(i, lv));
+        /* ⚠️ A PIECE THAT SERVES NO OCCASION ON THIS TRIP IS NEVER PACKED, and
+           the slot RUNS SHORT instead (2026-08-04 r5, reported: the pack "is
+           putting items in that don't match the contexts/formalities for the
+           trip, and admitting that they don't match").
+           Once every demanded level had laundry capacity, `fill` went to 0 for
+           every remaining candidate and the score fell through to rackWarmth —
+           so the tail of each slot filled up with whatever she'd worn lately,
+           whether or not the trip had a day for it. packItemWhy then printed
+           the honest consequence, "doesn't fit any occasion on this trip",
+           which is the app correctly reporting a choice it should not have
+           made. Same call as the rack's off-level ceiling (r2): a shorter pack
+           that reflects her trip beats one padded with clothes for days she
+           isn't having.
+           ⚠️ Guarded on needAt.size — with no levels in demand at all there is
+           nothing to be off-level FROM, and the gate would empty every slot. */
+        if (needAt.size && !set.length) continue;
         const cap = capacityOf(i);
         let fill = 0;
         for (const lv of set) {
@@ -1121,7 +1155,7 @@ function packCoverage(pack, demand, { wxFor = null, poolIds = null } = {}) {
    pack-only reasoning, which is why it's threaded through packRegroup. */
 function packBlockingSlot(ids, level, poolIds = null) {
   const reaches = (list, slot) => list.map(id => itemById.get(id)).some(i =>
-    i && packSlotOf(i) === slot && (itemFormalitySet(i) || []).includes(level));
+    i && packSlotOf(i) === slot && packCoversLevel(i, level));
   const inPack = (slot) => reaches(ids, slot);
   const available = (slot) => !poolIds || reaches(poolIds, slot);
 
@@ -1365,6 +1399,30 @@ function packRegroup(st) {
 // for it — scoped to the pack she's actually taking.
 function packEnsureSolve(st, { force = false } = {}) {
   if (st.res && !force) return st.res;
+  /* ⚠️ REHYDRATE BEFORE RE-SOLVING — inversion ③, and load-bearing now that the
+     by-day planner shows these outfits (2026-08-04 r5). The record IS the state;
+     re-entering the solver for a screen that only wants to DISPLAY the plan would
+     reshuffle days she never touched, which is the slot machine ③ exists to
+     prevent. Only when the stored assignment no longer describes this trip — an
+     occasion added, a piece dropped from the bag — does the solver run. */
+  if (!force) {
+    const stored = packAssignFromRecord(st.cid);
+    const inPack = new Set(st.pack);
+    const usable = stored.size && st.demand.every(o => {
+      const cd = stored.get(o.id);
+      return cd && cd.ids.every(id => inPack.has(id));
+    });
+    if (usable) {
+      st.res = {
+        pack: [...st.pack], assign: stored, options: new Map(), unmet: [],
+        violations: [], stats: { pieces: st.pack.length, outfits: 0,
+                                 legs: (st.rack && st.rack.legs) || 1,
+                                 seed: packRecord(st.cid).seed || null },
+      };
+      packRefresh(st);          // options + violations + outfit count, no solve
+      return st.res;
+    }
+  }
   st.res = packSolve({
     c: st.c, demand: st.demand,
     rack: { ids: st.pack, cold: [], legs: (st.rack && st.rack.legs) || 1 },
@@ -1373,6 +1431,18 @@ function packEnsureSolve(st, { force = false } = {}) {
   });
   return st.res;
 }
+/* The pack's outfits are shown on the by-day planner and the trip dash now, so
+   every revision handler can fire from a screen that never loaded the pack.
+   Loads the state and rehydrates the solve for whichever capsule is in play.
+   Returns null when there's no pack to revise, so callers can just bail. */
+function packStateReady(cid = capsuleId) {
+  if (!cid || !capsuleById.get(cid)) return null;
+  if (!_packState || _packState.cid !== cid) packLoadState(cid);
+  if (!_packState || _packState.cid !== cid) return null;
+  packEnsureSolve(_packState);
+  return _packState;
+}
+
 // Weather lookup for a trip, from whatever the plan view already loaded. Null
 // when nothing is loaded — the solve still runs on season alone and says so.
 function packWxFor(c) {
@@ -1437,15 +1507,15 @@ function packRemovalOrder(st, slot) {
   for (const o of st.demand) if (o.level) needAt.set(o.level, (needAt.get(o.level) || 0) + 1);
   const reachCount = new Map();
   for (const id of (st.bySlot[slot] || [])) {
-    for (const lv of (itemFormalitySet(itemById.get(id)) || [])) {
-      if (needAt.has(lv)) reachCount.set(lv, (reachCount.get(lv) || 0) + 1);
+    for (const lv of needAt.keys()) {
+      if (packCoversLevel(itemById.get(id), lv)) reachCount.set(lv, (reachCount.get(lv) || 0) + 1);
     }
   }
   const cost = (id) => {
     const i = itemById.get(id);
     let unique = 0;
-    for (const lv of (itemFormalitySet(i) || [])) {
-      if (needAt.has(lv) && (reachCount.get(lv) || 0) <= 1) unique++;
+    for (const lv of needAt.keys()) {
+      if (packCoversLevel(i, lv) && (reachCount.get(lv) || 0) <= 1) unique++;
     }
     return unique * 100 + rackWarmth(id) * 10;   // higher = more missed
   };
@@ -1468,6 +1538,12 @@ async function packSetTarget(slot, n) {
       subTargets: st.subTargets, banned: [...st.banned],
     });
     for (const id of filled.bySlot[slot] || []) if (!st.pack.includes(id)) st.pack.push(id);
+    /* ⚠️ Say so when ＋ can't add. Since a piece serving no occasion is never
+       packed (see packFill), a slot can legitimately refuse to grow — and a
+       stepper that silently does nothing reads as broken. */
+    if ((filled.bySlot[slot] || []).length <= have) {
+      toast(`Nothing else in your closet fits this trip's ${slot.toLowerCase()}`);
+    }
   } else if (want < have) {
     const drop = packRemovalOrder(st, slot).slice(0, have - want);
     if (drop.length < have - want) toast("Kept pieces stay — unkeep one to go lower");
@@ -1575,8 +1651,8 @@ function packUniqueCoverIds(st, slot) {
   const needed = new Set(st.demand.map(o => o.level).filter(Boolean));
   const reach = new Map();   // level → [ids in this slot that cover it]
   for (const id of (st.bySlot[slot] || [])) {
-    for (const lv of (itemFormalitySet(itemById.get(id)) || [])) {
-      if (!needed.has(lv)) continue;
+    for (const lv of needed) {
+      if (!packCoversLevel(itemById.get(id), lv)) continue;
       if (!reach.has(lv)) reach.set(lv, []);
       reach.get(lv).push(id);
     }
@@ -1949,11 +2025,11 @@ function renderCapsulePack() {
         <svg viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>
         Start over from the app's numbers
       </button>
-      <button class="cap-plan sec" data-pack-toplan style="margin-top:8px">
+      <button class="cap-plan sec" data-pack-byday style="margin-top:8px">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
-        Send outfits to the by-day plan
+        Open the by-day plan
       </button>
-      <div class="pack-warn-note" style="padding:8px 16px 30px">Nothing re-picks itself. Keep a piece and it stays; the dials only fill what's missing.</div>
+      <div class="pack-warn-note" style="padding:8px 16px 30px">These outfits are already on your by-day plan and today's trip screen — nothing to send. Nothing re-picks itself either: keep a piece and it stays, and the dials only fill what's missing.</div>
     </div>`;
 }
 
@@ -2014,7 +2090,8 @@ function packSlotsHtml(st) {
         </div>
       </div>
       <div class="pack-grp-why">
-        ${esc(st.counts.why[slot] || "")}${changed ? ` · <b>you set ${target}</b> (app said ${proposed})` : ""}
+        ${esc(st.counts.why[slot] || "")}${changed ? ` · <b>you set ${target}</b> (app said ${proposed})` : ""}${
+        ids.length < target ? ` · <b>${target - ids.length} short</b> — nothing else you own fits this trip's days` : ""}
       </div>
       ${rows}
       <div class="plan-add-row">
@@ -2163,6 +2240,118 @@ function packDaysHtml(st) {
   }).join("");
 }
 
+/* ===================================================================
+   THE PACK *IS* THE PLAN  (2026-08-04 r5)
+
+   Her ask: *"I want build a pack to be more integrated — I don't want to have to
+   say send to the trip, I want it to just build and all those editing options to
+   always be available."*
+
+   It used to end at a wall: the solve lived in kv "pack:<cid>" and the by-day
+   planner, the trip dash and "Wore it" all read `capsules.plan`, which only an
+   explicit "Send outfits to the by-day plan" ever wrote. So a built pack was
+   invisible everywhere she actually lives during a trip until she found and
+   pressed one button — and it then dumped ~13 auto-created looks into her Looks
+   list, which is exactly why that button was gated behind a confirm.
+
+   ⚠️ THE REASON FOR THE OLD GATE IS STILL RIGHT; only the gate is wrong. Nothing
+   here writes `capsules.plan` or creates an outfit record on a solve. The day
+   cards render the pack's assignment DIRECTLY, and a look is materialised at the
+   one moment it has earned existing: when she says she wore it. That's the same
+   create-or-merge `wearSuggestedCombo` already uses, and it means one record per
+   outfit she actually wore rather than thirteen per solve.
+
+   ⚠️ Materialised days are matched by ITEM SET, not by a stored flag — a plan
+   look whose pieces are this occasion's pieces IS this occasion, however it got
+   there (including packs sent over by the old button). Derived, so it can't go
+   stale, and removing the look from the plan brings the pack's card back. */
+function packPlanByDate(c) {
+  if (!c || !isDatedTrip(c) || !packHasPlan(c.id)) return null;
+  const stored = packAssignFromRecord(c.id);
+  if (!stored.size) return null;
+  const demand = packDemand(packSlate(c, { tripContexts: packTripContexts(c.id) }));
+  const lockedSet = new Set(packRecord(c.id).locked || []);
+  const out = new Map();
+  for (const occ of demand) {
+    if (!occ.date) continue;
+    const cd = stored.get(occ.id);
+    if (!cd || !cd.ids.length) continue;
+    const key = cd.ids.join(",");
+    // Already a real look on this day → the plan owns it, not the pack.
+    if (planActiveLooks(c, occ.date).some(oid => {
+      const o = outfitById.get(oid);
+      return o && outfitItems(o).map(i => i.id).sort().join(",") === key;
+    })) continue;
+    let arr = out.get(occ.date);
+    if (!arr) out.set(occ.date, arr = []);
+    // Same rule as packDaysHtml: two contexts in the same clothes are ONE card.
+    const same = arr.find(e => e.cd.ids.join(",") === key);
+    if (same) { same.alsoFor.push(occ); continue; }
+    arr.push({ occ, cd, alsoFor: [], locked: lockedSet.has(occ.id) });
+  }
+  return out.size ? out : null;
+}
+
+/* One day's pack outfits, rendered for the by-day planner. Carries the SAME
+   data-pack-* hooks as the pack screen's own cards, so every editing option is
+   available here without a second set of handlers to drift. */
+function packPlanCardsHtml(entries, date) {
+  return (entries || []).map(e => {
+    const { occ, cd } = e;
+    const labels = [occ.context, ...e.alsoFor.map(o => o.context)].filter(Boolean);
+    const label = labels.length ? labels.join(" + ") : (OCCASION_LADDER[(occ.level || 1) - 1] || "Something");
+    const topLvl = Math.max(occ.level || 1, ...e.alsoFor.map(o => o.level || 1));
+    const lvl = OCCASION_LADDER[topLvl - 1] || "";
+    /* ⚠️ An occasion with no context is already NAMED by its level, so printing
+       the level again beside it reads as "Casual · Casual". Found by rendering
+       the plan and reading it, not by a test — same as the three defects this
+       feature shipped with. */
+    const sub = [labels.length && lvl ? lvl : "", "from your pack", e.locked ? "🔒" : ""].filter(Boolean).join(" · ");
+    const pieces = cd.pieces.length ? cd.pieces : cd.ids.map(id => itemById.get(id)).filter(Boolean);
+    return `<div class="pack-occ${e.locked ? " locked" : ""}">
+      <div class="pack-occ-hd">
+        <b>${esc(label)}</b>
+        <span>${esc(sub)}</span>
+      </div>
+      <div class="pack-pieces">
+        ${pieces.map(i => `<button class="pack-piece" data-pack-swap="${esc(i.id)}" data-pack-occ="${esc(occ.id)}">
+          ${thumbHtml(i.image_path, "pack-pthumb")}
+          <div class="pack-pname">${esc(i.name || "Untitled")}</div>
+        </button>`).join("")}
+      </div>
+      <div class="pack-occ-acts">
+        <button class="plan-act" data-pack-wore="${esc(occ.id)}" data-pack-date="${esc(date)}">Wore it</button>
+        <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
+        <button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>
+        <button class="plan-act" data-pack-lock="${esc(occ.id)}">${e.locked ? "Unlock" : "🔒 Lock"}</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* "Wore it" on a pack outfit. THIS is where a look record is created — one, for
+   an outfit she actually wore, instead of thirteen on a solve. It also joins the
+   by-day plan, so the card stops being the pack's and starts being the trip's
+   (packPlanByDate then skips it on the item-set match). */
+async function packWoreOccasion(occId, date, cid = capsuleId) {
+  if (_packBusy) return;
+  const st = packStateReady(cid);
+  if (!st) return;
+  const cd = st.res.assign.get(occId);
+  if (!cd) return;
+  const pieces = cd.ids.map(id => itemById.get(id)).filter(Boolean);
+  if (pieces.length < 2) { toast("This outfit needs at least two pieces"); return; }
+  _packBusy = true;
+  try {
+    const oid = await saveComboAsOutfit(pieces);
+    if (!oid) return;
+    await addPlanLook(st.cid, date, oid);
+    await planWoreIt(date, oid);
+  } catch (e) { toast(e.message); }
+  finally { _packBusy = false; }
+  if (activeTabName() === "capsules") renderCapsules();
+}
+
 /* The "why is this here" line. This is where the old max(laundry, coverage)
    formula lives — as an explanation, which is all it was ever good enough for. */
 function packWhyLine(i, use, c, optLabels) {
@@ -2261,8 +2450,8 @@ function packSwapCandidates(st, occ, cd, pieceId) {
 }
 
 function openPackSwapSheet(occId, pieceId) {
-  const st = _packState;
-  if (!st) return;
+  const st = packStateReady();
+  if (!st || !st.res) return;
   const occ = st.demand.find(o => o.id === occId);
   const cd = st.res.assign.get(occId);
   if (!occ || !cd) return;
@@ -2289,8 +2478,8 @@ function openPackSwapSheet(occId, pieceId) {
 }
 
 async function packApplySwap(occId, fromId, toId) {
-  const st = _packState;
-  if (!st) return;
+  const st = packStateReady();
+  if (!st || !st.res) return;
   const cd = st.res.assign.get(occId);
   if (!cd) return;
   const ids = cd.ids.filter(id => id !== fromId).concat([toId]).sort();
@@ -2316,8 +2505,8 @@ async function packApplySwap(occId, fromId, toId) {
 
 // "✨ Another" — a different outfit for THIS occasion only.
 async function packReroll(occId) {
-  const st = _packState;
-  if (!st || _packBusy) return;
+  const st = packStateReady();
+  if (!st || !st.res || _packBusy) return;
   const occ = st.demand.find(o => o.id === occId);
   if (!occ) return;
   const cur = st.res.assign.get(occId);
@@ -2341,8 +2530,8 @@ async function packReroll(occId) {
 
 // "See N" — the other outfits this pack can make for one occasion.
 function openPackOptionsSheet(occId) {
-  const st = _packState;
-  if (!st) return;
+  const st = packStateReady();
+  if (!st || !st.res) return;
   const occ = st.demand.find(o => o.id === occId);
   if (!occ) return;
   const inPack = new Set(st.res.pack);
@@ -2379,7 +2568,7 @@ function openPackOptionsSheet(occId) {
 }
 
 async function packToggleLock(occId) {
-  const st = _packState;
+  const st = packStateReady();
   if (!st) return;
   const rec = packRecord(st.cid);
   const set = new Set(rec.locked || []);
@@ -2526,27 +2715,13 @@ function openPackTightSheet() {
   });
 }
 
-/* Materialise the assignments as real looks in capsules.plan, so trip mode opens
-   ready. Explicit, because it creates outfit records. */
-async function packSendToPlan() {
-  const st = _packState;
-  if (!st || _packBusy) return;
-  if (!confirm(`Save ${st.res.assign.size} outfits to the by-day plan? They become real looks you can wear-log.`)) return;
-  _packBusy = true;
-  try {
-    let n = 0;
-    for (const occ of st.demand) {
-      const cd = st.res.assign.get(occ.id);
-      if (!cd || !occ.date) continue;
-      const pieces = cd.ids.map(id => itemById.get(id)).filter(Boolean);
-      if (pieces.length < 2) continue;
-      const oid = await saveComboAsOutfit(pieces);
-      if (oid) { await addPlanLook(st.cid, occ.date, oid); n++; }
-    }
-    toast(`${n} outfit${n === 1 ? "" : "s"} in the by-day plan`);
-  } catch (e) { toast(e.message); }
-  finally { _packBusy = false; }
-}
+/* ⚠️ packSendToPlan is GONE (2026-08-04 r5). It materialised every assignment as
+   a real look and wrote capsules.plan, which is why it needed a confirm and why
+   the pack was invisible until she found it. The by-day planner and the trip
+   dash now read the pack record directly (packPlanByDate) and a look is created
+   only when she wears one (packWoreOccasion). Do not reinstate it: the flood of
+   auto-created look records it caused is the reason it was gated, and the gate
+   is the thing she asked to remove. */
 
 /* ===================================================================
    RE-ENTRY — the diff is the artifact (TRIP_BUILDER.md §8).

@@ -2586,6 +2586,147 @@ async function run() {
     },
   }));
 
+  /* ---- 2026-08-04 r5: the fill must not pad a slot with off-trip clothes ----
+     Reported: "build a pack is putting items in that don't match the
+     contexts/formalities for the trip (and admitting that they don't match)".
+     Once every demanded level had laundry capacity, `fill` went to 0 for every
+     remaining candidate and the score fell through to rackWarmth — so the tail
+     of each slot filled with whatever she'd worn lately. The slot must come up
+     SHORT instead (same call as the rack's off-level ceiling, r2). */
+  t("a piece that fits no occasion on the trip is never packed — the slot runs short", () => withPackCloset(() => {
+    const c = packTrip(4);
+    const demand = [
+      { id: "a", date: D(1), level: 3, context: "Errands", contexts: ["Errands"] },
+      { id: "b", date: D(2), level: 3, context: "Errands", contexts: ["Errands"] },
+    ];
+    const pool = ["onA", "onB", "offA", "offB", "offC", "botA", "shoeA"];
+    /* ⚠️ FIXTURE GUARD (the r1/r2 lesson, twice). This case is only meaningful if
+       the off-level tops are genuinely available to be picked and are the WARMER
+       ones — otherwise the right answer arrives by luck and the case passes with
+       the gate switched off. */
+    const offWarm = pool.filter(id => {
+      const i = W.itemById.get(id);
+      return i && i.category === "Tops" && !(W.itemFormalitySet(i) || []).includes(3);
+    });
+    if (offWarm.length < 2) return `fixture drifted — only ${offWarm.length} off-level tops to be tempted by`;
+    const fill = W.packFill({ Tops: 4, Bottoms: 1, Dresses: 0, Shoes: 1, Outerwear: 0 },
+      { c, demand, rack: { ids: pool, cold: [], legs: 1 } });
+    const tops = (fill.bySlot.Tops || []);
+    const offTaken = tops.filter(id => offWarm.includes(id));
+    return !offTaken.length && tops.length === 2 && fill.short.Tops === 2
+      ? true : `packed ${JSON.stringify(tops)} (off-level: ${JSON.stringify(offTaken)}), short=${fill.short.Tops}`;
+  }, {
+    replace: (add) => {
+      add("onA", "Tops", "Tee shirts", [3]);
+      add("onB", "Tops", "Blouses", [3]);
+      add("offA", "Tops", "Sweaters", [6]);   // nothing on this trip is Dressed Up
+      add("offB", "Tops", "Sweaters", [6]);
+      add("offC", "Tops", "Sweaters", [6]);
+      add("botA", "Bottoms", "Jeans", [3]);
+      add("shoeA", "Shoes", "Sneakers", [3]);
+    },
+    wears: (ws) => {
+      // The off-level tops are the recently-worn ones, so only the level rule
+      // can keep them out — warmth alone would hand them straight back.
+      ["offA", "offB", "offC"].forEach((id, k) =>
+        ws.push({ id: "ow" + k, item_id: id, worn_on: D(-(k + 1)), context: ["Errands"], formality_for: 6 }));
+    },
+  }));
+
+  /* ---- 2026-08-04 r5: a workout day has to build ----------------------------
+     Reported: build-a-pack "is unable to build workout items for the trip".
+     LEVEL 1 ANSWERS TO isFunctionWear, NOT to the formality set — her running
+     shoes are Sneakers at [2,3] carrying gear:workout, so asking the set gave
+     the Utility day no credit at all and the fill packed the dressier shoe on
+     warmth. packCandidates already asked it the right way; packFill didn't. */
+  t("a workout day packs the gear that dresses it, not the warmer street shoe", () => withPackCloset(() => {
+    const c = packTrip(4);
+    const demand = [
+      { id: "w", date: D(1), level: 1, context: "Workout", contexts: ["Workout"] },
+      { id: "w2", date: D(2), level: 1, context: "Workout", contexts: ["Workout"] },
+    ];
+    const pool = ["wtop", "wshort", "runners", "flatsWarm"];
+    // ⚠️ Guard: the gear shoe must NOT claim level 1 through its formality set,
+    // or the old code passes this too and the case proves nothing.
+    const run = W.itemById.get("runners");
+    if ((W.itemFormalitySet(run) || []).includes(1)) return "fixture drifted — runners claim level 1 outright";
+    const fill = W.packFill({ Tops: 1, Bottoms: 1, Dresses: 0, Shoes: 1, Outerwear: 0 },
+      { c, demand, rack: { ids: pool, cold: [], legs: 1 } });
+    const shoes = fill.bySlot.Shoes || [];
+    return shoes.includes("runners") && !shoes.includes("flatsWarm")
+      ? true : `packed ${JSON.stringify(shoes)} for a Utility day`;
+  }, {
+    replace: (add) => {
+      add("wtop", "Workout", "Workout tops", [1]);
+      add("wshort", "Workout", "Active shorts", [1]);
+      add("runners", "Shoes", "Sneakers", [2, 3], { tags: ["gear:workout"] });
+      add("flatsWarm", "Shoes", "Flats", [3, 4]);
+    },
+    wears: (ws) => {
+      // Make the street shoe the warmer one, so only the level-1 rule can win.
+      for (let n = 0; n < 6; n++) ws.push({ id: "fw" + n, item_id: "flatsWarm", worn_on: D(-(n + 1)), context: ["Errands"], formality_for: 3 });
+    },
+  }));
+
+  /* ---- 2026-08-04 r5: the pack IS the plan ---------------------------------
+     Her ask: "I don't want to have to say send to the trip, I want it to just
+     build and all those editing options to always be available." The by-day
+     planner and the trip dash read the pack record directly, so a built pack
+     shows up with no hand-off — and creates NO look records until she wears one
+     (which is why the old packSendToPlan needed a confirm). */
+  t("a built pack's outfits reach the by-day plan with nothing sent", () => {
+    const c = packTrip(3);
+    return withPackCloset(() => {
+      const occ = W.packDemand(W.packSlate(c)).find(o => o.date === D(2));
+      const before = W.outfits.length;
+      W.kvData.set("pack:" + c.id, { built: today, assign: { [occ.id]: ["tee0", "jea0", "snk0"] } });
+      try {
+        const byDate = W.packPlanByDate(c);
+        const day = byDate && byDate.get(D(2));
+        return day && day.length === 1 && day[0].cd.ids.join(",") === "jea0,snk0,tee0" && W.outfits.length === before
+          ? true : `day=${JSON.stringify(day && day.map(e => e.cd.ids))} outfitsCreated=${W.outfits.length - before}`;
+      } finally { W.kvData.delete("pack:" + c.id); }
+    }, { capsules: [c] });
+  });
+
+  t("a day already holding that look as a real look isn't shown twice", () => {
+    const c = packTrip(3);
+    return withPackCloset(() => {
+      const occ = W.packDemand(W.packSlate(c)).find(o => o.date === D(2));
+      W.kvData.set("pack:" + c.id, { built: today, assign: { [occ.id]: ["tee0", "jea0", "snk0"] } });
+      try {
+        // The same pieces, saved as a real look and planned on that day — which
+        // is what "Wore it" does. Matched on the ITEM SET, so no stored flag can
+        // go stale and removing the look brings the pack's card back.
+        W.outfits = [{ id: "o1", name: null, layout: null, archived: false }];
+        W.outfitLinks = ["tee0", "jea0", "snk0"].map(item_id => ({ outfit_id: "o1", item_id }));
+        W.buildOutfitIndexes();
+        c.plan = { [D(2)]: ["o1"] };
+        const withLook = W.packPlanByDate(c);
+        c.plan = {};
+        const without = W.packPlanByDate(c);
+        return !(withLook && withLook.get(D(2))) && without && without.get(D(2))
+          ? true : `withLook=${!!(withLook && withLook.get(D(2)))} without=${!!(without && without.get(D(2)))}`;
+      } finally { W.kvData.delete("pack:" + c.id); c.plan = {}; }
+    }, { capsules: [c] });
+  });
+
+  t("packBlockingSlot reads level 1 as function-wear too", () => withPackCloset(() => {
+    // A Utility day with the gear top and bottom but no function shoes: the
+    // blocker is Shoes, and it's only nameable if the runners in the POOL count
+    // as reaching level 1. Asking the formality set says "nothing reaches it".
+    const pool = ["wtop", "wshort", "runners", "flatsWarm"];
+    const inPack = ["wtop", "wshort", "flatsWarm"];
+    return eq(W.packBlockingSlot(inPack, 1, pool), "Shoes");
+  }, {
+    replace: (add) => {
+      add("wtop", "Workout", "Workout tops", [1]);
+      add("wshort", "Workout", "Active shorts", [1]);
+      add("runners", "Shoes", "Sneakers", [2, 3], { tags: ["gear:workout"] });
+      add("flatsWarm", "Shoes", "Flats", [3, 4]);
+    },
+  }));
+
   /* Her ask: "hone the individual events by formality when context is not
      sufficient". A pinned level must WIN over what the contexts average to — a
      dinner tagged Friends can still be a Dressed Up dinner, and the context

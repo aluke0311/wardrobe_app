@@ -711,8 +711,14 @@ function renderCapsulePlan() {
   </div>`;
 
   const rewearFlags = planRewearFlags(c, dates);
+  /* The pack's own outfits, shown here without ever having been "sent" (r5).
+     Derived from the pack record — no look records, no capsules.plan writes.
+     See the "THE PACK IS THE PLAN" header in js/21-pack.js. */
+  const packByDate = (typeof packPlanByDate === "function") ? packPlanByDate(c) : null;
   const dayCards = dates.map(date => {
     const looks = planActiveLooks(c, date);
+    const packCards = packByDate && packByDate.get(date)
+      ? packPlanCardsHtml(packByDate.get(date), date) : "";
     const isLaun = planLaundryDay(c, date);
     const rw = rewearFlags.get(date);
     const looksHtml = looks.map(oid => {
@@ -733,6 +739,7 @@ function renderCapsulePlan() {
       ${isLaun ? `<div class="plan-launday">🧺 Laundry day — rewear counts reset</div>` : ""}
       ${rw ? `<div class="plan-rewarn">${rw.map(f => `⚠︎ ${esc(f.name)} — ${ordinal(f.nth)} wear since laundry`).join("<br>")}</div>` : ""}
       ${looks.length ? `<div class="plan-looks">${looksHtml}</div>` : ""}
+      ${packCards}
       <div class="plan-add-row">
         ${bucketIds.length ? `<button class="plan-act" data-plan-frombucket="${esc(date)}">🪣 From bucket</button>` : ""}
         <button class="plan-act" data-plan-assign="${esc(date)}">＋ Look</button>
