@@ -148,6 +148,18 @@ function openItem(id) {
     await (on ? pullOntoRack(i.id) : pushOffRack(i.id));
     openItem(i.id);
   };
+  // Reset (eligible again) and unpin (stop keeping) are separate from the
+  // pull/push toggle above — see rackResetPiece.
+  const rackReset = body.querySelector("[data-rack-reset-one]");
+  if (rackReset) rackReset.onclick = async () => {
+    await rackResetPiece(rackReset.dataset.rackResetOne);
+    openItem(i.id);
+  };
+  const rackUnpin = body.querySelector("[data-rack-unpin-one]");
+  if (rackUnpin) rackUnpin.onclick = async () => {
+    await rackUnpinPiece(rackUnpin.dataset.rackUnpinOne);
+    openItem(i.id);
+  };
   const flagBtn = body.querySelector("[data-flag-open]");
   if (flagBtn) flagBtn.onclick = () => openFlagSheet(i.id);
   const dateEdit = body.querySelector("[data-laun-date-edit]");

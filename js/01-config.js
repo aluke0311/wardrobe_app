@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r9";
+const APP_VERSION = "2026-08-05 r10";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-05 r9";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r10", notes: [
+    "Undoing a \"not right now\" no longer pins the piece to the rack. Those were two decisions welded into one button: Reset just makes a piece eligible again so it competes for a slot like everything else, and 📌 is there separately for when you mean keep it in",
+    "You can see your rack pins — a \"Kept on the rack\" list on the rack screen, each with how long the keep has left and an Unpin. They used to be write-only: a toast said it was kept and then there was no way to find it again",
+    "An item\'s own screen has both too: \"Stop keeping\" on a kept piece, and \"Reset not right now\" on one you pushed off",
+  ] },
   { v: "2026-08-05 r9", notes: [
     "Found the real reason the heels kept coming back. When a piece has no formality set, the app guesses one — heels guess \"Dressed Up and Formal\" — and then widens the guess with the levels of things you\'ve worn them WITH. So a pair worn a few times with a casual outfit quietly counted as casual, and both of the last two fixes were reading a number that had already moved. The rack now judges dressiness on the piece itself. If you\'ve set a piece\'s formality by hand that still wins — that\'s your call, not a guess",
     "Pieces dressier than an ordinary day are capped in the rack\'s rediscovery bands, where before only pieces matching NONE of your levels were. Your top three lived levels were being read as a licence for the dressiest thing that touched them",

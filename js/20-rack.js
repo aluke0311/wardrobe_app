@@ -1165,17 +1165,83 @@ function rackOffSectionHtml() {
             : `Not right now — back in ${left} day${left === 1 ? "" : "s"}`}</span>
         </span>
       </button>
-      <button class="cap-chip" data-rack-return="${esc(i.id)}" style="flex:none;font-size:12px">Put back</button>
+      <div style="display:flex;gap:5px;flex:none">
+        <button class="cap-chip" data-rack-reset="${esc(i.id)}" style="font-size:12px">${kind === "tagged" ? "Allow again" : "Reset"}</button>
+        <button class="cap-chip" data-rack-pin="${esc(i.id)}" style="font-size:12px" title="Put it in and keep it in">📌</button>
+      </div>
     </div>`).join("");
   return `<div class="stats-sec-hdr" style="padding:16px 16px 4px"><div class="t">Taken off the rack · ${list.length}</div></div>
-    <div class="muted" style="font-size:12.5px;padding:0 16px 6px;line-height:1.45">“Not right now” wears off by itself. “Keep off the rack” doesn't — those are the ones worth a second thought.</div>
+    <div class="muted" style="font-size:12.5px;padding:0 16px 6px;line-height:1.45">“Not right now” wears off by itself. “Keep off the rack” doesn't — those are the ones worth a second thought. <b>Reset</b> just makes a piece eligible again; 📌 puts it in and keeps it in.</div>
     <div class="frows">${rows}</div>`;
 }
-async function rackReturnPiece(id) {
+/* ⚠️ ELIGIBLE AGAIN ≠ PINNED (2026-08-05, her report: "I tapped put back to
+   reset but it just put them back on the rack — can we just have a reset option
+   to remove the 'not right now' that doesn't actually pin it to the rack?").
+
+   She's right, and the old button was two decisions welded together. Undoing a
+   "not right now" should hand the piece back to the ordinary machinery — it
+   competes for a slot on its own merits like everything else — whereas pinning
+   is a separate, stronger statement that bypasses the slot quotas. Reusing
+   pullOntoRack for both meant every reset silently spent a rack seat.
+
+   So: `rackResetPiece` clears the exclusion and stops. `pullOntoRack` is still
+   there, offered separately, for when she means "and keep it in". */
+async function rackResetPiece(id) {
   const i = itemById.get(id);
   if (isNoRack(i)) await setNoRack(id, false);
-  await pullOntoRack(id);           // clears any push-out and pins it back in
+  await kvUpdate(RACK_KEY, prev => {
+    const st = prev && typeof prev === "object" ? prev : {};
+    const pushed = { ...(st.pushed || {}) };
+    delete pushed[id];
+    return { ...st, pushed };
+  });
+  _rackMemo = null;
+  // Structural: the piece is eligible again, so let the rack reconsider it now
+  // rather than at the next weekly shuffle. Never a rotation tick.
+  await rackEnsure();
   if (typeof renderCloset === "function" && closetRack) renderCloset();
+  toast(`${(i && i.name) || "Piece"} can be picked again`);
+}
+// Drop a pin without pushing the piece off — the mirror of rackResetPiece.
+async function rackUnpinPiece(id) {
+  await kvUpdate(RACK_KEY, prev => {
+    const st = prev && typeof prev === "object" ? prev : {};
+    const pinned = (Array.isArray(st.pinned) ? st.pinned : [])
+      .filter(v => (typeof v === "string" ? v : (v && v.id)) !== id);
+    return { ...st, pinned };
+  });
+  _rackMemo = null;
+  await rackEnsure();
+  if (typeof renderCloset === "function" && closetRack) renderCloset();
+  const i = itemById.get(id);
+  toast(`${(i && i.name) || "Piece"} is no longer kept — it competes like everything else`);
+}
+
+/* The pins, visible (her ask: "also want the option to reset (and see!) rack
+   pins"). They were write-only: pullOntoRack said "on the rack" in a toast and
+   the only way to find one again was to remember which piece it was. */
+function rackPinnedListHtml(today = todayStr()) {
+  const set = rackPinnedSet(today);
+  if (!set.size) return "";
+  const rows = [...set].map(id => itemById.get(id)).filter(i => i && itemStatus(i) === "Available")
+    .map(i => {
+      const left = rackPinDaysLeft(i.id, today);
+      return `<div class="frow" style="align-items:center">
+      <button data-item-open="${esc(i.id)}" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left">
+        ${thumbHtml(i.image_path, "sthumb")}
+        <span style="flex:1;min-width:0">
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</span>
+          <span style="display:block;font-size:12px;color:var(--muted)">${left == null ? "Kept in"
+            : left > 0 ? `Kept in for ${left} more day${left === 1 ? "" : "s"}` : "Keep has run out"}</span>
+        </span>
+      </button>
+      <button class="cap-chip" data-rack-unpin="${esc(i.id)}" style="flex:none;font-size:12px">Unpin</button>
+    </div>`;
+    }).join("");
+  if (!rows) return "";
+  return `<div class="stats-sec-hdr" style="padding:16px 16px 4px"><div class="t">Kept on the rack · ${set.size}</div></div>
+    <div class="muted" style="font-size:12.5px;padding:0 16px 6px;line-height:1.45">These skip the usual slot limits. A keep clears itself once you wear the piece, or after ${RACK_PIN_DAYS} days at home.</div>
+    <div class="frows">${rows}</div>`;
 }
 
 /* ---- the second-look sheet ----
@@ -1481,9 +1547,11 @@ function renderClosetRack() {
       + sec("Steady", "You wear these — just not this week. This band exists so the middle of your wardrobe doesn't go invisible.", inSteady)
       + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, and they lean toward the kinds of days you actually have — clothes for rarer occasions take a slot or two at most.", inDorm)
       + secondBlock
+      + rackPinnedListHtml()
       + rackOffSectionHtml()
     : `<div class="placeholder" style="padding:40px 32px"><b>Rack not built yet</b>
-        <div>It fills itself from what's in season and what you've been wearing.</div></div>` + rackOffSectionHtml();
+        <div>It fills itself from what's in season and what you've been wearing.</div></div>`
+      + rackPinnedListHtml() + rackOffSectionHtml();
   return clToolbar(`The rack · ${list.length}`, true, false)
     + `<div class="snote" style="padding:8px 16px 2px">${esc(note)} Open a piece to pull it in or push it out — you never have to maintain this.</div>`
     + body

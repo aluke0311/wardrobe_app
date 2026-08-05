@@ -629,10 +629,13 @@ function rackLineHtml(i) {
           const left = rackPinDaysLeft(i.id);
           return left == null ? "" : ` for ${left} more day${left === 1 ? "" : "s"}`;
         })()}` : ""}</span>
+        ${pinned ? `<button class="lnk" data-rack-unpin-one="${esc(i.id)}" style="font-size:13px;color:var(--muted)">Stop keeping</button>` : ""}
         <button class="lnk" data-rack-toggle="0" style="font-size:13px;color:var(--muted)">Not right now</button>
       </div>`
-    : `<div class="item-stat-strip" style="display:flex;justify-content:center">
-        <button class="lnk" data-rack-toggle="1" style="font-size:12px;color:var(--muted)">\u{1F455} Put on the rack</button>
+    : `<div class="item-stat-strip" style="display:flex;justify-content:center;align-items:center;gap:12px">
+        ${(typeof rackPushedSet === "function" && rackPushedSet().has(i.id))
+          ? `<button class="lnk" data-rack-reset-one="${esc(i.id)}" style="font-size:12px;color:var(--muted)">Reset “not right now”</button>` : ""}
+        <button class="lnk" data-rack-toggle="1" style="font-size:12px;color:var(--muted)">\u{1F455} Keep on the rack</button>
       </div>`;
 }
 /* Flag for review — a bookmark, nothing more (see the FLAGGED entry in

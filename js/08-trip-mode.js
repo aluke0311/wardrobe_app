@@ -984,10 +984,22 @@ function renderCloset() {
   // "Taken off the rack" list: open the piece, or put it straight back.
   body.querySelectorAll("[data-item-open]").forEach(b =>
     b.onclick = () => openItem(b.dataset.itemOpen));
-  body.querySelectorAll("[data-rack-return]").forEach(b => b.onclick = async (e) => {
-    e.stopPropagation();
-    b.disabled = true;
-    await rackReturnPiece(b.dataset.rackReturn);
+  // ⚠️ Reset ≠ pin (see rackResetPiece). Three separate acts, three buttons.
+  body.querySelectorAll("[data-rack-reset]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation(); b.disabled = true;
+    await rackResetPiece(b.dataset.rackReset);
+  });
+  body.querySelectorAll("[data-rack-pin]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation(); b.disabled = true;
+    const id = b.dataset.rackPin;
+    if (isNoRack(itemById.get(id))) await setNoRack(id, false);
+    await pullOntoRack(id);
+    await rackEnsure();
+    if (closetRack) renderCloset();
+  });
+  body.querySelectorAll("[data-rack-unpin]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation(); b.disabled = true;
+    await rackUnpinPiece(b.dataset.rackUnpin);
   });
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
