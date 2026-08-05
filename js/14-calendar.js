@@ -559,8 +559,17 @@ function openSplitWearSheet(wearIds, outfitId, body) {
   const nItems = new Set(rows.map(w => w.item_id)).size;
   // Other days this outfit is worn — deleting the outfit affects those too.
   const otherDays = new Set(wears.filter(w => w.outfit_id === outfitId && w.worn_on !== calendarDay).map(w => w.worn_on));
+  /* ⚠️ Her rule for deciding: "almost always only want to delete it if there
+     were no previous wears". So the number that matters isn't "other days" —
+     it's how many wear-DAYS came BEFORE this one. Said in the header, not buried
+     in a footnote, because it's the whole decision. */
+  const priorDays = new Set(wears.filter(w => w.outfit_id === outfitId && w.worn_on && w.worn_on < calendarDay).map(w => w.worn_on)).size;
+  const laterDays = otherDays.size - priorDays;
+  const priorLine = priorDays
+    ? `<b style="color:var(--danger)">${priorDays} wear${priorDays === 1 ? '' : 's'} before today</b>`
+    : `<b>No wears before today</b>`;
   const delNote = otherDays.size
-    ? `<div class="muted" style="font-size:12.5px;margin-top:12px;color:var(--danger)">Heads up: this look is also worn on ${otherDays.size} other day${otherDays.size === 1 ? '' : 's'} — deleting the outfit unlinks those wears too (they stay as individual items).</div>`
+    ? `<div class="muted" style="font-size:12.5px;margin-top:12px;color:var(--danger)">Heads up: this look is also worn on ${otherDays.size} other day${otherDays.size === 1 ? '' : 's'}${laterDays > 0 ? ` (${priorDays} before today, ${laterDays} after)` : ''} — deleting the outfit unlinks those wears too (they stay as individual items).</div>`
     : '';
   const opt = (id, title, sub, danger) => `<button class="sheet-chip" id="${id}" style="width:100%;flex-direction:column;align-items:flex-start;gap:3px;height:auto;padding:12px 14px;text-align:left">
       <span style="font-weight:600${danger ? ';color:var(--danger)' : ''}">${title}</span>
@@ -574,12 +583,12 @@ function openSplitWearSheet(wearIds, outfitId, body) {
     </div>
     <div style="padding:16px 18px 30px">
       <div class="muted" style="font-size:13.5px;line-height:1.5;margin-bottom:18px">
-        “${esc(o ? outfitName(o) : 'this look')}” · ${nItems} piece${nItems === 1 ? '' : 's'} on this day.
+        “${esc(o ? outfitName(o) : 'this look')}” · ${nItems} piece${nItems === 1 ? '' : 's'} on this day.<br>${priorLine}
       </div>
       <div class="sheet-chips" style="flex-direction:column;gap:10px">
         ${opt('splKeep', 'Split &amp; keep', `Keep the outfit wear and also log each of the ${nItems} piece${nItems === 1 ? '' : 's'} as a separate item.`, false)}
         ${opt('splDelWear', 'Split &amp; delete the wear', 'Replace the outfit wear with each piece as a separate item; keep the outfit in your looks.', true)}
-        ${opt('splDelBoth', 'Split &amp; delete the wear + outfit', 'Same as above, and delete the outfit entirely.', true)}
+        ${opt('splDelBoth', 'Split &amp; delete the wear + outfit', `Same as above, and delete the outfit entirely. ${priorDays ? `It has ${priorDays} wear${priorDays === 1 ? '' : 's'} before today.` : 'It has never been worn before today.'}`, true)}
       </div>
       ${delNote}
     </div>`;

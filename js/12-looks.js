@@ -2935,7 +2935,7 @@ function openLookDetails(id) {
       <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit arrangement</button></div>
       <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
       ${missingLvlPieces.length ? `<button class="lnk" id="lookAddLevel" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:8px">+ Add “${lookLvl}. ${esc(occLabel(lookLvl))}” to ${missingLvlPieces.length} piece${missingLvlPieces.length === 1 ? "" : "s"}</button>` : ""}
-      ${(!(Array.isArray(o.layout) && o.layout.length) && its.length >= 2) ? `<button class="lnk" id="lookDefLayout" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:4px;color:var(--muted)">Use the default arrangement instead of a collage</button>` : ""}
+      ${its.length >= 2 ? `<button class="lnk" id="lookDefLayout" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:4px;color:var(--muted)">${(Array.isArray(o.layout) && o.layout.length) ? "Reset to the default arrangement" : "Use the default arrangement instead of a collage"}</button>` : ""}
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
@@ -3171,7 +3171,11 @@ async function deconstructLookCore(id) {
 }
 
 async function deleteLook(id) {
-  if (!confirm("Delete this look? Your wear history is kept — only the saved outfit is removed.")) return;
+  // Name the history, same reason as the split sheet: whether it was ever worn
+  // is the whole basis for the decision.
+  const n = new Set(wears.filter(w => w.outfit_id === id && w.worn_on).map(w => w.worn_on)).size;
+  const hist = n ? `It's been worn ${n} day${n === 1 ? "" : "s"}.` : "It's never been worn.";
+  if (!confirm(`Delete this look? ${hist} Your wear history is kept — only the saved outfit is removed.`)) return;
   try {
     await deconstructLookCore(id);
     leaveLook();

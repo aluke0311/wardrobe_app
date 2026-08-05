@@ -489,6 +489,15 @@
   .rv-fieldrow .fcount.rv-cnt { color: var(--accent); font-weight: 600; }
 
   /* ---------- capsules ---------- */
+  .cap-tabbar { display: flex; gap: 8px; padding: 10px 14px 0; }
+  .cap-tabbar button { flex: 1; padding: 10px; border-radius: 11px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer; }
+  .cap-tabbar button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+  /* Swipe-left row: the actions sit behind, the card slides over them. */
+  .cap-swipe { position: relative; overflow: hidden; border-radius: 14px; }
+  .cap-swipe-acts { position: absolute; right: 0; top: 0; bottom: 0; display: flex;
+    transform: translateX(100%); transition: transform .25s ease; }
+  .cap-swipe-inner { position: relative; width: 100%; transition: transform .25s ease; }
   .cap-list { padding: 6px 14px 24px; display: flex; flex-direction: column; gap: 12px; }
   .cap-card { display: flex; gap: 13px; align-items: center; text-align: left;
     background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; box-shadow: 0 1px 3px rgba(33,29,26,.06); }

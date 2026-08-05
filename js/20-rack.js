@@ -104,19 +104,70 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 3;   // 3 = declared + lived pieces are forced in (2026-08-04 r3)
+const RACK_ALGO = 4;   // 4 = size dial + away-aware warmth (2026-08-05 r1)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
    going disproportionately to steady and dormant, which is where the coverage
    hole was. Formality top-ups take the real total toward 65. */
-const RACK_SLOT_QUOTA = {
+const RACK_SLOT_QUOTA_BASE = {
   Tops:      { rotation: 11, steady: 5, dormant: 4 },   // 20
   Bottoms:   { rotation: 8,  steady: 3, dormant: 3 },   // 14
   Dresses:   { rotation: 3,  steady: 2, dormant: 1 },   // 6
   Shoes:     { rotation: 6,  steady: 3, dormant: 2 },   // 11
   Outerwear: { rotation: 4,  steady: 2, dormant: 1 },   // 7
 };
+/* ⚠️ THE SIZE IS HERS NOW (2026-08-05, her report: "the rack feels too small for
+   my real life"). 58 was a number I picked; how big a working wardrobe feels
+   right is not something the app can derive. So it's a dial.
+
+   It scales every band of every slot by one factor, which is what keeps the
+   proportions — the slot quotas exist so a rack can BUILD an outfit, and the
+   cold share is load-bearing (see the header). Scaling the whole object keeps
+   both invariants at any size; letting her set per-slot numbers would not.
+   ⚠️ Changing it changes SELECTION, so it's part of the staleness check — see
+   rackStamp/rackIsStale, which now carry the size. It does NOT go through
+   RACK_ALGO: a size change is hers and immediate, and bumping ALGO would make
+   every OTHER stored rack in the world stale too. */
+const RACK_SIZE_KEY = "wardrobe.rackSize";
+const RACK_SIZE_MIN = 46, RACK_SIZE_MAX = 130, RACK_SIZE_DEFAULT = 58;
+let _rackSizeOverride = null;   // set only while the Settings slider previews
+function rackTargetSize() {
+  if (_rackSizeOverride != null) return _rackSizeOverride;
+  const v = +store.getItem(RACK_SIZE_KEY);
+  if (!v || !isFinite(v)) return RACK_SIZE_DEFAULT;
+  return Math.max(RACK_SIZE_MIN, Math.min(RACK_SIZE_MAX, Math.round(v)));
+}
+function setRackTargetSize(n) {
+  store.setItem(RACK_SIZE_KEY, String(Math.max(RACK_SIZE_MIN, Math.min(RACK_SIZE_MAX, Math.round(+n || RACK_SIZE_DEFAULT)))));
+}
+/* The scaled quota. ⚠️ Every band keeps a floor of 1 — a slot that rounds to
+   zero dormant would silently switch off rediscovery for that slot, which is
+   the one thing the header says never to optimise away. */
+/* What the dial actually buys, IN PIECES — the number the Settings label shows.
+   Read off the scaled quota, not off the dial, because the per-band floors of 1
+   mean small sizes round UP. Naming the real total is the honest version; "46"
+   on a rack that will be 51 is the kind of small lie that erodes trust in every
+   other number on the screen. */
+function rackQuotaTotal2(size = null) {
+  if (size != null) _rackSizeOverride = Math.max(RACK_SIZE_MIN, Math.min(RACK_SIZE_MAX, Math.round(size)));
+  const q = rackSlotQuota();
+  _rackSizeOverride = null;
+  return Object.values(q).reduce((n, b) => n + b.rotation + b.steady + b.dormant, 0);
+}
+function rackSlotQuota() {
+  const f = rackTargetSize() / RACK_SIZE_DEFAULT;
+  if (Math.abs(f - 1) < 0.01) return RACK_SLOT_QUOTA_BASE;
+  const out = {};
+  for (const [slot, b] of Object.entries(RACK_SLOT_QUOTA_BASE)) {
+    out[slot] = {
+      rotation: Math.max(1, Math.round(b.rotation * f)),
+      steady:   Math.max(1, Math.round(b.steady * f)),
+      dormant:  Math.max(1, Math.round(b.dormant * f)),
+    };
+  }
+  return out;
+}
 const RACK_COLD_SHARE = 0.20;   // ⚠️ dormant share — load-bearing, see header
 const RACK_STEADY_SHARE = 0.25; // the middle band; rotation takes the remainder
 const RACK_WARM_DAYS = 60;      // the rotation/steady vs dormant line
@@ -315,7 +366,7 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
   }
 
   // Cap per slot — see the warning above. A commitment outranks recency.
-  const Q = quota || RACK_SLOT_QUOTA;
+  const Q = quota || rackSlotQuota();
   const slotOf = i => (isLayer(i) && i.category === "Tops") ? "Tops" : suggestSlot(i);
   const bySlot = new Map();
   for (const id of raw) {
@@ -374,7 +425,7 @@ function rackWarmth(itemId, today = todayStr()) {
 function buildRack({ pool = null, wearRows = null, today = todayStr(), season = null,
                      wx = null, plans = null, pinned = null, pushed = null,
                      quota = null, seen = null } = {}) {
-  const QUOTA = quota || RACK_SLOT_QUOTA;
+  const QUOTA = quota || rackSlotQuota();
   const rows = wearRows || wears;
   const seas = season || currentSeason();
   const pin = pinned || rackPinnedSet();
@@ -588,6 +639,9 @@ function rackIsStale(st = rackState(), today = todayStr()) {
   // Built by an older derivation → rebuild now rather than show her last week's
   // answer to a question the app has since changed its mind about. See RACK_ALGO.
   if ((st.algo || 1) !== RACK_ALGO) return true;
+  // She moved the size dial — that changes SELECTION, so top it up now rather
+  // than up to a week from now. Structural: it must not spend a rotation tick.
+  if ((st.size || RACK_SIZE_DEFAULT) !== rackTargetSize()) return true;
   if (daysBetween(st.built, today) >= RACK_REBUILD_DAYS) return true;
   if (st.season !== currentSeason()) return true;   // a season flip must not wait a week
   /* ⚠️ A NEWLY DECLARED LEVEL REBUILDS AT ONCE (2026-08-03 r6, her question:
@@ -709,6 +763,7 @@ async function rackEnsure({ force = false } = {}) {
 
   const next = {
     algo: RACK_ALGO,
+    size: rackTargetSize(),
     built: cadence ? today : (prevBuilt || today),
     revised: today,                 // last recomputed at all — for the screen
     season: currentSeason(),

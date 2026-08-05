@@ -100,6 +100,8 @@ function renderCapsules() {
   else { capsuleView = "list"; body.innerHTML = renderCapsuleList(); }
   hydratePhotos(body);
   wireCapsules();
+  if (capsuleView === "list") wireCapSwipe(body);
+  if (capsuleView === "form") wireCapFormLoc();
   if (capsuleView === "plan") {
     const c = capsuleById.get(capsuleId);
     if (c && (c.locations || []).length && _planWxLoadedFor !== c.id) loadPlanWeather(c);
@@ -131,53 +133,119 @@ function capToolbar(title, showBack, right = "") {
   </div>`;
 }
 
+/* Capsules and trips are two different things she goes looking for at different
+   moments — a trip is a dated event, a capsule is a standing set. One merged
+   list meant scrolling past six trips to reach a capsule, so they're two tabs.
+   ⚠️ The split is by DATES, not `kind` — dates are what trip mode keys on
+   everywhere else (see completedTrips), and a "packing" capsule with no dates
+   behaves like a capsule in every other part of the app. */
+let capsuleTab = "trips";        // "trips" | "capsules" — session-only
 function renderCapsuleList() {
-  if (!capsules.length) {
-    return capToolbar("Capsules", false) + `
-      <div class="cap-empty">
-        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg>
-        <b>No capsules yet</b>
-        <div>Build a style capsule or a packing list for a trip — a named set of pieces you can plan outfits from.</div>
-      </div>
-      <button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
-  }
   const card = (c) => {
     const n = capsuleItemCount(c.id);
     const dates = capDateLabel(c);
     const bits = [`${n} item${n === 1 ? "" : "s"}`];
     if (capValue(c.id)) bits.push(money(capValue(c.id)));
     if (dates) bits.unshift(dates);
-    return `<button class="cap-card" data-cap="${esc(c.id)}">
-      ${capCollageHtml(c.id)}
-      <div class="cap-meta">
-        <div class="cap-badge${isTrip(c) ? " trip" : ""}">${capModeLabel(c)}</div>
-        <div class="cap-name">${esc(c.name)}</div>
-        <div class="cap-sub">${esc(bits.join(" · "))}</div>
+    // Swipe-left to delete, same idiom as a calendar wear card.
+    return `<div class="cap-swipe" data-cap-swipe="${esc(c.id)}">
+      <div class="cap-swipe-acts">
+        <button class="cal-act cal-act-del" data-cap-del-row="${esc(c.id)}">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>
+          Delete
+        </button>
       </div>
-      <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
-    </button>`;
+      <button class="cap-card cap-swipe-inner" data-cap="${esc(c.id)}">
+        ${capCollageHtml(c.id)}
+        <div class="cap-meta">
+          <div class="cap-badge${isTrip(c) ? " trip" : ""}">${capModeLabel(c)}</div>
+          <div class="cap-name">${esc(c.name)}</div>
+          <div class="cap-sub">${esc(bits.join(" · "))}</div>
+        </div>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>`;
   };
+  const isTripRow = (c) => !!(c.start_date || c.end_date);
   const arch = archivedCapsuleIds();
-  const live = capsules.filter(c => !arch.has(c.id));
+  const mine = capsules.filter(c => capsuleTab === "trips" ? isTripRow(c) : !isTripRow(c));
+  const live = mine.filter(c => !arch.has(c.id));
   // Newest trips first among archived — that's how she'll look for one.
-  const put = capsules.filter(c => arch.has(c.id))
+  const put = mine.filter(c => arch.has(c.id))
     .sort((a, b) => String(b.start_date || b.created_at || "").localeCompare(String(a.start_date || a.created_at || "")));
+  const nTrips = capsules.filter(isTripRow).length, nCaps = capsules.length - nTrips;
+
+  const tabs = `<div class="cap-tabbar">
+    <button data-captab="trips" class="${capsuleTab === "trips" ? "on" : ""}">Trips${nTrips ? ` · ${nTrips}` : ""}</button>
+    <button data-captab="capsules" class="${capsuleTab === "capsules" ? "on" : ""}">Capsules${nCaps ? ` · ${nCaps}` : ""}</button>
+  </div>`;
+  // ＋ at the TOP (her ask) — it's the reason she opens this screen on a day
+  // when nothing is listed yet, so it must not sit under the whole list.
+  const newBtn = `<button class="cap-newbtn" data-cap-new="${capsuleTab === "trips" ? "packing" : "capsule"}" style="margin:10px 14px 4px">＋ New ${capsuleTab === "trips" ? "trip" : "capsule"}</button>`;
+
+  if (!live.length && !put.length) {
+    return capToolbar("Capsules", false) + tabs + newBtn + `
+      <div class="cap-empty">
+        <svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/></svg>
+        <b>No ${capsuleTab === "trips" ? "trips" : "capsules"} yet</b>
+        <div>${capsuleTab === "trips"
+          ? "A trip has dates and a place — that's what unlocks the weather, the packing list and the build-a-pack solver."
+          : "A capsule is a standing named set of pieces you can plan outfits from. No dates."}</div>
+      </div>`;
+  }
   const archSection = put.length ? `
     <button class="frow" data-cap-archtoggle style="margin:4px 14px 0;border-radius:14px">
       <span style="flex:1;text-align:left">🗄 Archived · ${put.length}</span>
       <svg class="chev" viewBox="0 0 24 24" style="${_capArchiveOpen ? "transform:rotate(90deg)" : ""}"><path d="M9 6l6 6-6 6"/></svg>
     </button>
     ${_capArchiveOpen ? `<div class="cap-list" style="opacity:.72">${put.map(card).join("")}</div>` : ""}` : "";
-  return capToolbar("Capsules", false) +
+  return capToolbar("Capsules", false) + tabs + newBtn +
     (live.length ? `<div class="cap-list">${live.map(card).join("")}</div>`
                  : `<div class="placeholder" style="padding:18px 16px;font-size:13px;color:var(--muted)">Everything's archived. Open the section below to bring one back.</div>`) +
-    archSection +
-    `<button class="cap-newbtn" data-cap-new>＋ New capsule</button>`;
+    archSection;
+}
+
+// Swipe-left on a capsule row, same mechanics as wireCalSwipe.
+function wireCapSwipe(root) {
+  (root || document).querySelectorAll("[data-cap-swipe]").forEach(card => {
+    const inner = card.querySelector(".cap-swipe-inner");
+    const acts = card.querySelector(".cap-swipe-acts");
+    if (!inner || !acts) return;
+    const W = 70;
+    let startX = 0, startY = 0, opened = false, tracking = false, axis = null;
+    card.addEventListener("touchstart", e => {
+      startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+      tracking = true; axis = null;
+      inner.style.transition = "none"; acts.style.transition = "none";
+    }, { passive: true });
+    card.addEventListener("touchmove", e => {
+      if (!tracking) return;
+      const dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY;
+      // Don't hijack a vertical scroll of the list.
+      if (!axis) { if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return; axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y"; }
+      if (axis !== "x") return;
+      const off = Math.max(-W, Math.min(0, (opened ? -W : 0) + dx));
+      inner.style.transform = `translateX(${off}px)`;
+      acts.style.transform = `translateX(${100 + (off / W * 100)}%)`;
+    }, { passive: true });
+    card.addEventListener("touchend", e => {
+      if (!tracking) return;
+      tracking = false;
+      if (axis !== "x") return;
+      const dx = e.changedTouches[0].clientX - startX;
+      inner.style.transition = "transform .25s ease"; acts.style.transition = "transform .25s ease";
+      opened = opened ? dx < 30 : dx < -50;
+      inner.style.transform = opened ? `translateX(-${W}px)` : "translateX(0)";
+      acts.style.transform = opened ? "translateX(0)" : "translateX(100%)";
+    }, { passive: true });
+  });
 }
 
 // ---- create form ----
-function openCapsuleNew() {
-  _capForm = { name: "", kind: "capsule", start_date: "", end_date: "", notes: "", anchors: [] };
+function openCapsuleNew(kind = "capsule") {
+  _capForm = { name: "", kind: kind === "packing" ? "packing" : "capsule",
+               start_date: "", end_date: "", notes: "", anchors: [],
+               loc: null, locQ: "", locResults: [] };
   capsuleView = "form";
   renderCapsules();
 }
@@ -185,7 +253,7 @@ function openCapsuleNew() {
 function renderCapsuleForm() {
   const f = _capForm;
   const trip = f.kind !== "capsule";
-  return capToolbar("New capsule", true) + `
+  return capToolbar(trip ? "New trip" : "New capsule", true) + `
     <div class="cap-form">
       <div>
         <label class="fld">Name</label>
@@ -203,6 +271,20 @@ function renderCapsuleForm() {
         <div><label class="fld">End</label><input class="inp" type="date" id="capEnd" value="${esc(f.end_date)}"></div>
       </div>
       <div>
+        <label class="fld">Where</label>
+        ${f.loc
+          ? `<div class="pack-anchor"><span>📍 ${esc(f.loc.name)}</span>
+               <button class="pack-drop" id="capLocClear" aria-label="Remove">×</button></div>`
+          : `<input class="inp" id="capLocInp" placeholder="Search a city…" value="${esc(f.locQ || "")}" autocomplete="off">
+             ${(f.locResults || []).length ? `<div class="det-card" style="margin-top:6px">
+               ${f.locResults.map((r, k) => `<button class="det-row" data-caploc="${k}" style="width:100%">
+                 <span class="det-lbl">${esc(r.name)}</span>
+                 <span class="det-val" style="font-size:12px">${esc([r.admin1, r.country].filter(Boolean).join(", "))}</span>
+               </button>`).join("")}
+             </div>` : ""}`}
+        <div class="pack-warn-note" style="padding:4px 0 0">Sets the trip's weather straight away — you can add more stops later.</div>
+      </div>
+      <div>
         <label class="fld">Anything already fixed? (optional)</label>
         ${(f.anchors || []).map((a, idx) => `<div class="pack-anchor">
           <span>${esc(a.context)} · ${esc(fmtDate(a.date))}</span>
@@ -215,8 +297,44 @@ function renderCapsuleForm() {
         <label class="fld">Notes (optional)</label>
         <textarea class="inp" id="capNotes" rows="3" placeholder="Anything to remember…">${esc(f.notes)}</textarea>
       </div>
-      <button class="btn" id="capCreate">Create capsule</button>
+      <button class="btn" id="capCreate">Create ${trip ? "trip" : "capsule"}</button>
     </div>`;
+}
+
+// Live city search on the create form — same geocoder the location sheet uses,
+// so a trip can carry its weather from the moment it exists.
+function wireCapFormLoc() {
+  const inp = $("#capLocInp");
+  if (inp) {
+    let timer;
+    inp.oninput = () => {
+      if (!_capForm) return;
+      _capForm.locQ = inp.value;
+      clearTimeout(timer);
+      if (!inp.value.trim()) { _capForm.locResults = []; return; }
+      timer = setTimeout(async () => {
+        syncCapForm();
+        let res = [];
+        try { res = await geocodeLocation(inp.value.trim()); } catch (e) { res = []; }
+        if (!_capForm || capsuleView !== "form") return;
+        _capForm.locResults = res.slice(0, 5);
+        renderCapsules();
+        const again = $("#capLocInp");
+        if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      }, 380);
+    };
+  }
+  $$("[data-caploc]").forEach(el => el.onclick = () => {
+    syncCapForm();
+    const r = (_capForm.locResults || [])[+el.dataset.caploc];
+    if (!r) return;
+    const extra = [r.admin1, r.country].filter(Boolean)[0];
+    _capForm.loc = { name: r.name + (extra ? `, ${extra}` : ""), lat: r.lat, lon: r.lon };
+    _capForm.locQ = ""; _capForm.locResults = [];
+    renderCapsules();
+  });
+  const clr = $("#capLocClear");
+  if (clr) clr.onclick = () => { syncCapForm(); _capForm.loc = null; renderCapsules(); };
 }
 
 async function saveNewCapsule() {
@@ -224,7 +342,12 @@ async function saveNewCapsule() {
   const f = _capForm;
   if (!f.name.trim()) { toast("Give it a name"); return; }
   const payload = { name: f.name.trim(), kind: f.kind, notes: f.notes || null };
-  if (isTripKind(f.kind)) { payload.start_date = f.start_date || null; payload.end_date = f.end_date || null; }
+  if (isTripKind(f.kind)) {
+    payload.start_date = f.start_date || null;
+    payload.end_date = f.end_date || null;
+    // from/to null = "covers the whole trip", same convention as _saveLocation.
+    if (f.loc) payload.locations = [{ name: f.loc.name, lat: f.loc.lat, lon: f.loc.lon, from: null, to: null }];
+  }
   try {
     const rows = await rest("/capsules?select=*", {
       method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(payload),

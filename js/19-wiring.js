@@ -81,6 +81,16 @@ function renderSettings() {
         </div>
       </div>
       <div class="card stack">
+        <div><div class="fld">Rack size</div>
+          <div class="muted" style="font-size:13px;line-height:1.5">How many pieces are "in play" at once. Bigger keeps more of your wardrobe reachable; smaller makes the suggester more decisive. The slot mix and the 20% you haven't reached for lately scale with it.</div></div>
+        <input type="range" id="setRackSize" min="${RACK_SIZE_MIN}" max="${RACK_SIZE_MAX}" step="4" value="${rackTargetSize()}" style="width:100%;accent-color:var(--accent)">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span class="muted" style="font-size:12px">${RACK_SIZE_MIN}</span>
+          <b id="setRackSizeVal" style="font-size:16px">about ${rackQuotaTotal2()} pieces</b>
+          <span class="muted" style="font-size:12px">${RACK_SIZE_MAX}</span>
+        </div>
+      </div>
+      <div class="card stack">
         <div><div class="fld">What's new</div>
           <div class="muted" style="font-size:13px;line-height:1.5">${(() => {
             // Just the version and a count. Leading with the first bullet ran to
@@ -131,6 +141,13 @@ function renderSettings() {
   $("#signOutBtn").onclick = () => handleSignedOut();
   $("#settingsBody").querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { applyTheme(b.dataset.themeSet); renderSettings(); });
   $("#settingsBody").querySelectorAll("[data-lookfb]").forEach(b => b.onclick = () => { setLookFallbackMode(b.dataset.lookfb); renderSettings(); });
+  const rs = $("#setRackSize");
+  if (rs) {
+    // Live label while dragging; commit (and let the rack go stale) on release,
+    // so a drag across the range doesn't invalidate the rack forty times.
+    rs.oninput = () => { const v = $("#setRackSizeVal"); if (v) v.textContent = `about ${rackQuotaTotal2(+rs.value)} pieces`; };
+    rs.onchange = () => { setRackTargetSize(+rs.value); toast("Rack size saved — it'll top up on the next open"); };
+  }
   $("#setWhatsNew").onclick = () => openWhatsNewSheet();
   $("#setChangelog").onclick = () => openChangelogSheet();
   $("#setBackup").onclick = downloadBackup;
@@ -646,7 +663,13 @@ function wireEvents() {
   // capsules: list / detail / form / picker
   $("#capsulesBody").addEventListener("click", (e) => {
     if (e.target.closest("#capBack")) return capsuleBack();
-    if (e.target.closest("[data-cap-new]")) return openCapsuleNew();
+    const capTab = e.target.closest("[data-captab]");
+    if (capTab) { capsuleTab = capTab.dataset.captab; return renderCapsules(); }
+    const delRow = e.target.closest("[data-cap-del-row]");
+    if (delRow) return deleteCapsule(delRow.dataset.capDelRow);
+    const capNew = e.target.closest("[data-cap-new]");
+    // The ＋ carries the kind of the tab she's standing on.
+    if (capNew) return openCapsuleNew(capNew.dataset.capNew || (capsuleTab === "trips" ? "packing" : "capsule"));
     if (e.target.closest("[data-trip-toggle]")) {
       if (tripModeId === capsuleId) exitTripMode();  // re-renders this screen
       else enterTripMode(capsuleId);
