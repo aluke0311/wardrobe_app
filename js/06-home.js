@@ -1051,6 +1051,7 @@ function openQuickContextSheet(date, idx, { onDone = null } = {}) {
   showSheet("logSheet");
 }
 
+let _todayAltOpen = false;   // session-only: the "something else?" fold on today's card
 function tomorrowCardHtml() { return dayCardHtml(shiftDate(todayStr(), 1), { label: "Tomorrow" }); }
 /* ⚠️ Suppressed in trip mode: the trip dash already IS today, with today's
    planned looks and a one-tap "Wore it". Two cards for one day is the
@@ -1068,11 +1069,25 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
     : dayPlan(tm);
   // A trip day with nothing planned still gets one generated suggestion —
   // scoped to the suitcase, like every other trip-mode suggestion.
+  /* ⚠️ WHAT SHE WORE OUTRANKS WHAT THE APP WOULD SUGGEST (2026-08-05, her
+     report: "today should show my outfits actually worn today once I've logged
+     one — it's showing me a new outfit instead. There can be a row for that but
+     I need to see the current outfit(s) too").
+
+     The card only ever read the PLAN. Log an outfit from the calendar, from a
+     look, from the suggester — none of that is a day plan — and Home carried on
+     proposing something else, which reads as the app not knowing what you just
+     told it. `wears` is the record of what happened and it wins. The suggestion
+     survives underneath as a secondary row, because "what else could I wear"
+     is still a real question at 6pm; it's just not the headline any more. */
+  const wornGroups = isToday ? dayGroups(tm) : [];
   /* ⚠️ Today ALWAYS generates when nothing is planned — "the planned outfit or
      if no planned outfit, then a suggested outfit". Tomorrow deliberately keeps
      its empty state: an unasked-for suggestion for tomorrow is noise, whereas
-     today is the question she opens the app to answer. */
-  const genEntries = entries.length ? entries : ((trip || isToday) ? [{ contexts: [], outfit: null }] : []);
+     today is the question she opens the app to answer. Once something IS logged
+     the generated row stops being automatic — see wornHtml's footer. */
+  const genEntries = entries.length ? entries
+    : ((trip || (isToday && !wornGroups.length)) ? [{ contexts: [], outfit: null }] : []);
   const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
   const wx = _dpWx(tm);
   const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
@@ -1080,6 +1095,22 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
     <div style="font-size:13px;font-weight:600;color:var(--muted)">${esc(label)} · ${esc(planDayLabel(tm))}${wxBit}${trip ? " · ✈️" : ""}</div>
     <button class="lnk" data-tm-edit data-tm-date="${esc(tm)}" style="font-size:12.5px">${entries.length ? "✎ Edit" : "＋ Plan"}</button>
   </div>`;
+  // The worn block, rendered above everything else on today's card.
+  const wornHtml = wornGroups.map(g => {
+    const o = g.outfitId ? outfitById.get(g.outfitId) : null;
+    const pieces = g.itemIds.map(id => itemById.get(id)).filter(Boolean);
+    const name = o ? outfitName(o) : `${pieces.length} piece${pieces.length === 1 ? "" : "s"}`;
+    const ctxs = (g.context || []).join(", ");
+    return `<button data-tm-worn="${esc(g.outfitId || "")}" data-tm-date="${esc(tm)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:4px 0">
+      <span style="width:48px;flex:none">${o ? outfitCollageHtml(o, 4) : _planThumbStrip(pieces.slice(0, 4))}</span>
+      <span style="flex:1;min-width:0">
+        <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✓ ${esc(name)}</span>
+        <span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs || "Worn today")}</span>
+      </span>
+      <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex:none"><path d="M9 6l6 6-6 6"/></svg>
+    </button>`;
+  }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
+
   let body = "";
   if (!genEntries.length) {
     body = `<button data-tm-edit data-tm-date="${esc(tm)}" style="width:100%;text-align:left;font-size:13.5px;color:var(--muted);padding:2px">Nothing planned — tap to set ${isToday ? "today" : "tomorrow"}'s context or outfit.</button>`;
@@ -1133,7 +1164,16 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
     `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
       <button class="lnk" data-plan-ahead style="font-size:12.5px;color:var(--muted)">📅 Plan the week ›</button>
     </div>`;
-  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}${mem}${foot}</div>`;
+  /* Once something is logged, the plan/suggestion block is demoted behind a
+     link rather than deleted — "there can be a row for that". */
+  const secondary = (wornGroups.length && body)
+    ? `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
+        ${_todayAltOpen
+          ? body + `<div class="center" style="padding:4px 0 0"><button class="lnk" data-tm-alt style="font-size:12px;color:var(--muted)">Hide</button></div>`
+          : `<button class="lnk" data-tm-alt style="font-size:12.5px;color:var(--muted)">Something else to wear? ›</button>`}
+      </div>`
+    : body;
+  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${wornHtml}${secondary}${mem}${foot}</div>`;
 }
 /* ===================================================================
    PLAN THE WEEK  (2026-08-03)
@@ -1658,6 +1698,17 @@ function renderHome() {
       if (trip) { switchTab("capsules"); return openTripPlan(trip.id); }
       openDayPlanSheet(tm);
     };
+  });
+  $("#homeBody").querySelectorAll("[data-tm-worn]").forEach(b => {
+    // A logged look opens the look; a bare item-log opens that day.
+    b.onclick = () => {
+      const oid = b.dataset.tmWorn;
+      if (oid) return openLookFrom(oid);
+      switchTab("calendar"); calendarDay = b.dataset.tmDate; renderCalendar();
+    };
+  });
+  $("#homeBody").querySelectorAll("[data-tm-alt]").forEach(b => {
+    b.onclick = () => { _todayAltOpen = !_todayAltOpen; renderHome(); };
   });
   $("#homeBody").querySelectorAll("[data-qctx]").forEach(b => {
     b.onclick = () => {

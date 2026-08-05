@@ -263,6 +263,41 @@ function itemFormalitySet(i) {
   return [...set].sort((a, b) => a - b);
 }
 
+/* ⚠️ THE SET WITHOUT THE CO-OCCURRENCE NUDGE (2026-08-05) — the actual reason
+   the heels kept coming back after two rounds of ceilings.
+
+   `Heels: [6,8]` is the seed, and the name rule pins it to exactly {6,8}. Both
+   the rack's dress-only filter and its off-level ceiling should therefore catch
+   every pair. They didn't, because the LAST step of itemFormalitySet adds the
+   modal level of the explicitly-tagged pieces she has co-worn — so a pair worn
+   three times with a level-4 outfit silently becomes [4,6,8], whose minimum is
+   an ordinary day. Two ceilings, both looking at a number the nudge had already
+   moved.
+
+   The nudge is right for what it was built for: the SUGGESTER needs a plausible
+   level so a piece can be paired at all, and erring wide is correct there. It is
+   the wrong input for "has this piece earned a standing seat in what's in play",
+   which is a judgement about the piece itself.
+
+   ⚠️ An EXPLICIT array is returned untouched — if she has tagged her heels as
+   wearable at 4, that is her judgement and it outranks any rule here. */
+function itemFormalityBase(i) {
+  if (i && i.formality) {
+    if (Array.isArray(i.formality)) return i.formality.length ? i.formality : null;
+    return [+i.formality];
+  }
+  if (!i) return null;
+  const seed = SUBCAT_FORMALITY[i.subcategory] ?? CAT_FORMALITY[i.category] ?? [3];
+  const set = new Set(seed);
+  const name = (i.name || "").toLowerCase();
+  if (/\bgown\b|tuxedo|\btux\b/.test(name))                 { set.clear(); set.add(8); }
+  else if (/\bheel\b|pumps?\b/.test(name))                  { set.clear(); set.add(6); set.add(8); }
+  else if (/blazer/.test(name))                             { [5,6,7].forEach(l => set.add(l)); }
+  else if (/cocktail/.test(name))                           { set.clear(); set.add(6); }
+  else if (/athletic|workout|gym|running|yoga/.test(name))  { set.clear(); set.add(1); }
+  return [...set].sort((a, b) => a - b);
+}
+
 // Single representative level (minimum of set) for display/grouping compatibility.
 function itemFormality(i) {
   const s = itemFormalitySet(i);

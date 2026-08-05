@@ -1531,8 +1531,22 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
                                banned: [...banned], wxFor: packWxFor(c) }).pack;
   }
 
+  /* ⚠️ `resolve` MUST SURVIVE INTO THE SOLVE (2026-08-05, her report:
+     "switching between lean/normal/cushion changes nothing in a pack").
+
+     It didn't, and the reason is that inversion ③'s rehydrate guard is
+     unconditional. `packLoadState(cid, {resolve:true})` re-fills the BAG from
+     the new K — and then packEnsureSolve found a stored assignment whose pieces
+     were all still in that bag, declared it usable, and handed back the very
+     outfits K was supposed to change. Cushion grows the bag, so the stored
+     assignment is always still contained: the guard could never fail on the one
+     path that most needed it. K is options per occasion, which is a property of
+     the SOLVE, so it is invisible until the solver actually runs.
+
+     Rehydration is right for a screen that only wants to display; it is wrong
+     for an explicit "recompute this". `forceSolve` is that distinction. */
   _packState = { cid, c, slate, demand, rack, counts, targets, subTargets,
-                 pack, keeps, banned, K: kk, res: null };
+                 pack, keeps, banned, K: kk, res: null, forceSolve: !!resolve };
   packRegroup(_packState);
   return _packState;
 }
@@ -1558,6 +1572,9 @@ function packRegroup(st) {
 // for it — scoped to the pack she's actually taking.
 function packEnsureSolve(st, { force = false } = {}) {
   if (st.res && !force) return st.res;
+  // An explicit recompute (a tightness change, "start over") consumes its flag
+  // here — one forced solve, not a screen that can never rehydrate again.
+  if (st.forceSolve) { force = true; st.forceSolve = false; }
   /* ⚠️ REHYDRATE BEFORE RE-SOLVING — inversion ③, and load-bearing now that the
      by-day planner shows these outfits (2026-08-04 r5). The record IS the state;
      re-entering the solver for a screen that only wants to DISPLAY the plan would

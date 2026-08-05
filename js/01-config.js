@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-05 r8";
+const APP_VERSION = "2026-08-05 r9";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,14 @@ const APP_VERSION = "2026-08-05 r8";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-05 r9", notes: [
+    "Found the real reason the heels kept coming back. When a piece has no formality set, the app guesses one — heels guess \"Dressed Up and Formal\" — and then widens the guess with the levels of things you\'ve worn them WITH. So a pair worn a few times with a casual outfit quietly counted as casual, and both of the last two fixes were reading a number that had already moved. The rack now judges dressiness on the piece itself. If you\'ve set a piece\'s formality by hand that still wins — that\'s your call, not a guess",
+    "Pieces dressier than an ordinary day are capped in the rack\'s rediscovery bands, where before only pieces matching NONE of your levels were. Your top three lived levels were being read as a licence for the dressiest thing that touched them",
+    "Taking something off the rack tops the slot back up from the same shelf, instead of leaving the rack a piece short until the weekly shuffle",
+    "The rack screen lists everything you\'ve taken off it, saying which will come back on their own and which won\'t, with a Put back on each",
+    "Lean / normal / cushion actually changes the pack now. Choosing one rebuilt the bag and then handed back the outfits it had already solved, so the setting was invisible",
+    "Today\'s card on Home shows what you actually wore once you\'ve logged it. It was reading only the plan, so logging from the calendar or a look left Home proposing something else. A suggestion is still there, behind \"Something else to wear?\"",
+  ] },
   { v: "2026-08-05 r8", notes: [
     "The Today card stays out of the way during a trip — the trip dash already is today",
   ] },

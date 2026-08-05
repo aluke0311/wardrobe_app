@@ -981,6 +981,14 @@ function renderCloset() {
   // "Worth a second look" rows → the label-it-yourself sheet (never a verdict).
   body.querySelectorAll("[data-rsecond]").forEach(b =>
     b.onclick = () => openRackSecondLook(b.dataset.rsecond));
+  // "Taken off the rack" list: open the piece, or put it straight back.
+  body.querySelectorAll("[data-item-open]").forEach(b =>
+    b.onclick = () => openItem(b.dataset.itemOpen));
+  body.querySelectorAll("[data-rack-return]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    await rackReturnPiece(b.dataset.rackReturn);
+  });
   // "Closet" footer link — jumps all the way back to root
   const clRootJump = $("#clRootJump");
   if (clRootJump) clRootJump.onclick = () => { closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; closetHamper = false; closetWorn = false; closetRack = false; navResetScroll("closet"); renderCloset(); scrollToTop(); };

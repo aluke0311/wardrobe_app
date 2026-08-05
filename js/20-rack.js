@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 5;   // 5 = no-rack tag + dress-only excluded (2026-08-05 r6)
+const RACK_ALGO = 6;   // 6 = dressy-lean ceiling (2026-08-05 r9)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -324,6 +324,66 @@ function rackSeen() {
    ⚠️ A day-plan entry's OWN level (set per event since 2026-07-30 r4) wins over
    its contexts' usual level, exactly as entrySuggestLevel does — otherwise a
    dinner she has explicitly pinned to Dressed Up stocks the rack for Friends. */
+/* Just the levels she has DECLARED for the days ahead — rackNeededLevels minus
+   its habitual floor. The ceiling below needs the two separated: "I have a
+   wedding on Saturday" must lift it, "I wear level 5 sometimes" must not. */
+function rackDeclaredLevels(today = todayStr(), plans = null, wearRows = null) {
+  const rows = wearRows || wears;
+  const all = plans || dayPlanAll();
+  const levels = new Set();
+  for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
+    for (const e of (all[shiftDate(today, k)] || [])) {
+      if (e.level) { levels.add(e.level); continue; }
+      for (const c of (e.contexts || [])) {
+        const lv = contextFormalityLevel(c, rows);
+        if (lv) levels.add(lv);
+      }
+    }
+  }
+  return levels;
+}
+/* ⚠️ "DRESSIER THAN AN ORDINARY DAY" IS NOT THE SAME AS "off-level"
+   (2026-08-05, her third report on this: "I'm still continuously getting so
+   many heels — one pair in rotation and four in haven't reached for lately,
+   and that's after removing one pair and saying not right now").
+
+   RACK_OFFLEVEL_SHARE caps pieces that serve NONE of rackNeededLevels — and
+   rackNeededLevels includes her TOP THREE lived levels as a floor. If one of
+   those three is 5, then a heel at [5,6,7] "serves a needed level" and the
+   ceiling never looks at it. That is the leak: the floor exists so the rack can
+   dress her ordinary week, and it was being read as a licence for the dressiest
+   thing that touches it.
+
+   The real question is whether a piece can be worn on an ORDINARY day, and the
+   honest measure of that is its FLOOR against how she actually dresses: a piece
+   whose lowest level sits above the level most of her days fall under has no
+   ordinary day to be in play for, whatever its top end reaches.
+
+   ⚠️ Declared plans still lift it — see rackDeclaredLevels — so a wedding in the
+   planner brings the heels back the same day, through the same machinery as
+   RACK_DRESSY_FLOOR. And a piece with no derivable set is never dressy-lean:
+   unknown beats invented, as everywhere else. */
+const RACK_TYPICAL_SHARE = 0.75;   // the level most of her days fall at or under
+function rackTypicalLevel(wearRows = null) {
+  const rows = wearRows || wears;
+  const byLevel = new Map(), seen = new Set();
+  let total = 0;
+  for (const w of rows) {
+    if (!w.formality_for || !w.worn_on) continue;
+    const k = w.formality_for + "|" + w.worn_on;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    byLevel.set(w.formality_for, (byLevel.get(w.formality_for) || 0) + 1);
+    total++;
+  }
+  if (!total) return 4;                       // no history: don't cap anything hard
+  let run = 0;
+  for (const lv of [...byLevel.keys()].sort((a, b) => a - b)) {
+    run += byLevel.get(lv);
+    if (run / total >= RACK_TYPICAL_SHARE) return lv;
+  }
+  return 8;
+}
 function rackNeededLevels(today = todayStr(), plans = null, wearRows = null) {
   const rows = wearRows || wears;
   const all = plans || dayPlanAll();
@@ -573,7 +633,7 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
      filters), so a gown she has pinned or is wearing this week still shows. */
   const levelSet0 = new Set(levels);
   const dressOnly = i => {
-    const set = itemFormalitySet(i) || [];
+    const set = itemFormalityBase(i) || [];   // ⚠️ un-nudged — see itemFormalityBase
     if (!set.length) return false;                     // unknown beats invented
     if (!set.every(l => l >= RACK_DRESSY_FLOOR)) return false;
     return !set.some(l => levelSet0.has(l));           // she has declared one → keep
@@ -605,7 +665,18 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
      formality at all is imputed by itemFormalitySet, so nothing is off-level
      merely for being untagged. */
   const levelSet = new Set(levels);
-  const servesALevel = i => (itemFormalitySet(i) || []).some(l => levelSet.has(l));
+  const declaredSet = rackDeclaredLevels(today, plans, rows);
+  const typical = rackTypicalLevel(rows);
+  /* One predicate for the ceiling: a piece is "for a day she doesn't have" if it
+     serves no needed level AT ALL, or if its floor is above an ordinary day.
+     Either way a declared plan exempts it. */
+  const offLevel = i => {
+    const set = itemFormalityBase(i) || [];   // ⚠️ un-nudged — see itemFormalityBase
+    if (!set.length) return false;                      // unknown beats invented
+    if (set.some(l => declaredSet.has(l))) return false;
+    if (!set.some(l => levelSet.has(l))) return true;
+    return Math.min(...set) > typical;
+  };
   const ids = new Set();
   const rotation = new Set(), steady = new Set(), dormant = new Set();
 
@@ -634,7 +705,7 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
       const out = [];
       for (const i of queue) {
         if (out.length >= n) break;
-        if (!servesALevel(i)) { if (offBudget <= 0) continue; offBudget--; }
+        if (offLevel(i)) { if (offBudget <= 0) continue; offBudget--; }
         out.push(i);
       }
       return out;
@@ -673,7 +744,7 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
          after, so a declared Dressed Up day still gets its shoes. */
       for (const i of spare) {
         if (short <= 0) break;
-        if (!servesALevel(i)) { if (offBudget <= 0) continue; offBudget--; }
+        if (offLevel(i)) { if (offBudget <= 0) continue; offBudget--; }
         chosen.add(i.id);
         (warmth(i) > 0 ? inSteady : inDormant).push(i);
         short--;
@@ -1035,7 +1106,76 @@ async function pushOffRack(id, { days = RACK_PUSH_DAYS, quiet = false } = {}) {
              dormant: drop(st.dormant), cold: drop(st.cold) };
   });
   _rackMemo = null;
-  if (!quiet) toast(`Off the rack for now`, { label: "Undo", fn: () => pullOntoRack(id) });
+  /* ⚠️ TOP THE SLOT BACK UP (2026-08-05, her ask: "I want the rack to top itself
+     off if I remove something from it").
+
+     Removal used to just delete the id, so the rack shrank by one and stayed a
+     piece short until the weekly rotation — which made saying "not right now"
+     feel like a punishment rather than an exchange. A structural rebuild refills
+     the gap from the same slot immediately.
+
+     ⚠️ STRUCTURAL, NOT A ROTATION TICK — the r7 churn lesson. rackEnsure's own
+     rackShouldRotate decides that, and a top-up must not spend a tick or move
+     the `built` anchor, or a handful of removals would postpone the real weekly
+     rotation and inflate `seen` for pieces she never declined. */
+  await rackEnsure();
+  if (!quiet) toast(`Off the rack — topped up from the same shelf`, { label: "Undo", fn: () => pullOntoRack(id) });
+}
+
+/* ---- what she's taken off, and whether it's coming back --------------------
+   Her question: "a list available somewhere of pieces I've removed from the
+   rack so I know if there are any I need to re-enter the pool (if they stay off
+   permanently if I've removed them?)".
+
+   The honest answer is that it depends which of two things she did, and the
+   list has to say so per piece rather than in a legend:
+     · "Not right now"      → expires (RACK_PUSH_DAYS / RACK_PUSH_LONG_DAYS)
+     · "Keep off the rack"  → permanent until she says otherwise
+   Both are listed, each with its own wording and a one-tap way back. */
+function rackOffList(today = todayStr()) {
+  const out = [];
+  for (const [id, v] of Object.entries(rackState().pushed || {})) {
+    const at = typeof v === "string" ? v : (v && v.d);
+    const days = typeof v === "string" ? RACK_PUSH_DAYS : ((v && v.n) || RACK_PUSH_DAYS);
+    if (!at) continue;
+    const left = days - daysBetween(at, today);
+    if (left <= 0) continue;                      // already back in the pool
+    const i = itemById.get(id);
+    if (!i || itemStatus(i) !== "Available") continue;
+    out.push({ item: i, kind: "pushed", at, left });
+  }
+  for (const i of items) {
+    if (!isNoRack(i) || itemStatus(i) !== "Available") continue;
+    out.push({ item: i, kind: "tagged", at: null, left: null });
+  }
+  // Soonest to return first; the permanent ones last, since they need a decision.
+  return out.sort((a, b) => (a.kind === b.kind ? (a.left || 0) - (b.left || 0)
+                                               : (a.kind === "pushed" ? -1 : 1)));
+}
+function rackOffSectionHtml() {
+  const list = rackOffList();
+  if (!list.length) return "";
+  const rows = list.map(({ item: i, kind, left }) => `<div class="frow" style="align-items:center">
+      <button data-item-open="${esc(i.id)}" style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left">
+        ${thumbHtml(i.image_path, "sthumb")}
+        <span style="flex:1;min-width:0">
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.name || "Untitled")}</span>
+          <span style="display:block;font-size:12px;color:var(--muted)">${kind === "tagged"
+            ? "Kept off the rack — stays off until you change it"
+            : `Not right now — back in ${left} day${left === 1 ? "" : "s"}`}</span>
+        </span>
+      </button>
+      <button class="cap-chip" data-rack-return="${esc(i.id)}" style="flex:none;font-size:12px">Put back</button>
+    </div>`).join("");
+  return `<div class="stats-sec-hdr" style="padding:16px 16px 4px"><div class="t">Taken off the rack · ${list.length}</div></div>
+    <div class="muted" style="font-size:12.5px;padding:0 16px 6px;line-height:1.45">“Not right now” wears off by itself. “Keep off the rack” doesn't — those are the ones worth a second thought.</div>
+    <div class="frows">${rows}</div>`;
+}
+async function rackReturnPiece(id) {
+  const i = itemById.get(id);
+  if (isNoRack(i)) await setNoRack(id, false);
+  await pullOntoRack(id);           // clears any push-out and pins it back in
+  if (typeof renderCloset === "function" && closetRack) renderCloset();
 }
 
 /* ---- the second-look sheet ----
@@ -1341,8 +1481,9 @@ function renderClosetRack() {
       + sec("Steady", "You wear these — just not this week. This band exists so the middle of your wardrobe doesn't go invisible.", inSteady)
       + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, and they lean toward the kinds of days you actually have — clothes for rarer occasions take a slot or two at most.", inDorm)
       + secondBlock
+      + rackOffSectionHtml()
     : `<div class="placeholder" style="padding:40px 32px"><b>Rack not built yet</b>
-        <div>It fills itself from what's in season and what you've been wearing.</div></div>`;
+        <div>It fills itself from what's in season and what you've been wearing.</div></div>` + rackOffSectionHtml();
   return clToolbar(`The rack · ${list.length}`, true, false)
     + `<div class="snote" style="padding:8px 16px 2px">${esc(note)} Open a piece to pull it in or push it out — you never have to maintain this.</div>`
     + body
