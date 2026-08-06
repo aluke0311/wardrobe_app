@@ -3147,10 +3147,55 @@ function openLookDetails(id) {
 
 /* ---- one-gesture piece editing on a look's Details page (2026-08-05) ------
    Both of these write outfit_items directly and then buildOutfitIndexes(), which
-   is what resets the `_bucket` caches so formality re-derives. Neither touches
-   `wears`: a look's PIECES are what it is now, its WEARS are what happened, and
-   conflating them is how history gets rewritten. The builder's own wear-sync
-   offer is the deliberate, asked-for exception and stays where it is. */
+   is what resets the `_bucket` caches so formality re-derives.
+
+   ⚠️ A SAME-DAY EDIT IS A CORRECTION TO WHAT SHE WORE (2026-08-06, her report:
+   "removing an item from an outfit that I just logged (or adding one) does not
+   change the 'what this changed' screen and it does not remove the item's
+   wear — major problem").
+
+   These shipped with the rule "a look's PIECES are what it is now, its WEARS
+   are what happened", and that rule is still right for a look worn ten times
+   over a year — but it is wrong for the look she logged an hour ago, where the
+   edit IS her saying what actually left the closet. The builder has drawn that
+   line correctly since 2026-07-08: same-day → sync silently, 1–14 days →
+   offer. This is the same line, applied to the faster path she now actually
+   uses. It is `wearSyncCandidate` + `syncWearsToLook`, not a second derivation,
+   so the two edit paths can't disagree about her history.
+   ⚠️ The wear screen reads `wears` at open time, so syncing the rows IS the fix
+   for "the what-this-changed screen doesn't update" — there is nothing else to
+   invalidate, and a second cache here would be a way for them to drift. */
+async function syncLookPieceEdit(lookId_) {
+  const d = wearSyncCandidate(lookId_);
+  if (!d) return null;
+  if (d === todayStr()) {
+    const r = await syncWearsToLook(lookId_, d);
+    return r ? { synced: true, ...r } : null;
+  }
+  return { offer: d };
+}
+// Shared tail: re-render the details page, then either say what was synced or
+// offer the older day. ⚠️ The re-render happens AFTER the sync so the wear list
+// on that page shows the corrected outing rather than the one being replaced.
+async function afterLookPieceEdit(lookId_, msg, undo) {
+  let res = null;
+  try { res = await syncLookPieceEdit(lookId_); } catch (e) { toast(e.message); }
+  openLookDetails(lookId_);
+  const chips = [];
+  if (undo) chips.push(undo);
+  if (res && res.offer) {
+    chips.push({ label: "Update that wear →", fn: async () => {
+      try {
+        const r = await syncWearsToLook(lookId_, res.offer);
+        openLookDetails(lookId_);
+        toast(r ? "Wear updated to match the look" : "Already up to date");
+      } catch (e) { toast(e.message); }
+    } });
+    toast(`${msg} · worn ${calDayLabel(res.offer)} with the old pieces`, chips);
+    return;
+  }
+  toast(res && res.synced ? `${msg} · today's wear updated` : msg, chips.length ? chips : null);
+}
 async function removeLookPiece(lookId_, itemId) {
   const o = outfitById.get(lookId_);
   if (!o) return;
@@ -3160,9 +3205,9 @@ async function removeLookPiece(lookId_, itemId) {
     await rest(`/outfit_items?outfit_id=eq.${lookId_}&item_id=eq.${itemId}`, { method: "DELETE" });
     outfitLinks = outfitLinks.filter(l => !(l.outfit_id === lookId_ && l.item_id === itemId));
     buildOutfitIndexes();
-    openLookDetails(lookId_);
     const it = itemById.get(itemId);
-    toast(`${(it && it.name) || "Piece"} removed`, { label: "Undo", fn: () => addLookPiece(lookId_, itemId) });
+    await afterLookPieceEdit(lookId_, `${(it && it.name) || "Piece"} removed`,
+      { label: "Undo", fn: () => addLookPiece(lookId_, itemId) });
   } catch (e) { toast(e.message); }
 }
 async function addLookPiece(lookId_, itemId) {
@@ -3174,7 +3219,8 @@ async function addLookPiece(lookId_, itemId) {
     });
     outfitLinks = outfitLinks.concat([{ outfit_id: lookId_, item_id: itemId }]);
     buildOutfitIndexes();
-    openLookDetails(lookId_);
+    const it = itemById.get(itemId);
+    await afterLookPieceEdit(lookId_, `${(it && it.name) || "Piece"} added`, null);
   } catch (e) { toast(e.message); }
 }
 /* The add picker. A flat searchable list rather than the builder's folder drill

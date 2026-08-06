@@ -46,6 +46,14 @@ const PACK_SOLVE_CANDIDATES = 120;
 const PACK_ENUM_CAP = 400;              // combo enumeration cap inside a pack
 const PACK_ADD_TRIES = 12;              // additions tested when short on options
 const PACK_OPT_GUARD = 6;               // max pieces added per occasion for options
+/* Ceiling on the per-group option target — see optionTarget in packSolve. A
+   fortnight at one level should not go chasing fourteen distinct looks; past
+   about a week of variety the bag is the problem, not the repetition. */
+const PACK_OPT_MAX = 7;
+/* How hard stage C is allowed to push for variety, strongest first — see the
+   strengths loop in packSolve. Anything below the last of these is not worth a
+   pass: it would move one occasion and call it a win. */
+const PACK_REPAIR_STRENGTHS = [1, 0.5, 0.25];
 
 // A trip-sized rack. RACK_SLOT_QUOTA is calibrated for one day at home; ten
 // days with two dress-coded evenings needs more to draw from. Passed to
@@ -803,10 +811,40 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
   const addPool = rackIds.filter(id => !pack.has(id))
     .sort((a, b) => (proven.has(b) - proven.has(a)) || (rackWarmth(b) - rackWarmth(a)) || (a < b ? -1 : 1));
 
+  /* ⚠️ K IS PER OCCASION, SO THE TARGET HAS TO COUNT THE OCCASIONS (2026-08-06).
+     Her report: a 5-day trip with FOUR casual days came back as two outfits,
+     each worn twice, out of a 19-piece bag. Nothing was broken — this loop
+     raises each GROUP to K options, K at normal is 2, and all four casual days
+     are ONE group. The app guaranteed exactly two looks for four days and then,
+     correctly by its own lights, repeated them.
+
+     "Two options" is the right promise for a single dressy evening and the
+     wrong one for half a week. What the tightness dial actually buys is how
+     much repetition she'll accept, so the target scales with how many days are
+     asking: lean still packs light (repeat every other day), normal aims for a
+     different outfit each time, cushion leaves one spare.
+     ⚠️ Capped — a fortnight at one level must not chase fourteen looks — and
+     PACK_OPT_GUARD still bounds pieces added per group regardless.
+     ⚠️ THIS AND STAGE C ARE ONE FIX AND NEITHER WORKS ALONE. Measured on the
+     scarce fixture that reproduces her report: with this alone the options are
+     built and never spent (stage A still assigns two looks); with stage C alone
+     there is nothing extra to spend (2 options → 2 looks). Together: 5 distinct
+     outfits over 7 occasions. Removing either one silently restores the bug,
+     which is why the case guarding it drives the whole solver end to end. */
+  const occCount = new Map();
+  for (const occ of dem) occCount.set(groupKey(occ), (occCount.get(groupKey(occ)) || 0) + 1);
+  const optionTarget = (occ) => {
+    const n = occCount.get(groupKey(occ)) || 1;
+    const want = K <= PACK_OPTIONS.lean ? Math.ceil(n / 2)
+      : K >= PACK_OPTIONS.cushion ? n + 1 : n;
+    return Math.max(K, Math.min(want, PACK_OPT_MAX));
+  };
+
   for (const occ of groups.values()) {
+    const target = optionTarget(occ);
     let have = packOptionCount(occ, pack, candOpts);
     let guard = 0;
-    while (have < K && guard++ < PACK_OPT_GUARD) {
+    while (have < target && guard++ < PACK_OPT_GUARD) {
       let bestAdd = null, bestGain = 0;
       for (const id of addPool.slice(0, PACK_ADD_TRIES)) {
         if (pack.has(id)) continue;
@@ -825,11 +863,40 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
   for (const occ of groups.values()) byKey.set(groupKey(occ), packOptionCount(occ, pack, candOpts));
   const options = new Map();
   for (const occ of dem) options.set(occ.id, byKey.get(groupKey(occ)) || 0);
-  const sched = packSchedule(assignOf(dem, best.chosen), { dates: days, ls: lst, washDays });
+
+  /* ---- stage C: re-assign over the finished pack — see packRepairAssign ----
+     ⚠️ SEVERAL STRENGTHS, STRONGEST FIRST, and this is not belt-and-braces —
+     the first version failed exactly here. The repair walks days in order, so
+     chasing variety hard makes it spend the clean tolerance-1 tops early and
+     day five is left with nothing clean: measured 4 → 6 distinct outfits AND
+     0 → 1 laundry violation, so the gate correctly threw the whole thing away
+     and the fix silently did nothing. Greedy myopia, and the honest answer is
+     to ask for less spreading rather than to accept a dirty day: variety is
+     worth having, but not at the price of wearing something out of clean wears,
+     which is the constraint she asked for this feature to respect. */
+  let assign = best.chosen;
+  let sched = packSchedule(assignOf(dem, assign), { dates: days, ls: lst, washDays });
+  const base = packAssignVariety(dem, assign);
+  const repairCache = new Map();
+  for (const mult of PACK_REPAIR_STRENGTHS) {
+    const repaired = packRepairAssign(pack, dem, best.chosen, {
+      candOpts, ls: lst, washDays, locked: lockedMap, repW: repW * mult, cache: repairCache,
+    });
+    if (!repaired || !repaired.size) continue;
+    const rSched = packSchedule(assignOf(dem, repaired), { dates: days, ls: lst, washDays });
+    const b = packAssignVariety(dem, repaired);
+    // Strictly better on variety, and never worse on the two things that matter
+    // more: every occasion still dressed, and no new tolerance violation.
+    if (b.placed >= base.placed && rSched.violations.length <= sched.violations.length &&
+        b.distinct > base.distinct) {
+      assign = repaired; sched = rSched;
+      break;                                  // strongest clean improvement wins
+    }
+  }
 
   return {
     pack: [...pack],
-    assign: best.chosen,
+    assign,
     options,
     unmet: best.unmet,
     violations: sched.violations,
@@ -841,6 +908,165 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
     },
   };
 }
+/* ---- stage C: SPEND the pack you actually built (2026-08-06) -------------
+   Her report, on a 5-day trip that came back with 19 pieces: four home
+   occasions dressed as two outfits, each worn twice unchanged, and the same
+   dress again for the party. Nothing was wrong by stage A's rules — and that
+   is precisely the bug.
+
+   ⚠️ STAGE A CHOOSES AGAINST A PACK THAT DOESN'T EXIST YET. Every alternative
+   it can see costs `added * 1000` for a piece not yet in the bag, while the
+   repetition terms top out at PACK_REPEAT_ANY + PACK_REPEAT_TOP = 550. Repeating
+   an outfit is therefore ALWAYS cheaper than varying it, by construction, at
+   every tightness — the dial cannot fix this because repW scales the losing side.
+   Then stage B goes and adds pieces to raise each occasion's option count and
+   NEVER REVISITS THE ASSIGNMENT, so the options it bought sit in the suitcase
+   unworn while the by-day plan repeats itself. That is the whole shape of "19
+   pieces, four outfits": eight of those pieces were options nothing spent.
+
+   Stage C re-walks the trip over the FINAL pack. Every candidate is already
+   packed, so `added` is 0 for all of them and the repetition terms finally
+   decide — which is what turns K's promise ("N options per occasion") into N
+   different days rather than N more things to carry.
+   ⚠️ It may never make things worse: an assignment that covers fewer occasions
+   or breaks more tolerances is discarded whole, and locked occasions are copied
+   through untouched (inversion ③ — her edits are state, not suggestions).
+   ⚠️ Deterministic on purpose. Stage A has restarts and a seeded RNG because it
+   is searching; this is a repair, and a repair that wobbles between renders
+   would read as the pack reshuffling itself. */
+function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, washDays = null,
+                                                  locked = null, repW = 1, cache = null } = {}) {
+  const dem = demand || [];
+  if (!dem.length || !chosen) return null;
+  const packSet = pack instanceof Set ? pack : new Set(pack || []);
+  const lst = ls || laundryState();
+  const lockedMap = locked instanceof Map ? locked : new Map();
+  const washSet = new Set(washDays || []);
+
+  /* Grouped by (level, leg, temperature band) — the same key stage A enumerates
+     on, for the same reason: two Work days in one city at one level have the
+     identical candidate set, so grouping is the difference between one solve
+     and a dozen. */
+  const legKeyOf = (o) => o.leg && o.leg.loc ? `${o.leg.loc.lat},${o.leg.loc.lon}` : "";
+  const bandOf = (day) => {
+    const w = day && candOpts.wxFor ? candOpts.wxFor(day) : null;
+    return w && w.maxT != null ? Math.round(w.maxT / 8) : "x";
+  };
+  const groupKey = (o) => `${o.level}|${legKeyOf(o)}|${bandOf(o.date)}`;
+  // ⚠️ Shared across repair attempts (see the strengths loop in packSolve) — the
+  // enumeration is the expensive half and the pack doesn't change between them.
+  const byGroup = cache instanceof Map ? cache : new Map();
+  for (const occ of dem) {
+    const k = groupKey(occ);
+    if (byGroup.has(k)) continue;
+    /* ⚠️ Filtered to what's fully inside the pack. `all: true` because we want
+       every look the bag can make, not the diversified top slice — and level 1
+       draws from the whole closet by design (see packCandidates), so the filter
+       is doing real work there rather than being a formality. */
+    byGroup.set(k, packCandidates(occ, [...packSet], { ...candOpts, all: true })
+      .filter(cd => cd.ids.every(id => packSet.has(id))));
+  }
+
+  const grouped = (() => {
+    const m = new Map();
+    for (const occ of dem) {
+      const d = occ.date || "9999-12-31";
+      let a = m.get(d);
+      if (!a) m.set(d, a = []);
+      a.push(occ);
+    }
+    return [...m.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  })();
+
+  const out = new Map();
+  const counts = new Map();
+  let washed = false;
+  const seedOf = (id, it) => counts.has(id) ? counts.get(id) : (washed ? 0 : packWearSeed(it, lst));
+  const usedCombos = new Set();
+  const dayWorn = new Map();
+  let prevDayCombos = new Set();
+
+  for (const [date, occs] of grouped) {
+    if (washSet.has(date)) { counts.clear(); washed = true; }
+    const usedToday = new Set();
+    const todayCombos = new Set();
+    // Scarcest first, exactly as stage A orders a day: the occasion with the
+    // fewest ways to dress it should claim its pieces before the easy one does.
+    const ord = occs.slice().sort((a, b) =>
+      ((byGroup.get(groupKey(a)) || []).length - (byGroup.get(groupKey(b)) || []).length) ||
+      (a.id < b.id ? -1 : 1));
+
+    for (const occ of ord) {
+      const keep = lockedMap.get(occ.id) || chosen.get(occ.id) || null;
+      const list = (lockedMap.has(occ.id) ? [] : (byGroup.get(groupKey(occ)) || []));
+      if (!list.length) {
+        if (keep) {
+          out.set(occ.id, keep);
+          todayCombos.add(packLookKey(keep.ids));
+          for (const id of keep.ids) usedToday.add(id);
+        }
+        continue;
+      }
+      const keepKey = keep ? packLookKey(keep.ids) : null;
+      let pick = keep, bestCost = Infinity;
+      for (const cd of list) {
+        let over = 0, topRepeat = 0;
+        for (const id of cd.ids) {
+          const it = itemById.get(id);
+          if (!it) continue;
+          // Repetition is charged on the visible half only — same rule as stage
+          // A: wearing one pair of jeans all week is the point of packing light.
+          const slot = suggestSlot(it);
+          if (slot === "Tops" || slot === "Dresses") topRepeat += (dayWorn.get(id) || 0);
+          const tol = wearTolerance(it);
+          if (tol === Infinity || usedToday.has(id)) continue;
+          if (seedOf(id, it) + 1 > tol) over++;
+        }
+        const key = packLookKey(cd.ids);
+        const cost = over * 5000
+          + (prevDayCombos.has(key) ? PACK_REPEAT_DAY : 0)
+          + (usedCombos.has(key) ? PACK_REPEAT_ANY * repW : 0)
+          + topRepeat * PACK_REPEAT_TOP * repW
+          - cd.score * PACK_SCORE_W
+          - (key === keepKey ? 1 : 0);   // a genuine tie keeps what she may already be looking at
+        if (cost < bestCost) { bestCost = cost; pick = cd; }
+      }
+      if (!pick) continue;
+      out.set(occ.id, pick);
+      todayCombos.add(packLookKey(pick.ids));
+      for (const id of pick.ids) usedToday.add(id);
+    }
+
+    // Commit the day: one wear-day per distinct piece, however many outfits.
+    for (const id of usedToday) {
+      const it = itemById.get(id);
+      if (!it) continue;
+      const slot = suggestSlot(it);
+      if (slot === "Tops" || slot === "Dresses") dayWorn.set(id, (dayWorn.get(id) || 0) + 1);
+      if (wearTolerance(it) === Infinity) continue;
+      counts.set(id, seedOf(id, it) + 1);
+    }
+    for (const k of todayCombos) usedCombos.add(k);
+    prevDayCombos = todayCombos;
+  }
+  return out;
+}
+
+/* How many DIFFERENT outfits an assignment actually puts on her, counted by
+   LOOK — the r13 rule, so five shoe permutations of one outfit stay one outfit.
+   This is the number her report was really about. */
+function packAssignVariety(demand, assign) {
+  const keys = new Set();
+  let placed = 0;
+  for (const occ of (demand || [])) {
+    const cd = assign && assign.get(occ.id);
+    if (!cd) continue;
+    placed++;
+    keys.add(packLookKey(cd.ids));
+  }
+  return { placed, distinct: keys.size };
+}
+
 // demand + chosen → the [{date, ids}] shape packSchedule walks.
 function assignOf(demand, chosen) {
   const out = [];

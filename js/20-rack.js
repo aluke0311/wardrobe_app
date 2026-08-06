@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 7;   // 7 = dress-only needs a PLAN, not a habit (2026-08-05 r12)
+const RACK_ALGO = 8;   // 8 = travel plans don't stock the home rack (2026-08-06 r1)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -209,6 +209,37 @@ const RACK_OFFLEVEL_SHARE = 0.2;
    the dressOnly filter in buildRack. 6 = Dressed Up, so a [6,7,8] gown is out
    and a [5,6] blazer (which also does a normal work day) stays. */
 const RACK_DRESSY_FLOOR = 6;
+/* The top of an ORDINARY day, in her own words (2026-08-06): "the rack should
+   ONLY build levels 2, 3, 4, 5 unless I request other levels for the rack /
+   plan future days". Read literally: nothing above this is stocked FOR unless a
+   forward plan declares it. See the formality top-up in buildRack. */
+const RACK_EVERYDAY_MAX = 5;
+
+/* ⚠️ TRAVEL PLANS ARE NOT THE RACK'S BUSINESS (2026-08-06, her words: "rack
+   should not consider travel plans — a planned formal event on a trip does not
+   have anything to do with the rack").
+
+   Booking a trip writes its anchor events STRAIGHT INTO `dayplan`
+   (saveCapsuleForm), which is right for the pack solver and wrong here: one
+   shower on holiday put level 6 into rackDeclaredLevels, and a declared level
+   is the single exemption that lets a [6,8] piece past the dress-only filter.
+   So an evening she'll spend a thousand miles away moved her dressiest clothes
+   into the pool she gets dressed from AT HOME, for a fortnight — which is
+   exactly the report "I'm still getting dressed up and formal pieces in the
+   rack", from pieces that are explicitly nothing but 6 and 8.
+
+   During the trip the suitcase IS the pool (see _suggPool's capsule branch), so
+   a trip day is already answered by something else; reading it here only ever
+   double-counts it.
+   ⚠️ rackWarmth and rackForcedIds' lived half already skip PAST away days for
+   the same reason. This is that audit finished on the forward half — the same
+   "when you add a trigger, audit them all" lesson, arriving through dayplan. */
+function rackHomeDate(d, away) {
+  return !(away && away.length && awayRangeFor(d, away));
+}
+function rackAwayRanges() {
+  return (typeof awayRanges === "function") ? awayRanges() : [];
+}
 
 /* A slot quota is either the banded object above or a plain number (the trip
    builder's PACK_TRIP_QUOTA is flat, and calibrating it per-band would be a
@@ -327,12 +358,15 @@ function rackSeen() {
 /* Just the levels she has DECLARED for the days ahead — rackNeededLevels minus
    its habitual floor. The ceiling below needs the two separated: "I have a
    wedding on Saturday" must lift it, "I wear level 5 sometimes" must not. */
-function rackDeclaredLevels(today = todayStr(), plans = null, wearRows = null) {
+function rackDeclaredLevels(today = todayStr(), plans = null, wearRows = null, away = null) {
   const rows = wearRows || wears;
   const all = plans || dayPlanAll();
+  const awayR = away || rackAwayRanges();
   const levels = new Set();
   for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
-    for (const e of (all[shiftDate(today, k)] || [])) {
+    const d0 = shiftDate(today, k);
+    if (!rackHomeDate(d0, awayR)) continue;   // see rackHomeDate — travel isn't the rack
+    for (const e of (all[d0] || [])) {
       if (e.level) { levels.add(e.level); continue; }
       for (const c of (e.contexts || [])) {
         const lv = contextFormalityLevel(c, rows);
@@ -384,12 +418,14 @@ function rackTypicalLevel(wearRows = null) {
   }
   return 8;
 }
-function rackNeededLevels(today = todayStr(), plans = null, wearRows = null) {
+function rackNeededLevels(today = todayStr(), plans = null, wearRows = null, away = null) {
   const rows = wearRows || wears;
   const all = plans || dayPlanAll();
+  const awayR = away || rackAwayRanges();
   const levels = new Set();
   for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
     const d = shiftDate(today, k);
+    if (!rackHomeDate(d, awayR)) continue;   // see rackHomeDate — travel isn't the rack
     for (const e of (all[d] || [])) {
       if (e.level) { levels.add(e.level); continue; }
       for (const c of (e.contexts || [])) {
@@ -469,9 +505,14 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
               !isNoRack(i) &&
               i.category !== "Workout" && !push.has(id) && (!inPool || inPool.has(id)));
   };
-  // Declared: the pieces of a look she has actually assigned to a day ahead.
+  /* Declared: the pieces of a look she has actually assigned to a day ahead.
+     ⚠️ Home days only (2026-08-06) — see rackHomeDate. An outfit planned for a
+     day of a trip is a packing decision, and forcing its pieces into the home
+     rack is the same leak as reading that day's LEVEL. */
+  const awayFwd = rackAwayRanges();
   for (let k = 0; k <= RACK_LOOKAHEAD_DAYS; k++) {
     const d = shiftDate(today, k);
+    if (!rackHomeDate(d, awayFwd)) continue;
     for (const e of (all[d] || [])) {
       if (!e || !e.outfit) continue;
       for (const id of (outfitItemMap.get(e.outfit) || [])) {
@@ -626,8 +667,11 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
     !isNoSuggest(i) && !isNoRack(i) &&
     i.category !== "Workout" && !push.has(i.id));
 
-  const levels = rackNeededLevels(today, plans, rows);
-  const declaredSet0 = rackDeclaredLevels(today, plans, rows);
+  // One away-range read for the whole build — the forward reads and rackWarmth
+  // must agree about which days she was home for. See rackHomeDate.
+  const awayR = rackAwayRanges();
+  const levels = rackNeededLevels(today, plans, rows, awayR);
+  const declaredSet0 = rackDeclaredLevels(today, plans, rows, awayR);
   /* ⚠️ DRESS-ONLY PIECES ARE OFF THE RACK UNLESS SHE ASKS (2026-08-05, her
      words: "let's never include pieces that only work for formal occasions in
      the rack unless I select that as a need").
@@ -662,7 +706,6 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
   /* Deterministic ordering: same inputs, same rack. Stability is the point —
      she should come to recognise it, and a rack that reshuffles every open is
      just a random sample with extra steps. */
-  const awayR = (typeof awayRanges === "function") ? awayRanges() : [];
   const warmth = i => rackWarmth(i.id, today, { wearRows: rows, away: awayR });
   const likedRank = i => (liked.has(i.id) ? 1 : 0);
   const seenOf = i => seenMap[i.id] || 0;
@@ -778,6 +821,21 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
      Top-ups join the STEADY band — they're here because a declared plan needs
      them, not because she's been reaching for them. */
   for (const lv of levels) {
+    /* ⚠️ NEVER GO SHOPPING FOR A DRESSY LEVEL SHE HASN'T DECLARED (2026-08-06).
+       `levels` is declared plans UNIONED with her top three LIVED levels, and
+       this loop is deliberately exempt from the off-level ceiling — so a season
+       with a few dressy evenings in it put 6 into the floor and then this loop
+       actively went and fetched level-6 tops, bottoms AND shoes on every single
+       rebuild. That is the ceiling's whole job being undone by the one door the
+       ceiling doesn't watch. Her rule, verbatim: "the rack should ONLY build
+       levels 2, 3, 4, 5 unless I request other levels for the rack / plan
+       future days" — so habit stocks the ordinary levels and only a DECLARED
+       plan stocks above them, the same split rackDeclaredLevels already draws.
+       ⚠️ Coverage is not lost: poolCoversLevel + planningPool's rescue widen to
+       the whole closet the instant she asks for a level the rack can't dress,
+       so an undeclared "Dressed Up" ask still returns a full sheet — out of her
+       closet, which is where clothes for rare days belong. */
+    if (lv > RACK_EVERYDAY_MAX && !declaredSet.has(lv)) continue;
     for (const slot of ["Tops", "Bottoms", "Shoes"]) {
       const covers = i => (itemFormalitySet(i) || []).includes(lv);
       const have = [...ids].map(id => itemById.get(id)).filter(i => i && slotOf(i) === slot && covers(i)).length;
@@ -1522,6 +1580,9 @@ function openFlagSheet(id) {
 }
 
 // ---- the rack screen (closet shelf, same shape as Worn / Hamper) ----
+// Session-only, and reset on every entry to the screen: the app never quietly
+// stays folded OR quietly stays open, same rule as _sugg.wholeCloset.
+let _rackExtrasOpen = false;
 function renderClosetRack() {
   const list = rackItems();
   const eff = rackEffective();
@@ -1559,16 +1620,33 @@ function renderClosetRack() {
        </div>`
     : "";
 
+  /* Everything below the three bands is BOOKKEEPING, not the rack (her ask:
+     "bottom part showing exclusions etc should be collapsible"). The bands are
+     the answer to "what's in play"; the second-look list, the keeps and the
+     taken-off list are all answers to "what have I told it", and each one is a
+     list she scrolls past every time to reach the Rebuild link. Collapsed by
+     default, count on the label so nothing goes invisible, session-only so it
+     never becomes another thing to maintain. */
+  const extras = secondBlock + rackPinnedListHtml() + rackOffSectionHtml();
+  const extraN = second.length + rackPinnedSet().size + rackOffList().length;
+  const extrasBlock = extras
+    ? `<div style="padding:18px 16px 0">
+         <button class="btn-sec" id="rackExtras" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px">
+           <span>Pieces you've weighed in on · ${extraN}</span>
+           <span class="muted" style="font-size:13px">${_rackExtrasOpen ? "Hide" : "Show"}</span>
+         </button>
+       </div>`
+      + (_rackExtrasOpen ? extras : "")
+    : "";
+
   const body = list.length
     ? sec("In rotation", "What you've actually been reaching for.", inRot)
       + sec("Steady", "You wear these — just not this week. This band exists so the middle of your wardrobe doesn't go invisible.", inSteady)
       + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, and they lean toward the kinds of days you actually have — clothes for rarer occasions take a slot or two at most.", inDorm)
-      + secondBlock
-      + rackPinnedListHtml()
-      + rackOffSectionHtml()
+      + extrasBlock
     : `<div class="placeholder" style="padding:40px 32px"><b>Rack not built yet</b>
         <div>It fills itself from what's in season and what you've been wearing.</div></div>`
-      + rackPinnedListHtml() + rackOffSectionHtml();
+      + extrasBlock;
   return clToolbar(`The rack · ${list.length}`, true, false)
     + `<div class="snote" style="padding:8px 16px 2px">${esc(note)} Open a piece to pull it in or push it out — you never have to maintain this.</div>`
     + body

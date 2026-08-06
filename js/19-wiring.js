@@ -540,7 +540,7 @@ function wireEvents() {
         preLoad: lw.dataset.laundryWash || null,
       });
     }
-    if (e.target.closest("[data-rack]")) { navDeeper("closet"); closetRack = true; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; rackEnsure().then(() => { if (closetRack) renderCloset(); }); return renderCloset(); }
+    if (e.target.closest("[data-rack]")) { navDeeper("closet"); closetRack = true; _rackExtrasOpen = false; closetHamper = false; closetWorn = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; rackEnsure().then(() => { if (closetRack) renderCloset(); }); return renderCloset(); }
     if (e.target.closest("[data-laundry]")) { navDeeper("closet"); closetHamper = true; hamperLoad = null; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     if (e.target.closest("[data-worn]")) { navDeeper("closet"); closetWorn = true; closetHamper = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null; return renderCloset(); }
     const lens = e.target.closest("[data-lens]");

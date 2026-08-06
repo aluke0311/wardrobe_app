@@ -978,6 +978,10 @@ function renderCloset() {
     await rackEnsure({ force: true });
     if (closetRack) renderCloset();
   };
+  // The fold over the second-look / kept-in / taken-off lists. Bookkeeping, not
+  // the rack itself — see the extrasBlock comment in renderClosetRack.
+  const rackEx = $("#rackExtras");
+  if (rackEx) rackEx.onclick = () => { _rackExtrasOpen = !_rackExtrasOpen; renderCloset(); };
   // "Worth a second look" rows → the label-it-yourself sheet (never a verdict).
   body.querySelectorAll("[data-rsecond]").forEach(b =>
     b.onclick = () => openRackSecondLook(b.dataset.rsecond));
