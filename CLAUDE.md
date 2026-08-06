@@ -227,14 +227,6 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
-> ⚠️ **THIS FILE IS STALE FOR 2026-08-05 (r1–r13).** That day shipped the rack
-> size dial, `RACK_ALGO`, `itemFormalityBase`, the dress-only rule, the
-> pack-by-LOOK key, `removeLookPiece`/`addLookPiece`, the week planner move into
-> Calendar and more — **none of it is written up below**. `RELEASE_NOTES` in
-> `js/01-config.js` is the only narrative record of those rounds; read it before
-> trusting a claim here about the rack, the pack or look editing. The
-> 2026-08-06 entry immediately below IS current.
-
 **2026-08-06 r1 — FOUR REPORTS. Selftest 330 → 337, run GREEN.** All 7 new cases
 mutation-checked red in the same session; **two were found VACUOUS by that check
 and rewritten**, which is the third and fourth time that has paid for itself.
@@ -331,6 +323,215 @@ session-only and reset on entry, same rule as `_sugg.wholeCloset`. Rendered and
 measured at **358 × 51px** in a 390px column — full-width buttons need an
 explicit `width`, and 22px in a detached host just means the app's CSS isn't
 loaded there.
+
+**2026-08-05 r1–r13 — THIRTEEN ROUNDS FROM HER LIVE USE. Written up 2026-08-06.**
+Shipped one deploy per fix, tests deliberately skipped at her instruction ("I'm
+close to my weekly usage limit — deploy often, skip tests until all is
+deployed"); the 2026-08-06 r1 session is what baselined and repaired the suite
+afterwards, which is where the 8 red rack cases it found came from. Verification
+here was a per-file + whole-bundle JavaScriptCore parse check plus **targeted
+arithmetic probes**, and three of the four hardest finds below came from a probe
+rather than from reading the code.
+
+⚠️ **THE HEELS TOOK FOUR ROUNDS AND ONLY THE MEASUREMENT ENDED IT.** She reported
+"so many heels" three times (r6 ceiling → r9 → r12). r6 and r9 both reasoned
+from the code and both were wrong about the cause. **`itemFormalityBase(i)`
+(r9)** is the answer: `itemFormalitySet`'s LAST step adds the modal level of the
+explicitly-tagged pieces she has co-worn, so imputed heels — `[6,8]` from the
+`SUBCAT_FORMALITY` seed and the name rule — became **`[3,6,8]`** after a few
+casual outings, and every ceiling was reading a minimum the nudge had already
+moved. The nudge is right for the SUGGESTER (a piece needs a plausible level to
+be paired at all); it is the wrong input for "has this earned a standing rack
+seat". ⚠️ An EXPLICIT array is returned untouched — that is her judgement.
+**Probe it before changing it:** 3/3 imputed heels excluded, boots and sneakers
+unaffected.
+
+⚠️ **THE RACK'S LEVEL RULES, in the order they were tightened.** All are
+`RACK_ALGO`-stamped (4 → 7 across the day; bump it whenever SELECTION changes).
+- **`RACK_DRESSY_FLOOR`(6) + `dressOnly`** (r6): a piece with no level below 6 is
+  off the rack. ⚠️ Judged on `itemFormalityBase`, not the nudged set.
+- **`offLevel` + `rackTypicalLevel`** (r9): the old ceiling only caught pieces
+  serving NONE of `rackNeededLevels`, whose floor is her **top three lived
+  levels** — so if 5 was among them a `[5,6,7]` piece was never even looked at.
+  A piece whose FLOOR is above her 75th-percentile lived level
+  (`RACK_TYPICAL_SHARE` 0.75) is now capped too.
+- ⚠️ **HABIT IS NOT A PLAN** (r12, her words: *"cannot be on the rack unless I
+  have planned something that requires that level"*). The exemption moved from
+  `rackNeededLevels` (declared ∪ habitual) to **`rackDeclaredLevels`** (declared
+  only). This is the one that finally bit; the previous two were exempting on
+  her own habits.
+- ⚠️ **WEARING IS NOT PLANNING** (r12): `rackForcedIds` forces anything worn in
+  14 days into rotation, so one dressy evening put the heels back for a
+  fortnight — the stretch she is LEAST likely to need them. Its **lived** half
+  skips dress-only; its **declared** half does not. **A pin still overrides
+  everything.**
+- ⚠️ Safe because `poolCoversLevel` + `planningPool`'s rescue already widen to
+  the whole closet the moment she asks for a level the rack can't dress.
+
+**RACK SIZE IS A DIAL (r1).** `RACK_SLOT_QUOTA` → **`RACK_SLOT_QUOTA_BASE` +
+`rackSlotQuota()`**, scaled by `rackTargetSize()` (Settings slider, 46–130).
+⚠️ Every band keeps a floor of 1 so a slot can never lose its dormant share.
+⚠️ The size is in `rackIsStale` (`st.size`) but deliberately **NOT** in
+`RACK_ALGO` — a size change is hers and immediate; bumping ALGO would restale
+every other stored rack too. `rackQuotaTotal2(size?)` reports the REAL total
+(per-band floors round up), because "58" on a rack that will be 62 is the kind
+of small lie that erodes every other number.
+
+⚠️ **A TRIP WEAR IS NOT A HOME WEAR (r2).** `rackWarmth` is pure recency over 60
+days, so a ten-day trip wrote ten days of wears for ~20 pieces at the top of the
+window and **the suitcase owned rotation for two months**. It now ranks on the
+most recent **HOME** wear, falling back to an away wear + `RACK_AWAY_PENALTY_DAYS`
+(21) — not zero, or the bug just inverts. `rackForcedIds` skips away days for the
+same reason. ⚠️ It reads its own `wearRows` (the r3 injectability lesson).
+
+**PINS EXPIRE (r2), which is the answer to "does it stay forever?"** Stored as
+`{id, d}` objects (legacy bare strings still read). A pin clears when she WEARS
+the piece — merit takes over via `rackWarmth`/`rackForcedIds` — or after
+`RACK_PIN_DAYS`(60) **HOME** days. ⚠️ `rackEnsure` must persist `st.pinned`
+unchanged, not a flattened id list, or every rebuild resets the clocks.
+
+⚠️ **RESET IS NOT A PIN (r10).** `rackReturnPiece` called `pullOntoRack`, so
+undoing a "not right now" silently spent a rack seat (pins bypass the quotas).
+**`rackResetPiece`** clears the exclusion and stops; **`rackUnpinPiece`** is its
+mirror; **`rackPinnedListHtml`** + **`rackOffList`/`rackOffSectionHtml`** make
+both sets visible — pins were write-only, and "will this come back?" is answered
+per piece (a push-out expires, `NO_RACK_TAG` doesn't). **`NO_RACK_TAG`
+("Keep off the rack", r6)** is narrower than `no-suggest` on purpose: the piece
+is still suggested when she asks for its level or it's in a capsule.
+**`pushOffRack` now tops the slot up** (`rackEnsure`, structural — never a tick).
+
+⚠️ **PACK: `PACK_COUNT_MAX` WAS EATING THE TIGHTNESS DIAL (r11) — three reports,
+and only a probe found it.** r9's `forceSolve` (below) was a real bug and not
+her bug. `packCounts` scaled ONLY the rate term, then took a `max` against the
+laundry and coverage floors, then clamped. Both ends swallow K: the max means
+the scaled term often isn't the one being read, and **`packSlotRates` derives
+her rate from what she ACTUALLY packed on past trips — she packs generously, so
+on a 7-day trip all five slots pinned to their caps at BOTH normal and cushion.**
+Identical bags. It only ever worked on short trips. `PACK_COUNT_MAX` is now the
+cap on what **normal** proposes; cushion may exceed it, lean may go under but
+never under the hard floors, and lean **floors** rather than rounds so a 2 can
+reach 1. Measured 26 / 34 / 43.
+- ⚠️ **`packLoadState({resolve})` sets `forceSolve`, consumed once by
+  `packEnsureSolve` (r9).** Inversion ③'s rehydrate guard is unconditional, and
+  cushion only GROWS the bag — so a stored assignment was always still contained
+  and the guard could never fail on the one path that needed it.
+- ⚠️ `openPackTightSheet` never solved before persisting, so `packPersist`'s
+  `if (st.res)` left the PREVIOUS tightness's outfits stored, and the toast then
+  read `res.stats` off null and threw **inside a `try/finally` with no `catch`**.
+
+⚠️ **AN OUTFIT IS ITS LOOK, NOT ITS PIECE SET (r13).** Her rule: *"an outfit
+cannot be exactly the same except shoes."* D2 said any differing piece makes two
+outfits distinct, expecting the optimiser to buy a second pair of shoes on
+merit. It bought them constantly — **swapping shoes adds one small piece and
+resets every repetition penalty at once**, so the solver satisfied both "K
+options per occasion" and "don't repeat" without changing what the outfit looks
+like. **`packLookKey` = the piece set minus Shoes**, used by `packDistinct`,
+`packOptionCount`, the solver's `prevDayCombos`/`usedCombos`/`todayCombos`,
+`packDiversify` (look reuse weighted far above shoe reuse) and the options sheet.
+⚠️ Deliberately NOT "every slot must differ" — reusing the same jeans all week is
+why repetition is charged on the visible half only. ⚠️ **The D2 comment predicted
+this exact failure and named this exact fix ("needs the visible core variant"),
+so the old selftest case 12 was written to hold the behaviour this replaces.**
+
+⚠️ **INVERSION ① IS NOT SELF-ENFORCING AFTER A SOLVE (r5).** Her report: *"hiking
+boots in a workout context that are not listed in the items screen"* — and they
+really weren't in the bag. `packCandidates` draws **level 1 from the whole
+closet** by design (her running shoes are Sneakers at `[2,3]`), so a solve can
+legitimately choose a piece that was never in `st.pack`, while `bySlot` — the
+items screen — is derived from `st.pack`, which the solver doesn't touch.
+`packEnsureSolve` now calls `packRepack` + `packRegroup` after solving.
+
+**THE PACK'S OUTFITS ARE GROUPED BY HER BUCKETS (r5).** Her report: the outfits,
+the occasions and the formalities didn't correspond. The screen rendered the
+PLACED view (one card per day) — a derived detail the solver needs for the
+laundry schedule and she never asked for. **`packBucketsHtml`** = one section per
+(context, level) she declared, holding exactly the count she asked for and saying
+so; flight days and floor filler get their own labelled sections rather than
+being mixed into hers. **`packOccCardHtml`** is extracted so the bucket view, the
+day view and the by-day planner share one card and one set of handlers;
+`packDaysFoldHtml` keeps the by-day view, folded. **`packOpenSuggest` /
+`packSetOccasionOutfit`** put the real suggester on every occasion, scoped to the
+suitcase with the sheet's own widen as "or from outside of it".
+⚠️ **No `planCtx`** — that would run the plan branch and write `capsules.plan`,
+the bulk look creation r5 (2026-08-04) removed.
+⚠️ **AN EMPTY STORED CONTEXT LIST IS A DECISION**, not "unset": `packSlate` fell
+back on `.length`, so clearing the list handed the app's proposal straight back.
+The sheet now says when the ticks are still a guess and offers Clear all.
+⚠️ **`packSlateAsPlans` carries `o.level` (r12)** — entries went over as contexts
+only, so the rack re-derived the level from `contextFormalityLevel` (her HISTORY
+for that context) and threw away the level she set FOR THIS TRIP.
+
+**HOME: ONE DAY CARD, TWO DATES (r6–r8).** `tomorrowCardHtml` → **`dayCardHtml(ds,
+{label, isToday})`**, so Today gets the identical card (planned outfit, else a
+generated one, weather, "you've dressed for this before") instead of a bare
+`logged-row`. ⚠️ **Every handler now reads `data-tm-date`** — each used to
+recompute `shiftDate(todayStr(), 1)` for itself, which is exactly what stops a
+card being shared. **`quickCtxChipHtml`/`openQuickContextSheet`** are the
+dropdown context button; they write the DAY PLAN (not a card-local filter) so the
+suggestion re-levels and the week planner sees the same value, and
+`tmPickClear` drops the now-wrong sticky pick.
+⚠️ **WHAT SHE WORE OUTRANKS WHAT THE APP WOULD SUGGEST (r9):** the card read only
+the plan, so logging from the calendar or a look left Home proposing something
+else. `dayGroups(today)` leads; the suggestion is demoted behind "Something else
+to wear?" (`_todayAltOpen`). Suppressed entirely in trip mode (r8) — the trip
+dash already is today.
+⚠️ **THE ATTENTION FOLD IS GONE (r6)**, her words: *"I don't want things hidden
+behind 'two more things' — just keep scrolling."* The one-thing-at-a-time
+hierarchy was my premise, not hers, and its real cost was that a prompt she'd
+have acted on sat behind a link naming nothing — the app looked calm by hiding
+work. `_homeAttnOpen` and `todayPlanRowsHtml` are gone.
+
+**PLAN THE WEEK MOVED INTO THE CALENDAR TAB (r7).** `calendarMode` = Month /
+Plan the week, sharing the day view; `renderWeekPlan(target, {embedded})` so
+`#tab-week` still works and `openWeekPlanSheet` routes to the calendar.
+⚠️ The month view installs `body.onclick` and the embedded view replaces that
+innerHTML, so the mode bar carries its own handler in both.
+⚠️ **"Outfit still to pick" was a LIE on any day she'd logged elsewhere** — the
+screen read the plan and never `wears`. **`loggedOnDay(d)`** fixes it. A context
+chip is on EVERY row (changing one context used to mean the whole day sheet),
+plus ✕ per entry, ✕ per day and Clear the whole week — each also clearing that
+day's sticky pick.
+
+**LAUNDRY IS AN ALWAYS-VISIBLE LENS (r3).** Her ask: *"a filter at the top when I
+add an item like available, but clean / clean + hamper / all — showing always so
+I don't have to click into the filters."* A real `laundry` dim on `FILTERS`
+(so the funnel inherits it) **plus** `laundryLensHtml(id, state, onChange?)`
+rendered persistently on the closet root/category/grid, the capsule add-items
+picker and the calendar +Clothing picker. One delegated capture-phase listener
+over a registry (`_laundryLensFns`), registered by the renderer itself so a new
+surface can't draw the row and forget to wire it. ⚠️ It deliberately does **not**
+touch STATUS — both surfaces already have a status lens beside it, so "All"
+means no laundry narrowing and the middle option is the hamper alone.
+⚠️ Adding a dim still means four places: `FILTERS`, `newFilterState`,
+`hasActiveFilter`, `filterActiveCount`.
+
+**EDITING WITH FEWER TAPS (r4).** ⚠️ **`removeSuggestionPiece` (✕) ≠
+`banSuggestionPiece` (⃠):** ⃠ bans and REFILLS the slot, which is the wrong
+answer for *"shoes from an outfit I'll wear at home"* — the app already models a
+shoeless look as `"home"`. Guarded by `outfitIncomplete` (via a `__probe__` entry
+in `outfitItemMap`) so it can never produce a look the health check would flag,
+and `suggCanRemove` hides the chip where it wouldn't work. On a look's Details
+page, **swipe a piece row left to remove it** + ＋ Add a piece
+(`removeLookPiece`/`addLookPiece`/`openLookAddPieceSheet`/`wireLookPieceSwipe`) —
+⚠️ these are what 2026-08-06 r1 then had to make same-day-wear-aware.
+
+**CAPSULES (r1).** Trips / Capsules are two tabs (`capsuleTab`), ⚠️ **split on
+DATES, not `kind`** — dates are what trip mode keys on everywhere else. ＋ New
+moved to the TOP, swipe-left deletes a row (`wireCapSwipe`, axis-locked so it
+can't hijack a vertical scroll), and the create form takes a **location**
+(`geocodeLocation`, written as `locations:[{…, from:null, to:null}]` = whole
+trip) so weather works from the moment a trip exists.
+**Also r1:** split/delete a look now names **wears BEFORE today** (`priorDays`) —
+her rule is *"almost always only want to delete it if there were no previous
+wears"*, so "other days" was the wrong fact; and **"use the default arrangement"
+no longer vanishes once a look is arranged** (it was gated on having no layout;
+it now reads Reset, with Undo on the toast).
+
+⚠️ **DEPLOY NOTE.** `.nojekyll` was added 2026-08-06 — the site is plain static
+files and Jekyll only adds a failure mode. (The r1 Pages failure itself was a
+**GitHub Actions major outage**, not content: three builds stuck at 0ms while
+every prior build took ~40s.)
+
 
 **2026-08-04 r6 — FOUR MORE REPORTS FROM THE SAME FEATURE.** Selftest 327 →
 **330**, run green; all 3 new cases mutation-checked red in the same session,
