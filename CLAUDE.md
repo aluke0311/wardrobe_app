@@ -227,6 +227,111 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+> ⚠️ **THIS FILE IS STALE FOR 2026-08-05 (r1–r13).** That day shipped the rack
+> size dial, `RACK_ALGO`, `itemFormalityBase`, the dress-only rule, the
+> pack-by-LOOK key, `removeLookPiece`/`addLookPiece`, the week planner move into
+> Calendar and more — **none of it is written up below**. `RELEASE_NOTES` in
+> `js/01-config.js` is the only narrative record of those rounds; read it before
+> trusting a claim here about the rack, the pack or look editing. The
+> 2026-08-06 entry immediately below IS current.
+
+**2026-08-06 r1 — FOUR REPORTS. Selftest 330 → 337, run GREEN.** All 7 new cases
+mutation-checked red in the same session; **two were found VACUOUS by that check
+and rewritten**, which is the third and fourth time that has paid for itself.
+
+⚠️ **EIGHT RACK CASES WERE ALREADY RED ON `main` BEFORE THIS SESSION** — left by
+2026-08-05 r11–r13. Baselined first (the documented rule), which is the only
+reason they didn't read as this round's regressions. Two causes, both worth
+knowing: `RACK_SLOT_QUOTA` became `rackSlotQuota()` with the size dial and four
+cases still named the constant; and three cases pick "an off-rack piece" with
+`items.find(not on the rack)`, which **silently started returning a DRESS-ONLY
+piece** once r12 excluded those — so cases about ordinary pieces became cases
+about a piece the rack is supposed to refuse, and two failed for the right reason
+while appearing to say the rack had become a cage. **The fixture drifted under
+the code.** Both fixtures' dressy banks are now `[5,6]` (dressy-LEAN, which is
+what `RACK_OFFLEVEL_SHARE` is actually about); `[6]` made every ceiling case
+vacuous under r12's stricter rule, and left "a dressy piece can still be a
+rediscovery pick" asserting the r1 rule r12 had replaced.
+
+⚠️ **THE PACK WAS BUILDING OPTIONS IT NEVER SPENT.** Her report: a 5-day trip,
+19 pieces, **four distinct outfits** — the same tee/pants/cardigan twice, the
+same dress twice. Two causes and **NEITHER FIX WORKS ALONE** (verified by
+mutating each separately; both alone go red):
+- **Stage A chooses against a pack that doesn't exist yet.** On day one every
+  candidate costs `added * 1000`; **by the third day of a level, re-wearing an
+  earlier look costs `PACK_REPEAT_ANY + PACK_REPEAT_TOP` = 550 while ANY new
+  piece costs 1000.** So repeating is cheaper than varying, by construction, at
+  every tightness — `repW` scales the losing side, so the dial cannot reach it.
+  It converges on ~2 looks per level. Stage B then raised option counts and
+  **never revisited the assignment**, so the options were carried, not worn.
+  **`packRepairAssign` (stage C)** re-walks the trip over the FINAL pack, where
+  `added` is 0 for everything and the repetition terms finally decide.
+- **Stage B's target was `K` per GROUP**, and four casual days are ONE group — so
+  the app guaranteed exactly two looks for four days and then correctly repeated
+  them. `optionTarget` scales it with the occasion count (`PACK_OPT_MAX` caps it).
+- ⚠️ **`PACK_REPAIR_STRENGTHS` is not belt-and-braces.** Pushing variety hard
+  spends the clean tolerance-1 tops early and leaves day five with nothing clean:
+  measured **4 → 6 distinct outfits AND 0 → 1 violation**, so the gate threw the
+  whole repair away and the fix silently did nothing. Strongest-first, take the
+  first clean improvement.
+- ⚠️ The repair **may never cost coverage or a clean day**, and **locked
+  occasions pass through untouched** (inversion ③). It is deterministic — stage A
+  has restarts because it searches; a repair that wobbled would read as churn.
+- ⚠️ **THE ROOMY FIXTURE DOES NOT REPRODUCE THIS** — three attempts at the case
+  passed against it while the defect was live. `scarceCloset` (few per slot, high
+  tolerance so only repetition is under test) reproduces it exactly: **7
+  occasions in 2 outfits with 6 options available** → 5 after.
+
+⚠️ **TRAVEL PLANS ARE NOT THE RACK'S BUSINESS, and she diagnosed it herself**
+(*"rack should not consider travel plans — a planned formal event on a trip does
+not have anything to do with the rack"*). Booking a trip writes its anchor events
+**straight into `dayplan`** (`saveCapsuleForm`), and a declared level is the ONE
+exemption from r12's dress-only filter — so **one shower on holiday moved every
+`[6,8]` piece she owns into the pool she dresses from AT HOME, for a fortnight.**
+`rackHomeDate` skips away days in `rackNeededLevels`, `rackDeclaredLevels` and
+`rackForcedIds`' declared half. ⚠️ `rackWarmth` and the lived half already did
+this for PAST away days — **this is that audit finished on the forward half**,
+the "when you add a trigger, audit them all" lesson arriving through `dayplan`.
+`RACK_ALGO` → 8.
+
+⚠️ **"THE RACK SHOULD ONLY BUILD LEVELS 2, 3, 4, 5 UNLESS I REQUEST OTHER
+LEVELS."** The formality top-up is **deliberately exempt from the off-level
+ceiling**, which made it the one door left open: `levels` unions declared plans
+with her top three LIVED levels, so a few dressy evenings put 6 in the floor and
+the top-up went shopping for level-6 tops, bottoms AND shoes on every rebuild —
+the ceiling's whole job undone by the one door it doesn't watch.
+`RACK_EVERYDAY_MAX`(5): habit stocks the ordinary levels, only a DECLARED plan
+goes above. ⚠️ Coverage is unaffected — `poolCoversLevel` + `planningPool`'s
+rescue already widen to the whole closet the moment she asks.
+⚠️ **The case for this was VACUOUS twice.** First on `withRackCloset`, whose
+dressy pieces are `[6]` and so can never be top-up material. Then, on the right
+fixture, with 40 injected level-6 days — at which point level 6 **legitimately
+becomes her typical day**, `rackTypicalLevel` rises to 6 and the ceiling
+correctly stops applying. "Habit" means a level that reaches the top-three floor,
+which one dressy evening a month already does; five days, not forty.
+
+⚠️ **A SAME-DAY EDIT IS A CORRECTION TO WHAT SHE WORE.** Her report, and she
+called it a major problem: *"removing an item from an outfit that I just logged
+(or adding one) does not change the 'what this changed' screen and it does not
+remove the item's wear."* `removeLookPiece`/`addLookPiece` shipped 2026-08-05
+under "a look's PIECES are what it is now, its WEARS are what happened" — still
+right for a look worn ten times over a year, **wrong for the one she logged an
+hour ago, where the edit IS her saying what left the closet.** The builder has
+drawn that line correctly since 2026-07-08, so this reuses it:
+`syncLookPieceEdit`/`afterLookPieceEdit` → `wearSyncCandidate` +
+`syncWearsToLook` (same-day syncs silently, 1–14 days offers).
+⚠️ **The wear screen reads `wears` at open time, so the ROWS are the fix** —
+there is nothing else to invalidate, and a second cache would only be a way for
+the two to drift. Undo re-adds the piece and re-syncs, symmetrically.
+
+**The rack screen's bookkeeping folds away** (her ask: *"bottom part showing
+exclusions etc should be collapsible"*). Second-look + kept-in + taken-off go
+behind one `#rackExtras` button carrying a count; `_rackExtrasOpen` is
+session-only and reset on entry, same rule as `_sugg.wholeCloset`. Rendered and
+measured at **358 × 51px** in a 390px column — full-width buttons need an
+explicit `width`, and 22px in a detached host just means the app's CSS isn't
+loaded there.
+
 **2026-08-04 r6 — FOUR MORE REPORTS FROM THE SAME FEATURE.** Selftest 327 →
 **330**, run green; all 3 new cases mutation-checked red in the same session,
 each reproducing her exact words. ⚠️ **Every one of these was a case of the app
@@ -2082,7 +2187,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-04 r6`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-06 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2429,7 +2534,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **330/330** (2026-08-04 r6, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **337/337** (2026-08-06 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
