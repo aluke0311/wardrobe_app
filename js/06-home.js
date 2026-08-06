@@ -538,7 +538,7 @@ const HOME_TILES = [
     icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
   { tab: "calendar", label: "Calendar",   sub: () => {
       const today = localISO(new Date());
-      const n = new Set(wears.filter(w => w.worn_on === today).map(w => w.item_id)).size;
+      const n = dayGroups(today).length;
       return n ? `${n} logged today` : "Nothing logged yet";
     },
     icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>` },

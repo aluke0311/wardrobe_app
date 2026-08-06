@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-06 r1";
+const APP_VERSION = "2026-08-06 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,9 @@ const APP_VERSION = "2026-08-06 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-06 r2", notes: [
+    "The Calendar tile on Home now counts what you logged as outfits, not pieces — a five-piece look said \"5 logged today\"; it now says \"1\"",
+  ] },
   { v: "2026-08-06 r1", notes: [
     "Removing a piece from an outfit you logged TODAY now removes that piece's wear too, and adding one adds it — so the \"what this wear changed\" screen agrees with what you actually wore. Editing a look from its details page never touched your wear history before, which was right for a look you wore last March and wrong for the one you logged an hour ago. Older wears still ask first, as they always did",
     "The pack stopped repeating itself. It was building a bag with several options per day and then never spending them — the outfits were chosen while the bag was still half empty, and at that point re-wearing yesterday's outfit is literally cheaper than reaching for anything not yet packed. It now re-picks the days once the bag is finished. Measured on a trip that came back with seven occasions in two outfits: five outfits, same bag",
