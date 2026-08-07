@@ -227,6 +227,139 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-06 r3 — TWO REPORTS, ONE TRIP. Selftest 337 → 349, run GREEN.** All 12
+new cases mutation-checked red in the same session; **four were found VACUOUS by
+that check and rewritten, and one measurement killed a fix I had already
+written.** Her words: *"building the pack now readds occasions that I didn't
+select and is still giving me two identical outfits for four days of the same
+context."*
+
+⚠️ **DIAGNOSED BY READING HER LIVE Stl TRIP IN THE BROWSER, NOT FROM THE CODE.**
+The code reading produced a plausible ranking that was WRONG about which cause
+dominated. Her actual trip (5 days, 2026-08-12→16): she ticked Home ×4, Workout
+×2, Friends ×2, Party/Shower ×1 = **9 occasions on a 5-day trip** whose other
+days were already claimed by two flights and two calendar events — leaving **2
+free days**, onto which all 9 were crammed. Home ×4 landed as two pairs, and the
+pair on each day was assigned the byte-identical look. **Four days, two outfits:
+the SLATE, not the solver.** Trip-wide variety was fine (9 distinct over 13).
+
+⚠️ **THE SPREADER ONLY EVER USED "FREE" DAYS.** `free` was computed once and then
+cycled with `k % pool.length`, so once those days were used it stacked a SECOND
+occasion of the same context on a day that already had one — and same-day
+duplicates **merge into one card on screen** while still costing laundry and
+options, so the day silently disappeared too. Now: least-loaded day, then fewest
+of THAT context, then earliest date, round-robin across contexts. ⚠️ **Flight
+days take overflow like any other day** — one extra occasion on a plane day is
+honest, and TRIP_BUILDER's travel-last warning was about ORDERING (② claims those
+days first), not about keeping them empty.
+
+⚠️ **`todayCombos` WAS WRITTEN AND NEVER READ.** A second occasion on a day paid
+nothing to repeat the first, and `added` was 0 because the pieces were already in
+the bag — repeating was strictly cheapest. Now charged via **`packOccKind`** at
+`PACK_REPEAT_DAY`, **unscaled by `repW`** like the consecutive-day floor.
+⚠️ **PER KIND, NOT PER DAY.** "One outfit across contexts = one entry" is
+dayplan's rule and the reason same-day cards merge — two DIFFERENT contexts
+sharing an outfit is a feature. Only the same context, or two undeclared days at
+one level, are charged.
+
+⚠️ **OCCASION IDS ARE CONTENT-DERIVED NOW (`packOccId`), AND THE OLD ONES WERE A
+BUG WITH TEETH.** `${date}#${index}` keyed the stored assignment, her locks and
+now her drops — so unticking a context renumbered everything after it, the
+rehydrate guard (which only asked "are the pieces still in the bag") passed, and
+**the removed occasion's outfit was handed to whatever moved into its slot.**
+- A `selected` occasion is **deliberately not date-anchored** — demand is a
+  multiset (D6), so unticking some OTHER context must not orphan it.
+- The level is in the key **only when she pinned it**; derived levels drift as
+  she logs wears, and a self-drifting id orphans occasions she never touched.
+- ⚠️ **`packOccId` falls back to the index when `_ident` is missing** — a
+  hand-built slate (fixtures) would otherwise collapse two occasions onto one id.
+  Found by two existing cases going red.
+
+⚠️ **THE REHYDRATE GUARD IS PER OCCASION, VIA TRANSIENT LOCKS.** Survivors (id
+present, pieces still in bag, `packOccSig` unchanged) are passed into `packSolve`
+as **locks**, which stage A already copies through and the repair already skips —
+so "keep what didn't change, solve what did" needed no new machinery.
+⚠️ **They are NEVER written to `rec.locked`** — that is her explicit arrangement,
+and polluting it would make "re-solve the unlocked ones" a permanent no-op.
+⚠️ **`packOccSig` CARRIES NO DATE.** It did at first, and that made unticking one
+context re-solve every OTHER context's outfits — removing a context re-spreads
+the rest, so their dates moved, so every signature broke. The date's job is the
+laundry SCHEDULE, which `packSchedule` recomputes anyway. No weather band either:
+weather loads async, so a band would make rehydration depend on a race.
+⚠️ Stage B's top-up now skips groups with no unlocked occasion, or adding one day
+buys option pieces for four settled ones.
+
+**`rec.dropped` — a calendar event can be taken OUT of the pack (her wedding).**
+Pass ① regenerates `dayplan` events on every build and the contexts sheet never
+listed them, so there was no way to say "not this trip".
+⚠️ **It never writes `dayplan`** — the event stays on her calendar, and the copy
+says so. ⚠️ Applied in **`packDemandFor`**, the one derivation all four callers
+now use (`packLoadState`, `packDiff`, `packPlanByDate`, `packMidTripWash`), and
+filtered on the **SLATE** so `packRack`/`packSlateAsPlans` see it too — a dropped
+occasion still stocking the trip rack is the 2026-08-06 r1 lesson in a new hat.
+⚠️ The floor pass runs AFTER the drop filter and skips dropped dates, or emptying
+a day just refills it. **A declared occasion also inherits the level she set for
+that context on this trip** — Stl carried Party/Shower at 4 (history) beside her
+own tick at 6.
+
+⚠️ **`PACK_ASSIGN_V`(2) + `packMigrateRecord`, hooked in `packAssignFromRecord`,
+NOT in `packLoadState`** — the trip dash reaches the stored assignment through
+`packMidTripWash`/`packPlanByDate` without ever loading pack state.
+⚠️ **IT DECIDES FROM THE KEYS, NOT FROM THE MISSING STAMP.** A record written in
+the new scheme but unstamped would otherwise have every still-correct key looked
+up in a legacy map, miss, and be **silently emptied**. Legacy keys are exactly
+`YYYY-MM-DD#n`; every new one carries a `|`. Both directions are pinned.
+
+⚠️ **THE OUTFITS WERE NEVER BEING SAVED.** `packPersist` only writes `assign`
+when `st.res` exists, and `openPackPlan`'s `if (resolve) await packPersist(cid)`
+ran before the lazy `packEnsureSolve` — verified on her live record: `built` set,
+`assign` absent. So every open re-solved from scratch, i.e. inversion ③ was not
+actually holding and the plan could shift between two opens.
+
+**LEAN IS A SMALLER BAG, NOT A REPEATED OUTFIT (her decision).** Told that lean
+meant "repeat every other day" she said: *"same as normal just a smaller bag.
+small numbers of clothes can make lots of different outfits."* She's right, and
+it's the better model — distinct looks are a RECOMBINATION problem. **A different
+outfit per occasion is the floor at every tightness**; K buys spare capacity
+(lean +0, normal +1, cushion +2). `packOptionTarget` is **hoisted out of
+packSolve so the policy is directly assertable** — a case written against its
+downstream effect passed under a mutation restoring the old formula, because on
+every fixture available the target isn't the binding constraint.
+
+**`packDemandKey` (level+leg) is split from the candidate key (level+leg+band).**
+The band is a CACHE key; keying the occasion COUNT on it split four mild days into
+two groups of two, halving the target and letting both be satisfied by the same
+two looks. `packRefresh` keyed on `occ.level` alone — a third grouping, and the
+one the rehydrate path shows most.
+
+**Stage C's gate is per group and no longer breaks on the first improvement.**
+`packAssignVariety` returns `byGroup`/`deficit`/`maxDeficit`; all three strengths
+are evaluated and the best legal one wins on `sum(deficit)`, then `maxDeficit`,
+then trip-wide distinct. **`maxDeficit` is the term that fixes it** — a repair
+improving only the dressy evening used to satisfy a trip-wide count and `break`.
+**`res.extras`** now records stage B's spares so `packRepack` stops deleting
+them, and **`packRepack` writes `st.pack` too**, not only `st.res.pack` (the r5
+"the pack is the union of the outfits' pieces" fix was only half-wired).
+
+⚠️ **A FIX I WROTE AND THEN DELETED, BECAUSE I MEASURED IT.** Stage B's add pool
+is `rackIds` minus what stage A used, and the app passes the BAG as `rackIds` —
+so it can only reshuffle within the bag. That looks exactly like the r1 bug, and
+a version passing the wide trip rack was written. **On every configuration tried
+— roomy and scarce closets, 5/8/10-day trips, lean through cushion — stage B
+added ZERO pieces from outside the bag**, because `packFill` already builds a bag
+richer than the option target. Unexercised, and its only reachable effect would
+be growing the bag past the slot counts she set. **The evidence to bring, if a
+future round wants it, is a fixture where `packOptionCount` on the filled bag
+comes in UNDER `optionTarget`.**
+
+⚠️ **THREE THINGS WERE ONLY FOUND BY RENDERING THE SCREENS.** "Wedding" appeared
+**twice** in the contexts sheet — once in the browse list of every context she
+owns, once as the actual calendar event, with the event buried under a dozen rows
+(the calendar/floor sections now sit ABOVE "Everything else"); the drop button
+measured 114px in a 390px column; and the four Home days came back as four
+distinct tops over shared jeans and shoes, which is what confirmed the fix rather
+than any assertion.
+
 **2026-08-06 r1 — FOUR REPORTS. Selftest 330 → 337, run GREEN.** All 7 new cases
 mutation-checked red in the same session; **two were found VACUOUS by that check
 and rewritten**, which is the third and fourth time that has paid for itself.
@@ -2735,7 +2868,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **337/337** (2026-08-06 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **349/349** (2026-08-06 r3, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

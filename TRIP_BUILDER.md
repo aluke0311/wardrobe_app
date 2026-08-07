@@ -9,7 +9,27 @@ got built; deviations found during the build are marked **BUILT DIFFERENTLY**.
 
 **Decision D2 is CONFIRMED** by its gate case: "distinct = any piece differs"
 does force shoes for both formality bands on a 10-day trip with two dressy
-evenings. No per-slot floor, no shoe cap.
+evenings. No per-slot floor, no shoe cap. (⚠️ D2 was later NARROWED — 2026-08-05
+r13 made an outfit its LOOK, the piece set minus Shoes; see `packLookKey`.)
+
+**REVISED 2026-08-06 r3 — read the CLAUDE.md entry for the full account.** Four
+decisions in this document changed, all from her live Stl trip:
+- **D5 / the tightness dial no longer buys repetition.** Lean used to target
+  `ceil(n/2)` looks — four days of one context, two outfits, by design. Her call:
+  *"same as normal just a smaller bag."* A different outfit per occasion is the
+  floor at every tightness now; K buys spare capacity above it
+  (`packOptionTarget`).
+- **D6 / placement.** Occasions spread to the LEAST-LOADED day, not round-robin
+  over a once-computed list of free days — which stacked a second occasion of the
+  same context onto a day that already had one. Flight days take overflow like
+  any other day; the "travel days are claimed first" rule in §4 is about
+  ORDERING, not about keeping them empty.
+- **Occasion identity is content-derived** (`packOccId`), not `${date}#${index}`.
+  A `selected` occasion is deliberately not date-anchored, because demand is a
+  multiset and re-spreading must not orphan it.
+- **A declared (calendar) occasion can be dropped from the pack** (`rec.dropped`)
+  without touching `dayplan`. Pass ① regenerates them on every build, so without
+  this there was no way to say "not this trip".
 
 **BUILT DIFFERENTLY — five things the build changed:**
 1. **The greedy walks the trip in DATE ORDER with a running wear counter.** §6

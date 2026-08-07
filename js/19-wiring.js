@@ -752,6 +752,12 @@ function wireEvents() {
     const packSug = e.target.closest("[data-pack-suggest]");
     if (packSug) return packOpenSuggest(packSug.dataset.packSuggest);
     if (e.target.closest("[data-pack-ctx]")) return openPackContexts();
+    // ⚠️ dropocc = take an OCCASION out of the trip; data-pack-drop below is a PIECE.
+    const packDropOcc = e.target.closest("[data-pack-dropocc]");
+    if (packDropOcc) { e.stopPropagation(); return packDropOccasion(packDropOcc.dataset.packDropocc); }
+    const packDropBk = e.target.closest("[data-pack-dropbucket]");
+    if (packDropBk) { e.stopPropagation(); return packDropBucket(packDropBk.dataset.packDropbucket); }
+    if (e.target.closest("[data-pack-undrop]")) return packUndropAll();
     if (e.target.closest("[data-pack-daysfold]")) { _packDaysOpen = !_packDaysOpen; return renderCapsules(); }
     // The by-day planner shows the pack's outfits too, so this fires from there.
     const packWore = e.target.closest("[data-pack-wore]");

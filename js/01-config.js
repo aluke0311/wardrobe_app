@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-06 r2";
+const APP_VERSION = "2026-08-06 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,15 @@ const APP_VERSION = "2026-08-06 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-06 r3", notes: [
+    "Occasions now spread across the whole trip instead of piling onto the days nothing else had claimed. On your St. Louis trip you'd asked for nine occasions over five days, two of which were free — so four Home days became two days holding two Home occasions each, and each pair got the identical outfit. That's where \"two outfits for four days\" came from: the day list, not the outfit picker",
+    "Two occasions on one day can no longer come back in the same clothes when they're the same kind of occasion. Different contexts sharing one outfit is still fine — that's one outfit across two things, and it shows as one card",
+    "An event on your calendar can be taken out of a trip's packing. A wedding on a trip date was regenerating on every build with nowhere to say \"not this trip\", and it wasn't even listed under What's happening. It is now, and unticking it only removes it from the packing — it stays on your calendar",
+    "You can also drop a day the app filled in for you, and leave it with nothing planned",
+    "Unticking a context no longer hands its outfit to a different day. Occasions were identified by their position, so removing one renumbered the rest and the outfits shuffled underneath them. The days you didn't touch now keep exactly what they had",
+    "The pack's outfits are actually saved now. They weren't — every time you opened a built pack it solved again from scratch, so the plan could change when you'd changed nothing",
+    "Lean means a smaller bag, not a repeated outfit. It used to aim for half as many looks as you had days; all three settings now aim for a different outfit each time, and the dial changes how much spare you carry",
+  ] },
   { v: "2026-08-06 r2", notes: [
     "The Calendar tile on Home now counts what you logged as outfits, not pieces — a five-piece look said \"5 logged today\"; it now says \"1\"",
   ] },

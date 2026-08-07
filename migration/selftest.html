@@ -3105,6 +3105,305 @@ async function run() {
       ? true : `${v.placed} occasions dressed as only ${v.distinct} distinct outfits`;
   }, scarceCloset));
 
+  /* ================= 2026-08-06 r2: her Stl trip =========================
+     Two reports, one trip: the pack planned for a wedding she never selected,
+     and four days of one context came back as two identical outfits.
+
+     ⚠️ THESE DRIVE THE APP PATH (packLoadState → packEnsureSolve), NOT packSolve
+     DIRECTLY, and that distinction is the whole reason the r1 fix shipped
+     broken. `solveFor` hands packSolve the wide trip rack; the app hands it the
+     already-built BAG, so stage B had nothing to add and gave up silently while
+     the suite went green. A harness that can't reach the code she runs is a
+     harness that certifies the wrong thing. */
+  const appSolve = (c, o = {}) => {
+    W.capsuleId = c.id;
+    W.kvData.set("pack:" + c.id, Object.assign({
+      contexts: o.tripContexts === undefined ? null : o.tripContexts,
+      K: o.K == null ? 2 : o.K, assignV: 2,
+    }, o.rec || {}));
+    const st = W.packLoadState(c.id, { resolve: o.resolve !== false, K: o.K == null ? 2 : o.K });
+    if (st) W.packEnsureSolve(st);
+    return st;
+  };
+
+  t("the app path spends the options it builds", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const st = appSolve(c, { K: 2, tripContexts: [{ ctx: "Errands", n: 5 }] });
+    if (!st) return "no pack state";
+    const v = W.packAssignVariety(st.demand, st.res.assign);
+    if (v.placed < 6) return `fixture drift: only ${v.placed} occasions were dressed`;
+    // ⚠️ Vacuity guard: if the BAG can't make four looks the assertion below is
+    // about the closet's poverty, not about whether the solver spends what it has.
+    const occ = st.demand.find(o => o.source === "selected") || st.demand[0];
+    const built = W.packOptionCount(occ, new W.Set(st.pack), { wxFor: null });
+    if (built < 4) return `vacuous: the bag only offers ${built} looks for that group`;
+    return v.distinct >= 4
+      ? true : `${v.placed} occasions dressed as only ${v.distinct} distinct outfits`;
+  }, Object.assign({ capsules: [packTrip(5)] }, scarceCloset)));
+
+  /* ⚠️ LEAN MEANS A SMALLER BAG, NOT A REPEATED OUTFIT (her decision,
+     2026-08-06 r2). The old target was `ceil(n/2)` at lean — four days of one
+     context asked for two looks and got exactly that, by design, and the design
+     was wrong: *"same as normal just a smaller bag. small numbers of clothes
+     can make lots of different outfits."* Distinct-per-occasion is the floor at
+     every tightness now; K buys spare capacity above it. */
+  /* ⚠️ Asserts the POLICY, not a downstream outcome. The first version of this
+     case measured distinct outfits at lean and passed under a mutation that put
+     the old `ceil(n/2)` formula back — on every fixture here the target isn't
+     the binding constraint, so the effect is invisible and only the contract
+     can be tested. That is why packOptionTarget is hoisted out of packSolve. */
+  t("lean asks for a smaller bag, not a repeated outfit", () => {
+    const L = W.PACK_OPTIONS.lean, N = W.PACK_OPTIONS.normal, C = W.PACK_OPTIONS.cushion;
+    const bad = [];
+    // Four days of one context want four looks at EVERY tightness; the dial
+    // only moves how much spare capacity sits above that.
+    if (W.packOptionTarget(4, L) !== 4) bad.push(`lean(4)=${W.packOptionTarget(4, L)} want 4`);
+    if (W.packOptionTarget(4, N) !== 5) bad.push(`normal(4)=${W.packOptionTarget(4, N)} want 5`);
+    if (W.packOptionTarget(4, C) !== 6) bad.push(`cushion(4)=${W.packOptionTarget(4, C)} want 6`);
+    // ⚠️ Still capped — a fortnight at one level must not chase fourteen looks.
+    if (W.packOptionTarget(20, C) !== W.PACK_OPT_MAX) bad.push(`no cap at 20`);
+    return bad.length ? bad.join("; ") : true;
+  });
+
+  // The spares stage B bought have to still be in the bag afterwards, or the
+  // option count it promised falls back the next time anything reads it.
+  t("options promised by the solve are still in the bag", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const st = appSolve(c, { K: 3, tripContexts: [{ ctx: "Errands", n: 5 }] });
+    if (!st) return "no pack state";
+    const inPack = new W.Set(st.pack);      // ⚠️ st.pack, not res.pack — catches packRepack
+    for (const o of st.demand) {
+      const promised = st.res.options.get(o.id) || 0;
+      if (!promised) continue;
+      const actual = W.packOptionCount(o, inPack, { wxFor: null });
+      if (actual < promised) return `promised ${promised} options, bag makes ${actual}`;
+    }
+    return true;
+  }, Object.assign({ capsules: [packTrip(5)] }, scarceCloset)));
+
+  /* ⚠️ HER SECOND REPORT, AND THE CAUSE WAS THE SLATE, NOT THE SOLVER. Nine
+     occasions asked for on a 5-day trip whose other days were taken by flights
+     and calendar events left two free days, and the spreader cycled ONLY those
+     — so Home×4 became two pairs on two days, and a same-day pair costs nothing
+     to repeat. Four days, two outfits, exactly as reported. */
+  t("more occasions than free days spread across the whole trip", () => withPackCloset(() => {
+    const c = packTrip(5);
+    const slate = W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+    const demand = W.packDemand(slate);
+    const picked = demand.filter(o => o.source === "selected");
+    if (picked.length !== 4) return `vacuous: ${picked.length} selected occasions, expected 4`;
+    for (const s of slate) {
+      const byCtx = new W.Map();
+      for (const o of s.occasions) {
+        if (!o.context) continue;
+        byCtx.set(o.context, (byCtx.get(o.context) || 0) + 1);
+        if (byCtx.get(o.context) > 1) return `${s.date} carries ${byCtx.get(o.context)} × ${o.context}`;
+      }
+    }
+    return true;
+  }));
+
+  // And when a day genuinely does carry two of one kind, they must not come
+  // back in identical clothes — the cost function never used to read today.
+  t("two same-context occasions on one day get different outfits", () => withPackCloset(() => {
+    const c = packTrip(2);
+    const slate = W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+    const demand = W.packDemand(slate);
+    const dayOf = new W.Map();
+    for (const o of demand) {
+      if (o.context !== "Errands") continue;
+      dayOf.set(o.date, (dayOf.get(o.date) || []).concat([o]));
+    }
+    const pair = [...dayOf.values()].find(a => a.length > 1);
+    if (!pair) return "vacuous: no day carries two Errands occasions";
+    const rack = W.packRack(c, slate);
+    const res = W.packSolve({ c, demand, rack, restarts: 12, K: 2 });
+    const looks = pair.map(o => res.assign.get(o.id)).filter(Boolean).map(cd => W.packLookKey(cd.ids));
+    if (looks.length < 2) return "vacuous: the pair wasn't dressed";
+    return looks[0] !== looks[1] ? true : `both wore ${looks[0]}`;
+  }, scarceCloset));
+
+  /* ---- occasions she didn't select ---- */
+
+  t("a calendar event can be taken out of the pack without touching the calendar", () => {
+    const c = packTrip(4);
+    const plan = { [D(3)]: [{ contexts: ["Wedding"], outfit: null }] };
+    return withPackCloset(() => {
+      const before = JSON.stringify(W.kvData.get("dayplan"));
+      W.kvData.set("pack:" + c.id, { built: today, assignV: 2, contexts: [] });
+      const dec = W.packDemandFor(c.id, c).demand.filter(o => o.source === "declared");
+      if (dec.length !== 1) return `vacuous: ${dec.length} declared occasions, expected 1`;
+      W.kvData.set("pack:" + c.id, { built: today, assignV: 2, contexts: [], dropped: [dec[0].id] });
+      const after = W.packDemandFor(c.id, c);
+      const stillThere = after.demand.some(o => o.id === dec[0].id);
+      /* ⚠️ The SLATE too, not just the demand: packRack and packSlateAsPlans read
+         the slate, and a dropped occasion that still stocking the rack is the
+         travel-plans-in-the-home-rack bug in a new hat.
+         ⚠️ The day is NOT expected to be empty — dropping the wedding makes it
+         an ordinary day, so the floor pass fills it and the rack should hear
+         about THAT. What must be gone is the wedding's own level. */
+      const inPlans = W.packSlateAsPlans(after.slate)[D(3)] || [];
+      const stillDressy = inPlans.some(e => e.level === dec[0].level
+        || (e.contexts || []).includes("Wedding"));
+      const dayplanIntact = JSON.stringify(W.kvData.get("dayplan")) === before;
+      return (!stillThere && !stillDressy && dayplanIntact)
+        ? true : `inDemand=${stillThere} rackStillHears=${stillDressy} calendarIntact=${dayplanIntact}`;
+    }, { capsules: [c], dayplan: plan });
+  });
+
+  t("a day she drops is not re-invented by the floor pass", () => withPackCloset(() => {
+    const c = packTrip(5);
+    W.kvData.set("pack:" + c.id, { built: today, assignV: 2, contexts: [] });
+    const floors = W.packDemandFor(c.id, c).demand.filter(o => o.source === "floor");
+    if (floors.length < 2) return `vacuous: ${floors.length} floor days, expected 2+`;
+    const drop = floors.slice(0, 2).map(o => o.id);
+    W.kvData.set("pack:" + c.id, { built: today, assignV: 2, contexts: [], dropped: drop });
+    const after = W.packDemandFor(c.id, c).demand;
+    const bare = new W.Set(drop.map(id => id.split("|")[0]));
+    const stillDressed = after.filter(o => bare.has(o.date));
+    const others = after.filter(o => o.source === "floor").length;
+    return (!stillDressed.length && others === floors.length - 2)
+      ? true : `dropped days still dressed=${stillDressed.length} remainingFloors=${others}`;
+  }, { capsules: [packTrip(5)] }));
+
+  /* ---- occasion identity ---- */
+
+  /* ⚠️ Positional ids (`${date}#${index}`) meant unticking a context renumbered
+     everything after it, and the rehydrate guard — which only asked whether the
+     pieces were still in the bag — happily handed the REMOVED occasion's outfit
+     to whatever moved into its slot. She saw the outfit she'd deleted, relabelled. */
+  /* ⚠️ THE STORED OUTFITS ARE HAND-PICKED, NOT WHAT THE SOLVER WOULD CHOOSE, and
+     that is the whole design of these two cases. A first version stored the
+     solver's own answer and passed under every mutation — including one that
+     removed the partial-rehydrate machinery outright — because the solver is
+     deterministic and simply reproduced the same picks. It asserted nothing.
+     A deliberately odd assignment can only survive by being READ, never by
+     being recomputed. */
+  const HAND_WORK = ["blo0", "pnt0", "fla0"];       // a Work outfit, level 5
+  const HAND_ERR = ["tee7", "jea2", "snk2"];        // an Errands outfit, level 3
+  const storeAssign = (c, demand, pick, contexts) => {
+    const assign = {}, sig = {};
+    for (const o of demand) {
+      const ids = pick(o);
+      if (ids) assign[o.id] = ids.slice().sort();
+      sig[o.id] = W.packOccSig(o);
+    }
+    W.kvData.set("pack:" + c.id, { built: today, assignV: 2, K: 2,
+                                   pieces: W.items.map(i => i.id),
+                                   contexts, assign, occSig: sig });
+    W._packState = null;
+    return assign;
+  };
+
+  t("unticking a context leaves the others' outfits exactly where they were", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const both = [{ ctx: "Errands", n: 2 }, { ctx: "Work", n: 2 }];
+      const demand = W.packDemandFor(c.id, c, { tripContexts: both }).demand;
+      const work = demand.filter(o => o.context === "Work");
+      if (work.length !== 2) return `vacuous: ${work.length} Work occasions`;
+      storeAssign(c, demand, o => o.context === "Work" ? HAND_WORK
+        : o.context === "Errands" ? HAND_ERR : HAND_ERR, [{ ctx: "Work", n: 2 }]);
+      const st2 = W.packLoadState(c.id);
+      W.packEnsureSolve(st2);
+      for (const o of work) {
+        const cd = st2.res.assign.get(o.id);
+        if (!cd) return `Work occasion ${o.id} lost its outfit`;
+        if (cd.ids.join(",") !== HAND_WORK.slice().sort().join(","))
+          return `Work occasion ${o.id} was re-solved: ${cd.ids.join(",")}`;
+      }
+      return st2.demand.some(o => o.context === "Errands") ? "Errands survived the untick" : true;
+    }, { capsules: [c] });
+  });
+
+  t("adding a context keeps the settled days and dresses the new one", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const one = [{ ctx: "Errands", n: 2 }];
+      const demand = W.packDemandFor(c.id, c, { tripContexts: one }).demand;
+      const err = demand.filter(o => o.context === "Errands");
+      if (err.length !== 2) return `vacuous: ${err.length} Errands occasions`;
+      storeAssign(c, demand, () => HAND_ERR,
+        [{ ctx: "Errands", n: 2 }, { ctx: "Work", n: 1 }]);
+      const st2 = W.packLoadState(c.id);
+      W.packEnsureSolve(st2);
+      /* ⚠️ BOTH halves, in one case. The two failure modes are opposite —
+         "nothing re-solved" and "everything re-solved" — and either one alone
+         passes a one-sided assertion. */
+      for (const o of err) {
+        const cd = st2.res.assign.get(o.id);
+        if (!cd || cd.ids.join(",") !== HAND_ERR.slice().sort().join(","))
+          return `a settled Errands day was re-solved`;
+      }
+      const work = st2.demand.filter(o => o.context === "Work");
+      if (work.length !== 1) return `vacuous: ${work.length} Work occasions after the edit`;
+      return st2.res.assign.get(work[0].id) ? true : "the new Work occasion was left undressed";
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ The one that stops the identity fix becoming a re-solve-on-every-open
+     bug, which would be strictly worse than what it fixes. */
+  t("reopening a solved pack does not re-enter the solver", () => {
+    const c = packTrip(5);
+    return withPackCloset(() => {
+      const st = appSolve(c, { K: 2, tripContexts: [{ ctx: "Errands", n: 3 }] });
+      if (!st) return "no pack state";
+      const before = st.demand.map(o => W.packLookKey((st.res.assign.get(o.id) || { ids: [] }).ids));
+      const assign = {}; const sig = {};
+      for (const [id, cd] of st.res.assign) assign[id] = cd.ids;
+      for (const o of st.demand) sig[o.id] = W.packOccSig(o);
+      W.kvData.set("pack:" + c.id, { built: today, assignV: 2, K: 2, pieces: st.pack,
+                                     contexts: [{ ctx: "Errands", n: 3 }], assign, occSig: sig });
+      W._packState = null;
+      const real = W.packSolve;
+      let calls = 0;
+      W.packSolve = function (...a) { calls++; return real.apply(this, a); };
+      try {
+        const st2 = W.packLoadState(c.id);
+        W.packEnsureSolve(st2);
+        const after = st2.demand.map(o => W.packLookKey((st2.res.assign.get(o.id) || { ids: [] }).ids));
+        if (calls !== 0) return `packSolve ran ${calls}× on a pure reopen`;
+        return before.join("|") === after.join("|") ? true : "the outfits moved without a solve";
+      } finally { W.packSolve = real; }
+    }, { capsules: [c] });
+  });
+
+  t("a record keyed by the old positional ids is remapped, not emptied", () => {
+    const c = packTrip(4);
+    return withPackCloset(() => {
+      const legacy = W.packDemand(W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 2 }],
+                                                   legacyPlacement: true }), { legacyIds: true });
+      const target = legacy.find(o => o.date === D(2)) || legacy[0];
+      W.kvData.set("pack:" + c.id, { built: today, K: 2, contexts: [{ ctx: "Errands", n: 2 }],
+                                     assign: { [target.id]: ["tee0", "jea0", "snk0"] } });
+      const stored = W.packAssignFromRecord(c.id);          // triggers the migration
+      const rec = W.kvData.get("pack:" + c.id);
+      if (rec.assignV !== 2) return `record not stamped: assignV=${rec.assignV}`;
+      if (stored.size !== 1) return `assignment lost: ${stored.size} entries after migrating`;
+      // The same outfit must still land on the same DAY.
+      const demand = W.packDemandFor(c.id, c).demand;
+      const on = demand.filter(o => stored.has(o.id));
+      return (on.length === 1 && on[0].date === target.date)
+        ? true : `moved to ${on.map(o => o.date).join(",") || "nowhere"}, expected ${target.date}`;
+    }, { capsules: [c] });
+  });
+
+  // ⚠️ The opposite failure, and the more dangerous one: a record already in the
+  // new scheme but never stamped must NOT be run through the legacy map, whose
+  // every lookup would miss and silently empty her outfits.
+  t("an unstamped new-scheme record is stamped, not wiped", () => {
+    const c = packTrip(4);
+    return withPackCloset(() => {
+      const demand = W.packDemand(W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 2 }] }));
+      const occ = demand[0];
+      W.kvData.set("pack:" + c.id, { built: today, K: 2, contexts: [{ ctx: "Errands", n: 2 }],
+                                     assign: { [occ.id]: ["tee0", "jea0", "snk0"] } });
+      const stored = W.packAssignFromRecord(c.id);
+      return (stored.size === 1 && stored.has(occ.id) && W.kvData.get("pack:" + c.id).assignV === 2)
+        ? true : `size=${stored.size} kept=${stored.has(occ.id)}`;
+    }, { capsules: [c] });
+  });
+
   /* ⚠️ The repair must never buy variety with something that matters more, and
      this is not a hypothetical: measured on the ROOMY fixture, pushing variety
      hard spends the clean tolerance-1 tops early and leaves day five with

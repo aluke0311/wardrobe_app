@@ -24,6 +24,13 @@
    =================================================================== */
 
 const PACK_KEY_PREFIX = "pack:";        // kv: the solve record, per capsule
+/* The OCCASION-ID SCHEME the stored assignment is keyed by. 1 = the positional
+   `${date}#${index}` ids, 2 = content-derived (see packOccId).
+   ⚠️ Deliberately NOT a PACK_ALGO. RACK_ALGO exists because the rack is cached
+   derived state that SHOULD be thrown away when the algorithm changes; the pack
+   record is her state (inversion ③) and re-deriving it on a deploy is exactly
+   what must not happen. This is a one-shot remap marker, not a staleness stamp. */
+const PACK_ASSIGN_V = 2;
 
 // Options per occasion (D5). This is the tightness dial, and it is what makes
 // "minimize pack size" SAFE as an objective — K carries the variety requirement
@@ -179,6 +186,47 @@ function packTripContexts(cid) {
 }
 async function setPackTripContexts(cid, list) {
   await savePackRecord(cid, { contexts: Array.isArray(list) ? list : null });
+  packInvalidateState(cid);
+}
+
+/* ---- occasions she's dropped (2026-08-06 r2) ----------------------------
+   Her report: the pack plans for a wedding she never selected. It came from a
+   `dayplan` entry — a calendar event on a trip date — which pass ① regenerates
+   on every single build, and which the "What's happening" sheet doesn't list,
+   so there was no way to say "not part of this trip".
+   ⚠️ PACK-SCOPED, AND IT NEVER WRITES `dayplan`. The event stays on her
+   calendar; this only says it isn't part of the packing. An app that deleted
+   her calendar entry to satisfy a packing screen would be the app arguing with
+   her, which she has already reported once. */
+function packDroppedOccasions(cid) {
+  const v = packRecord(cid).dropped;
+  return new Set(Array.isArray(v) ? v.filter(x => typeof x === "string") : []);
+}
+async function setPackDropped(cid, ids) {
+  await savePackRecord(cid, { dropped: [...(ids || [])] });
+  packInvalidateState(cid);
+}
+
+/* ONE derivation, every surface. The slate and demand were built independently
+   in three places, so a filter applied to only one of them would leave dropped
+   occasions showing on the others — the same "two surfaces, one derivation"
+   rule tripRecapData follows. */
+function packDemandFor(cid, c, { wearRows = null, tripContexts = undefined } = {}) {
+  const cap = c || capsuleById.get(cid);
+  if (!cap) return { slate: [], demand: [] };
+  const slate = packSlate(cap, {
+    wearRows,
+    tripContexts: tripContexts === undefined ? packTripContexts(cid) : tripContexts,
+    dropped: packDroppedOccasions(cid),
+  });
+  return { slate, demand: packDemand(slate) };
+}
+
+/* Anything that changes what the trip CONTAINS must drop the cached screen
+   state, or packStateReady's `_packState.cid === cid` short-circuit serves the
+   old demand to every handler reachable from the by-day planner and the dash. */
+function packInvalidateState(cid) {
+  if (_packState && _packState.cid === cid) _packState = null;
 }
 
 /* What to tick when she opens the list for the first time. The app proposes and
@@ -216,7 +264,8 @@ function packSuggestTripContexts(c, { wearRows = null, today = null } = {}) {
 
    Placement across days is computed (the laundry schedule needs dates) but never
    asked for. */
-function packSlate(c, { plans = null, wearRows = null, today = null, tripContexts = null } = {}) {
+function packSlate(c, { plans = null, wearRows = null, today = null, tripContexts = null,
+                        dropped = null, legacyPlacement = false } = {}) {
   const dates = tripDates(c);
   if (!dates.length) return [];
   const rows = wearRows || wears;
@@ -227,17 +276,44 @@ function packSlate(c, { plans = null, wearRows = null, today = null, tripContext
   for (const leg of packLegsOrWhole(c)) for (const d of leg.dates) legOf.set(d, leg);
   const slate = dates.map(date => ({ date, leg: legOf.get(date) || null, occasions: [] }));
   const byDate = new Map(slate.map(s => [s.date, s]));
+  const drop = dropped instanceof Set ? dropped : new Set(dropped || []);
+
+  /* Her selection is read up front because ① needs it: a level she set for a
+     context ON THIS TRIP also governs a calendar event carrying that context.
+     ⚠️ AN EMPTY ARRAY IS A DECISION; only null/undefined means "she hasn't said".
+     Falling back on `.length` handed the proposal back to someone who had just
+     cleared the list — which is one of the ways contexts she never chose kept
+     turning up in the outfits (2026-08-05). */
+  const picked = Array.isArray(tripContexts)
+    ? tripContexts
+    : packSuggestTripContexts(c, { wearRows: rows, today });
+  const pickedLvl = new Map();
+  for (const e of (picked || [])) if (e && e.ctx && e.level) pickedLvl.set(e.ctx, e.level);
 
   // ① Fixed events she declared for a specific date. Facts beat everything.
   for (const s of slate) {
+    const nth = new Map();
     for (const e of (all[s.date] || [])) {
       const ctxs = (e.contexts || []).filter(Boolean);
-      /* ⚠️ An explicit level WINS over the context-derived one: "hone the
-         individual events by formality when context is not sufficient". */
-      const lvl = e.level || (ctxs.length ? Math.max(...ctxs.map(x => lvlOf(x) || 0)) : 0);
       if (!ctxs.length && !e.level) continue;
+      /* ⚠️ An explicit level WINS over the context-derived one: "hone the
+         individual events by formality when context is not sufficient".
+         ⚠️ AND SO DOES THE LEVEL SHE SET FOR THIS TRIP. Her Stl trip carried
+         Party/Shower twice — a calendar event at 4 (her HISTORY's usual level)
+         beside her own tick at 6 — so the app was dressing one context at two
+         levels on one trip. Same discard contextFormalityLevel was written to
+         fix for the suggester, arriving through dayplan. */
+      const mine = ctxs.map(x => pickedLvl.get(x)).filter(Boolean);
+      const lvl = e.level
+        || (mine.length ? Math.max(...mine)
+                        : (ctxs.length ? Math.max(...ctxs.map(x => lvlOf(x) || 0)) : 0));
+      const pinned = !!(e.level || mine.length);
+      const ident = `dec|${ctxs.slice().sort().join("+")}|${pinned ? "L" + lvl : ""}`;
+      const n = nth.get(ident) || 0;
+      nth.set(ident, n + 1);
       s.occasions.push({ context: ctxs[0] || null, contexts: ctxs, level: lvl || null,
-                         placed: true, source: "declared", pinnedLevel: !!e.level });
+                         placed: true, source: "declared", pinnedLevel: pinned,
+                         _ident: ident, _nth: n });
     }
   }
 
@@ -255,43 +331,100 @@ function packSlate(c, { plans = null, wearRows = null, today = null, tripContext
     if (!s) continue;
     if (!s.occasions.some(o => (o.contexts || []).includes(PACK_FLIGHT_CONTEXT))) {
       s.occasions.push({ context: PACK_FLIGHT_CONTEXT, contexts: [PACK_FLIGHT_CONTEXT],
-                         level: lvlOf(PACK_FLIGHT_CONTEXT), placed: true, source: "flight" });
+                         level: lvlOf(PACK_FLIGHT_CONTEXT), placed: true, source: "flight",
+                         _ident: "fly", _nth: 0 });
     }
   }
 
-  // ③ Her selection. Spread evenly over the free days; a day can carry two
-  //    occasions, which is why demand is a multiset rather than a day grid.
-  /* ⚠️ AN EMPTY ARRAY IS A DECISION; only null/undefined means "she hasn't said".
-     Falling back on `.length` handed the proposal back to someone who had just
-     cleared the list — which is one of the ways contexts she never chose kept
-     turning up in the outfits (2026-08-05). */
-  const picked = Array.isArray(tripContexts)
-    ? tripContexts
-    : packSuggestTripContexts(c, { wearRows: rows, today });
-  const free = slate.filter(s => !s.occasions.length);
-  const queue = [];
-  for (const e of (picked || [])) {
-    const n = Math.max(1, e.n || 1);
-    for (let k = 0; k < n; k++) queue.push(e);
-  }
-  let k = 0;
-  for (const e of queue) {
-    const pool = free.length ? free : slate;
-    const s = pool[k % pool.length];
-    k++;
-    if (!s) break;
-    s.occasions.push({
-      context: e.ctx, contexts: [e.ctx],
-      level: e.level || lvlOf(e.ctx), placed: false, source: "selected",
-      pinnedLevel: !!e.level,
-    });
+  /* ③ Her selection, spread across the WHOLE trip — a day can carry two
+     occasions, which is why demand is a multiset rather than a day grid.
+
+     ⚠️ PLACE ON THE LEAST-LOADED DAY, NEVER ON A FIXED LIST OF "FREE" DAYS.
+     The old version computed `free` once and then cycled it with
+     `k % pool.length`, so the moment the free days were used it stacked a
+     SECOND occasion of the same context onto a day that already had one — and
+     two same-context occasions on one day merge into a single card on screen
+     while still costing laundry and options. Measured on her Stl trip: 9
+     occasions asked for on a 5-day trip whose other days were claimed by two
+     flights and two calendar events, leaving 2 free days; Home×4 landed as two
+     pairs and came back as TWO IDENTICAL OUTFITS. That is the whole of her
+     "two identical outfits for four days of the same context" report, and it
+     was the slate, not the solver.
+     ⚠️ Flight days take overflow like any other day. One extra occasion on a
+     plane day is honest — she does change when she lands. The travel-last
+     warning in TRIP_BUILDER.md is about ORDERING (② claims those days first so
+     they can't collect a stack), not about keeping them empty forever. */
+  const queues = (picked || []).filter(e => e && e.ctx)
+    .map(e => ({ e, left: Math.max(1, e.n || 1), nth: 0 }));
+  if (legacyPlacement) {
+    // Only for migrating records keyed by the old positional ids — see
+    // packMigrateRecord. Delete with the migration.
+    const free = slate.filter(s => !s.occasions.length);
+    const queue = [];
+    for (const q of queues) for (let n = 0; n < q.left; n++) queue.push(q);
+    let k = 0;
+    for (const q of queue) {
+      const pool = free.length ? free : slate;
+      const s = pool[k % pool.length];
+      k++;
+      if (!s) break;
+      s.occasions.push({ context: q.e.ctx, contexts: [q.e.ctx],
+                         level: q.e.level || lvlOf(q.e.ctx), placed: false,
+                         source: "selected", pinnedLevel: !!q.e.level,
+                         _ident: `sel|${q.e.ctx}|${q.e.level ? "L" + q.e.level : ""}`,
+                         _nth: q.nth++ });
+    }
+  } else {
+    const load = new Map(slate.map(s => [s.date, s.occasions.length]));
+    const ctxOn = (s, ctx) => s.occasions.reduce((n, o) => n + (o.context === ctx ? 1 : 0), 0);
+    // Fewest occasions, then fewest of THIS context, then earliest date (slate
+    // is already in date order, so taking the first strict minimum does that).
+    const place = (ctx) => {
+      let best = null, bl = 0, bc = 0;
+      for (const s of slate) {
+        const l = load.get(s.date) || 0, cn = ctxOn(s, ctx);
+        if (!best || l < bl || (l === bl && cn < bc)) { best = s; bl = l; bc = cn; }
+      }
+      return best;
+    };
+    // Round-robin across contexts, one occasion each per pass, so a context
+    // with a big count can't take every good day before the others are placed.
+    for (let live = true; live; ) {
+      live = false;
+      for (const q of queues) {
+        if (!q.left) continue;
+        live = true;
+        q.left--;
+        const s = place(q.e.ctx);
+        if (!s) break;
+        s.occasions.push({ context: q.e.ctx, contexts: [q.e.ctx],
+                           level: q.e.level || lvlOf(q.e.ctx), placed: false,
+                           source: "selected", pinnedLevel: !!q.e.level,
+                           _ident: `sel|${q.e.ctx}|${q.e.level ? "L" + q.e.level : ""}`,
+                           _nth: q.nth++ });
+        load.set(s.date, (load.get(s.date) || 0) + 1);
+      }
+    }
   }
 
-  // Anything still bare gets her modal level, so no day is ever unanswerable.
+  /* ④ What she said isn't happening, removed BEFORE the floor pass — otherwise
+     emptying a day just re-fills it at her modal level and the ✕ looks broken.
+     ⚠️ Filtered on the SLATE, not only on the demand: packRack and
+     packSlateAsPlans read the slate, and a dropped occasion that still stocks
+     the trip rack is the 2026-08-06 r1 lesson (a declared level reaching a pool
+     it has no business in) arriving one more time. */
+  if (drop.size) for (const s of slate) {
+    s.occasions = s.occasions.filter((o, idx) => !drop.has(packOccId(s.date, o, idx)));
+  }
+
+  // Anything still bare gets her modal level, so no day is ever unanswerable —
+  // unless she has explicitly dropped that day, which is a legitimate answer.
   const floorLvl = packModalLevel(rows);
   for (const s of slate) {
     if (s.occasions.length) continue;
-    s.occasions.push({ context: null, contexts: [], level: floorLvl, placed: false, source: "floor" });
+    if (drop.has(`${s.date}|flr#0`)) continue;
+    s.occasions.push({ context: null, contexts: [], level: floorLvl, placed: false,
+                       source: "floor", _ident: "flr", _nth: 0 });
   }
   return slate;
 }
@@ -310,14 +443,121 @@ function packModalLevel(wearRows = null) {
   return top ? +top[0] : 3;
 }
 
-/* Flatten the slate into the demand multiset. Occasion ids are stable across
-   re-solves (date + index) so locks and pins survive a rebuild. */
-function packDemand(slate) {
+/* An occasion's identity, and it is CONTENT-DERIVED, not positional.
+
+   ⚠️ IT USED TO BE `${date}#${index}`, AND THAT IS A BUG WITH TEETH. The stored
+   assignment, her locks and her drops are all keyed by this string, so an index
+   means unticking one context silently renumbers every later occasion on the
+   affected days — and packEnsureSolve's guard only asks "are these pieces still
+   in the bag", which stays true, so nothing re-solves and the REMOVED
+   occasion's outfit is handed to whatever moved into its slot. She sees the
+   outfit she deleted, wearing a different label.
+
+   ⚠️ A `selected` occasion is deliberately NOT date-anchored. Demand is a
+   multiset (D6) and placement is metadata the laundry schedule needs — "Errands
+   #2" is the same occasion wherever the spreader put it, so unticking some
+   OTHER context, which re-spreads everything, must not orphan it.
+
+   ⚠️ The level is in the key only when she PINNED it. Derived levels move as
+   she logs wears, and an id that drifts on its own would orphan occasions she
+   never touched — which is the inversion-③ violation this exists to prevent. */
+function packOccId(date, o, idx = 0) {
+  if (!o) return "";
+  // ⚠️ A slate built by hand (fixtures, and any future caller that doesn't go
+  // through packSlate) carries no ident — fall back to the position so two
+  // occasions on one day can't collapse onto the same id.
+  const ident = o._ident || `x${idx}`;
+  const nth = o._nth || 0;
+  return o.source === "selected" ? `${ident}#${nth}` : `${date}|${ident}#${nth}`;
+}
+
+/* What a stored outfit was solved AGAINST — the things that decide whether it is
+   still an APPROPRIATE outfit. If any of them moved, the stored answer is stale
+   even though the occasion still exists.
+
+   ⚠️ NO DATE, and that was measured. The date was in here first, and it made
+   unticking one context re-solve every OTHER context's outfits: removing a
+   context re-spreads the rest, so their dates move, so every signature broke.
+   That is precisely the churn the partial rehydrate exists to prevent — caught
+   by the case that stores a hand-picked assignment the solver would never pick.
+   The date's job is the laundry SCHEDULE, and packSchedule recomputes that from
+   the assignment every time; a valid outfit on a different day is still a valid
+   outfit, and if it now collides with tolerance the violation is reported.
+
+   ⚠️ NO WEATHER BAND either. Weather loads asynchronously (packWxFor returns
+   null until _planWxLoadedFor is set), so a band here would make rehydration
+   depend on whether a fetch happened to have finished — a slot machine, and
+   strictly worse than the bug it would be guarding. The LEG is in, because
+   Madrid-then-Javea is two climates and that is known without a fetch. */
+const packLegKey = (o) => (o && o.leg && o.leg.loc) ? `${o.leg.loc.lat},${o.leg.loc.lon}` : "";
+function packOccSig(o) {
+  if (!o) return "";
+  return `${o.level || ""}|${packLegKey(o)}`;
+}
+
+/* TWO GROUPING KEYS, AND CONFLATING THEM COST HER HALF THE VARIETY TARGET.
+   packCandKey (level + leg + temperature band) is a CACHE key: which occasions
+   share one enumerated candidate list. The band belongs there — a genuinely
+   cold day inside a long leg should not be offered the warm day's outfits.
+   packDemandKey (level + leg) answers a different question: how many different
+   looks does this trip need at this level in this place. That is a property of
+   her days, not of the enumerator's caching strategy — and keying the count on
+   the band split four mild days into two groups of two, so the target dropped
+   from 4 to 2 and the two groups were then free to be satisfied by the SAME
+   two looks, with no cross-group dedup anywhere. */
+const packDemandKey = (o) => `${o ? o.level : ""}|${packLegKey(o)}`;
+
+/* How many distinct looks a group of `n` occasions should be able to make.
+
+   ⚠️ LEAN IS A SMALLER BAG, NOT A REPEATED OUTFIT (her decision, 2026-08-06 r2).
+   This used to be `ceil(n/2)` at lean — four days of one context asked for two
+   looks and got exactly that, by design, and the design was wrong. Her words on
+   being told what lean meant: *"same as normal just a smaller bag. small
+   numbers of clothes can make lots of different outfits."* She is right, and it
+   is the better model: distinct looks are mostly a RECOMBINATION problem, not a
+   piece-count one — four tops and two bottoms is eight looks, not four.
+   So a different outfit per occasion is the floor at EVERY tightness, and K
+   buys spare capacity above it.
+   ⚠️ Hoisted out of packSolve so the policy is directly assertable. It lived in
+   that closure, and a case written against its downstream EFFECT passed under a
+   mutation restoring the old formula — on every fixture available the target is
+   not the binding constraint, so only the contract itself can be tested. */
+function packOptionTarget(n, K) {
+  const spare = K <= PACK_OPTIONS.lean ? 0 : (K >= PACK_OPTIONS.cushion ? 2 : 1);
+  return Math.max(1, Math.min((n || 1) + spare, PACK_OPT_MAX));
+}
+
+/* TWO OCCASIONS ON ONE DAY WERE FREE TO BE IDENTICAL, AND THAT IS HOW HER FOUR
+   HOME DAYS BECAME TWO OUTFITS (2026-08-06 r2). `todayCombos` was written and
+   drained into `usedCombos` at end of day but NEVER READ by the cost function,
+   and `dayWorn` is only incremented once the day closes — so a second occasion
+   on a day paid nothing for repeating the first, and `added` was 0 because the
+   pieces were already in the bag. Repeating was strictly the cheapest move.
+
+   ⚠️ CHARGED PER KIND, NOT PER DAY. "One outfit across contexts = one entry" is
+   dayplan's own rule and the reason same-day cards merge — two DIFFERENT
+   contexts sharing an outfit is a feature, and charging it would inflate the
+   bag for no gain. What is never right is the same context, or two undeclared
+   days at one level, coming back in identical clothes.
+   ⚠️ Charged at PACK_REPEAT_DAY and deliberately NOT scaled by repW, for the
+   same reason consecutive days aren't: it is the worst-looking output the
+   solver can produce, so the floor holds at every tightness. */
+const packOccKind = (o) => o && o.context ? `c:${o.context}` : `l:${o ? o.level || "" : ""}`;
+function packNoteKind(map, occ, lookKey) {
+  const k = packOccKind(occ);
+  let s = map.get(k);
+  if (!s) map.set(k, s = new Set());
+  s.add(lookKey);
+}
+
+// Flatten the slate into the demand multiset.
+function packDemand(slate, { legacyIds = false } = {}) {
   const out = [];
   for (const s of slate || []) {
     (s.occasions || []).forEach((o, idx) => {
       out.push({
-        id: `${s.date}#${idx}`, date: s.date, leg: s.leg,
+        id: legacyIds ? `${s.date}#${idx}` : packOccId(s.date, o, idx),
+        date: s.date, leg: s.leg,
         context: o.context || null, contexts: o.contexts || [],
         level: o.level || null, placed: !!o.placed, source: o.source || null,
         pinnedLevel: !!o.pinnedLevel,
@@ -651,12 +891,11 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
      The temperature band keeps genuine hot/cold differences inside a long leg
      from being flattened; with no weather loaded it collapses to level+leg. */
   const candOpts = { pool, wxFor, seed: sd, limit: PACK_SOLVE_CANDIDATES };
-  const legKeyOf = (o) => o.leg && o.leg.loc ? `${o.leg.loc.lat},${o.leg.loc.lon}` : "";
   const bandOf = (day) => {
     const w = day && wxFor ? wxFor(day) : null;
     return w && w.maxT != null ? Math.round(w.maxT / 8) : "x";
   };
-  const groupKey = (o) => `${o.level}|${legKeyOf(o)}|${bandOf(o.date)}`;
+  const groupKey = (o) => `${packDemandKey(o)}|${bandOf(o.date)}`;   // packCandKey
   const reps = new Map();   // groupKey → a representative occasion
   for (const occ of dem) if (!reps.has(groupKey(occ))) reps.set(groupKey(occ), occ);
   const candByKey = new Map();
@@ -715,6 +954,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
       if (washSet.has(date)) { counts.clear(); washed = true; }
       const usedToday = new Set();
       const todayCombos = new Set();
+      const todayKinds = new Map();     // kind → look-keys already used TODAY
       // Scarcest first within a day — a dressy evening has fewer options than an
       // ordinary afternoon and should claim its pieces before the easy case does.
       const ord = occs.slice().sort((a, b) =>
@@ -724,6 +964,8 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
         if (lockedMap.has(occ.id)) {
           const lk = lockedMap.get(occ.id);
           chosen.set(occ.id, lk);
+          todayCombos.add(packLookKey(lk.ids));
+          packNoteKind(todayKinds, occ, packLookKey(lk.ids));
           for (const id of lk.ids) { pack.add(id); usedToday.add(id); }
           continue;
         }
@@ -732,6 +974,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
           unmet.push({ occId: occ.id, date: occ.date, level: occ.level, reason: "nothing available covers this level" });
           continue;
         }
+        const sameKind = todayKinds.get(packOccKind(occ)) || null;
         let pick = null, bestCost = Infinity;
         for (const cd of list) {
           let added = 0, over = 0, prov = 0, topRepeat = 0;
@@ -754,6 +997,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
           // wearing a dirty one, which is the whole reason she asked for this.
           const cost = over * 5000
             + (prevDayCombos.has(key) ? PACK_REPEAT_DAY : 0)
+            + (sameKind && sameKind.has(key) ? PACK_REPEAT_DAY : 0)
             + (usedCombos.has(key) ? PACK_REPEAT_ANY * repW : 0)
             + topRepeat * PACK_REPEAT_TOP * repW
             + added * 1000
@@ -766,7 +1010,9 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
         const pickKey = packLookKey(pick.ids);
         if (prevDayCombos.has(pickKey)) repeatTally += 150;
         else if (usedCombos.has(pickKey)) repeatTally += 40;
+        if (sameKind && sameKind.has(pickKey)) repeatTally += 150;
         todayCombos.add(pickKey);
+        packNoteKind(todayKinds, occ, pickKey);
         for (const id of pick.ids) { pack.add(id); usedToday.add(id); }
       }
 
@@ -808,7 +1054,10 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
   }
   // Additions are tried warmest/most-proven first, so the cheap early exits are
   // also the good ones and PACK_ADD_TRIES doesn't have to be large.
-  const addPool = rackIds.filter(id => !pack.has(id))
+  // ⚠️ On the app path `rackIds` IS the bag, so this is its leftovers — see the
+  // note in packEnsureSolve for why widening it was measured and rejected.
+  const addIds = rackIds
+    .filter(id => !pack.has(id))
     .sort((a, b) => (proven.has(b) - proven.has(a)) || (rackWarmth(b) - rackWarmth(a)) || (a < b ? -1 : 1));
 
   /* ⚠️ K IS PER OCCASION, SO THE TARGET HAS TO COUNT THE OCCASIONS (2026-08-06).
@@ -818,13 +1067,17 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
      are ONE group. The app guaranteed exactly two looks for four days and then,
      correctly by its own lights, repeated them.
 
-     "Two options" is the right promise for a single dressy evening and the
-     wrong one for half a week. What the tightness dial actually buys is how
-     much repetition she'll accept, so the target scales with how many days are
-     asking: lean still packs light (repeat every other day), normal aims for a
-     different outfit each time, cushion leaves one spare.
+     ⚠️ AND THE DIAL DOES NOT BUY REPETITION (her decision, 2026-08-06 r2, after
+     reading that lean meant "repeat every other day": *"same as normal just a
+     smaller bag. small numbers of clothes can make lots of different
+     outfits."*). She is right, and it is the better model: distinct looks are
+     mostly a RECOMBINATION problem, not a piece-count one — four tops and two
+     bottoms is eight looks, not four. So a different outfit per occasion is the
+     floor at EVERY tightness, and K buys spare capacity above it: lean carries
+     nothing spare, normal one, cushion two.
      ⚠️ Capped — a fortnight at one level must not chase fourteen looks — and
      PACK_OPT_GUARD still bounds pieces added per group regardless.
+     ⚠️ Counted on packDemandKey, not on the candidate key: see packDemandKey.
      ⚠️ THIS AND STAGE C ARE ONE FIX AND NEITHER WORKS ALONE. Measured on the
      scarce fixture that reproduces her report: with this alone the options are
      built and never spent (stage A still assigns two looks); with stage C alone
@@ -832,21 +1085,28 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
      outfits over 7 occasions. Removing either one silently restores the bug,
      which is why the case guarding it drives the whole solver end to end. */
   const occCount = new Map();
-  for (const occ of dem) occCount.set(groupKey(occ), (occCount.get(groupKey(occ)) || 0) + 1);
-  const optionTarget = (occ) => {
-    const n = occCount.get(groupKey(occ)) || 1;
-    const want = K <= PACK_OPTIONS.lean ? Math.ceil(n / 2)
-      : K >= PACK_OPTIONS.cushion ? n + 1 : n;
-    return Math.max(K, Math.min(want, PACK_OPT_MAX));
-  };
+  for (const occ of dem) occCount.set(packDemandKey(occ), (occCount.get(packDemandKey(occ)) || 0) + 1);
+  const optionTarget = (occ) => packOptionTarget(occCount.get(packDemandKey(occ)) || 1, K);
 
+  /* ⚠️ Only groups holding an occasion the solver is still free to choose. With
+     the survivors of a context edit carried in as transient locks, every other
+     group is settled — and buying option pieces for four days she already has
+     outfits for is how a one-line edit grows the bag. */
+  const unlockedGroups = new Set();
+  for (const occ of dem) if (!lockedMap.has(occ.id)) unlockedGroups.add(groupKey(occ));
+  const stageBAdds = new Set();
   for (const occ of groups.values()) {
+    if (!unlockedGroups.has(groupKey(occ))) continue;
     const target = optionTarget(occ);
     let have = packOptionCount(occ, pack, candOpts);
     let guard = 0;
+    // Only pieces that can actually reach this level are worth a try — the
+    // slice is small, and an off-level piece can never raise the count.
+    const tries = addIds.filter(id => packCoversLevel(itemById.get(id), occ.level))
+      .slice(0, PACK_ADD_TRIES);
     while (have < target && guard++ < PACK_OPT_GUARD) {
       let bestAdd = null, bestGain = 0;
-      for (const id of addPool.slice(0, PACK_ADD_TRIES)) {
+      for (const id of tries) {
         if (pack.has(id)) continue;
         pack.add(id);
         const gain = packOptionCount(occ, pack, candOpts) - have;
@@ -855,6 +1115,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
       }
       if (!bestAdd) break;
       pack.add(bestAdd);
+      stageBAdds.add(bestAdd);
       have += bestGain;
     }
   }
@@ -874,30 +1135,63 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
      to ask for less spreading rather than to accept a dirty day: variety is
      worth having, but not at the price of wearing something out of clean wears,
      which is the constraint she asked for this feature to respect. */
+  /* ⚠️ THE GATE IS PER GROUP, AND IT NO LONGER STOPS AT THE FIRST IMPROVEMENT
+     (2026-08-06 r2). It used to compare ONE trip-wide distinct count and `break`
+     — so a repair that improved only the dressy evening was accepted, and four
+     casual days stayed on two alternating looks while the number the gate reads
+     went up. The first improvement is not the best improvement, and a trip total
+     cannot tell the difference between "every kind of day got better" and "one
+     did". `maxDeficit` is the term that can: it asks how bad the WORST group
+     still is, so a repair that leaves the week untouched cannot win.
+     ⚠️ Always running all three costs two extra linear walks — the enumeration
+     is shared through repairCache — and buys the comparison. Don't put the
+     `break` back. */
   let assign = best.chosen;
   let sched = packSchedule(assignOf(dem, assign), { dates: days, ls: lst, washDays });
-  const base = packAssignVariety(dem, assign);
+  const base = packAssignVariety(dem, assign, optionTarget);
   const repairCache = new Map();
-  for (const mult of PACK_REPAIR_STRENGTHS) {
+  let pick = null;
+  PACK_REPAIR_STRENGTHS.forEach((mult, idx) => {
     const repaired = packRepairAssign(pack, dem, best.chosen, {
       candOpts, ls: lst, washDays, locked: lockedMap, repW: repW * mult, cache: repairCache,
     });
-    if (!repaired || !repaired.size) continue;
+    if (!repaired || !repaired.size) return;
     const rSched = packSchedule(assignOf(dem, repaired), { dates: days, ls: lst, washDays });
-    const b = packAssignVariety(dem, repaired);
-    // Strictly better on variety, and never worse on the two things that matter
-    // more: every occasion still dressed, and no new tolerance violation.
-    if (b.placed >= base.placed && rSched.violations.length <= sched.violations.length &&
-        b.distinct > base.distinct) {
-      assign = repaired; sched = rSched;
-      break;                                  // strongest clean improvement wins
-    }
-  }
+    const b = packAssignVariety(dem, repaired, optionTarget);
+    // Never worse on the two things that matter more: every occasion still
+    // dressed, and no new tolerance violation.
+    if (b.placed < base.placed || rSched.violations.length > sched.violations.length) return;
+    // Strictly better on variety, judged worst-group first.
+    const better = b.deficit < base.deficit
+      || (b.deficit === base.deficit && b.maxDeficit < base.maxDeficit)
+      || (b.deficit === base.deficit && b.maxDeficit === base.maxDeficit && b.distinct > base.distinct);
+    if (!better) return;
+    const cand = { assign: repaired, sched: rSched, b, idx };
+    if (!pick) { pick = cand; return; }
+    const p = pick.b;
+    const wins = b.deficit !== p.deficit ? b.deficit < p.deficit
+      : b.maxDeficit !== p.maxDeficit ? b.maxDeficit < p.maxDeficit
+      : b.distinct !== p.distinct ? b.distinct > p.distinct
+      : rSched.violations.length !== pick.sched.violations.length
+        ? rSched.violations.length < pick.sched.violations.length
+        : idx < pick.idx;                     // ties go to the strongest attempt
+    if (wins) pick = cand;
+  });
+  if (pick) { assign = pick.assign; sched = pick.sched; }
 
+  /* ⚠️ `extras` is what stops stage B's work evaporating. packRepack rebuilds
+     the bag as pinned ∪ what the outfits use ∪ extras, so a piece added purely
+     to give an occasion a second option — and not worn, because only one option
+     per occasion ever is — was deleted from the bag the instant the solve
+     finished, and the option count fell back the next time it was read.
+     An option whose pieces aren't in the suitcase is not an option; keeping
+     them is what makes the screen and the solve agree. Counts stay an OUTPUT —
+     nothing targets a piece count. */
   return {
     pack: [...pack],
     assign,
     options,
+    extras: [...stageBAdds],
     unmet: best.unmet,
     violations: sched.violations,
     stats: {
@@ -947,12 +1241,11 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
      on, for the same reason: two Work days in one city at one level have the
      identical candidate set, so grouping is the difference between one solve
      and a dozen. */
-  const legKeyOf = (o) => o.leg && o.leg.loc ? `${o.leg.loc.lat},${o.leg.loc.lon}` : "";
   const bandOf = (day) => {
     const w = day && candOpts.wxFor ? candOpts.wxFor(day) : null;
     return w && w.maxT != null ? Math.round(w.maxT / 8) : "x";
   };
-  const groupKey = (o) => `${o.level}|${legKeyOf(o)}|${bandOf(o.date)}`;
+  const groupKey = (o) => `${packDemandKey(o)}|${bandOf(o.date)}`;
   // ⚠️ Shared across repair attempts (see the strengths loop in packSolve) — the
   // enumeration is the expensive half and the pack doesn't change between them.
   const byGroup = cache instanceof Map ? cache : new Map();
@@ -990,6 +1283,7 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
     if (washSet.has(date)) { counts.clear(); washed = true; }
     const usedToday = new Set();
     const todayCombos = new Set();
+    const todayKinds = new Map();     // same-day, same-kind repetition — see packOccKind
     // Scarcest first, exactly as stage A orders a day: the occasion with the
     // fewest ways to dress it should claim its pieces before the easy one does.
     const ord = occs.slice().sort((a, b) =>
@@ -1003,11 +1297,13 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
         if (keep) {
           out.set(occ.id, keep);
           todayCombos.add(packLookKey(keep.ids));
+          packNoteKind(todayKinds, occ, packLookKey(keep.ids));
           for (const id of keep.ids) usedToday.add(id);
         }
         continue;
       }
       const keepKey = keep ? packLookKey(keep.ids) : null;
+      const sameKind = todayKinds.get(packOccKind(occ)) || null;
       let pick = keep, bestCost = Infinity;
       for (const cd of list) {
         let over = 0, topRepeat = 0;
@@ -1025,6 +1321,7 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
         const key = packLookKey(cd.ids);
         const cost = over * 5000
           + (prevDayCombos.has(key) ? PACK_REPEAT_DAY : 0)
+          + (sameKind && sameKind.has(key) ? PACK_REPEAT_DAY : 0)
           + (usedCombos.has(key) ? PACK_REPEAT_ANY * repW : 0)
           + topRepeat * PACK_REPEAT_TOP * repW
           - cd.score * PACK_SCORE_W
@@ -1034,6 +1331,7 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
       if (!pick) continue;
       out.set(occ.id, pick);
       todayCombos.add(packLookKey(pick.ids));
+      packNoteKind(todayKinds, occ, packLookKey(pick.ids));
       for (const id of pick.ids) usedToday.add(id);
     }
 
@@ -1054,17 +1352,41 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
 
 /* How many DIFFERENT outfits an assignment actually puts on her, counted by
    LOOK — the r13 rule, so five shoe permutations of one outfit stay one outfit.
-   This is the number her report was really about. */
-function packAssignVariety(demand, assign) {
+   This is the number her report was really about.
+
+   ⚠️ ALSO PER GROUP, because the trip total hides exactly the case she reported
+   (2026-08-06 r2). Nine occasions in nine looks and nine occasions where the
+   dressy evenings carry seven of them while four casual days share two both
+   read as "distinct: 9". `byGroup` is keyed on packDemandKey, so two
+   temperature bands at one level in one leg are ONE variety group — which is
+   also where the cross-group duplication got in.
+   `deficit` = how many looks short of the target each group is, summed;
+   `maxDeficit` = the worst single group. Pass `target` (packSolve's
+   optionTarget) so a fortnight at one level isn't asked for fourteen looks. */
+function packAssignVariety(demand, assign, target = null) {
   const keys = new Set();
+  const byGroup = new Map();
   let placed = 0;
   for (const occ of (demand || [])) {
     const cd = assign && assign.get(occ.id);
+    const k = packDemandKey(occ);
+    let g = byGroup.get(k);
+    if (!g) byGroup.set(k, g = { n: 0, looks: new Set(), occ });
+    g.n++;
     if (!cd) continue;
     placed++;
-    keys.add(packLookKey(cd.ids));
+    const look = packLookKey(cd.ids);
+    keys.add(look);
+    g.looks.add(look);
   }
-  return { placed, distinct: keys.size };
+  let deficit = 0, maxDeficit = 0;
+  for (const g of byGroup.values()) {
+    const want = target ? Math.min(g.n, target(g.occ)) : g.n;
+    const short = Math.max(0, want - g.looks.size);
+    deficit += short;
+    if (short > maxDeficit) maxDeficit = short;
+  }
+  return { placed, distinct: keys.size, byGroup, deficit, maxDeficit };
 }
 
 // demand + chosen → the [{date, ids}] shape packSchedule walks.
@@ -1655,8 +1977,7 @@ function packMidTripWash(c, today = todayStr(), { ls = null, wearRows = null } =
   const assign = [];
   const rec = packRecord(c.id);
   const fromRec = packAssignFromRecord(c.id);
-  const slate = packSlate(c, { wearRows, tripContexts: packTripContexts(c.id) });
-  const demand = packDemand(slate);
+  const { demand } = packDemandFor(c.id, c, { wearRows });
   for (const d of rest) {
     const looks = planActiveLooks(c, d);
     if (looks.length) {
@@ -1761,6 +2082,62 @@ function packHasPlan(cid) { return !!(packRecord(cid).built); }
 async function savePackRecord(cid, patch) {
   await kvUpdate(PACK_KEY_PREFIX + cid, prev => ({ ...(prev && typeof prev === "object" ? prev : {}), ...patch }));
 }
+/* Re-key a record written under the positional ids onto the content-derived
+   ones. Runs once per capsule, at load, before anything reads the assignment.
+
+   Without it, every occasion on every existing pack orphans on the deploy and
+   her arranged trip re-solves the first time she opens it — the inversion-③
+   violation this whole change exists to prevent, delivered at the worst moment.
+
+   ⚠️ The pairing is EXACT, not a guess: both id schemes are computed from the
+   SAME slate (rebuilt under legacyPlacement so it reproduces the old spread),
+   so index i in one list is the same occasion as index i in the other.
+   ⚠️ `selected` ids are date-free, so they map correctly whichever placement
+   built them. `floor` ids can drift when the new spread fills a day the old one
+   left bare — those occasions simply re-solve, which is correct.
+   ⚠️ Writes through savePackRecord WITHOUT awaiting: kvUpdate sets kvData
+   synchronously, so the load that triggered this sees the migrated record, and
+   the network write settles behind it. */
+function packMigrateRecord(cid) {
+  const rec = packRecord(cid);
+  if ((rec.assignV || 0) >= PACK_ASSIGN_V) return false;
+  const c = capsuleById.get(cid);
+  if (!c) return false;
+  /* ⚠️ DECIDE FROM THE KEYS, NOT FROM THE MISSING STAMP. A record written under
+     the new scheme but never stamped — anything saved between the deploy and
+     the next packPersist, and every fixture — would otherwise be "migrated",
+     i.e. have every one of its still-correct keys looked up in a legacy map,
+     miss, and be silently emptied. Losing her outfits while claiming to rescue
+     them is worse than the bug. Legacy keys are exactly `YYYY-MM-DD#n`; every
+     new one carries a `|`. */
+  const isLegacy = (k) => typeof k === "string" && /^\d{4}-\d{2}-\d{2}#\d+$/.test(k);
+  const oldKeys = Object.keys(rec.assign || {}).filter(isLegacy);
+  const oldLocks = (rec.locked || []).filter(isLegacy);
+  if (!oldKeys.length && !oldLocks.length) { savePackRecord(cid, { assignV: PACK_ASSIGN_V }); return false; }
+
+  const legacySlate = packSlate(c, { tripContexts: packTripContexts(cid), legacyPlacement: true });
+  const oldDem = packDemand(legacySlate, { legacyIds: true });
+  const newDem = packDemand(legacySlate);
+  const map = new Map();
+  oldDem.forEach((o, i) => { if (newDem[i]) map.set(o.id, newDem[i].id); });
+  const remap = (k) => isLegacy(k) ? map.get(k) : k;   // non-legacy keys pass through
+
+  const assign = {};
+  for (const [k, ids] of Object.entries(rec.assign || {})) {
+    const nk = remap(k);
+    if (nk) assign[nk] = ids;
+  }
+  const locked = (rec.locked || []).map(remap).filter(Boolean);
+  const unmet = (rec.unmet || []).map(u => {
+    const nk = u && u.occId ? remap(u.occId) : null;
+    return nk ? { ...u, occId: nk } : null;
+  }).filter(Boolean);
+  // occSig is dropped, not remapped — it was never written under scheme 1, and
+  // an absent signature means "can't tell if it moved", which reads as unchanged.
+  savePackRecord(cid, { assign, locked, unmet, occSig: null, assignV: PACK_ASSIGN_V });
+  return true;
+}
+
 // A stamp over everything a solve depended on, so re-entry can say what moved.
 function packSlateHash(demand) {
   return packHash((demand || []).map(o => `${o.id}:${o.level}:${o.context || ""}`).join("|"));
@@ -1768,6 +2145,13 @@ function packSlateHash(demand) {
 // Rehydrate the stored assignment into the {ids, pieces, score} shape the rest
 // of the module speaks. Drops pieces that no longer exist.
 function packAssignFromRecord(cid) {
+  /* ⚠️ THE MIGRATION HOOK LIVES HERE, not in packLoadState, because this is the
+     single place the stored assignment is read — and packMidTripWash and
+     packPlanByDate reach it from the home dash without ever loading pack state.
+     Hooking the screen would have left the trip dash reading a record whose
+     keys no longer matched anything. Idempotent: the version check makes every
+     call after the first a no-op. */
+  packMigrateRecord(cid);
   const rec = packRecord(cid);
   const out = new Map();
   for (const [occId, ids] of Object.entries(rec.assign || {})) {
@@ -1806,8 +2190,7 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
   const c = capsuleById.get(cid);
   if (!c) return null;
   const rec = packRecord(cid);
-  const slate = packSlate(c, { tripContexts: packTripContexts(cid) });
-  const demand = packDemand(slate);
+  const { slate, demand } = packDemandFor(cid, c);
   const rack = packRack(c, slate, { wxFor: packWxFor(c) });
   const kk = K != null ? K : (rec.K || PACK_OPTIONS.normal);
   const keeps = new Set(rec.pinned || []);
@@ -1880,29 +2263,60 @@ function packEnsureSolve(st, { force = false } = {}) {
      reshuffle days she never touched, which is the slot machine ③ exists to
      prevent. Only when the stored assignment no longer describes this trip — an
      occasion added, a piece dropped from the bag — does the solver run. */
-  if (!force) {
-    const stored = packAssignFromRecord(st.cid);
-    const inPack = new Set(st.pack);
-    const usable = stored.size && st.demand.every(o => {
-      const cd = stored.get(o.id);
-      return cd && cd.ids.every(id => inPack.has(id));
-    });
-    if (usable) {
-      st.res = {
-        pack: [...st.pack], assign: stored, options: new Map(), unmet: [],
-        violations: [], stats: { pieces: st.pack.length, outfits: 0,
-                                 legs: (st.rack && st.rack.legs) || 1,
-                                 seed: packRecord(st.cid).seed || null },
-      };
-      packRefresh(st);          // options + violations + outfit count, no solve
-      return st.res;
-    }
+  /* ⚠️ THE CHECK IS PER OCCASION, NOT ALL-OR-NOTHING (2026-08-06 r2). It used
+     to ask "does EVERY occasion have a stored outfit still in the bag" and, on
+     yes, hand the whole stored map back. With positional ids that was actively
+     wrong — unticking a context renumbered the rest, every id still resolved,
+     so nothing re-solved and a removed occasion's outfit was handed to whatever
+     moved into its slot. With content ids it is merely blunt: one added
+     occasion would re-solve the entire trip and reshuffle days she never
+     touched, which is the slot machine ③ exists to prevent.
+     Survivors are carried into the solve as TRANSIENT LOCKS instead — stage A
+     copies a locked occasion through untouched and the repair skips it, so
+     "keep what didn't change, solve what did" needs no new machinery. */
+  const stored = packAssignFromRecord(st.cid);
+  const sigs = packRecord(st.cid).occSig || {};
+  const inPack = new Set(st.pack);
+  const keep = new Map();
+  if (!force) for (const o of st.demand) {
+    const cd = stored.get(o.id);
+    if (!cd) continue;                                   // new, renamed or re-levelled
+    if (!cd.ids.every(id => inPack.has(id))) continue;    // a piece left the bag
+    if (sigs[o.id] && sigs[o.id] !== packOccSig(o)) continue;   // moved day / level / leg
+    keep.set(o.id, cd);
   }
+  if (!force && st.demand.length && keep.size === st.demand.length) {
+    st.res = {
+      pack: [...st.pack], assign: keep, options: new Map(), unmet: [],
+      violations: [], stats: { pieces: st.pack.length, outfits: 0,
+                               legs: (st.rack && st.rack.legs) || 1,
+                               seed: packRecord(st.cid).seed || null },
+    };
+    packRefresh(st);            // options + violations + outfit count, no solve
+    return st.res;
+  }
+  /* ⚠️ Her own locks and the survivors are merged, but ONLY her locks are ever
+     written back to `rec.locked` (packPersist doesn't touch it, and nothing
+     here does either). Persisting survivors as locks would make her explicit
+     "re-solve the unlocked ones" a permanent no-op. */
+  const carry = new Map(keep);
+  for (const [id, cd] of packLockedFromRecord(st.cid)) carry.set(id, cd);
   st.res = packSolve({
     c: st.c, demand: st.demand,
     rack: { ids: st.pack, cold: [], legs: (st.rack && st.rack.legs) || 1 },
+    /* ⚠️ NO WIDER ADD POOL HERE, AND THAT WAS MEASURED, NOT ASSUMED (2026-08-06
+       r2). Stage B's add pool is `rackIds` minus what stage A used — and since
+       the app passes the BAG as rackIds, that is only the bag's own leftovers.
+       It looks like a bug, and a version passing the trip rack was written and
+       then thrown away: on every configuration tried (roomy and scarce closets,
+       5/8/10-day trips, lean through cushion) stage B added ZERO pieces from
+       outside the bag, because packFill already builds a bag richer than the
+       option target. The change was unexercised, and its only reachable effect
+       would be growing the bag past the slot counts she set.
+       If a future round wants it, the evidence to bring is a fixture where
+       `packOptionCount` on the filled bag comes in UNDER optionTarget. */
     wxFor: packWxFor(st.c), K: st.K, washDays: packWashDays(st.c),
-    pinned: [...st.keeps], locked: packLockedFromRecord(st.cid),
+    pinned: [...st.keeps], locked: carry,
   });
   /* ⚠️ INVERSION ① IS NOT SELF-ENFORCING AFTER A SOLVE (2026-08-05, her report:
      "it has hiking boots in a workout context that are not listed in the items
@@ -1956,6 +2370,14 @@ async function openPackPlan(cid, { resolve = false } = {}) {
     try { await loadPlanWeather(c); } catch (e) { /* solve on season alone */ }
   }
   packLoadState(cid, { resolve });
+  /* ⚠️ SOLVE BEFORE PERSISTING, or the outfits are never stored at all.
+     packPersist only writes `assign` when `st.res` exists, and `res` is lazy —
+     so building a pack wrote `built` and `pieces` and no outfits, and every
+     subsequent open re-solved from scratch. Verified on her live Stl record:
+     `built` set, `assign` absent. That is inversion ③ failing silently — the
+     solve is supposed to be an EVENT whose result is state, and instead the
+     plan could shift under her between two opens of the same screen. */
+  if (resolve && _packState && _packState.cid === cid) packEnsureSolve(_packState);
   if (resolve) await packPersist(cid);
   renderCapsules();
 }
@@ -1968,7 +2390,7 @@ async function packPersist(cid) {
   const patch = {
     built: todayStr(), K: st.K, slateHash: packSlateHash(st.demand),
     pieces: st.pack, targets: st.targets, subTargets: st.subTargets || null,
-    pinned: [...st.keeps], banned: [...st.banned],
+    pinned: [...st.keeps], banned: [...st.banned], assignV: PACK_ASSIGN_V,
   };
   // Only overwrite the stored outfit assignment when a solve actually ran —
   // otherwise editing items would wipe outfits she'd already arranged.
@@ -1978,6 +2400,11 @@ async function packPersist(cid) {
     patch.assign = assign;
     patch.unmet = st.res.unmet;
     patch.seed = st.res.stats.seed || rec.seed || null;
+    /* What each stored outfit was solved AGAINST, so the next open can tell a
+       moved occasion from an untouched one and re-solve only the difference. */
+    const sig = {};
+    for (const o of st.demand) sig[o.id] = packOccSig(o);
+    patch.occSig = sig;
   }
   await savePackRecord(cid, patch);
   await packSyncMembers(cid, st.pack);
@@ -2272,6 +2699,37 @@ function openPackContexts({ back = null } = {}) {
     };
 
     const total = chosen.reduce((n, e) => n + (e.n || 1), 0);
+    /* What the app already put on this trip that she never ticked, so "What's
+       happening" is a complete answer to what the trip contains. Calendar
+       events used to be invisible here and regenerate on every build — she
+       reported the pack planning for a wedding she never selected. */
+    const dropped = packDroppedOccasions(cid);
+    const allDem = packDemand(packSlate(c, { tripContexts: packTripContexts(cid) }));
+    const declared = allDem.filter(o => o.source === "declared");
+    const floorDates = new Set(packDemandFor(cid, c).demand
+      .filter(o => o.source === "floor").map(o => o.date));
+    for (const id of dropped) if (id.includes("|flr#")) floorDates.add(id.split("|")[0]);
+    const extraRow = (id, name, note) => {
+      const on = !dropped.has(id);
+      return `<div class="det-card" style="margin:0 16px 8px;padding:10px 12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="pack-tick" data-pc-keep="${esc(id)}" aria-label="Include">${on ? "✓" : ""}</button>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600">${esc(name)}</div>
+            <div class="muted" style="font-size:12px">${esc(note)}</div>
+          </div>
+        </div>
+      </div>`;
+    };
+    const extras = [
+      declared.length ? `<div class="stats-sec-hdr" style="padding:10px 16px 4px"><div class="t" style="font-size:14px">From your calendar</div></div>
+        <div class="sheet-note" style="padding-top:0">Events already on these dates. Unticking one only takes it out of the packing — it stays on your calendar.</div>
+        ${declared.map(o => extraRow(o.id, o.context || occLabel(o.level) || "Event",
+            `${planDayLabel(o.date)}${o.level ? " · " + occLabel(o.level) : ""}`)).join("")}` : "",
+      floorDates.size ? `<div class="stats-sec-hdr" style="padding:10px 16px 4px"><div class="t" style="font-size:14px">Days with nothing planned</div></div>
+        <div class="sheet-note" style="padding-top:0">The app dresses these at the level you usually live at. Untick a day to leave it out of the bag entirely.</div>
+        ${[...floorDates].sort().map(d => extraRow(`${d}|flr#0`, planDayLabel(d), "nothing declared")).join("")}` : "",
+    ].join("");
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
         <button class="lnk" id="pcDone" style="font-weight:700">Done</button>
@@ -2282,7 +2740,15 @@ function openPackContexts({ back = null } = {}) {
       ${!packTripContexts(cid) && chosen.length ? `<div class="pack-warn-note" style="padding:0 16px 6px">These ${chosen.length} are the app's guess from your history, not your choices yet. Untick anything that isn't happening.</div>` : ""}
       ${chosen.length ? `<div style="padding:0 16px 8px"><button class="lnk" id="pcClear" style="font-size:13px;color:var(--muted);font-weight:600">Clear all and start from nothing</button></div>` : ""}
       <div class="center muted" style="font-size:12.5px;padding:0 16px 8px">${total} day${total === 1 ? "" : "s"} accounted for, of ${days} · the two travel days are added for you</div>
+      ${total > days ? `<div class="pack-warn-note" style="padding:0 16px 8px">That's ${total - days} more than this trip has days, so some days will carry two outfits.</div>` : ""}
       ${picked.map(row).join("")}
+      ${/* ⚠️ ABOVE "Everything else", not below it. Found by rendering the sheet
+            and reading it: "Wedding" appeared TWICE — once in the browse list of
+            every context she owns, and once as the actual calendar event — with
+            the event buried under a dozen rows. What this trip already contains
+            is a fact about the trip and belongs beside her own picks; the browse
+            list is for adding something new. */ ""}
+      ${extras}
       ${picked.length && rest.length ? `<div class="stats-sec-hdr" style="padding:10px 16px 4px"><div class="t" style="font-size:14px">Everything else</div></div>` : ""}
       ${rest.map(row).join("")}
       <div style="padding:6px 16px 16px">
@@ -2319,6 +2785,14 @@ function openPackContexts({ back = null } = {}) {
       if (at >= 0) next.splice(at, 1);
       else next.push({ ctx, level: null, n: 1 });
       save(next);
+    });
+    // Calendar events and filler days: the tick is inclusion in the PACK only.
+    $("#logInner").querySelectorAll("[data-pc-keep]").forEach(b => b.onclick = async () => {
+      const id = b.dataset.pcKeep;
+      const next = packDroppedOccasions(cid);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      await setPackDropped(cid, next);
+      render();
     });
     $("#logInner").querySelectorAll("[data-pc-lvl]").forEach(b => b.onclick = () => {
       const [ctx, n] = b.dataset.pcLvl.split("|");
@@ -2745,24 +3219,91 @@ function packBucketsHtml(st) {
       sub = `${n} day${n === 1 ? "" : "s"} with nothing declared — dressed at the level you usually live at`;
     } else if (g.source === "declared") {
       title = [g.context, OCCASION_LADDER[(g.level || 1) - 1]].filter(Boolean).join(" · ");
-      sub = `${n} outfit${n === 1 ? "" : "s"} · a fixed event you put on the calendar`;
+      sub = `${n} outfit${n === 1 ? "" : "s"} · from an event on your calendar`;
     } else {
       title = [g.context, OCCASION_LADDER[(g.level || 1) - 1]].filter(Boolean).join(" · ");
       sub = `${n} outfit${n === 1 ? "" : "s"}`;
     }
+    const canDrop = g.source === "declared" || g.source === "floor";
+    // Removing the whole group is one tap when it's several days of filler.
+    const dropAll = canDrop && n > 1
+      ? `<button class="lnk" data-pack-dropbucket="${esc(packBucketKey(g.occs[0]))}"
+           style="font-size:12.5px;font-weight:600;color:var(--muted);padding:2px 0">✕ Remove all ${n}</button>` : "";
     return `<div class="pack-bucket">
       <div class="pack-bucket-hd"><b>${esc(title)}</b><span>${esc(sub)}</span></div>
-      ${g.occs.map(o => packOccCardHtml(st, o, { showDate: true })).join("")}
+      ${dropAll}
+      ${g.occs.map(o => packOccCardHtml(st, o, { showDate: true, canDrop })).join("")}
     </div>`;
   }).join("");
-  return summary + (sections || `<div class="center muted" style="padding:24px 16px">Nothing to dress yet — tap “What's happening”.</div>`);
+  const dropped = packDroppedOccasions(st.cid);
+  // Never silently narrowed: what she took out is named, and one tap brings it
+  // back — the same rule the suggester's pool chip follows.
+  const droppedNote = dropped.size
+    ? `<div class="pack-bucket-sum">You've taken ${dropped.size} occasion${dropped.size === 1 ? "" : "s"} out of this trip.
+        <button class="lnk" data-pack-undrop style="font-size:13px;font-weight:600;color:var(--accent);padding:2px 0">Put them back</button></div>`
+    : "";
+  return summary + droppedNote + (sections || `<div class="center muted" style="padding:24px 16px">Nothing to dress yet — tap “What's happening”.</div>`);
+}
+
+/* ---- taking an occasion out of the trip ---------------------------------
+   ⚠️ These write ONLY the pack record. A calendar event she'd rather not pack
+   for is still an event; deleting her dayplan entry to satisfy a packing screen
+   would be the app overruling her diary. The toast says so, because "removed"
+   is ambiguous about which of the two it removed it from. */
+async function packDropOccasion(occId) {
+  const st = packStateReady();
+  if (!st || !occId) return;
+  const next = packDroppedOccasions(st.cid);
+  next.add(occId);
+  await setPackDropped(st.cid, next);
+  packStateReady(st.cid);
+  renderCapsules();
+  toast("Taken out of this trip — it's still on your calendar", [
+    { label: "Undo", fn: () => packUndropOccasion(occId) },
+  ]);
+}
+async function packUndropOccasion(occId) {
+  const cid = capsuleId;
+  if (!cid) return;
+  const next = packDroppedOccasions(cid);
+  next.delete(occId);
+  await setPackDropped(cid, next);
+  packStateReady(cid);
+  renderCapsules();
+}
+async function packDropBucket(key) {
+  const st = packStateReady();
+  if (!st || !key) return;
+  const ids = st.demand.filter(o => packBucketKey(o) === key).map(o => o.id);
+  if (!ids.length) return;
+  const next = packDroppedOccasions(st.cid);
+  for (const id of ids) next.add(id);
+  await setPackDropped(st.cid, next);
+  packStateReady(st.cid);
+  renderCapsules();
+  toast(`${ids.length} taken out of this trip`, [
+    { label: "Undo", fn: async () => {
+      const back = packDroppedOccasions(capsuleId);
+      for (const id of ids) back.delete(id);
+      await setPackDropped(capsuleId, back);
+      packStateReady(capsuleId);
+      renderCapsules();
+    } },
+  ]);
+}
+async function packUndropAll() {
+  const cid = capsuleId;
+  if (!cid) return;
+  await setPackDropped(cid, []);
+  packStateReady(cid);
+  renderCapsules();
 }
 
 /* ONE card, used by the bucket view, the by-day view and the by-day planner, so
    the three can never drift apart in markup or in handlers. `alsoFor` carries
    the same-day merge the day view does; the bucket view never merges, because
    two occasions she asked for are two outfits she asked for. */
-function packOccCardHtml(st, occ, { showDate = false } = {}) {
+function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
   const rec = packRecord(st.cid);
   const lockedSet = new Set(rec.locked || []);
   const { res } = st;
@@ -2774,6 +3315,11 @@ function packOccCardHtml(st, occ, { showDate = false } = {}) {
   const topLvl = Math.max(occ.level || 1, ...(occ.alsoFor || []).map(o => o.level || 1));
   const lvl = OCCASION_LADDER[topLvl - 1] || "";
   const when = showDate && occ.date ? `<small class="pack-occ-when">${esc(planDayLabel(occ.date))}</small>` : "";
+  // "Not this trip" — only on occasions she never ticked (a calendar event, or
+  // a day the app filled in). Her own selections are removed by unticking them.
+  // ⚠️ data-pack-dropOCC — `data-pack-drop` already means "drop a PIECE".
+  const drop = canDrop && (occ.source === "declared" || occ.source === "floor")
+    ? `<button class="plan-act" data-pack-dropocc="${esc(occ.id)}">✕ Not this trip</button>` : "";
   if (unmet || !cd) {
     return `<div class="pack-occ gap">
       <div class="pack-occ-hd"><b>${esc(label)}</b><span>${esc(lvl)}</span></div>
@@ -2781,6 +3327,7 @@ function packOccCardHtml(st, occ, { showDate = false } = {}) {
       <div class="pack-occ-gap">Nothing available covers this.</div>
       <div class="pack-occ-acts">
         <button class="plan-act" data-pack-suggest="${esc(occ.id)}">✨ Suggest one</button>
+        ${drop}
       </div>
     </div>`;
   }
@@ -2802,6 +3349,7 @@ function packOccCardHtml(st, occ, { showDate = false } = {}) {
       <button class="plan-act" data-pack-suggest="${esc(occ.id)}">Suggester…</button>
       ${opts > 1 ? `<button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>` : ""}
       <button class="plan-act" data-pack-lock="${esc(occ.id)}">${lockedSet.has(occ.id) ? "Unlock" : "🔒 Lock"}</button>
+      ${drop}
     </div>
   </div>`;
 }
@@ -2878,7 +3426,7 @@ function packPlanByDate(c) {
   if (!c || !isDatedTrip(c) || !packHasPlan(c.id)) return null;
   const stored = packAssignFromRecord(c.id);
   if (!stored.size) return null;
-  const demand = packDemand(packSlate(c, { tripContexts: packTripContexts(c.id) }));
+  const { demand } = packDemandFor(c.id, c);
   const lockedSet = new Set(packRecord(c.id).locked || []);
   const out = new Map();
   for (const occ of demand) {
@@ -3015,9 +3563,12 @@ function packRefresh(st) {
   const { c, demand, res } = st;
   const pack = new Set(res.pack);
   const wxFor = packWxFor(c);
+  // ⚠️ packDemandKey, not the level alone — this was a THIRD grouping, and on a
+  // Madrid-then-Javea trip it showed one leg's option count on the other's days.
+  // It is also the grouping the rehydrate path uses, i.e. the one she sees most.
   const byKey = new Map();
   for (const occ of demand) {
-    const k = `${occ.level}`;
+    const k = packDemandKey(occ);
     if (!byKey.has(k)) byKey.set(k, packOptionCount(occ, pack, { wxFor }));
     res.options.set(occ.id, byKey.get(k));
   }
@@ -3027,11 +3578,18 @@ function packRefresh(st) {
   res.stats.outfits = packOutfitCount(pack, demand, { wxFor });
   return cons;
 }
+/* ⚠️ IT MUST WRITE `st.pack` TOO, not only `st.res.pack`. packRegroup derives
+   the items screen from `st.pack` and packPersist stores `st.pack` — so the r5
+   fix this function IS ("the pack is the union of the outfits' pieces") only
+   ever reached the outfits half. A level-1 piece the solver legitimately pulled
+   from the whole closet still never appeared on the items screen, and stage B's
+   spare options were dropped again at the next save. */
 function packRepack(st) {
   const pack = new Set(packRecord(st.cid).pinned || []);
   for (const cd of st.res.assign.values()) for (const id of cd.ids) pack.add(id);
   for (const id of (st.res.extras || [])) pack.add(id);
   st.res.pack = [...pack];
+  st.pack = [...pack];
 }
 
 /* Alternates for ONE hole. Not "browse your closet": pieces that fit this slot,
@@ -3401,8 +3959,7 @@ function packDiff(cid) {
   if (!rec.built) return null;
   const c = capsuleById.get(cid);
   if (!c) return null;
-  const slate = packSlate(c, { tripContexts: packTripContexts(cid) });
-  const demand = packDemand(slate);
+  const { demand } = packDemandFor(cid, c);
   const reasons = [];
   if (packSlateHash(demand) !== rec.slateHash) reasons.push("the plan for the days changed");
   const ls = laundryState();
@@ -3433,8 +3990,7 @@ function openPackBuildSheet(cid) {
   const c = capsuleById.get(cid);
   if (!c) return;
   const picked = packTripContexts(cid) || packSuggestTripContexts(c);
-  const slate = packSlate(c, { tripContexts: picked });
-  const demand = packDemand(slate);
+  const { slate, demand } = packDemandFor(cid, c, { tripContexts: picked });
   const rec = packRecord(cid);
   const K = rec.K || PACK_OPTIONS.normal;
   const washDays = packWashDays(c);
