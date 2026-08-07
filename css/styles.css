@@ -1090,6 +1090,9 @@
   .cal-cp { background: var(--surface) center/contain no-repeat; }
   .cal-cp.span2 { grid-column: span 2; }
   .cal-ccanvas { position: relative; width: calc(100% - 4px); aspect-ratio: 3/4; border-radius: 4px; overflow: hidden; background: var(--surface); }
+  /* A day with something declared but not yet lived. Sized to sit in the empty
+     cell where a collage would be, so the grid rhythm doesn't shift. */
+  .cal-planned { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: .55; margin-top: 3px; flex-shrink: 0; }
   .cal-stats { padding: 20px 14px 8px; }
   .cal-stat { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); }
   .cal-stat:last-child { border-bottom: none; }

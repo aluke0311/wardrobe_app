@@ -227,6 +227,51 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-06 r4 — "THERE IS NO SUCH WEDDING". Selftest 349 → 353, run GREEN.**
+All 4 new cases mutation-checked red; **one EXISTING case had to be rewritten
+because it asserted a policy she reversed.** Follow-on from r3, and the r3 answer
+to "where did the wedding come from" was wrong in the part that mattered.
+
+⚠️ **A PLAN SHE CAN'T SEE IS A COMMITMENT THE APP KEEPS AND SHE DOESN'T.** Her
+`dayplan` really did hold `2026-08-15 → ["Wedding"]` (and `08-12 →
+["Party/Shower"]`), and no code path invents those — all six `saveDayPlan`
+callers are user-driven. But **the calendar rendered nothing for it**: the day
+row was gated on `dateStr === todayStr()` AND on the entry having an `outfit`
+(`js/14-calendar.js:298`), so a context declared for a future day — exactly what
+the trip builder and `rackNeededLevels` read — was invisible everywhere. Verified
+live: `dayPlan("2026-08-15")` returned the Wedding while the day view said
+*"Nothing logged for this day."* Now any date from today on shows its plan,
+outfit or not; a context-only row says so and opens the day's plan sheet, and the
+month grid carries a `.cal-planned` dot (`!dayWears.length && ds >= today`).
+⚠️ "Wear it ✓" stays a TODAY action — you can't log a day you haven't lived — so
+a future row reads "Change" instead.
+
+⚠️ **THE FIXED-EVENT SHEET COMMITTED ON ONE TAP.** `openCapAnchorSheet` lists
+every context she owns with its formality level printed on the right, which
+invites tapping one to see what it maps to — and that tap wrote the `dayplan`
+entry, on a date pre-filled to the trip's start. Party/Shower landing exactly on
+her trip's start date is the fingerprint. Select and commit are two taps now, and
+tapping the selected one clears it (a control that can only turn on is a trap).
+
+⚠️ **A SOLVE THAT ISN'T SAVED IS A SOLVE THAT RUNS AGAIN.** Her ask: *"I need to
+be able to reopen that item list / suggested outfit list without rebuilding it —
+sometimes I just want to see what it said."* r3 made the BUILD path persist, but
+a plain open never did: her record had `built` and **no `assign`**, so every open
+solved from scratch, showed a different answer and discarded it. **`packPersistSolve`**
+now writes the outfits whenever the solver actually runs, whoever asked.
+⚠️ It writes the SOLVE only — never `built`/`targets` — because this isn't her
+pressing build, and moving that date on every open is a small lie in the one
+place that says how current the pack is. ⚠️ Guarded on `rec.built`, so a preview
+or a diff can't create state for a pack she never made.
+
+⚠️ **AN EXISTING CASE WAS ASSERTING THE POLICY SHE REVERSED.** "Lean tolerates
+strictly more repetition than Cushion" went red the moment `packOptionTarget`
+stopped asking for fewer looks at lean — it was correct for the old model and is
+now backwards. Rewritten to the new contract: **lean packs strictly FEWER PIECES
+and repeats no more than cushion.** The dial still has to do something she'd
+notice; what it buys changed. **When a decision reverses, its guard case reverses
+with it — a red case is not automatically a regression.**
+
 **2026-08-06 r3 — TWO REPORTS, ONE TRIP. Selftest 337 → 349, run GREEN.** All 12
 new cases mutation-checked red in the same session; **four were found VACUOUS by
 that check and rewritten, and one measurement killed a fix I had already
@@ -2868,7 +2913,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **349/349** (2026-08-06 r3, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **353/353** (2026-08-06 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

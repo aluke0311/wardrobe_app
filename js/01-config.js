@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-06 r3";
+const APP_VERSION = "2026-08-06 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-06 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-06 r4", notes: [
+    "Days you've planned something for now show it. A context you'd set for a future day — which is what the trip builder and the rack read — rendered nowhere: the calendar said \"Nothing logged for this day\" while the app was quietly packing for it. That's where the wedding on your St. Louis trip came from. Planned days now say what's planned, on any day from today onward, and the month grid marks them with a dot",
+    "Opening a built pack no longer rebuilds it. The outfits were being solved fresh every single time you looked, and thrown away again — so the plan could differ between two opens when you'd changed nothing. It solves once and remembers",
+    "Adding a fixed event to a trip takes two taps instead of one. The list shows every context with its formality beside it, which invites tapping one just to see — and that tap used to create the event, on a date already filled in, permanently and invisibly",
+  ] },
   { v: "2026-08-06 r3", notes: [
     "Occasions now spread across the whole trip instead of piling onto the days nothing else had claimed. On your St. Louis trip you'd asked for nine occasions over five days, two of which were free — so four Home days became two days holding two Home occasions each, and each pair got the identical outfit. That's where \"two outfits for four days\" came from: the day list, not the outfit picker",
     "Two occasions on one day can no longer come back in the same clothes when they're the same kind of occasion. Different contexts sharing one outfit is still fine — that's one outfit across two things, and it shows as one card",

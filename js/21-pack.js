@@ -2332,7 +2332,39 @@ function packEnsureSolve(st, { force = false } = {}) {
      of inversion ①, and it's what keeps the two screens from disagreeing. */
   packRepack(st);
   packRegroup(st);
+  /* ⚠️ A SOLVE THAT ISN'T SAVED IS A SOLVE THAT RUNS AGAIN (2026-08-06 r4, her
+     report: *"I need to be able to reopen that item list / suggested outfit
+     list without rebuilding it — sometimes I just want to see what it said."*).
+
+     r3 made the BUILD path persist its outfits, but a plain open never did: the
+     record had `built` and no `assign`, so every open found nothing to
+     rehydrate, solved from scratch, showed her a different answer and threw it
+     away again. Inversion ③ says the solve is an EVENT whose result is state —
+     so the moment the solver actually runs, the result becomes state, whoever
+     asked for it. That is what makes reopening free and stable.
+     ⚠️ Writes the SOLVE only, never `built`/`pieces`/`targets`: this is not her
+     pressing build, and moving that date on every open would be a small lie in
+     the one place that says how current the pack is.
+     ⚠️ Fire-and-forget — kvUpdate sets kvData synchronously, so the screen that
+     triggered it already sees the stored answer. */
+  packPersistSolve(st);
   return st.res;
+}
+
+/* Store just the outfits, for a solve nobody explicitly asked to run. */
+function packPersistSolve(st) {
+  if (!st || !st.res || !st.cid) return;
+  if (!packRecord(st.cid).built) return;      // never built — nothing to keep in sync with
+  const assign = {};
+  for (const [occId, cd] of st.res.assign) assign[occId] = cd.ids;
+  const occSig = {};
+  for (const o of st.demand) occSig[o.id] = packOccSig(o);
+  savePackRecord(st.cid, {
+    assign, occSig, assignV: PACK_ASSIGN_V,
+    unmet: st.res.unmet || [],
+    seed: (st.res.stats && st.res.stats.seed) || packRecord(st.cid).seed || null,
+    pieces: st.pack,          // packRepack may have widened the bag — keep the two in step
+  });
 }
 /* The pack's outfits are shown on the by-day planner and the trip dash now, so
    every revision handler can fire from a screen that never loaded the pack.
@@ -4082,9 +4114,17 @@ function openPackTemplateSheet(cid) {
 
 /* The fixed-event capture on the create form. Date + context, nothing else —
    she's booking a trip, not planning outfits. */
+/* ⚠️ TAPPING A CONTEXT USED TO CREATE THE EVENT IMMEDIATELY (fixed 2026-08-06
+   r4). Every context she owns is listed here with its formality level printed on
+   the right, which invites tapping one to see what level it maps to — and that
+   tap wrote a `dayplan` entry, on a date pre-filled to the trip's start, which
+   then stocked the rack and the pack and could never be seen again on the
+   calendar. Her report was a trip packing for a wedding that didn't exist.
+   Selecting and committing are two taps now. */
 function openCapAnchorSheet() {
   const opts = contextOptions();
   let date = _capForm && _capForm.start_date ? _capForm.start_date : todayStr();
+  let picked = null;
   const render = () => {
     $("#moveInner").innerHTML = `
       <div class="sheet-hdr">
@@ -4092,27 +4132,38 @@ function openCapAnchorSheet() {
         <h2>Fixed event</h2>
         <span style="width:54px"></span>
       </div>
+      <div class="sheet-note">Something already on the calendar for this trip — a wedding, a concert. It'll shape what gets packed.</div>
       <div style="padding:8px 16px">
         <label class="fld">Date</label>
         <input class="inp" type="date" id="capAnchDate" value="${esc(date)}">
         <label class="fld" style="margin-top:12px">What is it</label>
       </div>
-      ${opts.map(o => `<button class="sheet-row" data-capanch="${esc(o)}">
-        <span>${esc(o)}</span>
+      ${opts.map(o => `<button class="sheet-row${picked === o ? " on" : ""}" data-capanch="${esc(o)}">
+        <span>${picked === o ? "✓ " : ""}${esc(o)}</span>
         <span class="rt">${esc(OCCASION_LADDER[(contextFormalityLevel(o) || CONTEXT_FORMALITY_SEED[o] || 3) - 1] || "")}</span>
-      </button>`).join("")}`;
+      </button>`).join("")}
+      <div style="padding:12px 16px 16px">
+        <button class="btn" id="capAnchAdd"${picked ? "" : " disabled style=\"opacity:.45\""}>
+          ${picked ? `Add ${esc(picked)}` : "Pick one above"}
+        </button>
+      </div>
+      <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
     $("#capAnchCancel").onclick = () => hideSheet("moveSheet");
     const di = $("#capAnchDate"); if (di) di.onchange = () => { date = di.value; };
     $("#moveInner").querySelectorAll("[data-capanch]").forEach(b => {
-      b.onclick = () => {
-        const d = $("#capAnchDate");
-        const useDate = (d && d.value) || date;
-        if (!useDate) { toast("Pick a date"); return; }
-        _capForm.anchors = (_capForm.anchors || []).concat([{ date: useDate, context: b.dataset.capanch }]);
-        hideSheet("moveSheet");
-        renderCapsules();
-      };
+      // Tapping the selected one clears it — a control that can only turn on is a trap.
+      b.onclick = () => { picked = picked === b.dataset.capanch ? null : b.dataset.capanch; render(); };
     });
+    const addBtn = $("#capAnchAdd");
+    if (addBtn) addBtn.onclick = () => {
+      if (!picked) return;
+      const d = $("#capAnchDate");
+      const useDate = (d && d.value) || date;
+      if (!useDate) { toast("Pick a date"); return; }
+      _capForm.anchors = (_capForm.anchors || []).concat([{ date: useDate, context: picked }]);
+      hideSheet("moveSheet");
+      renderCapsules();
+    };
   };
   render();
   showSheet("moveSheet");

@@ -140,10 +140,15 @@ function renderCalendarMonth(body) {
         : [...new Set(dayWears.map(w => w.item_id))];
       collage = calCellCollageHtml(itemIds.slice(0, 4), firstOutfitId ? outfitById.get(firstOutfitId) : null);
     }
+    /* A planned day carries a dot, so a commitment is visible from the month
+       without opening each date. Nothing lived is marked — the collage already
+       says that — and a plan fulfilled by a real wear stops being news. */
+    const planned = !dayWears.length && ds >= todayStr && dayPlan(ds).length;
     cells += `<div class="cal-cell${isToday ? ' today-cell' : ''}">
       <button class="cal-cell-btn" data-calday="${esc(ds)}">
         <div class="cal-daynum${isToday ? ' is-today' : ''}">${d}</div>
         ${collage}
+        ${planned ? `<div class="cal-planned" aria-label="Planned"></div>` : ''}
       </button>
     </div>`;
   }
@@ -295,16 +300,44 @@ function renderCalendarDay(body) {
            </button>`
         : '';
     })()}
-    ${dateStr === todayStr() && !tripModeId ? dayPlan(dateStr).map((e, idx) => {
+    ${/* ⚠️ A PLAN YOU CAN'T SEE IS A COMMITMENT THE APP KEEPS AND YOU DON'T
+          (2026-08-06 r4, her report: the pack was packing for a wedding, and
+          *"there is no such wedding"* — there was, in `dayplan`, and the
+          calendar said "Nothing logged for this day").
+
+          Two gates hid it. The row only rendered when the date was TODAY, and
+          only when the entry had an OUTFIT attached — so a context declared for
+          a future day, which is exactly what the trip builder and the rack read,
+          rendered nothing anywhere. It could only be found by opening that one
+          day and pressing 📅 Plan.
+
+          Now: any date from today on shows its plan, outfit or not. An entry
+          with an outfit keeps its one-tap "Wear it ✓"; a context-only entry is
+          stated and opens the day's plan sheet, where it can be removed. */ ""}
+    ${dateStr >= todayStr() ? dayPlan(dateStr).map((e, idx) => {
       const o = e.outfit ? outfitById.get(e.outfit) : null;
-      if (!o || planWorn(dateStr, o.id)) return "";
-      const ctxs = (e.contexts || []).join(", ");
-      return `<button class="otd-row" data-cal-plan-wear="${idx}">
+      if (o && planWorn(dateStr, o.id)) return "";
+      const ctxs = (e.contexts || []).filter(Boolean).join(", ");
+      const lvl = e.level ? occLabel(e.level) : null;
+      if (!o) {
+        // Context-only: say what's declared, and make it reachable to change.
+        const title = ctxs || (lvl ? `Dressing for ${lvl}` : "Planned");
+        return `<button class="otd-row" data-cal-plan-edit="${idx}">
+          <div class="otd-text" style="flex:1">
+            <div class="otd-title">📅 Planned: ${esc(title)}</div>
+            <div class="otd-sub">${esc(ctxs && lvl ? lvl : "no outfit picked yet")}</div>
+          </div>
+          <span class="cap-chip" style="flex:none">Change</span>
+        </button>`;
+      }
+      // ⚠️ "Wear it" is a today action — you can't log a day you haven't lived.
+      const canWear = dateStr === todayStr() && !tripModeId;
+      return `<button class="otd-row" data-cal-plan-${canWear ? "wear" : "edit"}="${idx}">
         <div class="otd-text" style="flex:1">
           <div class="otd-title">📅 Planned: ${esc(outfitName(o))}</div>
           ${ctxs ? `<div class="otd-sub">${esc(ctxs)}</div>` : ""}
         </div>
-        <span class="cap-chip" style="flex:none">Wear it ✓</span>
+        <span class="cap-chip" style="flex:none">${canWear ? "Wear it ✓" : "Change"}</span>
       </button>`;
     }).join("") : ""}
     <div class="cal-day-foot">
@@ -339,6 +372,9 @@ function renderCalendarDay(body) {
   if (planDayBtn) planDayBtn.onclick = () => openDayPlanSheet(dateStr);
   body.querySelectorAll('[data-cal-plan-wear]').forEach(b => {
     b.onclick = () => wearPlannedEntry(dateStr, +b.dataset.calPlanWear);
+  });
+  body.querySelectorAll('[data-cal-plan-edit]').forEach(b => {
+    b.onclick = () => openDayPlanSheet(dateStr);
   });
 
   // Horizontal swipe to navigate days; skip if touch starts on a swipeable card

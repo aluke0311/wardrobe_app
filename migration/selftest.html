@@ -3388,6 +3388,84 @@ async function run() {
     }, { capsules: [c] });
   });
 
+  /* ⚠️ A SOLVE THAT ISN'T SAVED IS A SOLVE THAT RUNS AGAIN (2026-08-06 r4). Her
+     record had `built` and no `assign`, so every open solved from scratch and
+     threw the answer away — *"sometimes I just want to see what it said."* */
+  t("a solve on a plain open is written back to the record", () => {
+    const c = packTrip(5);
+    return withPackCloset(() => {
+      W.capsuleId = c.id;
+      // `built` with no `assign` — exactly the shape her live record was in.
+      W.kvData.set("pack:" + c.id, { built: today, assignV: 2, K: 2,
+                                     contexts: [{ ctx: "Errands", n: 3 }] });
+      const st = W.packLoadState(c.id);
+      W.packEnsureSolve(st);
+      const rec = W.kvData.get("pack:" + c.id);
+      const stored = Object.keys(rec.assign || {}).length;
+      if (!stored) return "the solve was not persisted";
+      if (!rec.occSig) return "no signatures stored, so the next open can't tell what moved";
+      // And the very next open must now rehydrate rather than solve.
+      W._packState = null;
+      const real = W.packSolve;
+      let calls = 0;
+      W.packSolve = function (...a) { calls++; return real.apply(this, a); };
+      try {
+        const st2 = W.packLoadState(c.id);
+        W.packEnsureSolve(st2);
+        return calls === 0 ? true : `re-solved ${calls}× despite a stored assignment`;
+      } finally { W.packSolve = real; }
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ A PLAN SHE CAN'T SEE IS A COMMITMENT THE APP KEEPS AND SHE DOESN'T. The
+     day row rendered only when the date was TODAY and only when the entry had an
+     OUTFIT — so the Wedding that was shaping her pack showed as "Nothing logged
+     for this day". Verified against her live app before the fix. */
+  t("a context-only plan on a future day is visible on the calendar", () => withPackCloset(() => {
+    W.kvData.set("dayplan", { [D(3)]: [{ contexts: ["Wedding"], outfit: null }] });
+    W.calendarDay = D(3);
+    W.renderCalendar();
+    const el = W.document.querySelector("#tab-calendar");
+    const txt = el ? el.innerText : "";
+    const hasRow = /Wedding/.test(txt);
+    const reachable = !!el.querySelector("[data-cal-plan-edit]");
+    W.calendarDay = null;
+    return (hasRow && reachable)
+      ? true : `named=${hasRow} reachable=${reachable} — "${txt.split("\n").map(s=>s.trim()).filter(Boolean).slice(0,6).join(" / ")}"`;
+  }));
+
+  t("the month grid marks a day with something planned", () => withPackCloset(() => {
+    W.kvData.set("dayplan", { [D(3)]: [{ contexts: ["Wedding"], outfit: null }] });
+    W.calendarDay = null;
+    W.renderCalendar();
+    const dots = W.document.querySelectorAll("#tab-calendar .cal-planned");
+    // ⚠️ Vacuity guard: a marker on every cell would also "pass" a >0 check.
+    return (dots.length === 1) ? true : `${dots.length} planned markers, expected exactly 1`;
+  }));
+
+  /* ⚠️ Tapping a context in the trip form's "Anything already fixed?" step used
+     to create the event on that single tap, with the date pre-filled to the trip
+     start — the one path where a stray tap becomes a permanent, invisible
+     commitment. Selecting and committing are two taps now. */
+  t("picking a context on the fixed-event sheet doesn't create it yet", () => withPackCloset(() => {
+    W._capForm = { kind: "packing", name: "T", start_date: D(1), end_date: D(5), anchors: [] };
+    W.openCapAnchorSheet();
+    const doc = W.document;
+    const row = doc.querySelector("#moveInner [data-capanch]");
+    if (!row) return "the sheet rendered no contexts";
+    row.click();
+    const afterPick = (W._capForm.anchors || []).length;
+    const addBtn = doc.querySelector("#capAnchAdd");
+    if (!addBtn) return "no confirm button on the sheet";
+    addBtn.click();
+    const afterAdd = (W._capForm.anchors || []).length;
+    const anchors = W._capForm.anchors;
+    W._capForm = null;
+    W.hideSheet("moveSheet");
+    return (afterPick === 0 && afterAdd === 1)
+      ? true : `after picking=${afterPick} (want 0), after confirming=${afterAdd} (want 1) ${JSON.stringify(anchors)}`;
+  }));
+
   // ⚠️ The opposite failure, and the more dangerous one: a record already in the
   // new scheme but never stamped must NOT be run through the legacy map, whose
   // every lookup would miss and silently empty her outfits.
@@ -3464,9 +3542,17 @@ async function run() {
       ? true : `days=${days} cap=${Math.ceil(days / 2)} worstTop=${worst}`;
   }));
 
-  /* The tightness dial has to DO something to the thing she'd notice. Before
-     repW existed, K only changed option counts, so Lean and Cushion produced the
-     same daily repetition and the dial was decorative on this axis. */
+  /* ⚠️ REWRITTEN 2026-08-06 r4 — IT WAS ASSERTING A POLICY SHE REVERSED. The
+     case used to require that Lean repeat a top STRICTLY MORE than Cushion, and
+     it went red the moment `packOptionTarget` stopped asking for fewer looks at
+     Lean. Told what Lean meant, she said: *"same as normal just a smaller bag.
+     small numbers of clothes can make lots of different outfits."*
+
+     So the dial's job moved. It must still DO something she'd notice — that part
+     of the original reasoning stands, and before repW existed K only changed
+     option counts and the dial was decorative — but what it buys is BAG SIZE,
+     not repetition. Measured on this fixture at the moment of the change:
+     lean 6 pieces / worst top worn 1 day, cushion 7 pieces / worst top 1 day. */
   /* ⚠️ Needs a SCARCE closet, and the reason is worth writing down: on the roomy
      general fixture the solver spreads tops perfectly at every setting, so the
      dial has nothing to trade and the case passes vacuously. The pressure comes
@@ -3484,7 +3570,7 @@ async function run() {
     add("jeaB", "Bottoms", "Jeans", [3]);
     add("snkA", "Shoes", "Sneakers", [3]);
   };
-  t("Lean tolerates strictly more repetition than Cushion", () => withPackCloset(() => {
+  t("Lean packs a smaller bag than Cushion, and repeats no more", () => withPackCloset(() => {
     const c = packTrip(6);
     /* ⚠️ `ctx`/`n`, not `context`/`per` — packSlate reads those keys. This test
        carried the old spelling from before the 2026-07-30 r5 flat-list rework
@@ -3496,10 +3582,14 @@ async function run() {
     const tripContexts = [{ ctx: "Errands", n: 4 }];
     const lean = solveFor(c, { K: 1, tripContexts });
     const cush = solveFor(c, { K: 3, tripContexts });
+    const lp = lean.res.pack.length, up = cush.res.pack.length;
     const l = topSpread(lean.demand, lean.res), u = topSpread(cush.demand, cush.res);
-    // STRICT: `l >= u` held even with repW pinned to 1 (verified by mutation).
-    return l > u
-      ? true : `leanWorstTop=${l} cushionWorstTop=${u} leanPieces=${lean.res.pack.length} cushionPieces=${cush.res.pack.length}`;
+    const bits = [];
+    // The dial's whole remaining job: fewer pieces at Lean.
+    if (!(lp < up)) bits.push(`lean packed ${lp}, cushion ${up} — the dial changed nothing`);
+    // And the smaller bag must not be bought back with a repeated outfit.
+    if (l > u) bits.push(`lean repeated a top ${l} days vs cushion's ${u}`);
+    return bits.length ? bits.join("; ") : true;
   }, { replace: scarceTops }));
 
   t("a 10-day trip packs enough tops to stay inside tolerance", () => withPackCloset(() => {
