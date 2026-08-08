@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-06 r4";
+const APP_VERSION = "2026-08-08 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,13 @@ const APP_VERSION = "2026-08-06 r4";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-08 r1", notes: [
+    "Lean / Normal / Cushion finally changes the bag. It was working out the right numbers all along — on a 7-day trip it proposed 11, 15 and 19 pieces — and then a last step rebuilt the bag from just the pieces your outfits happened to use, cutting all three back to 8, 8 and 9. Lean and Normal came out identical, which is why moving the dial did nothing. You now get the bag it proposed",
+    "Lean also stopped quietly buying its smaller bag with repeated outfits — a leftover from the old meaning of Lean, before you said it should be \"the same, just a smaller bag\". Wearing one top with two different bottoms was never the problem and still isn't; that's two outfits",
+    "A day you've planned no longer opens by telling you nothing is there. Future days used to lead with \"Nothing logged for this day\" and put the plan underneath it — the same sentence that made the wedding look like it didn't exist. A future day with no plan now says so in its own words, and past days are unchanged",
+    "Style Stats and the Closet vs Life page no longer contradict each other. One said your closet skewed toward a level while the other said there were no big gaps — the first had no threshold at all, so three workout pieces you never log was enough to trigger a verdict. It now waits for a real gap, states both numbers, and stops telling you what to do about it",
+    "Home's Calendar tile says \"Nothing logged today\" instead of \"Nothing logged yet\", which read as though you'd never logged anything",
+  ] },
   { v: "2026-08-06 r4", notes: [
     "Days you've planned something for now show it. A context you'd set for a future day — which is what the trip builder and the rack read — rendered nowhere: the calendar said \"Nothing logged for this day\" while the app was quietly packing for it. That's where the wedding on your St. Louis trip came from. Planned days now say what's planned, on any day from today onward, and the month grid marks them with a dot",
     "Opening a built pack no longer rebuilds it. The outfits were being solved fresh every single time you looked, and thrown away again — so the plan could differ between two opens when you'd changed nothing. It solves once and remembers",

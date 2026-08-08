@@ -227,6 +227,98 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-08 r1 — A FULL-APP AUDIT (she asked for one; no specific report).
+Selftest 353 → **357**, run GREEN.** All 4 new cases + the 1 rewritten case
+mutation-checked red in the same session. **The suite was ALREADY 352/353 on
+`main`** — baselined first (the documented rule), and the red case was the r4
+lean/cushion guard, which CLAUDE.md records as "run GREEN". Either it regressed
+after that run or it was never re-run; **check the suite before starting.**
+
+⚠️ **THE TIGHTNESS DIAL WAS BEING LOST IN THE LAST STEP, AFTER THREE ROUNDS OF
+FIXES UPSTREAM OF IT (her 4th report on this dial, r11 being the 3rd).**
+`packCounts` scales correctly with K and `packFill` builds exactly what it asks
+for — measured on a 158-piece closet, 7-day trip: **11 / 15 / 19** pieces at
+lean / normal / cushion. Then **`packRepack` rebuilt the bag from scratch** as
+`pinned ∪ what the outfits use ∪ extras` and cut all three to **8 / 8 / 9**,
+because eight occasions need about eight outfits' worth of pieces whatever the
+dial says. **Lean and normal came out byte-identical** — that is the whole
+"switching between lean/normal/cushion changes nothing" report, and r11's fix to
+`packCounts` could never have been visible through it. `packRepack` now
+**UNIONS** rather than replaces.
+- ⚠️ **Inversion ① still holds and is unchanged in spirit:** the bag is a
+  SUPERSET of the outfits' pieces, so every outfit is still fully packed and the
+  items screen cannot disagree with the outfits screen. What it is no longer is
+  the MINIMUM such set — the spare capacity K buys is exactly the difference.
+  **Counts remain an OUTPUT of `packFill`; nothing targets a number.**
+- ⚠️ **`packDropPiece`/`packAddPiece` now write `st.pack` too**, not only
+  `st.res.pack`. They didn't, and with a unioning `packRepack` a dropped piece
+  would come straight back at the next swap or re-roll. (The r3 note already
+  said these two must stay in step; this is the other half of it.)
+- ⚠️ **THE OFF-PATH MEASUREMENT LIED, AND I REPORTED IT BEFORE CATCHING IT.**
+  Driving `packSolve` directly with the wide trip rack gave 11/11/11; the app
+  passes the filled BAG, and the on-path truth was 8/8/9. Same conclusion, wrong
+  numbers and wrong emphasis. **The suite already has `appSolve` for exactly
+  this** (`packLoadState → packEnsureSolve`) — use it; `solveFor` cannot see this
+  class of defect, which is why three rounds of green tests missed it.
+- ⚠️ **A HYPOTHESIS I MUTATION-TESTED AND KILLED:** `repW = 0.5` at lean looked
+  like the cause — it halves repetition costs, and the comment above it still
+  stated the model she reversed in r4 ("at Lean, wearing one sweater four days
+  out of six is exactly right"). **Removing it did NOT fix the red case.** It was
+  stale policy, not the bug. It is now `1` at lean anyway, because a smaller bag
+  must be paid for in PIECES, never in repeated looks — but **it is not what the
+  dial was losing**, and a future round should not re-derive that by reading.
+
+⚠️ **HER GUARD CASE WAS MEASURING SOMETHING STRICTER THAN HER DECISION.** The red
+case asserted repetition with `topSpread` (most DAYS any one top went out), and
+on a scarce closet a smaller bag makes that arithmetically impossible — four tops
+cannot dress four occasions and also shrink. Asked directly, she confirmed the
+recombination model: **one top worn with two different bottoms is two different
+OUTFITS, not a repeat.** Rewritten against `packLookKey`, the unit
+`packDistinct`/`packOptionCount` already use. **A guard that measures more
+strictly than the decision it guards goes red for the right reason and sends you
+to the wrong place** — it sent this round at `repW` before a mutation ruled it out.
+
+⚠️ **TWO SCREENS, ONE QUESTION, OPPOSITE ANSWERS.** Stats main said *"Your closet
+skews Utility but your wears don't — consider wearing those pieces more"* while
+**Closet vs Life, one tap away, said "No big gaps"**. `biggestGap` started at 0
+and any positive gap won, so **3.4% owned vs 0.0% worn** — a few workout pieces
+she never logs — produced a whole-closet verdict. **Every other derivation in
+this app carries a noise floor; this was the one that didn't.**
+- ⚠️ **They are NOT merged, deliberately.** This one is about formality LEVELS
+  (do I own clothes at levels I don't wear); the gap page is about CONTEXTS (is
+  there a part of my life the closet can't dress). Both are worth having. What
+  they may not do is disagree about whether anything is wrong, so they share
+  **`CLOSET_VS_LIFE_MIN_GAP`(0.05)** — the threshold the gap page already used.
+- ⚠️ **A fact, not advice**, per the rule "packed 3×, worn 0×" / "worth a second
+  look" / the removal of wash orders all follow: it now names the level and both
+  numbers and stops. A case pins that it still SPEAKS on a real gap — silencing
+  it always would be the "test that can't fail" trap from the other direction.
+
+⚠️ **THE r4 CALENDAR FIX WAS HALF OF ITSELF.** r4 added the future-day plan row
+and left the empty state above it, so a declared future day **still opened with
+"Nothing logged for this day"** — the exact sentence its own comment quotes as
+the symptom — with the Wedding rendered below the sentence denying it. You cannot
+log a day you haven't lived: with a plan the line is noise, without one the
+honest empty state is about planning. **Past days are unchanged**, and a case
+pins that too.
+
+**Also:** Home's Calendar tile read "Nothing logged **yet**" (today-scoped words
+that say "never") → "Nothing logged today"; and `renderStatsReportPage` now falls
+back instead of throwing when `statsReportField` is unset — every real path sets
+the two together, so it isn't reachable today, but dereferencing a missing dim
+renders as a blank screen with no way back.
+
+**Verified as CORRECT under probing, so a later round needn't re-audit them:**
+suggester cohesion (**0 of 200** combos without a shared level), the Utility/level-1
+empty sheet (gear door + starvation note both fire), laundry (tolerance, hamper,
+lens narrowing, **0 of 8** suggestions offering a dirty piece), pack solve
+determinism (byte-identical across runs — inversion ③ holds), the rack (58 pieces,
+properly stratified), and structurally: **no undefined function references in
+25k lines**, shelf flags, filter dims in all four places, version lockstep.
+⚠️ **Two of my own probes were wrong before the code was** — `suggestGearDoorHtml`
+and `renderStatsReportPage` read SHEET/VIEW STATE, not arguments, so calling them
+bare returns "" or throws and looks like a bug. Set the state the screen would.
+
 **2026-08-06 r4 — "THERE IS NO SUCH WEDDING". Selftest 349 → 353, run GREEN.**
 All 4 new cases mutation-checked red; **one EXISTING case had to be rewritten
 because it asserted a policy she reversed.** Follow-on from r3, and the r3 answer
@@ -2566,7 +2658,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-06 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-08 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -2913,7 +3005,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **353/353** (2026-08-06 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **357/357** (2026-08-08 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

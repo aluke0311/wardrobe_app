@@ -539,7 +539,10 @@ const HOME_TILES = [
   { tab: "calendar", label: "Calendar",   sub: () => {
       const today = localISO(new Date());
       const n = dayGroups(today).length;
-      return n ? `${n} logged today` : "Nothing logged yet";
+      // ⚠️ "yet" reads as "you have never logged anything" — on a closet with a
+      // year of history behind it that's simply false. The tile is TODAY-scoped;
+      // the words have to say so.
+      return n ? `${n} logged today` : "Nothing logged today";
     },
     icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>` },
   { tab: "capsules", label: "Capsules",   sub: () => capsules.length ? `${capsules.length} set${capsules.length === 1 ? "" : "s"}` : "Sets & packing",

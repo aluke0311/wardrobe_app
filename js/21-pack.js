@@ -906,15 +906,25 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
   const rnd = packRng(sd);
   let best = null;
 
-  /* The tightness dial governs REPETITION, not only option counts. D5 gave K the
-     job of carrying variety, but K only guarantees options EXIST in the pack —
-     it says nothing about whether consecutive days look different, which is the
-     thing she'd actually notice. At Lean, wearing one sweater four days out of
-     six is exactly right; at Cushion it is the whole complaint.
-     ⚠️ PACK_REPEAT_DAY is deliberately NOT scaled: the identical outfit two days
-     running is the worst-looking failure the solver can produce, so that floor
-     holds at every tightness. */
-  const repW = K <= PACK_OPTIONS.lean ? 0.5 : (K >= PACK_OPTIONS.cushion ? 2 : 1);
+  /* The tightness dial governs REPETITION as well as option counts, because K
+     only guarantees options EXIST in the pack — it says nothing about whether
+     consecutive days look different, which is the thing she'd actually notice.
+
+     ⚠️ LEAN NO LONGER DISCOUNTS REPETITION (2026-08-08, audit). This used to be
+     `0.5` at lean, on the old model — the comment here said "at Lean, wearing
+     one sweater four days out of six is exactly right" — and that is precisely
+     the model she reversed in r4: *"same as normal just a smaller bag. small
+     numbers of clothes can make lots of different outfits."* A different outfit
+     per occasion is the floor at EVERY tightness, so a smaller bag must be paid
+     for in PIECES, never in repeated looks. Halving the repetition cost bought
+     it in exactly the wrong currency.
+     ⚠️ Reusing one TOP across two different-looking outfits is not repetition —
+     that's the recombination the whole model rests on, and it's why repetition
+     is charged on `packLookKey` (the look minus shoes), not per piece.
+     ⚠️ PACK_REPEAT_DAY is deliberately NOT scaled at all: the identical outfit
+     two days running is the worst-looking failure the solver can produce, so
+     that floor holds at every tightness. */
+  const repW = K >= PACK_OPTIONS.cushion ? 2 : 1;
 
   /* Occasions grouped by date, in order. ⚠️ The greedy walks the trip in DATE
      ORDER carrying a running wear counter, because tolerance has to DRIVE
@@ -3616,8 +3626,31 @@ function packRefresh(st) {
    ever reached the outfits half. A level-1 piece the solver legitimately pulled
    from the whole closet still never appeared on the items screen, and stage B's
    spare options were dropped again at the next save. */
+/* ⚠️ IT UNIONS, IT DOES NOT REPLACE — and replacing is what made the tightness
+   dial do nothing (2026-08-08, audit). This function existed to ADD what the
+   solver reached for (a level-1 piece drawn from the whole closet); it was
+   written as a rebuild-from-scratch, so it also SUBTRACTED everything packFill
+   had chosen and no outfit happened to use.
+
+   That is the entire dial. `packCounts` scales correctly with K and `packFill`
+   builds exactly what it asks for — measured on a 158-piece closet, 7-day trip:
+   11 / 15 / 19 pieces at lean / normal / cushion. Then this ran and cut all
+   three to 8 / 8 / 9, because eight occasions need about eight outfits' worth of
+   pieces whatever the dial says. Lean and normal came out byte-identical, which
+   is the "switching between lean/normal/cushion changes nothing" report, and the
+   r11 fix to `packCounts` could never have been visible through it.
+
+   ⚠️ Inversion ① still holds: the pack is a SUPERSET of the outfits' pieces, so
+   every outfit is still fully packed and the items screen can't disagree with
+   the outfits screen. What it is no longer is the MINIMUM such set — the spare
+   capacity K buys is exactly the difference, and `packItemWhy` already explains
+   a piece that serves no occasion yet. Counts remain an OUTPUT of packFill;
+   nothing here targets a number.
+   ⚠️ Requires `st.pack` to be the live bag: packDropPiece/packAddPiece keep it
+   in step, or a dropped piece would come straight back through this union. */
 function packRepack(st) {
   const pack = new Set(packRecord(st.cid).pinned || []);
+  for (const id of (st.pack || [])) pack.add(id);
   for (const cd of st.res.assign.values()) for (const id of cd.ids) pack.add(id);
   for (const id of (st.res.extras || [])) pack.add(id);
   st.res.pack = [...pack];
@@ -3835,6 +3868,10 @@ async function packDropPiece(itemId) {
   if (!st) return;
   const it = itemById.get(itemId);
   st.res.pack = st.res.pack.filter(id => id !== itemId);
+  // ⚠️ `st.pack` too. It is the live bag packRepack now unions from, so leaving
+  // it stale would hand the piece straight back at the next swap or re-roll —
+  // and packRegroup derives the items screen from it either way.
+  st.pack = (st.pack || []).filter(id => id !== itemId);
   st.res.extras = (st.res.extras || []).filter(id => id !== itemId);
   const rec = packRecord(st.cid);
   await savePackRecord(st.cid, { pinned: (rec.pinned || []).filter(id => id !== itemId) });
@@ -3879,6 +3916,7 @@ async function packAddPiece(itemId) {
   const it = itemById.get(itemId);
   if (!it) return;
   if (!st.res.pack.includes(itemId)) st.res.pack = st.res.pack.concat([itemId]);
+  if (!(st.pack || []).includes(itemId)) st.pack = (st.pack || []).concat([itemId]);
   st.res.extras = (st.res.extras || []).concat([itemId]);
   const rec = packRecord(st.cid);
   await savePackRecord(st.cid, { pinned: [...new Set((rec.pinned || []).concat([itemId]))] });

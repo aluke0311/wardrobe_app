@@ -271,7 +271,20 @@ function renderCalendarDay(body) {
       </div>
     </div>`;
   }).join('')
-  : `<div class="cal-day-empty">Nothing logged for this day.</div>`;
+  /* ⚠️ ON A FUTURE DAY "Nothing logged for this day" IS THE WRONG SENTENCE, and
+     it is the exact sentence from her report (2026-08-06 r4: the pack packed for
+     a wedding and *"there is no such wedding"* — there was, in `dayplan`, and
+     this line is what the calendar said instead of showing it). r4 fixed the
+     plan row underneath and left this above it, so a declared future day STILL
+     opens by announcing that nothing is there, with the plan below the fold of
+     the sentence denying it. You cannot log a day you haven't lived, so on a
+     future date this is never the point: if there's a plan, the plan row says
+     everything and this is pure noise; if there isn't, the honest empty state is
+     about planning, not logging. */
+  : (isFuture
+      ? (dayPlan(dateStr).length ? ''
+         : `<div class="cal-day-empty">Nothing planned for this day yet.</div>`)
+      : `<div class="cal-day-empty">Nothing logged for this day.</div>`);
 
   const prevD    = localISO(new Date(y, m - 1, d - 1));
   const nextD    = localISO(new Date(y, m - 1, d + 1));

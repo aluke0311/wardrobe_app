@@ -642,6 +642,49 @@ async function run() {
               [1, "Campus", 1, 86, 25]);
   });
 
+  /* ⚠️ TWO SCREENS, ONE QUESTION, OPPOSITE ANSWERS (2026-08-08 audit). The Stats
+     main block announced "your closet skews Utility — consider wearing those
+     pieces more" while the Closet vs Life page, one tap away, said "no big gaps".
+     `biggestGap` started at 0 and any positive gap won, so a handful of workout
+     pieces she never logs (3.4% of the closet, 0.0% of wears) was enough to
+     trigger a whole-closet verdict. Every other derivation in this app carries a
+     noise floor; this was the one that didn't.
+
+     They stay two derivations on purpose — this one is about formality LEVELS,
+     the gap page is about CONTEXTS, and both are worth having. What they may not
+     do is disagree about whether anything is wrong, so they now share one
+     threshold. Asserted through the rendered HTML because the contradiction was
+     only ever visible in the words. */
+  t("the main page doesn't announce a gap the Closet vs Life page denies", () => {
+    const saved = { items: W.items, wears: W.wears, byId: W.itemById };
+    try {
+      // 40 casual pieces she lives in + 3 utility pieces she never logs: a 3-point
+      // level gap, i.e. exactly the noise that used to produce a verdict.
+      W.items = [
+        ...Array.from({ length: 40 }, (_, k) => ({ id: "c" + k, status: "Available",
+          formality: [2, 3], category: "Tops", subcategory: "Tee shirts" })),
+        ...Array.from({ length: 3 }, (_, k) => ({ id: "u" + k, status: "Available",
+          formality: [1], category: "Workout", subcategory: "Workout tops" })),
+      ];
+      W.itemById = new Map(W.items.map(i => [i.id, i]));
+      W.wears = Array.from({ length: 60 }, (_, k) => ({ item_id: "c" + (k % 40),
+        worn_on: D(-k - 1), context: ["Errands"], formality_for: 2 }));
+      const quiet = W.closetVsLifeHtml();
+      if (/skews|consider wearing/.test(quiet)) return `still issues a verdict on noise: ${quiet.slice(0, 160)}`;
+      if (!/well-balanced/.test(quiet)) return `expected the balanced line, got: ${quiet.slice(0, 160)}`;
+
+      // ⚠️ And it must still SPEAK on a real gap, or this case just pins silence.
+      // 25 dressy pieces worn twice ever against 40 casual worn constantly.
+      W.items = W.items.concat(Array.from({ length: 25 }, (_, k) => ({ id: "d" + k,
+        status: "Available", formality: [6], category: "Dresses", subcategory: "Cocktail" })));
+      W.itemById = new Map(W.items.map(i => [i.id, i]));
+      const loud = W.closetVsLifeHtml();
+      if (!/You own more/.test(loud)) return `stayed silent on a real gap: ${loud.slice(0, 160)}`;
+      if (/consider wearing|skews/.test(loud)) return `still giving advice: ${loud.slice(0, 160)}`;
+      return true;
+    } finally { W.items = saved.items; W.wears = saved.wears; W.itemById = saved.byId; }
+  });
+
   // ---- year in review ----
   t("longestStreak counts consecutive days", () => {
     const s = new (W.Set)(["2026-03-01", "2026-03-02", "2026-03-03", "2026-03-07", "2026-03-08"]);
@@ -3141,6 +3184,60 @@ async function run() {
       ? true : `${v.placed} occasions dressed as only ${v.distinct} distinct outfits`;
   }, Object.assign({ capsules: [packTrip(5)] }, scarceCloset)));
 
+  /* ⚠️ THE DIAL HAS TO SURVIVE THE WHOLE PATH, NOT JUST packCounts (2026-08-08
+     audit — her fourth report on this dial, and the first three fixes all landed
+     upstream of where it was actually being lost).
+
+     packCounts scales correctly with K and packFill builds exactly what it asks
+     for. Measured on a 158-piece closet, 7-day trip, that is 11 / 15 / 19 pieces
+     at lean / normal / cushion. Then packRepack rebuilt the bag from scratch as
+     "pinned ∪ what the outfits use ∪ extras" and cut all three to 8 / 8 / 9 —
+     because eight occasions need about eight outfits' worth of pieces whatever
+     the dial says. Lean and normal came out byte-identical. Everything upstream
+     was right and the user-visible answer was still the same bag.
+
+     So this asserts the number she can actually SEE, through packLoadState →
+     packEnsureSolve, which is the only place the defect was visible at all: the
+     three previous rounds each measured an intermediate and went green. */
+  t("the tightness dial changes the bag she actually gets", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const sizes = [1, 2, 3].map(K => {
+        const st = appSolve(c, { K, tripContexts: [{ ctx: "Errands", n: 4 }] });
+        return st ? st.pack.length : -1;
+      });
+      const [lean, normal, cushion] = sizes;
+      if (sizes.some(n => n < 0)) return `no pack state: ${JSON.stringify(sizes)}`;
+      // ⚠️ Vacuity guard: a closet too small to supply the cushion target would
+      // clamp all three to the same number and this would pass on poverty.
+      if (cushion < 8) return `vacuous: cushion only reached ${cushion} pieces`;
+      return lean < normal && normal < cushion
+        ? true : `lean ${lean}, normal ${normal}, cushion ${cushion} — not monotonic`;
+    }, { capsules: [c] });
+  });
+
+  /* The mechanism behind it, asserted directly so a future "simplification" of
+     packRepack back into a rebuild can't pass. The bag must be a SUPERSET of the
+     outfits' pieces (inversion ① still holds — every outfit is fully packed),
+     not the minimum such set. */
+  t("packRepack keeps the bag it was given, it doesn't rebuild it", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { K: 3, tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const used = new W.Set();
+      for (const cd of st.res.assign.values()) for (const id of cd.ids) used.add(id);
+      const bag = new W.Set(st.pack);
+      const missing = [...used].filter(id => !bag.has(id));
+      if (missing.length) return `outfits use pieces not in the bag: ${JSON.stringify(missing)}`;
+      // Vacuity guard: if the outfits happened to use everything, "superset" is
+      // trivially true and this case is asserting nothing.
+      if (bag.size === used.size) return `vacuous: every one of the ${bag.size} pieces is in an outfit`;
+      return bag.size > used.size
+        ? true : `bag ${bag.size} vs ${used.size} used`;
+    }, { capsules: [c] });
+  });
+
   /* ⚠️ LEAN MEANS A SMALLER BAG, NOT A REPEATED OUTFIT (her decision,
      2026-08-06 r2). The old target was `ceil(n/2)` at lean — four days of one
      context asked for two looks and got exactly that, by design, and the design
@@ -3434,6 +3531,32 @@ async function run() {
       ? true : `named=${hasRow} reachable=${reachable} — "${txt.split("\n").map(s=>s.trim()).filter(Boolean).slice(0,6).join(" / ")}"`;
   }));
 
+  /* ⚠️ AND THE FIX WAS ONLY HALF OF IT (2026-08-08 audit). r4 added the plan row
+     but left the empty state above it untouched, so a declared future day STILL
+     opened with the words "Nothing logged for this day" — the exact sentence
+     from her report — and put the Wedding underneath the sentence denying it.
+     You cannot log a day you haven't lived, so on a future date that line is
+     never the right one: with a plan it is noise, without a plan the honest
+     empty state is about planning. Past days are unchanged. */
+  t("a future day never says 'nothing logged'", () => withPackCloset(() => {
+    const read = (ds) => { W.calendarDay = ds; W.renderCalendar();
+      const el = W.document.querySelector("#tab-calendar"); return el ? el.innerText : ""; };
+    W.kvData.set("dayplan", { [D(3)]: [{ contexts: ["Wedding"], outfit: null }] });
+    const planned = read(D(3));
+    W.kvData.delete("dayplan");
+    const bare = read(D(4));
+    const past = read(D(-400));            // long before any fixture wear
+    W.calendarDay = null;
+    const bits = [];
+    if (/Nothing logged/.test(planned)) bits.push("a planned future day still says 'nothing logged'");
+    if (!/Wedding/.test(planned)) bits.push("the plan itself vanished");
+    if (/Nothing logged/.test(bare)) bits.push("an empty future day still says 'nothing logged'");
+    if (!/Nothing planned/.test(bare)) bits.push("an empty future day says nothing at all");
+    // ⚠️ The past must keep the logging wording, or this "fix" just deleted it.
+    if (!/Nothing logged/.test(past)) bits.push("a past empty day lost its 'nothing logged' line");
+    return bits.length ? bits.join("; ") : true;
+  }));
+
   t("the month grid marks a day with something planned", () => withPackCloset(() => {
     W.kvData.set("dayplan", { [D(3)]: [{ contexts: ["Wedding"], outfit: null }] });
     W.calendarDay = null;
@@ -3570,6 +3693,18 @@ async function run() {
     add("jeaB", "Bottoms", "Jeans", [3]);
     add("snkA", "Shoes", "Sneakers", [3]);
   };
+  /* Distinct OUTFITS, judged the way the app judges them: packLookKey is the
+     piece set minus shoes, so two looks that differ only by shoes are one look
+     (r13). This is the right unit for "does lean repeat more than cushion" —
+     see the case below for why the old top-day measure was the wrong one. */
+  const distinctLooks = (demand, res) => {
+    const s = new W.Set();
+    for (const o of demand) {
+      const cd = res.assign.get(o.id);
+      if (cd) s.add(W.packLookKey(cd.ids));
+    }
+    return s.size;
+  };
   t("Lean packs a smaller bag than Cushion, and repeats no more", () => withPackCloset(() => {
     const c = packTrip(6);
     /* ⚠️ `ctx`/`n`, not `context`/`per` — packSlate reads those keys. This test
@@ -3578,17 +3713,30 @@ async function run() {
        occasion came out with context `undefined` and level null, so K couldn't
        bite and lean and cushion returned the identical pack. It was RED on main
        and nothing had noticed, because a failing assertion still looks like a
-       test doing its job. */
+       test doing its job.
+
+       ⚠️ IT THEN WENT RED AGAIN, AND THE MEASURE WAS THE PROBLEM (2026-08-08
+       audit). It asserted repetition with `topSpread` — the most DAYS any one
+       top went out — and on a scarce closet a smaller bag makes that
+       arithmetically impossible to hold: four tops cannot dress four occasions
+       and also shrink. But her model is recombination (2026-08-06 r2: *"small
+       numbers of clothes can make lots of different outfits"*), and one top worn
+       with two different bottoms is two different OUTFITS, not a repeat. Asked
+       directly, she confirmed that's fine. So the contract is distinct looks,
+       which is also the unit packLookKey, packDistinct and packOptionCount all
+       already use. A guard case measuring something stricter than the decision
+       it guards will go red for the right reason and send you to the wrong
+       place — it sent one round at `repW` before a mutation ruled it out. */
     const tripContexts = [{ ctx: "Errands", n: 4 }];
     const lean = solveFor(c, { K: 1, tripContexts });
     const cush = solveFor(c, { K: 3, tripContexts });
     const lp = lean.res.pack.length, up = cush.res.pack.length;
-    const l = topSpread(lean.demand, lean.res), u = topSpread(cush.demand, cush.res);
+    const l = distinctLooks(lean.demand, lean.res), u = distinctLooks(cush.demand, cush.res);
     const bits = [];
     // The dial's whole remaining job: fewer pieces at Lean.
     if (!(lp < up)) bits.push(`lean packed ${lp}, cushion ${up} — the dial changed nothing`);
-    // And the smaller bag must not be bought back with a repeated outfit.
-    if (l > u) bits.push(`lean repeated a top ${l} days vs cushion's ${u}`);
+    // And the smaller bag must not be bought back with a repeated OUTFIT.
+    if (l < u) bits.push(`lean made ${l} distinct outfits vs cushion's ${u}`);
     return bits.length ? bits.join("; ") : true;
   }, { replace: scarceTops }));
 

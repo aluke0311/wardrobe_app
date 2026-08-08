@@ -653,6 +653,13 @@ function wireDonutArrows(segments, total) {
   dnBtn.addEventListener("click", () => { statsDonutIdx = (statsDonutIdx + 1) % segments.length; update(); });
 }
 
+/* The one threshold both "does my closet match my life" surfaces answer to: the
+   Closet vs Life page's verdict and rows already used a hard 0.05, and the main
+   page's block used nothing at all. Shared so the two can never drift back into
+   contradicting each other. Five percentage points of the closet is the smallest
+   gap worth a sentence. */
+const CLOSET_VS_LIFE_MIN_GAP = 0.05;
+
 function closetVsLifeHtml() {
   const avail = items.filter(i => itemStatus(i) === "Available");
   if (!avail.length || !wears.length) return "";
@@ -671,8 +678,22 @@ function closetVsLifeHtml() {
   }
   const demandTotal = demand.reduce((a, b) => a + b, 0) || 1;
 
-  // Find biggest gap: supply heavy vs demand
-  let biggestGap = 0, gapLevel = -1;
+  /* ⚠️ A NOISE FLOOR, AND IT USED TO CONTRADICT THE CLOSET VS LIFE PAGE
+     (2026-08-08, audit). `biggestGap` started at 0 and any positive gap won, so
+     with a handful of workout pieces she never logs — 3.4% of the closet, 0.0%
+     of wears — this block announced "your closet skews Utility" while the
+     Closet vs Life page, one tap away, said "no big gaps". Two screens, one
+     question, opposite answers.
+
+     They are NOT the same derivation and must not be merged: this one is about
+     FORMALITY LEVELS (do I own clothes at levels I don't wear), the gap page is
+     about CONTEXTS (is there a part of my life the closet can't dress). Both are
+     worth having. What they can't do is disagree about whether anything is
+     wrong — so this one now uses the gap page's own threshold, and says which
+     question it is answering. Every other derivation in this app carries a
+     minimum (WX_PROFILE_MIN, RHYTHM_MIN_DAYS, GAP_MIN_CTX_DAYS…); this was the
+     one that didn't. */
+  let biggestGap = CLOSET_VS_LIFE_MIN_GAP, gapLevel = -1;
   for (let i = 0; i < 8; i++) {
     const gap = supply[i] / supplyTotal - demand[i] / demandTotal;
     if (gap > biggestGap) { biggestGap = gap; gapLevel = i; }
@@ -695,8 +716,14 @@ function closetVsLifeHtml() {
     </div>`;
   }).join("");
 
+  /* ⚠️ A FACT, NOT ADVICE. "Consider wearing those pieces more" was the app
+     telling her what to do, which it refuses to do everywhere else — "packed 3×,
+     worn 0×", "worth a second look", the flag-for-review consequences and the
+     removal of wash orders are all the same rule. It also named a whole-closet
+     verdict ("your closet skews X") off a single level's share. It now states
+     the level, both numbers, and stops. */
   const insight = gapLevel >= 0
-    ? `Your closet skews <b>${OCCASION_LADDER[gapLevel]}</b> but your wears don't — consider wearing those pieces more.`
+    ? `You own more <b>${OCCASION_LADDER[gapLevel]}</b> than you wear — ${Math.round(supply[gapLevel] / supplyTotal * 100)}% of the closet, ${Math.round(demand[gapLevel] / demandTotal * 100)}% of your wears.`
     : "Your closet and wear habits look well-balanced.";
 
   return `<div class="stats-sec">
@@ -1747,15 +1774,15 @@ function renderStatsPalettePage() {
 function renderStatsGapPage() {
   const g = buildGapStats();
   const pct = (x) => `${Math.round(x * 100)}%`;
-  const verdict = g.rows.length && g.rows[0].delta >= 0.05
+  const verdict = g.rows.length && g.rows[0].delta >= CLOSET_VS_LIFE_MIN_GAP
     ? `<div style="padding:14px 18px 4px;font-size:14px;line-height:1.5">You live in <b>${esc(g.rows[0].ctx)}</b> more than your closet does — it's ${pct(g.rows[0].wearShare)} of your logged life but only ${pct(g.rows[0].closetShare)} of the closet can dress it.</div>`
     : g.rows.length ? `<div style="padding:14px 18px 4px;font-size:14px">No big gaps — the closet tracks your life pretty well.</div>` : "";
   const bar = (share, color) => `<div style="height:8px;border-radius:4px;background:var(--line);overflow:hidden;flex:1">
     <div style="height:100%;width:${Math.min(100, Math.round(share * 100))}%;background:${color}"></div></div>`;
   const rowsHtml = g.rows.map(r => {
-    const chip = r.delta >= 0.05
+    const chip = r.delta >= CLOSET_VS_LIFE_MIN_GAP
       ? `<span style="font-size:11px;font-weight:700;color:var(--danger)">underserved +${Math.round(r.delta * 100)}</span>`
-      : r.delta <= -0.05
+      : r.delta <= -CLOSET_VS_LIFE_MIN_GAP
       ? `<span style="font-size:11px;font-weight:600;color:var(--muted)">well stocked</span>`
       : `<span style="font-size:11px;font-weight:600;color:#2f9e5e">balanced</span>`;
     return `<div style="padding:11px 18px;border-bottom:1px solid var(--line)">
@@ -2501,6 +2528,11 @@ const reportIdxColor = (v) => v == null ? "var(--muted)" : v >= 1.15 ? "#3a7d44"
 function renderStatsReportPage() {
   const field = statsReportField;
   const dim = REPORT_DIMS[field];
+  /* Every real entry point sets `statsView` and `statsReportField` together, so
+     this shouldn't fire — but the two are separate globals and dereferencing a
+     missing dim throws, which renders as a blank screen with no way back. Fall
+     back to the list this page came from rather than dying. */
+  if (!dim) { statsView = "main"; statsReportField = null; renderStatsMain(); return; }
   const { rows, noValue } = buildReportStats(field);
   const showIdx = dim.showIdx !== false;
   const thisYear = String(new Date().getFullYear());
