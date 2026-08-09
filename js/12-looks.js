@@ -1535,7 +1535,7 @@ function suggestionLayout(pieces) {
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false };
+let _sugg = { results: [], idx: 0, occPrefs: null, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
@@ -1603,6 +1603,136 @@ function contextFormalityLevel(context, wearRows = null) {
   return CONTEXT_FORMALITY_SEED[context] || null;
 }
 
+/* ===================================================================
+   CONTEXT PREFERENCES — rules about a KIND OF DAY (2026-08-08)
+   ===================================================================
+   Her report: *"the pack suggesting a dress for a context I don't want one, and
+   I can't really escape that as built"* — then, asked whether this should be
+   trip-only: *"bake this into contexts in general, not just for trips."*
+
+   She's right that it isn't a packing feature. "I don't wear dresses to Church"
+   is a fact about Church, and it should hold on an ordinary Tuesday as much as
+   in a suitcase. So this lives here, beside the other context derivations, and
+   both the everyday suggester and the trip builder read it.
+
+   ⚠️ WHY NOTHING EXISTING COVERED THIS. `contextFormalityLevel` translates a
+   context to a LEVEL and the level is all that survives — the discard that
+   `packOccasionSlotFit` was written to patch for trips. But that function reads
+   HISTORY: it only rules out a silhouette she has never once worn for an
+   occasion, so a single dress worn to one dinner permits dresses there forever,
+   and no amount of swapping or re-rolling can say otherwise. There was no way
+   for her to simply state the rule.
+
+   ⚠️ A STATED RULE IS A DECISION, NOT A HEURISTIC. `packOccasionSlotFit` and
+   `inSeasonWx` are rescue-shaped — if their narrowing leaves nothing buildable
+   the app widens again, because a guess must never cost her an answer. These do
+   NOT behave that way. If her rule leaves nothing buildable, the honest result
+   is an empty sheet she can see and relax, never a quiet override. An app that
+   overrules her when the maths gets hard hasn't given her control.
+
+   Storage: kv "ctxprefs" = { [context]: {silhouette, avoid:[itemIds], levelShift} }
+   Zero new columns, same as every other preference in this app. */
+const CTX_PREFS_KEY = "ctxprefs";
+const SIL_SEPARATES = "separates";   // a top and a bottom, never a dress
+const SIL_DRESS     = "dress";       // a dress, never separates
+const SIL_ANY       = "any";         // explicitly no silhouette rule — lets one
+                                     // occasion overrule its context's standing rule
+const PREF_LEVEL_MIN = 1, PREF_LEVEL_MAX = 8;
+
+function contextPrefsAll() {
+  const p = kvData.get(CTX_PREFS_KEY);
+  return p && typeof p === "object" ? p : {};
+}
+function contextPref(ctx) {
+  if (!ctx) return null;
+  const p = contextPrefsAll()[ctx];
+  return p && typeof p === "object" && Object.keys(p).length ? p : null;
+}
+/* Merge a patch, dropping keys set back to null — so a rule can be turned OFF
+   again. A control that can only be switched on is a trap; the formula chip and
+   the fixed-event sheet already follow this rule. */
+async function setContextPref(ctx, patch) {
+  const all = { ...contextPrefsAll() };
+  const next = { ...(all[ctx] || {}), ...patch };
+  for (const k of Object.keys(next)) {
+    const v = next[k];
+    if (v == null || (Array.isArray(v) && !v.length)) delete next[k];
+  }
+  if (Object.keys(next).length) all[ctx] = next; else delete all[ctx];
+  await kvSet(CTX_PREFS_KEY, all);
+}
+async function clearContextPref(ctx) { await setContextPref(ctx, { silhouette: null, avoid: null, levelShift: null }); }
+
+/* Silhouette is not a new taxonomy — it's what a FORMULA already says. A
+   formula key is "Slot:Subcategory + …", so "does this look use a dress" is
+   just whether the key names the Dresses slot. Reusing it keeps one definition
+   of an outfit's shape across formulas, the suggester and the pack. */
+function silhouetteOfIds(ids) {
+  const its = ids.map(id => itemById.get(id)).filter(Boolean);
+  return its.some(i => suggestSlot(i) === "Dresses") ? SIL_DRESS : SIL_SEPARATES;
+}
+function formulaSilhouette(key) {
+  return /(^|\s)Dresses:/.test(String(key || "")) ? SIL_DRESS : SIL_SEPARATES;
+}
+// Does this combo satisfy her stated rules? A HARD test — never rescued away.
+function comboMeetsPrefs(ids, prefs) {
+  if (!prefs) return true;
+  if (prefs.silhouette && prefs.silhouette !== SIL_ANY
+      && silhouetteOfIds(ids) !== prefs.silhouette) return false;
+  if (prefs.avoid && prefs.avoid.length) {
+    const no = new Set(prefs.avoid);
+    if (ids.some(id => no.has(id))) return false;
+  }
+  return true;
+}
+// Level after any "more casual" / "dressier", clamped to the ladder.
+function prefLevel(base, prefs) {
+  const shift = prefs ? (+prefs.levelShift || 0) : 0;
+  if (!base || !shift) return base;
+  return Math.max(PREF_LEVEL_MIN, Math.min(PREF_LEVEL_MAX, base + shift));
+}
+/* A trip occasion's own rule overrides the context's general one — same
+   precedence as an explicit `items.formality` beating an imputed set. Returns
+   null when neither says anything, so callers can skip the work entirely. */
+function effectivePrefs(ctx, occPrefs) {
+  const base = contextPref(ctx);
+  if (!base && !occPrefs) return null;
+  const out = { ...(base || {}), ...(occPrefs || {}) };
+  for (const k of Object.keys(out)) if (out[k] == null) delete out[k];
+  return Object.keys(out).length ? out : null;
+}
+// One short human line, so a rule in force is never invisible on a screen.
+function prefsLabel(prefs) {
+  if (!prefs) return "";
+  const bits = [];
+  if (prefs.silhouette === SIL_SEPARATES) bits.push("no dresses");
+  if (prefs.silhouette === SIL_DRESS) bits.push("a dress");
+  if (prefs.silhouette === SIL_ANY) bits.push("dresses allowed");
+  if (+prefs.levelShift < 0) bits.push("more casual");
+  if (+prefs.levelShift > 0) bits.push("dressier");
+  const n = (prefs.avoid || []).length;
+  if (n) bits.push(`${n} ruled out`);
+  return bits.join(" · ");
+}
+/* The pool filter for the everyday suggester. ⚠️ Deliberately applied to the
+   POOL rather than inside the engine: `suggestOutfits`' opts must not grow
+   scoring or filtering knobs (the moment the pack asks for different RULES the
+   engine has forked), and the pool is where this app already puts narrowing —
+   `suggestPoolChipHtml` names and counts it and one tap widens, which is the
+   rack's four conditions applying here for free.
+   ⚠️ Only the parts a pool CAN express: "never a dress" and "not these pieces"
+   are removals. "It must BE a dress" cannot be said by removing things, so it's
+   enforced on the results instead (see _suggApplyPrefs). */
+function prefsPoolFilter(pool, prefs) {
+  if (!prefs || !pool) return pool;
+  const no = new Set(prefs.avoid || []);
+  return pool.filter(i => {
+    if (no.has(i.id)) return false;
+    if (prefs.silhouette === SIL_SEPARATES && suggestSlot(i) === "Dresses") return false;
+    return true;
+  });
+}
+
 function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, shapeKey = null) {
   // Trip/capsule mode: every suggest entry point defaults to the suitcase pool
   // unless the caller scoped it explicitly.
@@ -1619,6 +1749,8 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   // formality) or activity mode (a Workout-context entry).
   _sugg.targetLevel = (planCtx && planCtx.level) || null;
   _sugg.activeContext = null;
+  _sugg.occPrefs = null;   // set by the pack for a specific occasion; session-only otherwise
+  _sugg.ratherOpen = false;
   _sugg.season = planCtx ? seasonOf(planCtxSeasonDate(planCtx)) : currentSeason();
   _sugg.idx = 0;
   _sugg.locked = new Set();
@@ -1645,7 +1777,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.wx = planCtx
     ? (_planWx[planCtx.date] || null)
     : (_homeWx.date === todayStr() ? _homeWx.wx : null);
-  _sugg.results = suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey);
+  _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey));
   renderSuggestSheet();
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
@@ -1654,7 +1786,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey);
+      _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey));
     }
     renderSuggestSheet();
   });
@@ -1737,6 +1869,66 @@ function _suggPlanDate() {
    laundry filter, and that subsumes today's — passing today's on top would
    exclude a piece that a wash day planned before then will have cleaned. */
 const _suggCleanArg = () => (_suggPlanDate() ? false : _suggClean());
+/* The rules in force for the sheet as it currently stands. In a trip the pack
+   screen sets `_sugg.occPrefs` for the occasion being dressed; otherwise it's
+   whatever standing rule the active context carries. */
+function _suggPrefs() {
+  return effectivePrefs(_sugg.activeContext, _sugg.occPrefs || null);
+}
+
+/* ---- "I'd rather…" -------------------------------------------------------
+   The escape hatch she didn't have. Structured chips, never a text field — she
+   ruled natural language out, and chips are the better control anyway: they say
+   what the app can actually act on instead of inviting a sentence it will then
+   half-understand.
+
+   ⚠️ SCOPE IS SHOWN, ALWAYS. The same chip means two different things depending
+   on where it's tapped — a standing rule for this CONTEXT, or a one-off for
+   THIS OCCASION of this trip — and a control whose reach is ambiguous is worse
+   than no control. The row says which, in words, above the chips.
+   ⚠️ Hidden when a formula is pinned: a shape already states the silhouette, so
+   offering to contradict it can only produce an empty sheet. */
+function suggestRatherHtml() {
+  if (_sugg.shapeKey) return "";
+  const scoped = !!(_sugg.packOcc);
+  const ctx = _sugg.activeContext;
+  if (!scoped && !ctx) return "";          // nothing to attach a rule TO
+  const cur = _suggPrefs() || {};
+  const chip = (key, val, label, title) => {
+    const on = cur[key] === val || (key === "levelShift" && +cur.levelShift === val);
+    return `<button class="cap-chip${on ? " on" : ""}" data-srather="${key}" data-srval="${esc(String(val))}" style="font-size:13px" title="${esc(title)}">${label}</button>`;
+  };
+  const where = scoped
+    ? `just this one`
+    : `whenever it's <b>${esc(ctx)}</b>`;
+  if (!_sugg.ratherOpen) {
+    const lbl = prefsLabel(cur);
+    return `<div style="padding:0 16px 8px">
+      <button class="lnk" data-srather-open style="font-size:13px">I'd rather…${lbl ? ` <span style="opacity:.7">(${esc(lbl)})</span>` : ""}</button>
+    </div>`;
+  }
+  return `<div style="padding:0 16px 10px">
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Applies ${where}.</div>
+    <div class="cap-catbar" style="padding-top:0">
+      ${chip("silhouette", SIL_SEPARATES, "\u{1F455} Not a dress", "Never suggest a dress here")}
+      ${chip("silhouette", SIL_DRESS, "\u{1F457} A dress", "Only suggest dresses here")}
+      ${chip("levelShift", -1, "↓ More casual", "Dress this down a level")}
+      ${chip("levelShift", 1, "↑ Dressier", "Dress this up a level")}
+      <button class="lnk" data-srather-open style="font-size:13px;margin-left:6px">Done</button>
+    </div>
+  </div>`;
+}
+/* "It must BE a dress" is the one rule a pool can't express — you can't force a
+   slot in by removing pieces — so it's enforced on the results. ⚠️ An empty
+   result is left EMPTY on purpose: this is her decision, not a heuristic, and
+   suggestStarvationNote explains it. Widening here would be the app overruling
+   her the moment the maths got hard. */
+function _suggApplyPrefs(list) {
+  const p = _suggPrefs();
+  if (!p || !p.silhouette || _sugg.shapeKey) return list;
+  return (list || []).filter(c => comboMeetsPrefs(c.pieces.map(x => x.id), p));
+}
+
 function _suggPool() {
   let pool = _suggBasePool();
   /* ⚠️ LAUNDRY IS AS OF THE DAY SHE'S DRESSING, not today (fixed 2026-08-03 r5,
@@ -1750,6 +1942,13 @@ function _suggPool() {
     if (dirty.size) pool = pool.filter(i => !dirty.has(i.id));
   }
   if (_sugg.banned && _sugg.banned.size) pool = pool.filter(i => !_sugg.banned.has(i.id));
+  /* Her standing rule for this kind of day ("no dresses to Church"). Applied to
+     the POOL so the chip below names and counts it and one tap clears it — the
+     rack's four conditions, inherited. ⚠️ Ignored while a shape is pinned: a
+     formula already states the silhouette outright, and two silhouette rules
+     fighting can only produce an empty sheet. */
+  const cprefs = _suggPrefs();
+  if (cprefs && !_sugg.shapeKey) pool = prefsPoolFilter(pool, cprefs);
   // Mirrors the engine so swap/+Layer/ban candidates see the same pool.
   // At Utility the pool IS function-wear (see isFunctionWear); at every other
   // level the Workout category stays hidden as it always has.
@@ -1849,15 +2048,22 @@ function suggestPoolChipHtml() {
   }
   const rackN = rackItems().length;
   const allN = items.filter(i => itemStatus(i) === "Available").length;
+  /* A rule she set is narrowing this sheet — say so, and make clearing it one
+     tap. Same contract as the rack chip: never narrow silently. */
+  const _pf = _suggPrefs();
+  const _pfLbl = prefsLabel(_pf);
+  const _pfChip = _pfLbl
+    ? `<button class="cap-chip on" data-sprefclear style="font-size:13px" title="Clear this rule">\u{2713} ${esc(_pfLbl)} \u2715</button>`
+    : "";
   /* The rack couldn't dress the level she asked for, so planningPool widened for
      her. Say which level did it — a pool that silently changed size is the one
      thing she made a condition of approving the rack. Not a button: there is
      nothing useful to narrow back TO, since the rack returns nothing here. */
   if (_sugg.targetLevel && _sugg.targetLevel !== 1 && !poolCoversLevel(_sugg.targetLevel, rackItems()))
     return `<span class="cap-chip" style="font-size:13px;opacity:.7">Whole closet · ${allN} — nothing on the rack dresses ${esc(occLabel(_sugg.targetLevel))}</span>`;
-  return _sugg.wholeCloset
+  return _pfChip + (_sugg.wholeCloset
     ? `<button class="cap-chip" data-spool style="font-size:13px" title="Back to the rack">Whole closet · ${allN} \u2192 rack</button>`
-    : `<button class="cap-chip on" data-spool style="font-size:13px" title="Widen to the whole closet">\u{1F455} Rack · ${rackN} \u2192 all ${allN}</button>`;
+    : `<button class="cap-chip on" data-spool style="font-size:13px" title="Widen to the whole closet">\u{1F455} Rack · ${rackN} \u2192 all ${allN}</button>`);
 }
 
 function suggestStarvationNote() {
@@ -1975,7 +2181,7 @@ function openGearTagSheet() {
   hydratePhotos($("#logInner"));
   $("#gearDone").onclick = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
     renderSuggestSheet();
   };
   const flip = (b, on) => b.classList.toggle("on", on);
@@ -2044,7 +2250,7 @@ function openTripUnwornSuggest(cid) {
   if (!u.pool.length) return toast("Nothing unworn left to build from");
   openSuggestSheet(null, cid);
   _sugg.unworn = u;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey);
+  _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season, _suggWx(), null, _suggCleanArg(), null, _sugg.shapeKey));
   _sugg.idx = 0;
   renderSuggestSheet();
 }
@@ -2135,7 +2341,7 @@ function banSuggestionPiece(pieceId) {
       return renderSuggestSheet();
     }
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
     renderSuggestSheet();
   }
 }
@@ -2387,6 +2593,7 @@ function renderSuggestSheet() {
         ${suggestPoolChipHtml()}
       </div>
     </div>
+    ${suggestRatherHtml()}
     ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}
     <div style="padding:12px 16px" id="sgPreview">
       <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
@@ -2456,7 +2663,7 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
-    _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
+    _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
     renderSuggestSheet();
   };
 
@@ -2518,6 +2725,54 @@ function renderSuggestSheet() {
     regen();
   };
 
+  /* Clearing a rule from the sheet. In the pack it clears the OCCASION's rule
+     (the trip-specific one she set on a card); everywhere else it clears the
+     CONTEXT's standing rule. Same chip, and it always clears the narrower of
+     the two first, so one tap never wipes a general rule she set months ago. */
+  const prefClear = $("#logInner").querySelector("[data-sprefclear]");
+  if (prefClear) prefClear.onclick = async () => {
+    if (_sugg.occPrefs && _sugg.packOcc) {
+      _sugg.occPrefs = null;
+      await packClearOccPref(_sugg.packOcc.cid, _sugg.packOcc.occId);
+    } else if (_sugg.activeContext) {
+      await clearContextPref(_sugg.activeContext);
+    }
+    regen();
+  };
+
+  const ratherToggle = $("#logInner").querySelector("[data-srather-open]");
+  if (ratherToggle) ratherToggle.onclick = () => { _sugg.ratherOpen = !_sugg.ratherOpen; renderSuggestSheet(); };
+  /* Tapping the active chip CLEARS it — a control that can only be turned on is
+     a trap (the formula chip and the fixed-event sheet already follow this).
+     Writes to the OCCASION when the pack opened this sheet, otherwise to the
+     CONTEXT, which is what the scope line above the chips promises. */
+  $("#logInner").querySelectorAll("[data-srather]").forEach(b => {
+    b.onclick = async () => {
+      const key = b.dataset.srather;
+      const raw = b.dataset.srval;
+      const val = key === "levelShift" ? +raw : raw;
+      const cur = _suggPrefs() || {};
+      const isOn = key === "levelShift" ? (+cur.levelShift === val) : (cur[key] === val);
+      const po = _sugg.packOcc;
+      /* ⚠️ Turning a chip OFF inside a trip has to be able to overrule a
+         STANDING context rule, not just delete the occasion's own key — delete
+         it and the context rule underneath simply reasserts itself, so the chip
+         visibly does nothing. SIL_ANY is that "allow it, just here". */
+      let patch;
+      if (!isOn) patch = { [key]: val };
+      else if (po && key === "silhouette" && (contextPref(po.ctx) || {}).silhouette === val)
+        patch = { silhouette: SIL_ANY };
+      else patch = { [key]: null };
+      if (po) {
+        await packSetOccPref(po.cid, po.occId, patch);
+        _sugg.occPrefs = effectivePrefs(po.ctx, packOccPref(po.cid, po.occId));
+      } else if (_sugg.activeContext) {
+        await setContextPref(_sugg.activeContext, patch);
+      }
+      regen();
+    };
+  });
+
   const gearBtn = $("#logInner").querySelector("[data-sggear]");
   if (gearBtn) gearBtn.onclick = () => openGearTagSheet();
 
@@ -2569,7 +2824,7 @@ function renderSuggestSheet() {
       // Locks must apply to the WHOLE batch, not just the combo on screen —
       // browsing to the next outfit used to drop them (2026-07-21). Regenerate,
       // then keep the current combo in front so the view doesn't jump.
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
+      _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
       _sugg.idx = 0;
       if (cur && [..._sugg.locked].every(lid => cur.pieces.some(p => p.id === lid))) {
         const k = comboKey(cur.pieces);
@@ -2709,7 +2964,7 @@ function openFeedbackSheet(pieces) {
     b.onclick = async () => {
       const id = b.dataset.nosug;
       await setNoSuggest(id, !isNoSuggest(itemById.get(id)));
-      _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
+      _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
       if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
       toast(isNoSuggest(itemById.get(id)) ? "Won't suggest this item" : "Will suggest again");
       openFeedbackSheet(pieces);
@@ -2790,7 +3045,7 @@ async function openExcludeSheet(pieces) {
         else if (res && res.id) exclusions.push(res);
         buildExcludeSet();
         toast(payload.length === 1 ? "Pair excluded" : `Excluded ${payload.length} pairs`);
-        _sugg.results = suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey);
+        _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
         if (_sugg.idx >= _sugg.results.length) _sugg.idx = 0;
         renderSuggestSheet();
       } catch (e) { toast(e.message); }

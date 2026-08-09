@@ -219,7 +219,19 @@ function packDemandFor(cid, c, { wearRows = null, tripContexts = undefined } = {
     tripContexts: tripContexts === undefined ? packTripContexts(cid) : tripContexts,
     dropped: packDroppedOccasions(cid),
   });
-  return { slate, demand: packDemand(slate) };
+  const demand = packDemand(slate);
+  /* Her per-occasion constraints ride ON the occasion, the same way `level` and
+     `leg` do, so every consumer — the solver, the cards, the options sheet, the
+     coverage report — sees them without a second lookup that could go stale.
+     ⚠️ This is the ONE derivation all four callers share (packLoadState,
+     packDiff, packPlanByDate, packMidTripWash), which is exactly why the drop
+     filter lives here too: attaching prefs anywhere else would let one screen
+     honour a constraint another screen ignores. */
+  for (const o of demand) {
+    const p = effectivePrefs(o.context, packOccPref(cid, o.id));
+    if (p) o.prefs = p;
+  }
+  return { slate, demand };
 }
 
 /* Anything that changes what the trip CONTAINS must drop the cached screen
@@ -608,6 +620,65 @@ function packRack(c, slate, { pool = null, wearRows = null, wxFor = null,
   return { ids: [...ids], cold: [...cold], legs: legs.length };
 }
 
+/* ---- per-occasion constraints: her "I'd rather…" -------------------------
+   Her report, 2026-08-08: *"the pack suggesting a dress for a context I don't
+   want one, and I can't really escape that as built."*
+
+   She was right, and there was no escape anywhere. `packOccasionSlotFit` looks
+   like the answer and isn't: it removes a silhouette she has NEVER worn for an
+   occasion, derived from history, so ONE dress worn to one dinner permits
+   dresses to that context forever — and swap, ✨ Another and Other options can
+   each hand her another one. Nothing in the app let her simply SAY "not a dress
+   for this".
+
+   ⚠️ THESE ARE DECISIONS, NOT HEURISTICS, and that is the whole distinction the
+   rework rests on. `packOccasionSlotFit` is rescue-shaped — if its narrowed pool
+   can't build, the unfiltered pool is used instead, because a guess should never
+   cost her an answer. A constraint she set must NOT behave that way: if it
+   leaves nothing buildable the honest result is an uncovered occasion she can
+   see and act on (§9), never a quiet override. An app that overrules her when
+   the maths gets hard has not given her control, it has given her a suggestion
+   box.
+   ⚠️ Stored per OCCASION id, so it survives re-solves and re-spreads like every
+   other user decision. `packOccId` is content-derived, so an unticked context
+   elsewhere can't silently transfer her constraint to a different occasion. */
+/* ⚠️ The MODEL lives in js/12-looks.js (contextPref / comboMeetsPrefs /
+   effectivePrefs / prefsLabel) because her rule is about a KIND OF DAY, not
+   about a trip — "no dresses to Church" holds on an ordinary Tuesday too. What
+   belongs here is only the TRIP-SCOPED override: a rule she set on one
+   occasion of one trip, which beats the standing context rule for that
+   occasion and nothing else.
+   ⚠️ Stored per `packOccId`, which is content-derived, so unticking some other
+   context can't renumber occasions and silently transfer her rule to a day she
+   never touched — the r3 bug with teeth, in a new place. */
+function packOccPrefsAll(cid) {
+  const p = packRecord(cid).occPrefs;
+  return p && typeof p === "object" ? p : {};
+}
+function packOccPref(cid, occId) {
+  const p = packOccPrefsAll(cid)[occId];
+  return p && typeof p === "object" && Object.keys(p).length ? p : null;
+}
+async function packSetOccPref(cid, occId, patch) {
+  const all = { ...packOccPrefsAll(cid) };
+  const next = { ...(all[occId] || {}), ...patch };
+  for (const k of Object.keys(next)) {
+    const v = next[k];
+    if (v == null || (Array.isArray(v) && !v.length)) delete next[k];
+  }
+  if (Object.keys(next).length) all[occId] = next; else delete all[occId];
+  await savePackRecord(cid, { occPrefs: all });
+}
+async function packClearOccPref(cid, occId) {
+  const all = { ...packOccPrefsAll(cid) };
+  delete all[occId];
+  await savePackRecord(cid, { occPrefs: all });
+}
+// The level she'll actually be dressed at, after any "more casual / dressier".
+function packOccLevel(occ) {
+  return prefLevel(occ && occ.level ? occ.level : null, occ && occ.prefs);
+}
+
 /* ---- candidates ---------------------------------------------------------
    ⚠️ cleanOnly = FALSE, deliberately. Laundry is a SCHEDULE constraint here
    (inversion ②), not a pool filter: a piece that's dirty today may be perfectly
@@ -617,9 +688,18 @@ function packRack(c, slate, { pool = null, wearRows = null, wxFor = null,
    the Workout category on purpose, so a Utility occasion pooled from the rack
    can never form an outfit. Same precedence as _suggBasePool. */
 function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_CANDIDATES_PER_OCC,
-                                        seed = 1, all = false } = {}) {
-  const avail = (pool || items).filter(i => itemStatus(i) === "Available");
-  let base = occ.level === 1 ? avail : rackIds.map(id => itemById.get(id)).filter(i => i && itemStatus(i) === "Available");
+                                        seed = 1, all = false, excluded = null } = {}) {
+  /* ⚠️ EXCLUDED HAS TO BITE HERE TOO, not only in packFill. The bag already
+     omits an excluded piece, so drawing from the bag is safe by construction —
+     but a level-1 occasion draws from the WHOLE closet by design (running shoes
+     are Sneakers at [2,3]), which walked straight past the exclusion. "Not this
+     trip" that still turns up on the hiking day is not a decision, it's a
+     suggestion. */
+  const no = excluded && excluded.size ? excluded : null;
+  const okay = (i) => i && itemStatus(i) === "Available" && !(no && no.has(i.id));
+  const avail = (pool || items).filter(okay);
+  const lvl = packOccLevel(occ);
+  let base = lvl === 1 ? avail : rackIds.map(id => itemById.get(id)).filter(okay);
   if (!base.length) return [];
 
   /* ⚠️ THE LEVEL IS NOT THE OCCASION (2026-08-04 r6). Reported: it offered "a
@@ -644,16 +724,21 @@ function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_
   const wx = wxFor ? wxFor(day) : null;
   const season = seasonOf(day);
   const enumerate = (p) => packWithSeed(seed ^ packHash(occ.id || day), () =>
-    suggestOutfits(occ.level, null, p, season, wx, null, false, null, null,
+    suggestOutfits(lvl, null, p, season, wx, null, false, null, null,
                    { all: true, uniqueCap: PACK_ENUM_CAP }));
   let raw = enumerate(base);
   // The rescue half of the context filter: never trade an answer for a purer one.
   if (!raw.length && base !== wide) raw = enumerate(wide);
+  /* ⚠️ HER CONSTRAINTS APPLY LAST AND ARE NEVER RESCUED. Everything above is
+     the app guessing and may be relaxed to keep an answer; this is her saying
+     what she will wear, so it filters after the rescue and an empty result
+     stays empty. packCoverage then reports the occasion as uncovered and the
+     card offers to relax it — visible, and hers to undo. */
   const out = raw.map(cmb => ({
     ids: cmb.pieces.map(p => p.id).sort(),
     pieces: cmb.pieces,
     score: cmb.score,
-  }));
+  })).filter(x => comboMeetsPrefs(x.ids, occ.prefs));
   out.sort((a, b) => (b.score - a.score) || (a.ids.join() < b.ids.join() ? -1 : 1));
   return all ? out : packDiversify(out, limit);
 }
@@ -3829,11 +3914,14 @@ function packOpenSuggest(occId) {
   openSuggestSheet(null, st.cid, null);
   _sugg.targetLevel = occ.level || null;
   _sugg.season = seasonOf(occ.date || todayStr());
-  _sugg.packOcc = { cid: st.cid, occId };
+  _sugg.packOcc = { cid: st.cid, occId, ctx: occ.context || null };
+  // Her rules for this occasion follow her into the sheet, so "✨ Another" and
+  // every swap here obey them too — the escape hatch she didn't have.
+  _sugg.occPrefs = occ.prefs || null;   // already context-merged by packDemandFor
   // The level/season were set after the sheet's own first generate, so re-run it.
   _sugg.idx = 0;
-  _sugg.results = suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season,
-                                 _suggWx(), null, _suggCleanArg(), null, null);
+  _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season,
+                                 _suggWx(), null, _suggCleanArg(), null, null));
   renderSuggestSheet();
 }
 async function packSetOccasionOutfit(cid, occId, ids) {

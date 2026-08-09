@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-08 r1";
+const APP_VERSION = "2026-08-08 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-08 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-08 r2", notes: [
+    "You can now tell the app what you'd rather wear for a kind of day. \"I'd rather…\" in the suggester sets a rule like \"not a dress\" or \"more casual\" \u2014 and it sticks, for that context, every time. This is the thing you couldn't escape before: the pack would keep offering a dress for a context you'd never wear one to, and swapping or re-rolling would just hand you another",
+    "A rule you set is obeyed, not weighed. Everything else the app narrows with \u2014 season, weather, what you've worn for an occasion before \u2014 quietly widens again if it can't build an outfit, because a guess shouldn't cost you an answer. A rule you stated doesn't do that: if nothing fits it, you get an empty sheet that says so, rather than the app deciding it knew better",
+    "Rules are always visible and always one tap to clear. The chip at the top of the suggester names the rule in force, and tapping it again turns it off",
+    "On a trip you can overrule a standing rule just for one occasion, without changing the general one",
+  ] },
   { v: "2026-08-08 r1", notes: [
     "Lean / Normal / Cushion finally changes the bag. It was working out the right numbers all along — on a 7-day trip it proposed 11, 15 and 19 pieces — and then a last step rebuilt the bag from just the pieces your outfits happened to use, cutting all three back to 8, 8 and 9. Lean and Normal came out identical, which is why moving the dial did nothing. You now get the bag it proposed",
     "Lean also stopped quietly buying its smaller bag with repeated outfits — a leftover from the old meaning of Lean, before you said it should be \"the same, just a smaller bag\". Wearing one top with two different bottoms was never the problem and still isn't; that's two outfits",

@@ -5228,6 +5228,91 @@ async function run() {
      ~144 dress combos against ~864 two-piece ones, so cutting the top 60 by
      score and sampling 8 left dresses at a few percent. Silhouette parity fills
      the candidate list to dresses/(dresses+tops) instead. */
+  /* ================= 2026-08-08: context preferences ======================
+     Her report: *"the pack suggesting a dress for a context I don't want one,
+     and I can't really escape that as built"* — and, asked whether it should be
+     trip-only, *"bake this into contexts in general, not just for trips."*
+
+     Nothing covered this. `packOccasionSlotFit` looks like it does and doesn't:
+     it rules out a silhouette she has NEVER worn for an occasion, so one dress
+     worn to one dinner permits dresses there forever, and swap / ✨ Another /
+     Other options can each hand her another one. There was no way to state the
+     rule.
+
+     ⚠️ These drive the EVERYDAY suggester, not the pack — that's the point of
+     her asking for it to be general. The trip half is exercised separately. */
+  const withPrefs = (fn) => {
+    const saved = W.kvData.get(CTX_PREFS_KEY_T);
+    W.kvData.delete(CTX_PREFS_KEY_T);
+    try { return fn(); }
+    finally {
+      if (saved === undefined) W.kvData.delete(CTX_PREFS_KEY_T);
+      else W.kvData.set(CTX_PREFS_KEY_T, saved);
+    }
+  };
+  const CTX_PREFS_KEY_T = "ctxprefs";
+  const dressShare = (pool, prefsCtx) => {
+    const before = W._sugg.activeContext;
+    W._sugg.activeContext = prefsCtx || null;
+    let d = 0, n = 0;
+    for (let run = 0; run < 6; run++) {
+      const res = W._suggApplyPrefs(W.suggestOutfits(null, null, W.prefsPoolFilter(pool, W._suggPrefs()),
+                                                     null, null, null, false));
+      for (const c of res) { n++; if (c.pieces.some(p => W.suggestSlot(p) === "Dresses")) d++; }
+    }
+    W._sugg.activeContext = before;
+    return { d, n };
+  };
+
+  t("a context rule stops dresses, and only for that context", () => withEvenCloset(() => withPrefs(() => {
+    const pool = W.items.slice();
+    const base = dressShare(pool, "Church");
+    // ⚠️ Vacuity guard: if this closet wasn't offering dresses anyway the
+    // assertion below is about the fixture, not about the rule.
+    if (base.d === 0) return `vacuous: no dresses offered before the rule (${base.n} suggestions)`;
+    W.kvData.set(CTX_PREFS_KEY_T, { Church: { silhouette: W.SIL_SEPARATES } });
+    const after = dressShare(pool, "Church");
+    const other = dressShare(pool, "Date night");
+    if (after.d !== 0) return `rule set, still offered ${after.d}/${after.n} dresses`;
+    if (!after.n) return "rule emptied the sheet entirely";
+    if (other.d === 0) return `the rule leaked to Date night (${other.d}/${other.n})`;
+    return true;
+  })));
+
+  t("a stated rule is never rescued away", () => withEvenCloset(() => withPrefs(() => {
+    /* ⚠️ THE WHOLE POINT, and the opposite of how packOccasionSlotFit and
+       inSeasonWx behave. Those are guesses and widen again rather than cost her
+       an answer. This is her decision: asking for a dress in a closet with no
+       dresses must return NOTHING, so the empty sheet tells her the rule is
+       binding — not quietly hand her separates and pretend it obeyed. */
+    W.items = W.items.filter(i => i.category !== "Dresses");
+    W.buildSuggestIndexes();
+    const pool = W.items.slice();
+    const free = dressShare(pool, "Church");
+    if (!free.n) return "vacuous: the closet can't build anything at all";
+    W.kvData.set(CTX_PREFS_KEY_T, { Church: { silhouette: W.SIL_DRESS } });
+    const bound = dressShare(pool, "Church");
+    return bound.n === 0 ? true
+      : `asked for a dress with no dresses in the closet and still got ${bound.n} suggestions`;
+  })));
+
+  t("an occasion can overrule its context's standing rule", () => withPrefs(() => {
+    // SIL_ANY exists because deleting the occasion key just lets the context
+    // rule reassert itself — the chip would visibly do nothing.
+    W.kvData.set(CTX_PREFS_KEY_T, { Church: { silhouette: W.SIL_SEPARATES } });
+    const ctxOnly = W.effectivePrefs("Church", null);
+    const overruled = W.effectivePrefs("Church", { silhouette: W.SIL_ANY });
+    const ids = ["d1"];
+    const stub = { id: "d1", category: "Dresses", subcategory: "Short" };
+    const had = W.itemById.get("d1");
+    W.itemById.set("d1", stub);
+    const blocked = W.comboMeetsPrefs(ids, ctxOnly);
+    const allowed = W.comboMeetsPrefs(ids, overruled);
+    if (had) W.itemById.set("d1", had); else W.itemById.delete("d1");
+    return (!blocked && allowed) ? true
+      : `context blocks=${!blocked} occasion allows=${allowed}`;
+  }));
+
   t("the suggester offers dresses in proportion to how many she owns", () => withEvenCloset(() => {
     const pool = W.items.slice();
     let dress = 0, total = 0;
