@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-08 r2";
+const APP_VERSION = "2026-08-08 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-08 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-08 r3", notes: [
+    "Lean / Normal / Cushion is gone. It asked you to think in \"options per occasion\" \u2014 and measurably, all it ever changed was how many SPARE pieces you carried: the outfits needed the same 9 pieces at every setting. It's now Light / Balanced / Flexible, and each one tells you what you'd actually carry before you pick it",
+    "Your pack is split into Core and Spare. Core is what your planned outfits actually use. Spare is everything else, each piece saying how many of the bag's possible looks it's in, with a Leave button. That's the packing-light decision made where the piece is, with the trade stated \u2014 rather than a dial you set and hope about",
+    "Slot counts stopped inventing shortfalls. A slot could read \"5/7\" and claim \"2 short \u2014 nothing else you own fits this trip\", when the app had simply trimmed the spares itself. It was blaming your wardrobe for its own decision",
+  ] },
   { v: "2026-08-08 r2", notes: [
     "You can now tell the app what you'd rather wear for a kind of day. \"I'd rather…\" in the suggester sets a rule like \"not a dress\" or \"more casual\" \u2014 and it sticks, for that context, every time. This is the thing you couldn't escape before: the pack would keep offering a dress for a context you'd never wear one to, and swapping or re-rolling would just hand you another",
     "A rule you set is obeyed, not weighed. Everything else the app narrows with \u2014 season, weather, what you've worn for an occasion before \u2014 quietly widens again if it can't build an outfit, because a guess shouldn't cost you an answer. A rule you stated doesn't do that: if nothing fits it, you get an empty sheet that says so, rather than the app deciding it knew better",

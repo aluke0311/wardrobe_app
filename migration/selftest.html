@@ -3199,20 +3199,46 @@ async function run() {
      So this asserts the number she can actually SEE, through packLoadState →
      packEnsureSolve, which is the only place the defect was visible at all: the
      three previous rounds each measured an intermediate and went green. */
-  t("the tightness dial changes the bag she actually gets", () => {
+  /* ⚠️ THE CONTROL CHANGED, SO ITS GUARD CHANGED WITH IT (2026-08-08). This
+     asserted K — lean/normal/cushion — and K is no longer something she sets:
+     the audit measured that the dial only ever moved the number of SPARE
+     pieces (core held at 7/7/9 while optional moved 4/8/10), so it was replaced
+     by Light/Balanced/Flexible naming that number outright. The contract is
+     unchanged in substance and is still the thing four reports were about: the
+     control she touches must change the bag she gets. A red case is not
+     automatically a regression — when a decision reverses, its guard reverses. */
+  t("the packing mode changes the bag she actually gets", () => {
     const c = packTrip(7);
     return withPackCloset(() => {
-      const sizes = [1, 2, 3].map(K => {
-        const st = appSolve(c, { K, tripContexts: [{ ctx: "Errands", n: 4 }] });
+      const sizes = W.PACK_MODES.map(mode => {
+        const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }], rec: { mode } });
         return st ? st.pack.length : -1;
       });
-      const [lean, normal, cushion] = sizes;
+      const [light, balanced, flexible] = sizes;
       if (sizes.some(n => n < 0)) return `no pack state: ${JSON.stringify(sizes)}`;
-      // ⚠️ Vacuity guard: a closet too small to supply the cushion target would
-      // clamp all three to the same number and this would pass on poverty.
-      if (cushion < 8) return `vacuous: cushion only reached ${cushion} pieces`;
-      return lean < normal && normal < cushion
-        ? true : `lean ${lean}, normal ${normal}, cushion ${cushion} — not monotonic`;
+      // ⚠️ Vacuity guard: a closet with no spare capacity would clamp all three
+      // to core and this would pass on poverty rather than on the mode working.
+      if (flexible <= light) return `vacuous: flexible (${flexible}) never exceeded light (${light})`;
+      return light < balanced && balanced <= flexible
+        ? true : `light ${light}, balanced ${balanced}, flexible ${flexible} — not monotonic`;
+    }, { capsules: [c] });
+  });
+
+  /* Core is what her outfits actually use; the mode may only ever trim SPARE.
+     If a mode change could drop a piece an outfit needs, the items screen and
+     the outfits screen would disagree — the thing inversion ① exists to stop. */
+  t("no mode can trim a piece an outfit needs", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      for (const mode of W.PACK_MODES) {
+        const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }], rec: { mode } });
+        if (!st || !st.res) return `no pack state at ${mode}`;
+        const bag = new W.Set(st.pack);
+        for (const cd of st.res.assign.values())
+          for (const id of cd.ids)
+            if (!bag.has(id)) return `${mode} trimmed ${id}, which an outfit uses`;
+      }
+      return true;
     }, { capsules: [c] });
   });
 

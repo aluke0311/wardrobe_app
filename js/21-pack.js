@@ -2426,7 +2426,20 @@ function packEnsureSolve(st, { force = false } = {}) {
      The pack IS the union of the outfits' pieces. Saying so here is the whole
      of inversion ①, and it's what keeps the two screens from disagreeing. */
   packRepack(st);
+  /* The mode acts HERE and nowhere else: trim spare capacity to what she asked
+     for, once the outfits are settled. Core is untouched by construction, so
+     this can't break coverage — and keeping it to one place is what stops the
+     mode becoming another opaque multiplier threaded through the fill, which is
+     how the old dial got lost for four rounds. */
+  packApplyMode(st);
   packRegroup(st);
+  /* ⚠️ AND THE OPTION COUNTS HAVE TO BE RE-READ AFTER THE TRIM. Stage B builds
+     options out of spare pieces; Light then removes some of those pieces, so
+     `res.options` — set during the solve — would keep promising options the bag
+     can no longer make. That is the r1 "building options it never spent" bug
+     from the other end: a number on screen the suitcase can't honour. A case
+     pins the agreement, and it caught this within a minute of the trim landing. */
+  packRefresh(st);
   /* ⚠️ A SOLVE THAT ISN'T SAVED IS A SOLVE THAT RUNS AGAIN (2026-08-06 r4, her
      report: *"I need to be able to reopen that item list / suggested outfit
      list without rebuilding it — sometimes I just want to see what it said."*).
@@ -3025,7 +3038,6 @@ function renderCapsulePack() {
   const st = _packState && _packState.cid === capsuleId ? _packState : packLoadState(capsuleId);
   const c = capsuleById.get(capsuleId);
   if (!st || !c) return capToolbar("Pack", true) + `<div class="placeholder"><b>No trip</b></div>`;
-  const kName = Object.entries(PACK_OPTIONS).find(([, v]) => v === st.K);
   const days = tripDates(c).length;
 
   const legNote = (st.rack.legs > 1) ? ` · ${st.rack.legs} legs` : "";
@@ -3043,7 +3055,12 @@ function renderCapsulePack() {
 
   const head = `<div class="cap-insight">
     <div class="kpi-row">
-      <div class="kpi-cell"><div class="kpi-val">${st.pack.length}</div><div class="kpi-lbl">pieces</div></div>
+      <div class="kpi-cell"><div class="kpi-val">${st.pack.length}</div><div class="kpi-lbl">${(() => {
+        // The headline number, said the way she can act on it: what the outfits
+        // need, and what's spare. "14 pieces" alone tells her nothing she can do.
+        const _co = packCoreOptional(st);
+        return _co.optional.length ? `${_co.core.length} core + ${_co.optional.length} spare` : "pieces";
+      })()}</div></div>
       <div class="kpi-cell"><div class="kpi-val">${st.cov.outfits}</div><div class="kpi-lbl">outfits they make</div></div>
     </div>
     <button class="cap-cov-lbl" data-pack-occasions style="margin-top:10px;width:100%;text-align:left;color:var(--accent)">
@@ -3070,7 +3087,7 @@ function renderCapsulePack() {
           return `<div>${esc(u.date ? planDayLabel(u.date) : "unplaced")}${u.context ? " · " + esc(u.context) : ""} (${esc(lvl)})${need}</div>`;
         }).join("")}
         ${cov.uncovered.length > 4 ? `<div>…and ${cov.uncovered.length - 4} more</div>` : ""}
-        <div class="pack-warn-note">Nothing is added without asking. Turn a dial up, or leave the gap.</div>
+        <div class="pack-warn-note">Nothing is added without asking. Add a piece, drop the occasion, or leave the gap.</div>
       </div>`
     : `<div class="pack-tip">✓ Every occasion on this trip can be dressed from these pieces.</div>`;
 
@@ -3098,7 +3115,7 @@ function renderCapsulePack() {
       <button data-packmode="items" class="${_packMode === "items" ? "on" : ""}">Items</button>
       <button data-packmode="outfits" class="${_packMode === "outfits" ? "on" : ""}">Outfits</button>
     </div>
-    <button class="cap-chip" data-pack-tight>${kName ? kName[0] : "normal"} ✎</button>
+    <button class="cap-chip" data-pack-tight>${esc(packMode(st.cid))} ✎</button>
   </div>`;
 
   const selBar = _packSel.size ? `<div class="cap-orgbar">
@@ -3137,6 +3154,12 @@ function packSlotsHtml(st) {
   const links = capsuleLinkMap.get(st.cid) || [];
   const packedSet = new Set(links.filter(l => l.packed).map(l => l.item_id));
   const optionFor = packItemsOptionMap(st);
+  /* Core vs Optional, marked on the row she's already looking at rather than
+     hidden behind another view. A piece her outfits need reads as settled; a
+     spare says what it's carrying and offers to come out. That's the packing-
+     light decision made where the piece is, with the trade stated. */
+  const co = packCoreOptional(st);
+  const optLooks = new Map(co.optional.map(o => [o.id, o.looks]));
 
   return PACK_COUNT_SLOTS.map(slot => {
     const ids = st.bySlot[slot] || [];
@@ -3151,7 +3174,10 @@ function packSlotsHtml(st) {
       if (!i) return "";
       const kept = st.keeps.has(id);
       const sel = _packSel.has(id);
-      const why = packItemWhy(i, optionFor.get(id), st.demand);
+      const isOpt = optLooks.has(id);
+      const why = isOpt
+        ? `spare \u00b7 in ${optLooks.get(id)} of the looks this bag can make`
+        : packItemWhy(i, optionFor.get(id), st.demand);
       return `<div class="pack-bagrow${packedSet.has(id) ? " on" : ""}"${sel ? ` style="background:var(--panel2)"` : ""}>
         <button class="pack-tick" data-pack-sel="${esc(id)}" aria-label="Select">${sel ? "✓" : ""}</button>
         ${thumbHtml(i.image_path, "pack-pthumb")}
@@ -3160,7 +3186,9 @@ function packSlotsHtml(st) {
           <div class="pack-bagwhy">${esc(why)}</div>
         </div>
         <button class="plan-act" data-pack-keep="${esc(id)}"${kept ? ` style="color:var(--accent);border-color:var(--accent)"` : ""}>${kept ? "📌 Kept" : "Keep"}</button>
-        <button class="plan-act" data-pack-swap1="${esc(id)}">Swap</button>
+        ${isOpt
+          ? `<button class="plan-act" data-pack-drop="${esc(id)}" title="Leave this one behind">Leave</button>`
+          : `<button class="plan-act" data-pack-swap1="${esc(id)}">Swap</button>`}
       </div>`;
     }).join("");
 
@@ -3207,6 +3235,118 @@ function packSlotsHtml(st) {
    is simply part of the pack. Here the honest fact is which occasions it can
    serve, plus the laundry ceiling when it actually binds. A piece that serves
    NOTHING says so, because that's the one worth swapping. */
+/* ---- CORE and OPTIONAL — what replaced the tightness dial (2026-08-08) -----
+   Her fourth report on that dial was that it did nothing; the audit found the
+   reason (packRepack rebuilt the bag and threw the difference away) and the fix
+   made the difference real. Measured on a 7-day trip once it worked: core stays
+   at 7 / 7 / 9 pieces across lean / normal / cushion while optional moves
+   4 / 8 / 10. So the dial was only ever a control over the OPTIONAL COUNT,
+   expressed as an abstraction nobody could see.
+
+   So say it directly. "7 core + 4 optional, drop what you don't want" is the
+   same decision with nothing to decode, it's per-piece, and it's reversible —
+   and each optional piece can explain what removing it costs, which is what
+   turns packing light into an informed trade instead of a guess.
+
+   ⚠️ CORE IS DERIVED, NEVER STORED: pieces her chosen outfits actually use,
+   plus her definites. That keeps inversion ① true by construction — the bag is
+   a superset of the outfits' pieces — and means the two screens cannot drift.
+   ⚠️ A DEFINITE IS ALWAYS CORE even if no outfit uses it. She said it's coming;
+   that is not the optimiser's call to revisit. It's reported as unused
+   (packUnusedDefinites) rather than quietly demoted or dropped. */
+const PACK_MODES = ["light", "balanced", "flexible"];
+const PACK_MODE_SPARE = { light: 0, balanced: 0.35, flexible: 0.8 };  // × occasions
+const PACK_MODE_DEFAULT = "balanced";
+
+function packMode(cid) {
+  const m = packRecord(cid).mode;
+  return PACK_MODES.includes(m) ? m : PACK_MODE_DEFAULT;
+}
+function packModeSpareTarget(mode, occN) {
+  const r = PACK_MODE_SPARE[mode] ?? PACK_MODE_SPARE[PACK_MODE_DEFAULT];
+  return Math.max(0, Math.round((occN || 0) * r));
+}
+/* Pieces her outfits use ∪ her definites. Everything else in the bag is spare. */
+function packCoreIds(st) {
+  const core = new Set(packRecord(st.cid).pinned || []);
+  if (st.res && st.res.assign) for (const cd of st.res.assign.values()) for (const id of cd.ids) core.add(id);
+  return core;
+}
+/* How many distinct LOOKS this piece takes part in, among outfits the bag can
+   actually build. ⚠️ Counted on packLookKey (the look minus shoes), because
+   "swap the shoes" is not a different outfit — the r13 rule. One shared
+   enumeration for the whole bag; doing it per piece is the items × candidates
+   trap that got context scoring thrown out of packFill. */
+function packLookReach(st) {
+  const reach = new Map();
+  const wxFor = packWxFor(st.c);
+  const idSet = new Set(st.pack);
+  const seenByLevel = new Map();
+  for (const occ of st.demand) if (!seenByLevel.has(occ.level)) seenByLevel.set(occ.level, occ);
+  for (const occ of seenByLevel.values()) {
+    for (const cd of packCandidates(occ, st.pack, { wxFor, all: true })) {
+      if (!cd.ids.every(x => idSet.has(x))) continue;
+      const look = packLookKey(cd.ids);
+      for (const id of cd.ids) {
+        let s = reach.get(id);
+        if (!s) reach.set(id, s = new Set());
+        s.add(look);
+      }
+    }
+  }
+  return reach;
+}
+/* The whole bag, split. `optional` is ranked by what it buys, so trimming to a
+   mode takes the least useful first and the list reads top-down as "most worth
+   carrying". */
+function packCoreOptional(st) {
+  const core = packCoreIds(st);
+  const reach = packLookReach(st);
+  const optional = st.pack.filter(id => !core.has(id)).map(id => ({
+    id,
+    /* ⚠️ "in N of the looks this bag can make", NOT "adds N". Other pieces
+       overlap, so dropping this one doesn't cost all N — claiming it would be
+       the app flattering its own arithmetic, and the copy has to match what the
+       number actually measures. */
+    looks: (reach.get(id) || new Set()).size,
+  })).sort((a, b) => (b.looks - a.looks) || (a.id < b.id ? -1 : 1));
+  return { core: [...core], optional };
+}
+// A definite no outfit reached for. A fact, reported — never a demotion.
+function packUnusedDefinites(st) {
+  const used = new Set();
+  if (st.res && st.res.assign) for (const cd of st.res.assign.values()) for (const id of cd.ids) used.add(id);
+  return (packRecord(st.cid).pinned || []).filter(id => !used.has(id) && itemById.has(id));
+}
+/* Trim spare capacity to what the mode asks for. ⚠️ Runs AFTER the solve and
+   only ever drops OPTIONAL pieces — never a definite, never anything an outfit
+   uses — so it cannot break coverage or contradict the outfits screen. This is
+   the one place the mode is allowed to act, which is what stops it becoming
+   another opaque multiplier threaded through the fill. */
+function packApplyMode(st) {
+  const { core, optional } = packCoreOptional(st);
+  const want = packModeSpareTarget(packMode(st.cid), st.demand.length);
+  if (optional.length <= want) return;
+  const keep = new Set(core.concat(optional.slice(0, want).map(o => o.id)));
+  st.pack = st.pack.filter(id => keep.has(id));
+  if (st.res) st.res.pack = st.pack.slice();
+  /* ⚠️ AND THE SLOT TARGETS HAVE TO FOLLOW, or the screen invents a shortfall.
+     `st.targets` is what packFill was asked to build; trimming spares leaves it
+     above the real bag, so the header read "Tops 5/7" and the why-line said
+     "2 short — nothing else you own fits this trip's days" about a closet with
+     plenty of tops. That is the app blaming the wardrobe for its own decision —
+     and it is the same class as the counts/bag disagreement inversion ① exists
+     to prevent. A genuine gap is still reported, by packCoverage, from the
+     outfits rather than from a fill target. */
+  const bySlot = {};
+  for (const id of st.pack) {
+    const i = itemById.get(id);
+    const s = i ? packSlotOf(i) : null;
+    if (s) bySlot[s] = (bySlot[s] || 0) + 1;
+  }
+  for (const slot of PACK_COUNT_SLOTS) st.targets[slot] = bySlot[slot] || 0;
+}
+
 function packItemWhy(i, labels, demand) {
   const bits = [];
   const named = labels && labels.size ? [...labels] : [];
@@ -4059,42 +4199,55 @@ async function packResolveUnlocked() {
   } finally { _packBusy = false; }
 }
 
-function openPackTightSheet() {
+/* ⚠️ THIS REPLACED THE TIGHTNESS DIAL (2026-08-08). The dial asked her to think
+   in "options per occasion" — an implementation concept — and then, measurably,
+   only ever changed the number of SPARE pieces. So it names its consequence
+   instead: each row says what you'd actually carry, and switching re-solves and
+   shows the new number. Nothing to decode, and the per-piece Optional list
+   underneath is where the real control lives. */
+function openPackModeSheet() {
   const st = _packState;
   if (!st) return;
-  const rows = Object.entries(PACK_OPTIONS).map(([name, v]) => `<button class="sheet-row" data-packk="${v}">
-    <span>${esc(name[0].toUpperCase() + name.slice(1))}</span>
-    <span class="rt" style="color:${st.K === v ? "var(--accent)" : "var(--muted)"};font-weight:${st.K === v ? "700" : "400"}">${v} option${v === 1 ? "" : "s"} per occasion${st.K === v ? " ✓" : ""}</span>
-  </button>`).join("");
+  const cur = packMode(st.cid);
+  const occN = st.demand.length;
+  const { core } = packCoreOptional(st);
+  const blurb = { light: "Smallest practical bag.", balanced: "Compact, with a little room.",
+                  flexible: "More options and backups." };
+  const rows = PACK_MODES.map(m => {
+    const spare = packModeSpareTarget(m, occN);
+    const total = core.length + spare;
+    return `<button class="sheet-row" data-packmodeset="${esc(m)}">
+      <span>${esc(m[0].toUpperCase() + m.slice(1))}<div class="muted" style="font-size:12px;font-weight:400">${esc(blurb[m])}</div></span>
+      <span class="rt" style="color:${cur === m ? "var(--accent)" : "var(--muted)"};font-weight:${cur === m ? "700" : "400"}">~${total} piece${total === 1 ? "" : "s"}${spare ? ` · ${spare} spare` : ""}${cur === m ? " \u2713" : ""}</span>
+    </button>`;
+  }).join("");
   $("#moveInner").innerHTML = `
     <div class="sheet-hdr">
-      <button class="lnk" id="packKCancel">Cancel</button>
+      <button class="lnk" id="packModeCancel">Cancel</button>
       <h2>How much to bring</h2>
       <span style="width:54px"></span>
     </div>
-    <div class="sheet-note">Options per occasion, not spare pieces — a second choice for a day is what actually makes a bag feel roomy.</div>
+    <div class="sheet-note">${core.length} pieces cover your planned outfits either way. This only changes how much spare you carry \u2014 and you can drop any spare piece individually.</div>
     ${rows}`;
   showSheet("moveSheet");
-  $("#packKCancel").onclick = () => hideSheet("moveSheet");
-  $("#moveInner").querySelectorAll("[data-packk]").forEach(b => {
+  $("#packModeCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-packmodeset]").forEach(b => {
     b.onclick = async () => {
       hideSheet("moveSheet");
       _packBusy = true;
       try {
         const cid = capsuleId;
-        await savePackRecord(cid, { K: +b.dataset.packk });
-        const st2 = packLoadState(cid, { resolve: true, K: +b.dataset.packk });
-        /* ⚠️ SOLVE BEFORE PERSISTING. packLoadState leaves res null, and
-           packPersist only writes the assignment `if (st.res)` — so the stored
-           outfits were left over from the PREVIOUS tightness while the bag was
-           rebuilt for the new one. And the toast then read `res.stats` off null
-           and threw, inside a try/finally with no catch, so the failure was
-           silent. Forcing the solve here fixes both. */
+        await savePackRecord(cid, { mode: b.dataset.packmodeset });
+        /* ⚠️ SOLVE BEFORE PERSISTING — packLoadState leaves res null and
+           packPersist only writes the assignment `if (st.res)`, so the stored
+           outfits would be last mode's while the bag was rebuilt for this one.
+           The r11 bug; the reason survives even though the dial didn't. */
+        const st2 = packLoadState(cid, { resolve: true });
         packEnsureSolve(st2, { force: true });
         await packPersist(cid);
         renderCapsules();
-        const stats = st2.res && st2.res.stats;
-        toast(`${st2.pack.length} pieces${stats ? ` → ${st2.res.assign.size} outfits` : ""}`);
+        const co = packCoreOptional(st2);
+        toast(`${co.core.length} core${co.optional.length ? ` + ${co.optional.length} optional` : ""}`);
       } finally { _packBusy = false; }
     };
   });

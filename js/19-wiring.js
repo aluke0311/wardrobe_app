@@ -739,7 +739,7 @@ function wireEvents() {
     if (e.target.closest("[data-pack-rebuild]")) return packRebuildFromProposal();
     if (e.target.closest("[data-pack-resolve]")) return packResolveUnlocked();
     if (e.target.closest("[data-pack-byday]")) return openTripPlan(capsuleId);
-    if (e.target.closest("[data-pack-tight]")) return openPackTightSheet();
+    if (e.target.closest("[data-pack-tight]")) return openPackModeSheet();
     if (e.target.closest("[data-pack-addany]")) return openPackAddSheet();
     const packSwap = e.target.closest("[data-pack-swap]");
     if (packSwap) return openPackSwapSheet(packSwap.dataset.packOcc, packSwap.dataset.packSwap);
