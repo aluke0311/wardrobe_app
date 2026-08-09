@@ -3033,8 +3033,17 @@ async function packSyncMembers(cid, pack) {
 let _packMode = "items";        // "items" | "outfits"
 let _packOpen = new Set();      // slots whose subcategory breakdown is expanded
 let _packSel = new Set();       // bulk-swap selection
+/* Which occasions she's widened past the bag. ⚠️ Session-only and reset on
+   entry, the same rule as _sugg.wholeCloset and _rackExtrasOpen: the app never
+   quietly stays wide, and never quietly stays narrow either. */
+let _packBeyond = new Set();
+let _packLastCid = null;
 
 function renderCapsulePack() {
+  /* ⚠️ Reset on entry, like _sugg.wholeCloset and _rackExtrasOpen: a widened
+     occasion is a thing she did just now, not a setting she has to remember
+     turning off. */
+  if (_packLastCid !== capsuleId) { _packBeyond = new Set(); _packLastCid = capsuleId; }
   const st = _packState && _packState.cid === capsuleId ? _packState : packLoadState(capsuleId);
   const c = capsuleById.get(capsuleId);
   if (!st || !c) return capToolbar("Pack", true) + `<div class="placeholder"><b>No trip</b></div>`;
@@ -3641,6 +3650,54 @@ function packReviewOptions(st, occ, n = PACK_REVIEW_OPTS) {
   }
   return out;
 }
+/* ⚠️ AND OPTIONS THAT AREN'T IN THE BAG YET — because a review confined to the
+   bag is a review of a decision she was never part of (2026-08-08, her report:
+   *"it treats the pack as built… all from within one settled bag. If I don't
+   like those options or want to change something, the way to do that is not
+   clear. I want input before the bag is finalized."*).
+
+   She was right, and the size of it is the point. Measured on a 7-day trip: the
+   in-bag review offered 21 alternatives across 8 occasions while 3,171 existed
+   in her closet at those levels — about 0.7%. The bag came out of `packFill`
+   with no input from her, so every "choice" was a reshuffle of eight pieces
+   somebody else picked.
+
+   ⚠️ These cost WEIGHT, and the label says so ("+2 to your bag"). That is the
+   honest trade and it's hers to make — the app's job is to state the cost, not
+   to hide the option because it's expensive. Choosing one flows through the
+   normal path: packChooseOutfit → packRepack, which UNIONS, so the pieces join
+   the bag automatically (that union is what r1 fixed, and this is the second
+   thing it buys). */
+function packReviewBeyond(st, occ, n = PACK_REVIEW_OPTS) {
+  const wxFor = packWxFor(st.c);
+  const bag = st.pack || (st.res && st.res.pack) || [];
+  const inPack = new Set(bag);
+  const pool = (st.rack && st.rack.ids && st.rack.ids.length) ? st.rack.ids : bag;
+  const shapeOf = (c) => formulaKeyFor(c.ids.map(id => itemById.get(id)).filter(Boolean)) || "";
+  const all = packCandidates(occ, pool, { wxFor, all: true })
+    .filter(x => !x.ids.every(id => inPack.has(id)))       // in-bag ones are tier 1
+    .map(x => ({ ...x, shape: shapeOf(x), adds: x.ids.filter(id => !inPack.has(id)).length }));
+  /* Cheapest first — one new piece before three — then by score. Packing light
+     is the default preference; she can still scroll to the expensive one. */
+  all.sort((a, b) => (a.adds - b.adds) || (b.score - a.score) || (a.ids.join() < b.ids.join() ? -1 : 1));
+  const out = [], seenLook = new Set(), seenShape = new Set();
+  for (const c of all) {                       // one per shape, as tier 1 does
+    if (out.length >= n) break;
+    const look = packLookKey(c.ids);
+    if (seenLook.has(look) || seenShape.has(c.shape)) continue;
+    seenLook.add(look); seenShape.add(c.shape);
+    out.push(c);
+  }
+  for (const c of all) {
+    if (out.length >= n) break;
+    const look = packLookKey(c.ids);
+    if (seenLook.has(look)) continue;
+    seenLook.add(look);
+    out.push(c);
+  }
+  return out;
+}
+
 /* How little basis the app has for its pick. Higher = ask sooner. Two options
    of DIFFERENT shape scoring almost the same is the strongest signal; the same
    shape twice is a weak one however close the scores. */
@@ -3777,20 +3834,33 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
          she has to enter and leave, and it costs no new surface. Undecided
          cards offer the alternatives; a decided one just says so. */
       if (packChosenSet(st.cid).has(occ.id)) return "";
+      const wide = _packBeyond.has(occ.id);
       const alts = packReviewOptions(st, occ).filter(x => packDistinct(x, cd));
-      if (!alts.length) return "";
+      const beyond = wide ? packReviewBeyond(st, occ).filter(x => packDistinct(x, cd)) : [];
+      if (!alts.length && !wide) return "";
       const altLabels = packOptionLabels([cd, ...alts]).slice(1);
+      const beyondLabels = packOptionLabels([cd, ...beyond]).slice(1);
+      const opt = (ids, label, cls, note) => `<button class="pack-review-opt${cls}" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(ids.join(","))}">
+            <div class="pack-review-thumbs">${ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
+            <div class="pack-review-lbl">${esc(label)}</div>
+            ${note ? `<div class="pack-review-cost">${esc(note)}</div>` : ""}
+          </button>`;
       return `<div class="pack-review">
         <div class="pack-review-q">Which would you actually wear?</div>
         <div class="pack-review-opts">
-          <button class="pack-review-opt on" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(cd.ids.join(","))}">
-            <div class="pack-review-thumbs">${cd.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
-            <div class="pack-review-lbl">This one</div>
-          </button>
-          ${alts.map((x, _ai) => `<button class="pack-review-opt" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(x.ids.join(","))}">
-            <div class="pack-review-thumbs">${x.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
-            <div class="pack-review-lbl">${esc(altLabels[_ai])}</div>
-          </button>`).join("")}
+          ${opt(cd.ids, "This one", " on", "")}
+          ${alts.map((x, _ai) => opt(x.ids, altLabels[_ai], "", "")).join("")}
+        </div>
+        ${wide ? `
+          <div class="pack-review-q" style="margin-top:10px">From the rest of your closet</div>
+          <div class="pack-review-opts">
+            ${beyond.length
+              ? beyond.map((x, _bi) => opt(x.ids, beyondLabels[_bi], " beyond", `+${x.adds} to your bag`)).join("")
+              : `<div class="pack-warn-note">Nothing else you own fits this day's level and weather.</div>`}
+          </div>` : ""}
+        <div class="pack-review-more">
+          <button class="lnk" data-pack-beyond="${esc(occ.id)}">${wide ? "Just the bag" : "Show me something else \u203a"}</button>
+          <button class="lnk" data-pack-rather="${esc(occ.id)}">I'd rather\u2026</button>
         </div>
       </div>`;
     })()}
@@ -4253,6 +4323,84 @@ function packOpenSuggest(occId) {
    context. ⚠️ The choice locks the outfit and nothing else — no scores move, no
    pool shifts. She was told the app isn't learning her taste behind her back,
    and the recorded evidence only ever surfaces later as a proposal she confirms. */
+// "Show me something else" — widen this occasion past the bag, or narrow back.
+function packToggleBeyond(occId) {
+  if (_packBeyond.has(occId)) _packBeyond.delete(occId); else _packBeyond.add(occId);
+  renderCapsules();
+}
+/* "I'd rather…" on the card. ⚠️ Setting a rule RE-SOLVES this occasion rather
+   than only re-filtering what's shown — that's the difference between a filter
+   and a decision, and it's the whole reason she couldn't escape the dress: the
+   old controls all re-picked inside a bag chosen under the old assumptions.
+   The rule is stored per occasion and beats her standing context rule. */
+function openPackRatherSheet(occId) {
+  const st = packStateReady();
+  if (!st) return;
+  const occ = st.demand.find(o => o.id === occId);
+  if (!occ) return;
+  const cur = occ.prefs || {};
+  const row = (key, val, label) => {
+    const on = key === "levelShift" ? (+cur.levelShift === val) : (cur[key] === val);
+    return `<button class="sheet-row" data-packrather="${esc(key)}" data-packrval="${esc(String(val))}">
+      <span>${label}</span>
+      <span class="rt" style="color:${on ? "var(--accent)" : "var(--muted)"}">${on ? "\u2713" : ""}</span>
+    </button>`;
+  };
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packRatherCancel">Cancel</button>
+      <h2>I'd rather\u2026</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="sheet-note">For ${esc(occ.context || occLabel(occ.level) || "this day")} on this trip. Tap again to undo.</div>
+    ${row("silhouette", SIL_SEPARATES, "\u{1F455} Not wear a dress")}
+    ${row("silhouette", SIL_DRESS, "\u{1F457} Wear a dress")}
+    ${row("levelShift", -1, "\u2193 Dress this down")}
+    ${row("levelShift", 1, "\u2191 Dress this up")}`;
+  showSheet("moveSheet");
+  $("#packRatherCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-packrather]").forEach(b => {
+    b.onclick = async () => {
+      hideSheet("moveSheet");
+      const key = b.dataset.packrather;
+      const val = key === "levelShift" ? +b.dataset.packrval : b.dataset.packrval;
+      const on = key === "levelShift" ? (+cur.levelShift === val) : (cur[key] === val);
+      /* Clearing has to be able to overrule a STANDING context rule, not just
+         delete the occasion key — see SIL_ANY. */
+      let patch;
+      if (!on) patch = { [key]: val };
+      else if (key === "silhouette" && (contextPref(occ.context) || {}).silhouette === val)
+        patch = { silhouette: SIL_ANY };
+      else patch = { [key]: null };
+      await packSetOccPref(st.cid, occId, patch);
+      // Re-solve THIS occasion against the new rule, holding the trip still.
+      const st2 = packStateReady(st.cid);
+      if (st2 && st2.res) {
+        const o2 = st2.demand.find(o => o.id === occId);
+        const wxFor = packWxFor(st2.c);
+        const inside = packCandidates(o2, st2.pack, { wxFor, all: true })
+          .find(x => x.ids.every(id => new Set(st2.pack).has(id)));
+        const pick = inside || packCandidates(o2, st2.rack.ids, { wxFor, all: true })[0];
+        if (pick) {
+          st2.res.assign.set(occId, pick);
+          packRepack(st2); packRegroup(st2); packRefresh(st2);
+          await packPersist(st2.cid);
+        } else {
+          /* ⚠️ Her rule left nothing buildable. That is an honest gap, not a
+             reason to ignore her — the occasion is reported uncovered and she
+             can relax the rule. Overruling here would make the control a
+             suggestion box. */
+          st2.res.assign.delete(occId);
+          packRegroup(st2); packRefresh(st2);
+          await packPersist(st2.cid);
+        }
+      }
+      renderCapsules();
+      toast(prefsLabel(packOccPref(st.cid, occId)) || "Rule cleared");
+    };
+  });
+}
+
 async function packChooseOutfit(occId, ids) {
   const st = packStateReady();
   if (!st || !st.res) return;
@@ -4385,10 +4533,16 @@ async function packAddPiece(itemId) {
   toast(`${it.name || "Piece"} is in the bag`);
 }
 
-function openPackAddSheet() {
+/* ⚠️ TWO DOORS, ONE STATE (her doc: "all roads should lead to the same state").
+   `pin:true` is the pre-build door — a piece added there is a DEFINITE, locked
+   before packFill runs, so the bag is built AROUND it rather than rebuilt to
+   accommodate it afterwards. Without the flag it's the post-build door and just
+   drops a piece into the bag. Same store either way (`rec.pinned`), so the two
+   can't drift. */
+function openPackAddSheet({ pin = false, back = null } = {}) {
   const st = _packState;
   if (!st) return;
-  const inPack = new Set(st.res.pack);
+  const inPack = new Set(st.res ? st.res.pack : st.pack);
   const pool = items.filter(i => itemStatus(i) === "Available" && !inPack.has(i.id));
   let q = "";
   const render = () => {
@@ -4399,20 +4553,27 @@ function openPackAddSheet() {
       : `<div style="padding:24px 16px;text-align:center;color:var(--muted)">Nothing matches.</div>`;
     hydratePhotos($("#logInner"));
     $("#logInner").querySelectorAll("[data-packadd]").forEach(b => {
-      b.onclick = () => { hideSheet("logSheet"); packAddPiece(b.dataset.packadd); };
+      b.onclick = async () => {
+        if (pin) {
+          const rec = packRecord(st.cid);
+          await savePackRecord(st.cid, { pinned: [...new Set((rec.pinned || []).concat([b.dataset.packadd]))] });
+          if (back) { back(); return; }
+          hideSheet("logSheet");
+        } else { hideSheet("logSheet"); packAddPiece(b.dataset.packadd); }
+      };
     });
   };
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="packAddCancel">Cancel</button>
-      <h2>Bring something</h2>
+      <h2>${pin ? "Definitely bringing" : "Bring something"}</h2>
       <span style="width:54px"></span>
     </div>
     <div style="padding:8px 16px"><input class="inp" id="packAddQ" placeholder="Search your closet…"></div>
     <div id="packAddResults" style="padding:0 0 30px"></div>`;
   showSheet("logSheet");
   render();
-  $("#packAddCancel").onclick = () => hideSheet("logSheet");
+  $("#packAddCancel").onclick = () => { if (back) back(); else hideSheet("logSheet"); };
   $("#packAddQ").oninput = (e) => { q = e.target.value; render(); };
 }
 
@@ -4534,7 +4695,7 @@ function openPackBuildSheet(cid) {
   const picked = packTripContexts(cid) || packSuggestTripContexts(c);
   const { slate, demand } = packDemandFor(cid, c, { tripContexts: picked });
   const rec = packRecord(cid);
-  const K = rec.K || PACK_OPTIONS.normal;
+  const mode = packMode(cid);
   const washDays = packWashDays(c);
   const mine = !!packTripContexts(cid);
 
@@ -4562,9 +4723,22 @@ function openPackBuildSheet(cid) {
       <div class="pack-warn-note" style="padding:2px 0 6px">${washDays.length
         ? `Washing on ${esc(washDays.map(d => fmtDate(d)).join(", "))} — set on the by-day planner.`
         : `No wash planned. Set a laundry day on the by-day planner if you'll have one.`}</div>
-      <div class="fld" style="margin-top:8px">How much to bring</div>
-      <div class="pack-chiprow">${Object.entries(PACK_OPTIONS).map(([name, v]) =>
-        `<button class="cap-chip${K === v ? " on" : ""}" data-packbk="${v}">${esc(name)}</button>`).join("")}</div>
+      <div class="fld" style="margin-top:14px">Definitely bringing${(rec.pinned || []).length ? ` · ${(rec.pinned || []).length}` : ""}</div>
+      <div class="pack-warn-note" style="padding:2px 0 6px">${(rec.pinned || []).length
+        ? esc((rec.pinned || []).map(id => (itemById.get(id) || {}).name || "piece").slice(0, 4).join(", "))
+          + ((rec.pinned || []).length > 4 ? ` +${(rec.pinned || []).length - 4} more` : "")
+        : `Nothing yet. Add anything you've already decided on and the pack gets built around it.`}</div>
+      <button class="btn btn-sec" id="packBuildDefinites" style="width:100%">＋ Add pieces you're bringing</button>
+      ${(rec.banned || []).length ? `<div class="pack-warn-note" style="padding:6px 0 0">Not this trip: ${
+        esc((rec.banned || []).map(id => (itemById.get(id) || {}).name || "piece").slice(0, 3).join(", "))}${
+        (rec.banned || []).length > 3 ? ` +${(rec.banned || []).length - 3}` : ""} · <button class="lnk" id="packBuildUnban">clear</button></div>` : ""}
+      <div class="fld" style="margin-top:14px">How much to bring</div>
+      <div class="pack-chiprow">${PACK_MODES.map(m =>
+        `<button class="cap-chip${mode === m ? " on" : ""}" data-packbmode="${esc(m)}">${esc(m)}</button>`).join("")}</div>
+      <div class="pack-warn-note" style="padding:2px 0 0">${esc({
+        light: "Smallest practical bag \u2014 no spare pieces.",
+        balanced: "Compact, with a little room to change your mind.",
+        flexible: "More options and backups." }[mode])}</div>
       <button class="btn" id="packBuildGo" style="margin:18px 0 8px">✨ Build the pack</button>
       <div class="pack-warn-note" style="padding:0 0 24px">${(c.locations || []).length
         ? `Weather comes from your locations — beyond about two weeks out it's a typical-for-the-date average, not a forecast.`
@@ -4577,9 +4751,20 @@ function openPackBuildSheet(cid) {
     if (!_packState || _packState.cid !== cid) { capsuleId = cid; packLoadState(cid); }
     openPackContexts({ back: () => openPackBuildSheet(cid) });
   };
-  $("#logInner").querySelectorAll("[data-packbk]").forEach(b => {
-    b.onclick = async () => { await savePackRecord(cid, { K: +b.dataset.packbk }); openPackBuildSheet(cid); };
+  $("#logInner").querySelectorAll("[data-packbmode]").forEach(b => {
+    b.onclick = async () => { await savePackRecord(cid, { mode: b.dataset.packbmode }); openPackBuildSheet(cid); };
   });
+  /* ⚠️ DEFINITES ARE AN INPUT, NOT AN EDIT (her report: "I want input before the
+     bag is finalized"). Added here they are locked before packFill runs, so the
+     bag is built AROUND them rather than being rebuilt to accommodate them
+     afterwards. Same store as "Keep" on a built pack — one state, two doors. */
+  const defBtn = $("#packBuildDefinites");
+  if (defBtn) defBtn.onclick = () => {
+    if (!_packState || _packState.cid !== cid) { capsuleId = cid; packLoadState(cid); }
+    openPackAddSheet({ pin: true, back: () => openPackBuildSheet(cid) });
+  };
+  const unban = $("#packBuildUnban");
+  if (unban) unban.onclick = async () => { await savePackRecord(cid, { banned: [] }); openPackBuildSheet(cid); };
   $("#packBuildGo").onclick = async () => {
     hideSheet("logSheet");
     // Whatever's shown becomes hers, so the pack isn't built on a guess that

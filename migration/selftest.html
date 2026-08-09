@@ -3272,6 +3272,61 @@ async function run() {
     }, { capsules: [c] });
   });
 
+  /* ⚠️ A REVIEW CONFINED TO THE BAG IS A REVIEW OF A DECISION SHE WASN'T PART OF
+     (2026-08-08, her report: *"it treats the pack as built… all from within one
+     settled bag. If I don't like those options the way to change is not clear.
+     I want input before the bag is finalized."*).
+
+     Measured on a 7-day trip: 21 alternatives inside the bag across 8
+     occasions, against 3,171 that existed in her closet at those levels —
+     about 0.7%. The bag came out of packFill with no input from her, so every
+     "choice" was a reshuffle of eight pieces somebody else picked. */
+  t("the review can reach outside the bag, and says what that costs", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const occ = W.packReviewQueue(st)[0];
+      if (!occ) return "vacuous: nothing to review";
+      const bag = new W.Set(st.pack);
+      const beyond = W.packReviewBeyond(st, occ);
+      if (!beyond.length) return "vacuous: the closet offered nothing beyond the bag";
+      for (const o of beyond) {
+        // Every one must genuinely leave the bag, and must know its own price.
+        if (o.ids.every(id => bag.has(id))) return `an option was entirely in the bag already`;
+        const real = o.ids.filter(id => !bag.has(id)).length;
+        if (o.adds !== real) return `stated +${o.adds}, actually adds ${real}`;
+      }
+      // Cheapest first — packing light is the default preference.
+      const adds = beyond.map(o => o.adds);
+      return adds.every((n, k) => k === 0 || adds[k - 1] <= n)
+        ? true : `not cheapest-first: ${JSON.stringify(adds)}`;
+    }, { capsules: [c] });
+  });
+
+  /* Choosing one has to actually put it in the bag, or the outfits screen and
+     the items screen disagree — inversion ①. This works through packRepack's
+     union, which is the second thing that fix bought. */
+  t("choosing an outfit from outside the bag adds its pieces", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const occ = W.packReviewQueue(st)[0];
+      const beyond = W.packReviewBeyond(st, occ);
+      if (!beyond.length) return "vacuous: nothing beyond the bag";
+      const pick = beyond[0];
+      const before = st.pack.length;
+      st.res.assign.set(occ.id, { ids: pick.ids.slice(), pieces: [], score: 0 });
+      W.packRepack(st);
+      const bag = new W.Set(st.pack);
+      const missing = pick.ids.filter(id => !bag.has(id));
+      if (missing.length) return `chose it, but ${JSON.stringify(missing)} never entered the bag`;
+      return st.pack.length > before
+        ? true : `bag stayed at ${before} despite adding ${pick.adds} new pieces`;
+    }, { capsules: [c] });
+  });
+
   t("choosing an outfit takes it out of the queue and locks it", () => {
     const c = packTrip(7);
     return withPackCloset(() => {

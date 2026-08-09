@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-08 r4";
+const APP_VERSION = "2026-08-09 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-08 r4";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-09 r1", notes: [
+    "The review can now reach outside the bag. Every outfit has \"Show me something else\" \u2014 options built from your whole closet, not just the pieces already packed, each one saying what it would add (\"+1 to your bag\"). Before this, the review only ever reshuffled a bag you'd had no say in: measured on a 7-day trip it was offering 21 alternatives when 3,171 existed in your closet at those levels",
+    "\"I'd rather\u2026\" is on every outfit now \u2014 not a dress, dress it down, dress it up \u2014 and setting one RE-SOLVES that day rather than just re-picking from what was already there. If your rule leaves nothing buildable the day is reported uncovered rather than the app quietly ignoring you",
+    "You can say what you're bringing BEFORE the pack is built. The build screen now has \"Definitely bringing\" \u2014 add anything you've already decided on and the bag gets built around it, instead of you having to add it afterwards and hope",
+    "The build screen was still offering Lean / Normal / Cushion, a control that no longer exists anywhere else in the app. It now shows Light / Balanced / Flexible with what each one means",
+  ] },
   { v: "2026-08-08 r4", notes: [
     "The pack asks you now. Every outfit shows two or three real alternatives with \"Which would you actually wear?\", and picking one locks it in \u2014 the app then optimises the rest of the trip around your choice instead of quietly re-deciding it. \"These all look fine\" clears the whole thing in one tap",
     "The alternatives are genuinely different, not the next three in the same ranking. They're picked to differ in SHAPE \u2014 a dress instead of separates, a different silhouette \u2014 using the same formulas the app already recognises in your outfits, so \"more options\" means something",

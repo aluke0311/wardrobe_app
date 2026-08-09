@@ -747,6 +747,10 @@ function wireEvents() {
     if (packRerollBtn) return packReroll(packRerollBtn.dataset.packReroll);
     const packOpts = e.target.closest("[data-pack-options]");
     if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
+    const packBeyond = e.target.closest("[data-pack-beyond]");
+    if (packBeyond) return packToggleBeyond(packBeyond.dataset.packBeyond);
+    const packRather = e.target.closest("[data-pack-rather]");
+    if (packRather) return openPackRatherSheet(packRather.dataset.packRather);
     const packChoose = e.target.closest("[data-pack-choose]");
     if (packChoose) return packChooseOutfit(packChoose.dataset.packChoose,
                                             packChoose.dataset.packIds.split(","));
