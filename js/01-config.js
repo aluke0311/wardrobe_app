@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-08 r3";
+const APP_VERSION = "2026-08-08 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-08 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-08 r4", notes: [
+    "The pack asks you now. Every outfit shows two or three real alternatives with \"Which would you actually wear?\", and picking one locks it in \u2014 the app then optimises the rest of the trip around your choice instead of quietly re-deciding it. \"These all look fine\" clears the whole thing in one tap",
+    "The alternatives are genuinely different, not the next three in the same ranking. They're picked to differ in SHAPE \u2014 a dress instead of separates, a different silhouette \u2014 using the same formulas the app already recognises in your outfits, so \"more options\" means something",
+    "Occasions are ordered by how little the app can tell them apart, so the ones worth your opinion come first and skipping the rest is safe. Days you declared, and dressier days, come before an airport transfer",
+    "Your choices are quietly filed as evidence about that kind of day \u2014 not acted on. Later the app will be able to say \"you've picked separates for Dinner five times, want me to stop offering dresses there?\" and you decide",
+  ] },
   { v: "2026-08-08 r3", notes: [
     "Lean / Normal / Cushion is gone. It asked you to think in \"options per occasion\" \u2014 and measurably, all it ever changed was how many SPARE pieces you carried: the outfits needed the same 9 pieces at every setting. It's now Light / Balanced / Flexible, and each one tells you what you'd actually carry before you pick it",
     "Your pack is split into Core and Spare. Core is what your planned outfits actually use. Spare is everything else, each piece saying how many of the bag's possible looks it's in, with a Leave button. That's the packing-light decision made where the piece is, with the trade stated \u2014 rather than a dial you set and hope about",

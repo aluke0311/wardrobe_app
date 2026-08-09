@@ -747,6 +747,10 @@ function wireEvents() {
     if (packRerollBtn) return packReroll(packRerollBtn.dataset.packReroll);
     const packOpts = e.target.closest("[data-pack-options]");
     if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
+    const packChoose = e.target.closest("[data-pack-choose]");
+    if (packChoose) return packChooseOutfit(packChoose.dataset.packChoose,
+                                            packChoose.dataset.packIds.split(","));
+    if (e.target.closest("[data-pack-reviewskip]")) return packSkipReview();
     const packLock = e.target.closest("[data-pack-lock]");
     if (packLock) return packToggleLock(packLock.dataset.packLock);
     const packSug = e.target.closest("[data-pack-suggest]");

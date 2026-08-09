@@ -3224,6 +3224,91 @@ async function run() {
     }, { capsules: [c] });
   });
 
+  /* ================= 2026-08-08: the review ==============================
+     The app had never asked her anything — it presented a finished plan and she
+     had to go digging, which is how a dress she'd never wear could sit on a card
+     until she found the swap sheet. She chose to be offered EVERY occasion with
+     a prominent skip, so the queue is ordered by ambiguity instead. */
+  t("review options are genuinely different, not the next three in one ranking", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const occ = W.packReviewQueue(st)[0];
+      if (!occ) return "vacuous: nothing to review";
+      const opts = W.packReviewOptions(st, occ);
+      if (opts.length < 2) return `vacuous: only ${opts.length} option offered`;
+      /* ⚠️ Distinct on packLookKey, which excludes shoes — swapping shoes was
+         how the solver used to fake variety (r13), and "more options" that does
+         the same would be the same bug wearing the review's clothes. */
+      const looks = new W.Set(opts.map(o => W.packLookKey(o.ids)));
+      return looks.size === opts.length
+        ? true : `${opts.length} options collapse to ${looks.size} distinct looks`;
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ THE LABELS HAVE TO TELL THE OPTIONS APART, and two versions failed at
+     exactly this while looking correct in the markup. "Separates instead" was
+     true of all three alternatives at once; naming each option's lead garment
+     then collided whenever two shared a top. The whole interaction is choosing
+     between them, so a label that doesn't distinguish is worse than none.
+     Both were found by rendering the card and reading it. */
+  t("every review option is labelled distinguishably", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      let checked = 0;
+      for (const occ of W.packReviewQueue(st)) {
+        const cd = st.res.assign.get(occ.id);
+        const alts = W.packReviewOptions(st, occ).filter(x => W.packDistinct(x, cd));
+        if (alts.length < 2) continue;
+        checked++;
+        const labels = W.packOptionLabels([cd, ...alts]);
+        if (labels.length !== new W.Set(labels).size)
+          return `${occ.context || occ.level}: ${JSON.stringify(labels)}`;
+      }
+      return checked ? true : "vacuous: no occasion offered two alternatives";
+    }, { capsules: [c] });
+  });
+
+  t("choosing an outfit takes it out of the queue and locks it", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const before = W.packReviewQueue(st).length;
+      if (!before) return "vacuous: the queue was already empty";
+      const occ = W.packReviewQueue(st)[0];
+      // The record is the state (inversion ③) — assert on it, not on a render.
+      W.kvData.set("pack:" + c.id, Object.assign({}, W.packRecord(c.id),
+        { chosen: [occ.id], locked: [occ.id] }));
+      const after = W.packReviewQueue(st).length;
+      const locked = new W.Set(W.packRecord(c.id).locked || []);
+      return (after === before - 1 && locked.has(occ.id))
+        ? true : `queue ${before} -> ${after}, locked=${locked.has(occ.id)}`;
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ SKIPPING IS NOT CHOOSING. "These all look fine" marks them decided so
+     the queue empties, but must NOT lock them — locking what she merely didn't
+     object to would make a later re-solve refuse to improve days she never
+     actually looked at. */
+  t("skipping the review doesn't lock what she didn't choose", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const all = st.demand.filter(o => st.res.assign.get(o.id)).map(o => o.id);
+      if (!all.length) return "vacuous: nothing was dressed";
+      W.kvData.set("pack:" + c.id, Object.assign({}, W.packRecord(c.id), { chosen: all }));
+      const queue = W.packReviewQueue(st).length;
+      const locked = (W.packRecord(c.id).locked || []).length;
+      return (queue === 0 && locked === 0)
+        ? true : `queue=${queue} locked=${locked}`;
+    }, { capsules: [c] });
+  });
+
   /* Core is what her outfits actually use; the mode may only ever trim SPARE.
      If a mode change could drop a piece an outfit needs, the items screen and
      the outfits screen would disagree — the thing inversion ① exists to stop. */

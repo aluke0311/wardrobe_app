@@ -3445,7 +3445,22 @@ function packLeftOutHtml(st) {
    is in its own clearly-labelled section, never mixed into hers. */
 function packOutfitsModeHtml(st) {
   packEnsureSolve(st);
-  return packBucketsHtml(st) + packDaysFoldHtml(st);
+  return packReviewBarHtml(st) + packBucketsHtml(st) + packDaysFoldHtml(st);
+}
+/* ⚠️ "2 decisions left", never "67% complete" — a percentage is a number about
+   the app's progress; a count is a number about hers, and it's the one that
+   tells her whether stopping now is fine. And the skip is PROMINENT by
+   decision: she chose to be offered every occasion rather than a filtered few,
+   which only works if declining the whole thing is one tap. */
+function packReviewBarHtml(st) {
+  const left = packReviewQueue(st).length;
+  const total = st.demand.filter(o => st.res && st.res.assign.get(o.id)).length;
+  if (!total) return "";
+  if (!left) return `<div class="pack-tip">\u2713 You've been through all ${total} outfit${total === 1 ? "" : "s"}.</div>`;
+  return `<div class="cap-orgbar">
+    <div class="cap-cov-lbl">${left} decision${left === 1 ? "" : "s"} for you${total > left ? ` \u00b7 ${total - left} done` : ""}</div>
+    <button class="plan-act" data-pack-reviewskip>These all look fine</button>
+  </div>`;
 }
 
 // The header for a bucket, and the order they appear in.
@@ -3570,6 +3585,151 @@ async function packUndropAll() {
    the three can never drift apart in markup or in handlers. `alsoFor` carries
    the same-day merge the day view does; the bucket view never merges, because
    two occasions she asked for are two outfits she asked for. */
+/* ===================================================================
+   REVIEW — "which would you actually wear?"  (2026-08-08)
+   ===================================================================
+   The app has never once asked her anything. It presents a finished plan and
+   she has to go digging to change it, which is why a dress she'd never wear
+   could sit on a card until she found the swap sheet.
+
+   Her decision was to be offered EVERY occasion with a prominent skip, rather
+   than only the ambiguous ones — so the queue is ordered by ambiguity instead,
+   most uncertain first. Skipping is then always safe: the ones she'd most want
+   a say in are the ones she sees first.
+
+   ⚠️ AMBIGUITY IS "THE ALTERNATIVES DIFFER", NEVER "how much will she like it".
+   The app has no preference model — scoreCombo's range is ~2.5–5.5, which the
+   solver treats as rounding error — so a confidence percentage would be an
+   invented number, and inventing one is exactly the guessing layer r19 deleted
+   with a "do not rebuild it to help" note. What IS derivable and honest: two
+   good answers of different SHAPE and comparable score means the app has no
+   basis to choose, which is precisely when her input is worth asking for. */
+const PACK_REVIEW_OPTS = 3;
+
+/* ⚠️ DIVERSIFIED BY FORMULA, NOT BY SCORE RANK. "More options" that hands back
+   the next three candidates is fake variety — this app has already shipped that
+   bug once, when swapping shoes counted as a different outfit (fixed r13 with
+   packLookKey). A formula key is the app's own name for an outfit's SHAPE, so
+   "a different shape" is a definition already in use rather than a new rule
+   invented here. Falls back to look-distinct once shapes run out, so a closet
+   with one shape still offers real alternatives. */
+function packReviewOptions(st, occ, n = PACK_REVIEW_OPTS) {
+  const wxFor = packWxFor(st.c);
+  /* ⚠️ `st.pack` OR the solve's copy. They're the same thing on every real
+     path, but the card renderer is reachable from states assembled elsewhere
+     (packDaysHtml is driven directly in tests, and by-day surfaces build their
+     own), and a review row is not worth throwing a whole screen away for. */
+  const bag = st.pack || (st.res && st.res.pack) || [];
+  const inPack = new Set(bag);
+  const all = packCandidates(occ, bag, { wxFor, all: true })
+    .filter(x => x.ids.every(id => inPack.has(id)));
+  const shapeOf = (c) => formulaKeyFor(c.ids.map(id => itemById.get(id)).filter(Boolean)) || "";
+  const out = [], seenLook = new Set(), seenShape = new Set();
+  for (const c of all) {                       // pass 1: one per distinct shape
+    if (out.length >= n) break;
+    const look = packLookKey(c.ids), shape = shapeOf(c);
+    if (seenLook.has(look) || seenShape.has(shape)) continue;
+    seenLook.add(look); seenShape.add(shape);
+    out.push({ ...c, shape });
+  }
+  for (const c of all) {                       // pass 2: top up on distinct looks
+    if (out.length >= n) break;
+    const look = packLookKey(c.ids);
+    if (seenLook.has(look)) continue;
+    seenLook.add(look);
+    out.push({ ...c, shape: shapeOf(c) });
+  }
+  return out;
+}
+/* How little basis the app has for its pick. Higher = ask sooner. Two options
+   of DIFFERENT shape scoring almost the same is the strongest signal; the same
+   shape twice is a weak one however close the scores. */
+function packAmbiguity(st, occ) {
+  const o = packReviewOptions(st, occ, 2);
+  if (o.length < 2) return 0;                       // no choice to make
+  const gap = Math.max(0, (o[0].score || 0) - (o[1].score || 0));
+  const spread = (o[0].shape !== o[1].shape ? 1 : 0.4) / (1 + gap);
+  /* ⚠️ AND STAKES, not just spread — measured, the spread term alone barely
+     discriminates: scoreCombo's top-two gap is usually ~0, so every occasion
+     with two shapes scored ~0.99 and the ordering collapsed to date order. The
+     doc's own rule is the missing half (§17): a wedding is worth asking about
+     even when the app is confident, an airport transfer isn't even when it
+     isn't. Both terms are derived — a context she DECLARED, and how dressy the
+     day is — so neither is a guess about how much she'll like the outfit. */
+  const declared = (occ.source === "selected" || occ.source === "declared") ? 1.6 : 1;
+  const dressy = 1 + Math.max(0, (occ.level || 1) - 3) * 0.25;
+  return spread * declared * dressy;
+}
+// Occasions she has actively decided — distinct from "locked", which she can
+// also do without being offered a choice.
+function packChosenSet(cid) { return new Set(packRecord(cid).chosen || []); }
+function packReviewQueue(st) {
+  const chosen = packChosenSet(st.cid);
+  return st.demand
+    .filter(o => st.res && st.res.assign.get(o.id) && !chosen.has(o.id))
+    .map(o => ({ occ: o, amb: packAmbiguity(st, o) }))
+    .sort((a, b) => (b.amb - a.amb) || ((a.occ.date || "") < (b.occ.date || "") ? -1 : 1))
+    .map(x => x.occ);
+}
+
+/* ---- what a choice is worth keeping ---------------------------------------
+   She asked for the review to teach the app her preferences, proposed for
+   confirmation rather than applied silently, and to "bake this into contexts in
+   general, not just for trips".
+
+   A choice is CONTRASTIVE — "I picked A over B and C, which were all valid
+   here" — which is worth far more per data point than a wear, and it's why the
+   volume objection to learning from ~6 trips a year doesn't hold once every
+   occasion is offered. Stored compactly and derived from, never trusted as a
+   score. ⚠️ Recording starts now even though the proposal UI comes later:
+   evidence that isn't being collected can't be learned from when it is. */
+const CTX_CHOICES_KEY = "ctxchoices";
+const CTX_CHOICES_MAX = 300;
+async function recordContextChoice(ctx, level, chosenIds, rejected) {
+  if (!ctx) return;                              // a level alone isn't a kind of day
+  const prev = kvData.get(CTX_CHOICES_KEY);
+  const list = Array.isArray(prev) ? prev.slice() : [];
+  list.push({
+    ctx, level: level || null, at: todayStr(),
+    chose: silhouetteOfIds(chosenIds),
+    against: [...new Set((rejected || []).map(ids => silhouetteOfIds(ids)))],
+  });
+  await kvSet(CTX_CHOICES_KEY, list.slice(-CTX_CHOICES_MAX));
+}
+
+/* What makes this option different from the one on offer. ⚠️ States the
+   DIFFERENCE, never a recommendation — "A dress instead" tells her what she'd
+   be choosing; "better for the weather" would be the app voting in its own
+   election. Same rule as "packed 3×, worn 0×". */
+/* ⚠️ LABELS ARE COMPUTED FOR THE SET, NOT PER OPTION, and two earlier versions
+   got this wrong in the same way. "Separates instead" was true of all three
+   alternatives at once; naming each one's lead garment then collided whenever
+   two options shared a top and differed below. Both looked fine in the markup
+   and were useless on screen — the whole interaction is telling these apart, so
+   a label that doesn't distinguish is worse than no label.
+
+   So: for each option, name the first garment (in dressing order) that no OTHER
+   option has. Fall back to two names when nothing single is unique. */
+const PACK_LABEL_ORDER = ["Dresses", "Tops", "Bottoms", "Shoes", "Outerwear"];
+function packOptionLabels(options) {
+  const named = options.map(o => {
+    const its = o.ids.map(id => itemById.get(id)).filter(Boolean);
+    const bySlot = new Map();
+    for (const i of its) bySlot.set(packSlotOf(i) || "?", i);
+    return PACK_LABEL_ORDER.map(sl => bySlot.get(sl)).filter(Boolean);
+  });
+  const nameOf = (i) => i.name || i.subcategory || "piece";
+  return named.map((mine, k) => {
+    const others = named.filter((_, n) => n !== k).map(list => new Set(list.map(nameOf)));
+    const unique = mine.find(i => others.every(o => !o.has(nameOf(i))));
+    if (unique) return nameOf(unique);
+    // Nothing single tells them apart — the pair always does, since the options
+    // are look-distinct by construction.
+    const pair = mine.slice(0, 2).map(nameOf);
+    return pair.length > 1 ? pair.join(" + ") : (pair[0] || "Another option");
+  });
+}
+
 function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
   const rec = packRecord(st.cid);
   const lockedSet = new Set(rec.locked || []);
@@ -3611,6 +3771,29 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
         <div class="pack-pname">${esc(i.name || "Untitled")}</div>
       </button>`).join("")}
     </div>
+    ${(() => {
+      /* THE REVIEW, INLINE. Not a separate screen — the Outfits tab already
+         shows one card per occasion, so asking here means review isn't a mode
+         she has to enter and leave, and it costs no new surface. Undecided
+         cards offer the alternatives; a decided one just says so. */
+      if (packChosenSet(st.cid).has(occ.id)) return "";
+      const alts = packReviewOptions(st, occ).filter(x => packDistinct(x, cd));
+      if (!alts.length) return "";
+      const altLabels = packOptionLabels([cd, ...alts]).slice(1);
+      return `<div class="pack-review">
+        <div class="pack-review-q">Which would you actually wear?</div>
+        <div class="pack-review-opts">
+          <button class="pack-review-opt on" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(cd.ids.join(","))}">
+            <div class="pack-review-thumbs">${cd.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
+            <div class="pack-review-lbl">This one</div>
+          </button>
+          ${alts.map((x, _ai) => `<button class="pack-review-opt" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(x.ids.join(","))}">
+            <div class="pack-review-thumbs">${x.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
+            <div class="pack-review-lbl">${esc(altLabels[_ai])}</div>
+          </button>`).join("")}
+        </div>
+      </div>`;
+    })()}
     <div class="pack-occ-acts">
       <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
       <button class="plan-act" data-pack-suggest="${esc(occ.id)}">Suggester…</button>
@@ -4064,6 +4247,54 @@ function packOpenSuggest(occId) {
                                  _suggWx(), null, _suggCleanArg(), null, null));
   renderSuggestSheet();
 }
+/* She picked one. Three things happen, and keeping them separate is the point:
+   the outfit becomes hers (locked against automatic re-solving), the occasion
+   leaves the review queue, and the CONTRASTIVE evidence is filed for the
+   context. ⚠️ The choice locks the outfit and nothing else — no scores move, no
+   pool shifts. She was told the app isn't learning her taste behind her back,
+   and the recorded evidence only ever surfaces later as a proposal she confirms. */
+async function packChooseOutfit(occId, ids) {
+  const st = packStateReady();
+  if (!st || !st.res) return;
+  const occ = st.demand.find(o => o.id === occId);
+  if (!occ) return;
+  const clean = [...new Set(ids)].filter(id => itemById.has(id)).sort();
+  if (clean.length < 2) return;
+  const cur = st.res.assign.get(occId);
+  const alts = packReviewOptions(st, occ).map(x => x.ids);
+  st.res.assign.set(occId, { ids: clean, pieces: clean.map(id => itemById.get(id)).filter(Boolean), score: 0 });
+  packRepack(st); packRegroup(st); packRefresh(st);
+  const rec = packRecord(st.cid);
+  const chosen = [...new Set([...(rec.chosen || []), occId])];
+  await savePackRecord(st.cid, { chosen, locked: packMarkLocked(st.cid, occId) });
+  await recordContextChoice(occ.context, occ.level, clean,
+                            alts.filter(a => a.join() !== clean.join()));
+  await packPersist(st.cid);
+  renderCapsules();
+  const same = cur && !packDistinct({ ids: clean }, cur);
+  toast(same ? "Kept \u00b7 locked in" : "Updated around your choice", {
+    label: "Undo", fn: async () => {
+      const r = packRecord(st.cid);
+      await savePackRecord(st.cid, { chosen: (r.chosen || []).filter(x => x !== occId) });
+      if (cur) st.res.assign.set(occId, cur);
+      packRepack(st); packRegroup(st); packRefresh(st);
+      await packPersist(st.cid);
+      renderCapsules();
+    },
+  });
+}
+/* "These all look fine." ⚠️ Marks them decided WITHOUT locking: skipping is not
+   the same as choosing, and locking what she merely didn't object to would make
+   a later re-solve refuse to improve days she never looked at. */
+async function packSkipReview() {
+  const st = packStateReady();
+  if (!st || !st.res) return;
+  const all = st.demand.filter(o => st.res.assign.get(o.id)).map(o => o.id);
+  await savePackRecord(st.cid, { chosen: [...new Set([...(packRecord(st.cid).chosen || []), ...all])] });
+  renderCapsules();
+  toast("Left as they are");
+}
+
 async function packSetOccasionOutfit(cid, occId, ids) {
   const st = packStateReady(cid);
   if (!st || !st.res || !ids || ids.length < 2) return;
