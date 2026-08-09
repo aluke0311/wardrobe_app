@@ -361,6 +361,11 @@ function builderCancel() {
   const planCtx = builder ? builder.planCtx : null;
   builder = null;
   $("#app").classList.remove("builder-mode");
+  if (planCtx && planCtx.packOcc) {
+    switchTab("capsules");
+    capsuleId = planCtx.packOcc.cid; capsuleView = "pack"; renderCapsules();
+    return;
+  }
   if (planCtx && planCtx.kv) { switchTab("home"); openDayPlanSheet(planCtx.date); return; }
   if (planCtx) { switchTab("capsules"); capsuleId = planCtx.capsuleId; capsuleView = "plan"; renderCapsules(); return; }
   switchTab("looks");
@@ -625,6 +630,21 @@ function finishBuilder(id, msg) {
   const planCtx = builder && builder.planCtx;
   builder = null;
   $("#app").classList.remove("builder-mode");
+  /* ⚠️ A BUILDER SAVE CAN BE AN OCCASION'S OUTFIT (2026-08-09, her report: "if
+     an outfit is almost good, I'd like the option to open and revise it in the
+     builder myself"). The look is created as normal — that's what the builder
+     is for — and then assigned to the occasion, so the pack screen and the
+     Looks list agree about what it is rather than the pack holding a private
+     copy. */
+  if (planCtx && planCtx.packOcc) {
+    const { cid, occId } = planCtx.packOcc;
+    switchTab("capsules");
+    capsuleId = cid; capsuleView = "pack";
+    packSetOccasionOutfit(cid, occId, (outfitItemMap.get(id) || []).slice())
+      .then(() => renderCapsules());
+    toast("That's the outfit for this one");
+    return;
+  }
   if (planCtx && planCtx.kv) {
     // Round A day plan (kv): attach + land back on the day's plan editor.
     switchTab("home");
@@ -647,6 +667,7 @@ function finishBuilder(id, msg) {
 }
 
 function capsuleBack() {
+  if (capsuleView === "packopts") { capsuleView = "pack"; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pack") { capsuleView = "detail"; _packState = null; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "plan") { capsuleView = "detail"; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pick") { capsuleView = "detail"; return renderCapsules(); }

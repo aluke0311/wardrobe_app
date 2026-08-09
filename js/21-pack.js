@@ -3033,17 +3033,13 @@ async function packSyncMembers(cid, pack) {
 let _packMode = "items";        // "items" | "outfits"
 let _packOpen = new Set();      // slots whose subcategory breakdown is expanded
 let _packSel = new Set();       // bulk-swap selection
-/* Which occasions she's widened past the bag. ⚠️ Session-only and reset on
-   entry, the same rule as _sugg.wholeCloset and _rackExtrasOpen: the app never
-   quietly stays wide, and never quietly stays narrow either. */
-let _packBeyond = new Set();
 let _packLastCid = null;
 
 function renderCapsulePack() {
   /* ⚠️ Reset on entry, like _sugg.wholeCloset and _rackExtrasOpen: a widened
      occasion is a thing she did just now, not a setting she has to remember
      turning off. */
-  if (_packLastCid !== capsuleId) { _packBeyond = new Set(); _packLastCid = capsuleId; }
+  if (_packLastCid !== capsuleId) { _packOptsOcc = null; _packLastCid = capsuleId; }
   const st = _packState && _packState.cid === capsuleId ? _packState : packLoadState(capsuleId);
   const c = capsuleById.get(capsuleId);
   if (!st || !c) return capToolbar("Pack", true) + `<div class="placeholder"><b>No trip</b></div>`;
@@ -3787,6 +3783,91 @@ function packOptionLabels(options) {
   });
 }
 
+/* ===================================================================
+   OUTFITS FOR ONE OCCASION — a full screen, not three chips on a card
+   ===================================================================
+   Her report (2026-08-09): *"'From the rest of your closet' needs a full
+   rewrite — it only gives a couple options and if I don't like those I'm
+   screwed. I'd like it to open to a full screen for more space and give me many
+   options."*
+
+   The inline row was right for "here are the near neighbours" and wrong as the
+   ONLY way out. Three options on a card is a peek; choosing what to wear wants
+   room. This is that screen: everything the closet can build for this day, the
+   in-bag ones first because they're free, then the rest with their price.
+
+   ⚠️ It shows MANY (PACK_OPTS_PAGE), not a curated few. The whole complaint was
+   being handed a shortlist someone else drew up. */
+const PACK_OPTS_PAGE = 40;
+let _packOptsOcc = null;          // which occasion the options screen is showing
+
+function openPackOptionsPage(occId) {
+  const st = packStateReady();
+  if (!st) return;
+  _packOptsOcc = occId;
+  navDeeper("capsules");
+  capsuleView = "packopts";
+  renderCapsules();
+  scrollToTop();
+}
+
+function renderPackOptionsPage() {
+  const st = packStateReady();
+  const occ = st && st.demand.find(o => o.id === _packOptsOcc);
+  if (!st || !st.res || !occ) { capsuleView = "pack"; return renderCapsulePack(); }
+  const cd = st.res.assign.get(occ.id);
+  const bag = new Set(st.pack);
+  const wxFor = packWxFor(st.c);
+  const label = occ.context || occLabel(occ.level) || "this day";
+
+  /* ⚠️ DEDUPED ON packLookKey, and the count is what's SHOWN. Raw enumeration
+     returned 52 "options" for one day, of which many differed only by shoes —
+     the same fake variety r13 removed from the solver, padding a list she asked
+     to be long. Worse, two tiles both rendered as "What you have now", because
+     packDistinct correctly reads them as the same look.
+     Deduping fixes both, and the header then reports the number of rows she can
+     actually see: a count that disagrees with the list beneath it is the
+     "20 options beside a See 20 button" bug all over again. */
+  const seenLook = new Set();
+  const inBag = packCandidates(occ, st.pack, { wxFor, all: true })
+    .filter(x => x.ids.every(id => bag.has(id)))
+    .filter(x => { const k = packLookKey(x.ids); if (seenLook.has(k)) return false; seenLook.add(k); return true; })
+    .slice(0, PACK_OPTS_PAGE);
+  const beyond = packReviewBeyond(st, occ, PACK_OPTS_PAGE)
+    .filter(x => { const k = packLookKey(x.ids); if (seenLook.has(k)) return false; seenLook.add(k); return true; });
+  const rule = prefsLabel(occ.prefs);
+
+  const tile = (x, extra) => {
+    const on = cd && !packDistinct(x, cd);
+    return `<button class="pack-opt-tile${on ? " on" : ""}" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(x.ids.join(","))}">
+      <div class="pack-opt-thumbs">${x.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "pack-opt-th")).join("")}</div>
+      <div class="pack-opt-meta">
+        <div class="pack-opt-names">${esc(x.ids.map(id => (itemById.get(id) || {}).name || "piece").join(" · "))}</div>
+        ${on ? `<div class="pack-opt-cost" style="color:var(--accent)">What you have now</div>`
+             : extra ? `<div class="pack-opt-cost">${esc(extra)}</div>` : ""}
+      </div>
+    </button>`;
+  };
+
+  const right = `<button class="clsearch" data-pack-optbuild style="width:auto;font-size:14px;font-weight:700;color:var(--accent);padding:0 6px">✎ Build</button>`;
+  return capToolbar(`What to wear · ${label}`, true, right) + `
+    <div style="padding:8px 14px 0">
+      <div class="pack-warn-note">${inBag.length} from your bag${beyond.length ? ` · ${beyond.length} more from your closet` : ""}${rule ? ` · rule: ${esc(rule)}` : ""}</div>
+      <div class="pack-chiprow" style="margin-top:8px">
+        <button class="cap-chip" data-pack-rather="${esc(occ.id)}">I'd rather…</button>
+        ${rule ? `<button class="cap-chip on" data-pack-ruleclear="${esc(occ.id)}">${esc(rule)} ✕</button>` : ""}
+      </div>
+    </div>
+    ${inBag.length ? `<div class="stats-sec-hdr" style="padding:14px 16px 6px"><div class="t">Already in your bag</div><div class="s">No extra weight</div></div>
+      <div class="pack-opt-list">${inBag.map(x => tile(x, "")).join("")}</div>` : ""}
+    ${beyond.length ? `<div class="stats-sec-hdr" style="padding:14px 16px 6px"><div class="t">From the rest of your closet</div><div class="s">Adds to what you carry</div></div>
+      <div class="pack-opt-list">${beyond.map(x => tile(x, `+${x.adds} to your bag`)).join("")}</div>` : ""}
+    ${!inBag.length && !beyond.length ? `<div class="placeholder"><b>Nothing fits this day</b><div>${rule
+      ? "Your rule rules everything out — clear it above, or add a piece."
+      : "Nothing you own reaches this day's level in this weather."}</div></div>` : ""}
+    <div style="height:30px"></div>`;
+}
+
 function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
   const rec = packRecord(st.cid);
   const lockedSet = new Set(rec.locked || []);
@@ -3834,12 +3915,9 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
          she has to enter and leave, and it costs no new surface. Undecided
          cards offer the alternatives; a decided one just says so. */
       if (packChosenSet(st.cid).has(occ.id)) return "";
-      const wide = _packBeyond.has(occ.id);
       const alts = packReviewOptions(st, occ).filter(x => packDistinct(x, cd));
-      const beyond = wide ? packReviewBeyond(st, occ).filter(x => packDistinct(x, cd)) : [];
-      if (!alts.length && !wide) return "";
+      if (!alts.length) return "";
       const altLabels = packOptionLabels([cd, ...alts]).slice(1);
-      const beyondLabels = packOptionLabels([cd, ...beyond]).slice(1);
       const opt = (ids, label, cls, note) => `<button class="pack-review-opt${cls}" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(ids.join(","))}">
             <div class="pack-review-thumbs">${ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
             <div class="pack-review-lbl">${esc(label)}</div>
@@ -3851,23 +3929,22 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
           ${opt(cd.ids, "This one", " on", "")}
           ${alts.map((x, _ai) => opt(x.ids, altLabels[_ai], "", "")).join("")}
         </div>
-        ${wide ? `
-          <div class="pack-review-q" style="margin-top:10px">From the rest of your closet</div>
-          <div class="pack-review-opts">
-            ${beyond.length
-              ? beyond.map((x, _bi) => opt(x.ids, beyondLabels[_bi], " beyond", `+${x.adds} to your bag`)).join("")
-              : `<div class="pack-warn-note">Nothing else you own fits this day's level and weather.</div>`}
-          </div>` : ""}
         <div class="pack-review-more">
-          <button class="lnk" data-pack-beyond="${esc(occ.id)}">${wide ? "Just the bag" : "Show me something else \u203a"}</button>
+          <button class="lnk" data-pack-optspage="${esc(occ.id)}">See all the options \u203a</button>
           <button class="lnk" data-pack-rather="${esc(occ.id)}">I'd rather\u2026</button>
         </div>
       </div>`;
     })()}
+    ${/* ⚠️ THREE BUTTONS THAT DIDN'T SAY WHAT THEY DID (2026-08-09, her report:
+          *"'Another', 'Suggester', 'other options' are not clear what they
+          do"*). She was right and they also overlapped: ✨ Another re-rolled
+          this occasion, Other options listed alternatives from the bag, and
+          Suggester… opened the generic sheet scoped to it — three doors onto
+          "show me a different outfit", none of them named that.
+          One door now, named for the question, plus building it herself. */""}
     <div class="pack-occ-acts">
-      <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
-      <button class="plan-act" data-pack-suggest="${esc(occ.id)}">Suggester…</button>
-      ${opts > 1 ? `<button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>` : ""}
+      <button class="plan-act" data-pack-optspage="${esc(occ.id)}">See other outfits</button>
+      <button class="plan-act" data-pack-buildocc="${esc(occ.id)}">✎ Change it myself</button>
       <button class="plan-act" data-pack-lock="${esc(occ.id)}">${lockedSet.has(occ.id) ? "Unlock" : "🔒 Lock"}</button>
       ${drop}
     </div>
@@ -3998,8 +4075,8 @@ function packPlanCardsHtml(entries, date) {
       </div>
       <div class="pack-occ-acts">
         <button class="plan-act" data-pack-wore="${esc(occ.id)}" data-pack-date="${esc(date)}">Wore it</button>
-        <button class="plan-act" data-pack-reroll="${esc(occ.id)}">✨ Another</button>
-        <button class="plan-act" data-pack-options="${esc(occ.id)}">Other options</button>
+        <button class="plan-act" data-pack-optspage="${esc(occ.id)}">See other outfits</button>
+        <button class="plan-act" data-pack-buildocc="${esc(occ.id)}">✎ Change it</button>
         <button class="plan-act" data-pack-lock="${esc(occ.id)}">${e.locked ? "Unlock" : "🔒 Lock"}</button>
       </div>
     </div>`;
@@ -4323,10 +4400,33 @@ function packOpenSuggest(occId) {
    context. ⚠️ The choice locks the outfit and nothing else — no scores move, no
    pool shifts. She was told the app isn't learning her taste behind her back,
    and the recorded evidence only ever surfaces later as a proposal she confirms. */
-// "Show me something else" — widen this occasion past the bag, or narrow back.
-function packToggleBeyond(occId) {
-  if (_packBeyond.has(occId)) _packBeyond.delete(occId); else _packBeyond.add(occId);
+/* ⚠️ "Change it myself" — the builder, seeded with this occasion's outfit
+   (2026-08-09, her report: *"if an outfit is almost good, I'd like the option to
+   open and revise it in the builder myself"*). Almost-right was the one case the
+   pack had no answer for: every control replaced the whole outfit.
+   The look is created for real and then assigned, so the pack doesn't hold a
+   private copy the Looks list knows nothing about. */
+async function packBuildOccasion(occId) {
+  const st = packStateReady();
+  if (!st || !st.res) return;
+  const occ = st.demand.find(o => o.id === occId);
+  const cd = st.res.assign.get(occId);
+  if (!occ) return;
+  // Seed from the current outfit when there is one; otherwise start empty.
+  const ids = cd ? cd.ids.slice() : [];
+  let oid = null;
+  if (ids.length >= 2) {
+    try { oid = await saveComboAsOutfit({ pieces: ids.map(id => itemById.get(id)).filter(Boolean) }); }
+    catch (e) { /* fall through to an empty canvas rather than blocking her */ }
+  }
+  openBuilder(oid, ids.length === 1 ? ids[0] : null, { packOcc: { cid: st.cid, occId } });
+}
+async function packClearOccRule(occId) {
+  const st = packStateReady();
+  if (!st) return;
+  await packClearOccPref(st.cid, occId);
   renderCapsules();
+  toast("Rule cleared");
 }
 /* "I'd rather…" on the card. ⚠️ Setting a rule RE-SOLVES this occasion rather
    than only re-filtering what's shown — that's the difference between a filter
@@ -4761,7 +4861,8 @@ function openPackBuildSheet(cid) {
   const defBtn = $("#packBuildDefinites");
   if (defBtn) defBtn.onclick = () => {
     if (!_packState || _packState.cid !== cid) { capsuleId = cid; packLoadState(cid); }
-    openPackAddSheet({ pin: true, back: () => openPackBuildSheet(cid) });
+    hideSheet("logSheet");
+    openCapsulePicker(cid, { mode: "definites", back: () => openPackBuildSheet(cid) });
   };
   const unban = $("#packBuildUnban");
   if (unban) unban.onclick = async () => { await savePackRecord(cid, { banned: [] }); openPackBuildSheet(cid); };

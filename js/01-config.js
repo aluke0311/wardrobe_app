@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-09 r1";
+const APP_VERSION = "2026-08-09 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-09 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-09 r2", notes: [
+    "\"See other outfits\" now opens a full screen with everything your closet can build for that day \u2014 usually 50-odd outfits, not three chips on a card. Your bag's options come first because they're free; the rest say what they'd add. \u2728 Another / Suggester / Other options are gone: they were three doors onto the same question and none of them said so",
+    "\u270e Change it myself opens the builder with that outfit already loaded, so you can fix an almost-right outfit instead of replacing the whole thing. Saving makes it that day's outfit",
+    "\"Definitely bringing\" uses the normal item picker now \u2014 search, filters, the laundry lens, category browsing \u2014 instead of the stripped-down grid it had",
+    "The options list no longer pads itself with outfits that differ only by shoes, and the count at the top matches the list underneath it",
+  ] },
   { v: "2026-08-09 r1", notes: [
     "The review can now reach outside the bag. Every outfit has \"Show me something else\" \u2014 options built from your whole closet, not just the pieces already packed, each one saying what it would add (\"+1 to your bag\"). Before this, the review only ever reshuffled a bag you'd had no say in: measured on a 7-day trip it was offering 21 alternatives when 3,171 existed in your closet at those levels",
     "\"I'd rather\u2026\" is on every outfit now \u2014 not a dress, dress it down, dress it up \u2014 and setting one RE-SOLVES that day rather than just re-picking from what was already there. If your rule leaves nothing buildable the day is reported uncovered rather than the app quietly ignoring you",

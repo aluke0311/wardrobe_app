@@ -3307,6 +3307,45 @@ async function run() {
   /* Choosing one has to actually put it in the bag, or the outfits screen and
      the items screen disagree — inversion ①. This works through packRepack's
      union, which is the second thing that fix bought. */
+  /* ⚠️ THE COUNT ON A SCREEN MUST MATCH THE LIST UNDER IT, and the options page
+     failed both halves at once when it was first rendered (2026-08-09): it said
+     "52 from your bag" while showing 40, and TWO tiles rendered as "What you
+     have now" because the raw enumeration contained outfits differing only by
+     shoes — the fake variety r13 took out of the solver, padding a list she'd
+     asked to be long. Deduping on packLookKey fixes both. Found by rendering
+     the page and reading it; the markup was fine. */
+  t("the options screen shows no two of the same look, and counts what it shows", () => {
+    const c = packTrip(7);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+      if (!st || !st.res) return "no pack state";
+      const occ = W.packReviewQueue(st)[0];
+      if (!occ) return "vacuous: nothing to review";
+      W.capsuleId = c.id;
+      W._packOptsOcc = occ.id;
+      const html = W.renderPackOptionsPage();
+      const d = W.document, host = d.createElement("div");
+      host.style.cssText = "position:absolute;left:-9999px;top:0;width:390px";
+      host.innerHTML = html; d.body.appendChild(host);
+      try {
+        const tiles = [...host.querySelectorAll(".pack-opt-tile")];
+        if (tiles.length < 3) return `vacuous: only ${tiles.length} options rendered`;
+        const keys = tiles.map(t => W.packLookKey(t.dataset.packIds.split(",")));
+        if (keys.length !== new W.Set(keys).size)
+          return `${keys.length - new W.Set(keys).size} tiles repeat a look`;
+        // Exactly one tile is her current outfit — two means packDistinct and
+        // the list disagree about what "the same outfit" means.
+        const cur = host.querySelectorAll(".pack-opt-tile.on").length;
+        if (cur > 1) return `${cur} tiles claim to be the current outfit`;
+        const m = host.innerText.replace(/[ \t]+/g, " ").match(/(\d+) from your bag(?: \u00b7 (\d+) more)?/);
+        if (!m) return "no count line";
+        const stated = (+m[1]) + (m[2] ? +m[2] : 0);
+        return stated === tiles.length
+          ? true : `says ${stated}, shows ${tiles.length}`;
+      } finally { host.remove(); W._packOptsOcc = null; }
+    }, { capsules: [c] });
+  });
+
   t("choosing an outfit from outside the bag adds its pieces", () => {
     const c = packTrip(7);
     return withPackCloset(() => {
@@ -4550,14 +4589,14 @@ async function run() {
 
   t("same-day occasions in the same clothes render as ONE card, named for both", () => withPackCloset(() => {
     const html = W.packDaysHtml(packDayFixture(true));
-    const cards = (html.match(/data-pack-reroll=/g) || []).length;
+    const cards = (html.match(/data-pack-lock=/g) || []).length;
     return cards === 1 && /Travel \+ Friends/.test(html)
       ? true : `cards=${cards} labelled=${/Travel \+ Friends/.test(html)}`;
   }));
 
   t("same-day occasions in different clothes stay two cards", () => withPackCloset(() => {
     const html = W.packDaysHtml(packDayFixture(false));
-    const cards = (html.match(/data-pack-reroll=/g) || []).length;
+    const cards = (html.match(/data-pack-lock=/g) || []).length;
     return cards === 2 ? true : `cards=${cards}`;
   }));
 

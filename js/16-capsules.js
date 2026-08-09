@@ -95,6 +95,7 @@ function renderCapsules() {
   if (capsuleView === "form")      body.innerHTML = renderCapsuleForm();
   else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
   else if (capsuleView === "pack" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePack();
+  else if (capsuleView === "packopts" && capsuleById.get(capsuleId)) body.innerHTML = renderPackOptionsPage();
   else if (capsuleView === "plan" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePlan();
   else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
   else { capsuleView = "list"; body.innerHTML = renderCapsuleList(); }
@@ -1224,9 +1225,22 @@ function refreshPackGroupCounts() {
 }
 
 // ---- add-items picker (membership editor) ----
-function openCapsulePicker(id) {
+/* ⚠️ ONE PICKER, NOT A SECOND ONE (2026-08-09, her report: "Add pieces you're
+   bringing opens a bizarre screen. It should be the same item selector as
+   everywhere else in the app"). The pack briefly grew its own search-box-and-
+   grid, which had none of the things this screen has earned — the funnel, the
+   laundry lens, the status lens, category drill-down, the suggested strip. A
+   second picker is a second place to fix every future picker bug.
+   `mode: "definites"` reuses all of it and only changes what Save writes. */
+let _capPickMode = "capsule";     // "capsule" | "definites"
+let _capPickBack = null;          // where Save/back returns, when not the detail page
+function openCapsulePicker(id, { mode = "capsule", back = null } = {}) {
   capsuleId = id;
-  _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
+  _capPickMode = mode;
+  _capPickBack = back;
+  _capPick = mode === "definites"
+    ? new Set(packRecord(id).pinned || [])
+    : new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
   _capPickFilter = "";
   _capPickCat = null;
   _capPickSub = null;
@@ -1344,7 +1358,10 @@ function renderCapsulePicker() {
     <button class="clsearch" id="capPickDone" style="width:auto;font-size:15px;font-weight:700;color:var(--accent);padding:0 6px">Save</button>
   </div>`;
   const lensBtn = (s, lbl) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-pick-status="${s}">${lbl}</button>`;
-  return capToolbar(`Add to ${c ? c.name : "capsule"}`, true, right) + `
+  const title = _capPickMode === "definites"
+    ? "Definitely bringing"
+    : `Add to ${c ? c.name : "capsule"}`;
+  return capToolbar(title, true, right) + `
     <div style="padding:10px 14px 0;display:flex;gap:8px;align-items:center">
       <input class="inp" id="capPickSearch" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}">
       ${funnelBtnHtml("capPickFilter", pickerFilter, () => renderCapsules())}
@@ -1369,6 +1386,20 @@ function togglePick(id) {
 
 async function saveCapsulePicker() {
   const cid = capsuleId;
+  /* Definites write to the pack record, not to capsule membership — a piece
+     you've decided to bring is a constraint on the solve, which is a different
+     thing from the trip's item list. */
+  if (_capPickMode === "definites") {
+    try {
+      await savePackRecord(cid, { pinned: [...(_capPick || [])] });
+      const back = _capPickBack;
+      _capPickMode = "capsule"; _capPickBack = null;
+      if (back) { back(); return; }
+      capsuleView = "pack"; renderCapsules();
+      toast(`${_capPick.size} piece${_capPick.size === 1 ? "" : "s"} you're bringing`);
+    } catch (e) { toast(e.message); }
+    return;
+  }
   const current = new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
   const selected = _capPick;
   const toAdd = [...selected].filter(id => !current.has(id));
