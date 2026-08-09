@@ -749,6 +749,8 @@ function wireEvents() {
     if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
     const packOptsPage = e.target.closest("[data-pack-optspage]");
     if (packOptsPage) return openPackOptionsPage(packOptsPage.dataset.packOptspage);
+    const packMoveDay = e.target.closest("[data-pack-moveday]");
+    if (packMoveDay) return openPackMoveDaySheet(packMoveDay.dataset.packMoveday);
     const packBuildOcc = e.target.closest("[data-pack-buildocc]");
     if (packBuildOcc) return packBuildOccasion(packBuildOcc.dataset.packBuildocc);
     const packRuleClear = e.target.closest("[data-pack-ruleclear]");

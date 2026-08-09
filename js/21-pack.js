@@ -211,6 +211,18 @@ async function setPackDropped(cid, ids) {
    in three places, so a filter applied to only one of them would leave dropped
    occasions showing on the others — the same "two surfaces, one derivation"
    rule tripRecapData follows. */
+/* Days she scheduled herself: { occId: "YYYY-MM-DD" }. Only `selected`
+   occasions can be here — see the note in packSlate. */
+function packOccDates(cid) {
+  const d = packRecord(cid).occDates;
+  return d && typeof d === "object" ? d : {};
+}
+async function packSetOccDate(cid, occId, date) {
+  const all = { ...packOccDates(cid) };
+  if (date) all[occId] = date; else delete all[occId];
+  await savePackRecord(cid, { occDates: all });
+}
+
 function packDemandFor(cid, c, { wearRows = null, tripContexts = undefined } = {}) {
   const cap = c || capsuleById.get(cid);
   if (!cap) return { slate: [], demand: [] };
@@ -218,6 +230,7 @@ function packDemandFor(cid, c, { wearRows = null, tripContexts = undefined } = {
     wearRows,
     tripContexts: tripContexts === undefined ? packTripContexts(cid) : tripContexts,
     dropped: packDroppedOccasions(cid),
+    pins: packOccDates(cid),
   });
   const demand = packDemand(slate);
   /* Her per-occasion constraints ride ON the occasion, the same way `level` and
@@ -277,7 +290,7 @@ function packSuggestTripContexts(c, { wearRows = null, today = null } = {}) {
    Placement across days is computed (the laundry schedule needs dates) but never
    asked for. */
 function packSlate(c, { plans = null, wearRows = null, today = null, tripContexts = null,
-                        dropped = null, legacyPlacement = false } = {}) {
+                        dropped = null, legacyPlacement = false, pins = null } = {}) {
   const dates = tripDates(c);
   if (!dates.length) return [];
   const rows = wearRows || wears;
@@ -399,21 +412,59 @@ function packSlate(c, { plans = null, wearRows = null, today = null, tripContext
       }
       return best;
     };
-    // Round-robin across contexts, one occasion each per pass, so a context
-    // with a big count can't take every good day before the others are placed.
+    /* ⚠️ A DAY SHE SCHEDULED BEATS THE SPREADER (2026-08-09, her report: "need
+       to be able to schedule the contexts, not just have things auto-assigned
+       to days"). Auto-placement is a proposal; a date she set is a decision,
+       and the same rule applies here as everywhere else in this rework.
+
+       ⚠️ Pinned ones are placed FIRST, before the round-robin, so the spreader
+       balances AROUND them instead of filling the good days and leaving her
+       choice to collide. And ⚠️ only `selected` occasions can be scheduled:
+       their ids are deliberately date-free (D6 — demand is a multiset), so
+       moving one keeps its outfit. A declared or floor occasion is keyed BY its
+       date, so "moving" it would orphan whatever she'd chosen for it. */
+    /* ⚠️ THE IDS ARE MINTED UP FRONT, and getting this wrong is why the first
+       version silently ignored her (2026-08-09). `_nth` is assigned as
+       occasions are placed, so placing a pinned one first would renumber it and
+       change the very id the pin is keyed on. Enumerate every occasion the
+       selection will produce WITH its stable id, then place: her scheduled ones
+       first, the rest spread around them. */
+    const pinAt = pins || {};
+    const wanted = [];
+    for (const q of queues) {
+      const ident = `sel|${q.e.ctx}|${q.e.level ? "L" + q.e.level : ""}`;
+      for (let n = 0; n < q.left; n++) wanted.push({ q, nth: n, id: `${ident}#${n}`, ident });
+      q.left = 0;
+    }
+    const mkAt = (w) => ({
+      context: w.q.e.ctx, contexts: [w.q.e.ctx],
+      level: w.q.e.level || lvlOf(w.q.e.ctx), placed: false,
+      source: "selected", pinnedLevel: !!w.q.e.level,
+      _ident: w.ident, _nth: w.nth,
+    });
+    const rest = [];
+    for (const w of wanted) {
+      const s = pinAt[w.id] ? byDate.get(pinAt[w.id]) : null;
+      if (!s) { rest.push(w); continue; }
+      s.occasions.push(mkAt(w));
+      load.set(s.date, (load.get(s.date) || 0) + 1);
+    }
+    /* Round-robin across contexts, one each per pass, so a context with a big
+       count can't take every good day before the others are placed. */
+    const byCtx = new Map();
+    for (const w of rest) {
+      if (!byCtx.has(w.q)) byCtx.set(w.q, []);
+      byCtx.get(w.q).push(w);
+    }
     for (let live = true; live; ) {
       live = false;
-      for (const q of queues) {
-        if (!q.left) continue;
+      for (const list of byCtx.values()) {
+        if (!list.length) continue;
         live = true;
-        q.left--;
-        const s = place(q.e.ctx);
+        const w = list.shift();
+        const s = place(w.q.e.ctx);
         if (!s) break;
-        s.occasions.push({ context: q.e.ctx, contexts: [q.e.ctx],
-                           level: q.e.level || lvlOf(q.e.ctx), placed: false,
-                           source: "selected", pinnedLevel: !!q.e.level,
-                           _ident: `sel|${q.e.ctx}|${q.e.level ? "L" + q.e.level : ""}`,
-                           _nth: q.nth++ });
+        s.occasions.push(mkAt(w));
         load.set(s.date, (load.get(s.date) || 0) + 1);
       }
     }
@@ -3930,7 +3981,6 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
           ${alts.map((x, _ai) => opt(x.ids, altLabels[_ai], "", "")).join("")}
         </div>
         <div class="pack-review-more">
-          <button class="lnk" data-pack-optspage="${esc(occ.id)}">See all the options \u203a</button>
           <button class="lnk" data-pack-rather="${esc(occ.id)}">I'd rather\u2026</button>
         </div>
       </div>`;
@@ -3944,7 +3994,10 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
           One door now, named for the question, plus building it herself. */""}
     <div class="pack-occ-acts">
       <button class="plan-act" data-pack-optspage="${esc(occ.id)}">See other outfits</button>
-      <button class="plan-act" data-pack-buildocc="${esc(occ.id)}">✎ Change it myself</button>
+      <button class="plan-act" data-pack-buildocc="${esc(occ.id)}">✎ Change it</button>
+      ${occ.source === "selected"
+        ? `<button class="plan-act" data-pack-moveday="${esc(occ.id)}">${occ.date ? "\u{1F4C5} " + esc(planDayLabel(occ.date)) : "\u{1F4C5} Pick a day"}</button>`
+        : ""}
       <button class="plan-act" data-pack-lock="${esc(occ.id)}">${lockedSet.has(occ.id) ? "Unlock" : "🔒 Lock"}</button>
       ${drop}
     </div>
@@ -4372,7 +4425,7 @@ function openPackOptionsSheet(occId) {
    ⚠️ It does NOT re-enter the solver (inversion ③). It sets one occasion's
    outfit, exactly like packApplySwap, and marks it locked so a later re-solve
    doesn't undo the choice she just made by hand. */
-function packOpenSuggest(occId) {
+function packOpenSuggest(occId, { seedCombo = null } = {}) {
   const st = packStateReady();
   if (!st) return;
   const occ = st.demand.find(o => o.id === occId);
@@ -4392,6 +4445,19 @@ function packOpenSuggest(occId) {
   _sugg.idx = 0;
   _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, null, _suggPool(), _sugg.season,
                                  _suggWx(), null, _suggCleanArg(), null, null));
+  /* ⚠️ HER CURRENT OUTFIT GOES FIRST. Opening on a fresh roll throws away the
+     thing she was looking at — she came here to change SOME of it, so the
+     starting point has to be what's on the card. Locking a piece then works
+     from the outfit she actually has, which is the whole point of "suggest
+     AROUND it". */
+  if (seedCombo && seedCombo.ids && seedCombo.ids.length) {
+    const pieces = seedCombo.ids.map(id => itemById.get(id)).filter(Boolean);
+    if (pieces.length) {
+      _sugg.results = [{ pieces, score: 0 }].concat((_sugg.results || [])
+        .filter(r => packLookKey(r.pieces.map(p => p.id)) !== packLookKey(seedCombo.ids)));
+      _sugg.idx = 0;
+    }
+  }
   renderSuggestSheet();
 }
 /* She picked one. Three things happen, and keeping them separate is the point:
@@ -4406,20 +4472,98 @@ function packOpenSuggest(occId) {
    pack had no answer for: every control replaced the whole outfit.
    The look is created for real and then assigned, so the pack doesn't hold a
    private copy the Looks list knows nothing about. */
-async function packBuildOccasion(occId) {
+/* ⚠️ TWO WAYS TO REVISE, AND SHE PICKS (2026-08-09: *"I want it to first give
+   me options between the suggester (prefilled) and the canvas (prefilled not
+   blank)"*). They answer different questions — the suggester asks "what else
+   works with some of this", the canvas asks "let me move it myself" — and BOTH
+   start from the outfit on the card rather than from nothing.
+
+   ⚠️ The first version saved a look so it could pass an outfitId. That was a
+   bug (saveComboAsOutfit takes an ARRAY, it was handed an object, threw, and
+   the catch left a blank canvas) and the wrong shape besides: every tap would
+   leave a look record behind, which is the Looks-list flooding that got bulk
+   creation removed. The look is created at SAVE, when it's real. */
+/* ⚠️ SCHEDULING IS HERS, PLACEMENT IS THE APP'S PROPOSAL (2026-08-09, her
+   report: "need to be able to schedule the contexts, not just have things
+   auto-assigned to days"). Offered only on `selected` occasions: their ids are
+   date-free by design, so moving one keeps the outfit she chose for it. A
+   declared event or a floor day is keyed BY its date — "moving" those would
+   orphan their outfit, so they aren't offered. */
+function openPackMoveDaySheet(occId) {
+  const st = packStateReady();
+  if (!st) return;
+  const occ = st.demand.find(o => o.id === occId);
+  if (!occ) return;
+  const dates = tripDates(st.c);
+  const counts = new Map();
+  for (const o of st.demand) if (o.date) counts.set(o.date, (counts.get(o.date) || 0) + 1);
+  const pinned = packOccDates(st.cid)[occId];
+  const rows = dates.map(d => {
+    const n = counts.get(d) || 0;
+    const on = occ.date === d;
+    return `<button class="sheet-row" data-packmoveto="${esc(d)}">
+      <span>${esc(planDayLabel(d))}<div class="muted" style="font-size:12px;font-weight:400">${
+        n ? `${n} thing${n === 1 ? "" : "s"} that day` : "nothing yet"}</div></span>
+      <span class="rt" style="color:${on ? "var(--accent)" : "var(--muted)"}">${on ? (pinned ? "✓ yours" : "✓ app's pick") : ""}</span>
+    </button>`;
+  }).join("");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packMoveCancel">Cancel</button>
+      <h2>${esc(occ.context || occLabel(occ.level) || "This one")} \u2014 which day?</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="sheet-note">The app spreads these out for you. Pick a day and it stays there.</div>
+    ${rows}
+    ${pinned ? `<button class="sheet-row" data-packmoveto=""><span>Let the app choose again</span></button>` : ""}`;
+  showSheet("moveSheet");
+  $("#packMoveCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-packmoveto]").forEach(b => {
+    b.onclick = async () => {
+      hideSheet("moveSheet");
+      await packSetOccDate(st.cid, occId, b.dataset.packmoveto || null);
+      /* The slate changes shape, so reload and re-solve the days that moved.
+         Her locks and chosen outfits survive — packEnsureSolve carries them in
+         as locks, which is what makes moving one day safe for the rest. */
+      const st2 = packLoadState(st.cid);
+      if (st2) packEnsureSolve(st2);
+      await packPersist(st.cid);
+      renderCapsules();
+      toast(b.dataset.packmoveto ? `Moved to ${planDayLabel(b.dataset.packmoveto)}` : "Back to the app's spread");
+    };
+  });
+}
+
+function packBuildOccasion(occId) {
   const st = packStateReady();
   if (!st || !st.res) return;
   const occ = st.demand.find(o => o.id === occId);
   const cd = st.res.assign.get(occId);
   if (!occ) return;
-  // Seed from the current outfit when there is one; otherwise start empty.
   const ids = cd ? cd.ids.slice() : [];
-  let oid = null;
-  if (ids.length >= 2) {
-    try { oid = await saveComboAsOutfit({ pieces: ids.map(id => itemById.get(id)).filter(Boolean) }); }
-    catch (e) { /* fall through to an empty canvas rather than blocking her */ }
-  }
-  openBuilder(oid, ids.length === 1 ? ids[0] : null, { packOcc: { cid: st.cid, occId } });
+  const names = ids.map(id => (itemById.get(id) || {}).name || "piece").join(" \u00b7 ");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="packReviseCancel">Cancel</button>
+      <h2>Change it</h2>
+      <span style="width:54px"></span>
+    </div>
+    ${ids.length ? `<div class="sheet-note">Starting from ${esc(names)}</div>` : ""}
+    <button class="sheet-row" data-packrevise="suggest">
+      <span>\u2728 Suggest around it<div class="muted" style="font-size:12px;font-weight:400">Lock the pieces you like, swap the rest</div></span>
+    </button>
+    <button class="sheet-row" data-packrevise="canvas">
+      <span>\u270e Arrange it myself<div class="muted" style="font-size:12px;font-weight:400">The builder, with this outfit already on it</div></span>
+    </button>`;
+  showSheet("moveSheet");
+  $("#packReviseCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-packrevise]").forEach(b => {
+    b.onclick = () => {
+      hideSheet("moveSheet");
+      if (b.dataset.packrevise === "canvas") openBuilder(null, null, { packOcc: { cid: st.cid, occId } }, ids);
+      else packOpenSuggest(occId, { seedCombo: cd || null });
+    };
+  });
 }
 async function packClearOccRule(occId) {
   const st = packStateReady();

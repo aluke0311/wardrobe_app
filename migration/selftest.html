@@ -3281,6 +3281,61 @@ async function run() {
      occasions, against 3,171 that existed in her closet at those levels —
      about 0.7%. The bag came out of packFill with no input from her, so every
      "choice" was a reshuffle of eight pieces somebody else picked. */
+  /* ⚠️ A DAY SHE SCHEDULED BEATS THE SPREADER (2026-08-09, her report: "need to
+     be able to schedule the contexts, not just have things auto-assigned to
+     days"). Auto-placement is a proposal; a date she set is a decision.
+
+     ⚠️ The first version silently ignored her: `_nth` is assigned as occasions
+     are PLACED, so it looked for a pin on #0, found none and stopped — a pin on
+     #2 was never reached, and placing pinned ones first would have renumbered
+     them and changed the very id the pin is keyed on. The ids are minted up
+     front now. */
+  t("an occasion she schedules lands on that day, and the rest spread around it", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 3 }, { ctx: "Work", n: 2 }] });
+      if (!st) return "no pack state";
+      const sel = st.demand.filter(o => o.source === "selected");
+      if (sel.length < 4) return `vacuous: only ${sel.length} selected occasions`;
+      // Deliberately pick one that is NOT #0 — that's the case that failed.
+      const target = sel.find(o => /#[1-9]/.test(o.id)) || sel[sel.length - 1];
+      const want = st.demand.map(o => o.date).filter(Boolean)
+        .find(d => d !== target.date);
+      if (!want) return "vacuous: nowhere else to move it to";
+      const rec = W.packRecord(c.id);
+      W.kvData.set("pack:" + c.id, Object.assign({}, rec, { occDates: { [target.id]: want } }));
+      const st2 = W.packLoadState(c.id);
+      const moved = st2 && st2.demand.find(o => o.id === target.id);
+      if (!moved) return `${target.id} vanished after scheduling`;
+      if (moved.date !== want) return `asked for ${want}, landed on ${moved.date}`;
+      // Every occasion still exists — scheduling moves, it doesn't consume.
+      const after = st2.demand.filter(o => o.source === "selected").length;
+      return after === sel.length ? true : `${sel.length} occasions became ${after}`;
+    }, { capsules: [c] });
+  });
+
+  t("scheduling one day leaves the other days' outfits alone", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 3 }, { ctx: "Work", n: 2 }] });
+      if (!st || !st.res) return "no pack state";
+      W.packPersist(c.id);                       // the real path persists the solve
+      const sel = st.demand.filter(o => o.source === "selected");
+      const target = sel.find(o => /#[1-9]/.test(o.id)) || sel[sel.length - 1];
+      const before = new W.Map();
+      for (const o of sel) before.set(o.id, (st.res.assign.get(o.id) || { ids: [] }).ids.join(","));
+      const want = st.demand.map(o => o.date).filter(Boolean).find(d => d !== target.date);
+      if (!want) return "vacuous: nowhere else to move it to";
+      W.kvData.set("pack:" + c.id, Object.assign({}, W.packRecord(c.id), { occDates: { [target.id]: want } }));
+      const st2 = W.packLoadState(c.id);
+      W.packEnsureSolve(st2);
+      const changed = [...before.keys()].filter(id => id !== target.id)
+        .filter(id => (st2.res.assign.get(id) || { ids: [] }).ids.join(",") !== before.get(id));
+      return !changed.length
+        ? true : `moving one day reshuffled ${changed.length} others: ${JSON.stringify(changed)}`;
+    }, { capsules: [c] });
+  });
+
   t("the review can reach outside the bag, and says what that costs", () => {
     const c = packTrip(7);
     return withPackCloset(() => {

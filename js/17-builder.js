@@ -14,9 +14,19 @@ function defaultPlacement(k) {
   return { x: cols[k % 3], y: clamp01(0.3 + Math.floor(k / 3) * 0.2 + (k % 3) * 0.05), s: 0.4 };
 }
 
-function openBuilder(outfitId = null, seedItemId = null, planCtx = null) {
+/* ⚠️ `seedIds` opens the canvas ON an outfit without CREATING one (2026-08-09,
+   her report: "'change it myself' opens a blank outfit canvas"). The first
+   version saved a look first so it could pass an outfitId — which was both a
+   bug (saveComboAsOutfit takes an array, it was handed an object, threw, and
+   the catch left a blank canvas) and the wrong shape: every tap would have left
+   a look record behind, which is the Looks-list flooding that got bulk creation
+   removed in the first place. The look is created at SAVE, when it's real. */
+function openBuilder(outfitId = null, seedItemId = null, planCtx = null, seedIds = null) {
   let pieces = [], name = "";
-  if (outfitId) {
+  if (!outfitId && Array.isArray(seedIds) && seedIds.length) {
+    pieces = seedIds.filter(id => itemById.has(id))
+                    .map((id, k) => ({ item_id: id, ...defaultPlacement(k) }));
+  } else if (outfitId) {
     const o = outfitById.get(outfitId);
     if (o) {
       name = o.name || "";

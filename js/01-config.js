@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-09 r2";
+const APP_VERSION = "2026-08-09 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-09 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-09 r3", notes: [
+    "You can schedule your contexts instead of letting the app assign them. Every occasion you picked has a 📅 day button \u2014 choose a day and it stays there, and the app spreads everything else around it. Tap \"Let the app choose again\" to hand it back. Moving one day leaves the other days' outfits exactly as they were",
+    "\u270e Change it now asks how: suggest around this outfit (keeping the pieces you like), or open the builder with it already on the canvas. It was opening a BLANK canvas \u2014 a bug \u2014 which made \"change it myself\" mean \"start over\"",
+    "The suggester opens on the outfit you were looking at, rather than rolling a fresh one, so you can lock the parts you like and swap the rest",
+    "\"See all the options\" and \"See other outfits\" were the same door with two names. There's one now",
+  ] },
   { v: "2026-08-09 r2", notes: [
     "\"See other outfits\" now opens a full screen with everything your closet can build for that day \u2014 usually 50-odd outfits, not three chips on a card. Your bag's options come first because they're free; the rest say what they'd add. \u2728 Another / Suggester / Other options are gone: they were three doors onto the same question and none of them said so",
     "\u270e Change it myself opens the builder with that outfit already loaded, so you can fix an almost-right outfit instead of replacing the whole thing. Saving makes it that day's outfit",
