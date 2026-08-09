@@ -227,6 +227,88 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-08 r2–r4 — THE PACKING REWORK. Selftest 357 → **365**, all green.**
+Driven by a design document she brought (a decision-authority philosophy written
+about packing) plus the r1 audit. **Her decisions, taken as answers to direct
+questions — do not re-litigate:** ① Core/Optional REPLACES the tightness dial;
+② a review choice locks that outfit and nothing else; ③ **every** occasion is
+offered, with a prominent skip (she overrode a recommendation to ask only about
+ambiguous ones); ④ preference learning is **proposed, she confirms** — and it is
+about **CONTEXTS in general, not trips**; ⑤ Light/Balanced/Flexible named by
+consequence; ⑥ **no natural language anywhere**.
+
+⚠️ **D2 AND D5 IN `TRIP_BUILDER.md` ARE DEAD.** D2 ("distinct = any piece
+differs") was replaced by `packLookKey` in r13; D5 (tightness = options per
+occasion) is what this rework removed. "Do not re-litigate" had already been
+overtaken twice by her own reports — check a locked decision against the entries
+below it before treating it as binding.
+
+**r2 — "I'D RATHER NOT A DRESS FOR THIS."** Her report: *"the pack suggesting a
+dress for a context I don't want one, and I can't really escape that as built."*
+True, and nothing covered it: `packOccasionSlotFit` only rules out a silhouette
+she has NEVER worn for an occasion, so one dress at one dinner permits dresses
+there forever, and swap / ✨ Another / Other options each hand her another.
+- **The model lives in `js/12-looks.js`** (`contextPref` / `comboMeetsPrefs` /
+  `effectivePrefs` / `prefsLabel`, kv `"ctxprefs"`), NOT in the pack — she asked
+  for it to be general, so the everyday suggester reads it too. `js/21-pack.js`
+  holds only the trip-scoped override (`packOccPref`, keyed on `packOccId`).
+- ⚠️ **A STATED RULE IS OBEYED, NOT WEIGHED — the distinction the rework rests
+  on.** `inSeasonWx` and `packOccasionSlotFit` are rescue-shaped and widen again
+  rather than cost her an answer, because they are guesses. A rule she stated is
+  not: if it leaves nothing buildable the sheet stays EMPTY and says so.
+- **Silhouette reuses `formulaKeyFor`** — a formula key names the Dresses slot or
+  it doesn't. No new taxonomy.
+- ⚠️ **`SIL_ANY` exists because clearing the chip inside a trip must overrule a
+  STANDING context rule.** Deleting the occasion key just lets the context rule
+  reassert itself, so the control visibly does nothing.
+- Applied to the **POOL**, so `suggestPoolChipHtml` names and counts it and one
+  tap clears it — the rack's four conditions inherited. `suggestOutfits`' `opts`
+  stays free of scoring knobs. "It must BE a dress" can't be said by removing
+  pieces, so that half filters results (`_suggApplyPrefs`).
+
+**r3 — CORE AND SPARE REPLACE THE DIAL.** Measured once r1 made the dial real:
+**core holds at 7/7/9 pieces while optional moves 4/8/10** — so the dial was only
+ever a control over the spare count, wearing an abstraction. Light/Balanced/
+Flexible now name their consequence before she picks ("~12 pieces · 3 spare").
+- ⚠️ **`packApplyMode` runs AFTER the solve and may only ever drop SPARE.** That
+  one-place rule is what stops the mode becoming another opaque multiplier
+  threaded through the fill, which is exactly how the old dial got lost.
+- ⚠️ **Two things the suite caught within a minute of the trim landing:**
+  `res.options` kept promising options the trimmed bag couldn't make (the r1
+  "options it never spent" bug from the other end → `packRefresh` after the
+  trim); and `st.targets` stayed at the fill proposal, so a slot read "5/7" and
+  claimed *"2 short — nothing else you own fits this trip"* about a closet full
+  of tops — **the app blaming the wardrobe for its own decision.**
+
+**r4 — THE REVIEW.** The app had never asked her anything.
+- ⚠️ **AMBIGUITY MEANS "THE ALTERNATIVES DIFFER", NEVER "how much will she like
+  it".** There is no preference model; a confidence percentage would be invented,
+  which is the r19 guessing layer in the review's clothes. **Measured: the spread
+  term alone barely discriminated** (every occasion ~0.99, because scoreCombo's
+  top-two gap is ~0), so it also weighs **stakes** — a context she DECLARED, and
+  how dressy the day is. Both derived, neither a guess about taste.
+- **Options are diversified by FORMULA** (her suggestion), not by score rank —
+  "more options" returning the next three is fake variety, and r13 already fixed
+  that bug once when swapping shoes counted as a new outfit.
+- ⚠️ **TWO LABELLING BUGS, BOTH FOUND BY RENDERING THE CARD AND READING IT**,
+  neither visible in the markup: "Separates instead" was true of all three
+  alternatives *at once*; then naming each option's lead garment collided when
+  two shared a top. **`packOptionLabels` computes across the SET** — the first
+  garment no other option has. The whole interaction is telling them apart, so a
+  label that doesn't distinguish is worse than none.
+- ⚠️ **Skipping marks decided but does NOT lock.** Locking what she merely didn't
+  object to would stop a later re-solve improving days she never looked at.
+- **Choices are recorded** (`kv "ctxchoices"`, contrastive: chose vs against) and
+  **nothing acts on them yet** — that's the proposal UI, still to build.
+
+**STILL TO BUILD (agreed, not started):** the learned-preference PROPOSAL
+("you've picked separates for Dinner 5 times — stop offering dresses there?",
+which writes to `ctxprefs` on confirm); DEFINITE/EXCLUDED as first-class visible
+states with an unused-definite report and add-from-anywhere; "None of these" →
+the "I'd rather…" chips wired into the review card; finalise ("I'm done
+packing") with the deterministic conflict check and a what-changed trail; and
+undo/reset throughout.
+
 **2026-08-08 r1 — A FULL-APP AUDIT (she asked for one; no specific report).
 Selftest 353 → **357**, run GREEN.** All 4 new cases + the 1 rewritten case
 mutation-checked red in the same session. **The suite was ALREADY 352/353 on
@@ -2658,7 +2740,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-08 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-08 r4`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3005,7 +3087,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **357/357** (2026-08-08 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **365/365** (2026-08-08 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

@@ -142,15 +142,17 @@ trip twice, get the same pack.
 
 ## 1. Locked decisions
 
-Approved 2026-07-29. Do not re-litigate.
+Approved 2026-07-29. Do not re-litigate — ⚠️ **except where an entry below is
+marked SUPERSEDED.** Two have been overtaken by her own reports (D2, D5); check
+a decision against the dated entries in CLAUDE.md before treating it as binding.
 
 | # | Decision |
 |---|---|
 | D1 | **Picks lead; counts are grouping headers.** The Bag view groups by subcategory with the count in the section header ("Tops · 5"), each line carrying a `why ›` disclosure. No separate abstract counts view — it's surface you'd stop opening. |
-| D2 | **Distinctness = any piece differs.** Shoes and layers count toward it, so a second pair of shoes is a cheap way to buy options and the optimizer reaches for it on its own. No hardcoded per-slot floors. ⚠️ Prototype against Javea's shape in the selftest before building UI on it — see §11 case 12. |
+| D2 | ⚠️ **SUPERSEDED 2026-07-26 r13 — see CLAUDE.md.** Swapping shoes became a cheap way to fake variety, exactly as this decision's own note predicted; `packLookKey` (the piece set minus Shoes) replaced it. Kept here for the reasoning only. ~~**Distinctness = any piece differs.**~~ Shoes and layers count toward it, so a second pair of shoes is a cheap way to buy options and the optimizer reaches for it on its own. No hardcoded per-slot floors. ⚠️ Prototype against Javea's shape in the selftest before building UI on it — see §11 case 12. |
 | D3 | **The day slate lives in `dayplan`.** One source of truth for "what's happening on day X". Trip days appear in the week planner. `DAYPLAN_KEEP_FUTURE` gains a trip-aware exemption. |
 | D4 | **Booking-time capture: character chip + fixed events.** Both optional, both one tap. Character seeds the occasion mix; fixed events buy lead time on the gap flag. |
-| D5 | **Tightness = options per occasion**, not pieces beyond a minimum. Lean 1 · Normal 2 · Cushion 3. This makes `minimize pack size` safe as the objective, because K carries the variety requirement structurally. ⚠️ **AMENDED r4:** K alone was not enough — it guards how many options *exist in the pack*, not whether consecutive days differ, so a "correct" pack still repeated an outfit two days running. K now also scales the repetition penalties (`repW`), which is what makes the dial change the thing she'd actually notice. |
+| D5 | ⚠️ **SUPERSEDED 2026-08-08 r3 — see CLAUDE.md.** Measured: the dial only ever moved the SPARE count (core held at 7/7/9 while optional moved 4/8/10), so it was replaced by Core/Optional + Light/Balanced/Flexible. ~~**Tightness = options per occasion**~~, not pieces beyond a minimum. Lean 1 · Normal 2 · Cushion 3. This makes `minimize pack size` safe as the objective, because K carries the variety requirement structurally. ⚠️ **AMENDED r4:** K alone was not enough — it guards how many options *exist in the pack*, not whether consecutive days differ, so a "correct" pack still repeated an outfit two days running. K now also scales the repetition penalties (`repW`), which is what makes the dial change the thing she'd actually notice. |
 | D6 | **Demand is a multiset of occasions, not a day grid.** Placement is optional metadata. Unplaced occasions still produce a full answer. |
 | D7 | **No shoe cap.** A hard ceiling of 2 is a magic number that will be wrong on the trip that matters. Coverage need for shoes is real and small; flag bulk instead. |
 | D8 | **Three laundry options**, not four: none · one wash on `<date>` · anytime. Sink washing folds into "anytime". The date matters — that's ② applied to the input. |
