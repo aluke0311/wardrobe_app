@@ -227,6 +227,13 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**▶ PICKING THIS UP COLD? Read `HANDOFF_2026-08-09.md` in the repo root.** It
+carries the current state, her locked decisions from this arc, what is
+deliberately NOT built, and — most importantly — **what has not been verified**:
+none of the packing rework has been tested against her real closet, because the
+app can't authenticate from localhost. Every number below came from synthetic
+fixtures.
+
 **2026-08-09 r1–r5 — THE PACKING REWORK, ROUNDS 2–6. Selftest 365 → **374**,
 all green; every new case mutation-checked red in the same session.** Five
 rounds off her live use, each one finding something structural the previous
