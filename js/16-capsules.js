@@ -1406,6 +1406,27 @@ async function saveCapsulePicker() {
   const toRemove = [...current].filter(id => !selected.has(id));
   try {
     if (toAdd.length) await addItemsToCapsule(cid, toAdd, true);
+    /* ⚠️ ONE LIST OF WHAT'S COMING (2026-08-09, her ask: "if I change something
+       from the bag, it should change the build a pack part too").
+
+       There were TWO and they silently fought. This picker wrote only
+       `capsule_items`; the pack's own list is `rec.pieces`; and packSyncMembers
+       computes `drop = members − bag − packed`. So a piece added here vanished
+       from the trip at the next pack edit — an explicit decision destroyed by a
+       background sync, which is the exact failure this whole rework is about.
+       The bag is the source of truth now, and every "add to this trip" door
+       writes it. */
+    if (packRecord(cid).pieces) {
+      const bag = new Set(packRecord(cid).pieces || []);
+      toAdd.forEach(id => bag.add(id));
+      toRemove.forEach(id => bag.delete(id));
+      await savePackRecord(cid, { pieces: [...bag] });
+      if (_packState && _packState.cid === cid) {
+        _packState.pack = [...bag];
+        _packState.res = null;            // the outfits are re-derived on next open
+        packRegroup(_packState);
+      }
+    }
     if (toRemove.length) {
       const inList = `(${toRemove.map(id => `"${id}"`).join(",")})`;
       await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=in.${inList}`, { method: "DELETE" });
@@ -1419,9 +1440,31 @@ async function saveCapsulePicker() {
 }
 
 // Insert membership rows; `skipBuild` avoids a double rebuild when caller rebuilds.
-async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
+/* ⚠️ EVERY "add to this trip" DOOR WRITES THE BAG (2026-08-09). There are ten
+   callers — the trip picker, the Add-item form, the suggester's level door, the
+   "you wore something you didn't pack" offer, duplicate-trip, and more — and
+   patching them one at a time is how one gets missed. `capsule_items` and the
+   pack's `rec.pieces` were two lists of "what's coming", and packSyncMembers
+   computes `drop = members − bag − packed`, so anything added through a door
+   that only wrote members was deleted at the next pack edit.
+   ⚠️ `syncPack:false` is for packSyncMembers itself, which is the projection —
+   without it this recurses. */
+async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild, { syncPack = true } = {}) {
   const fresh = itemIds.filter(id => !(capsuleLinkMap.get(cid) || []).some(l => l.item_id === id));
   if (!fresh.length) return;
+  if (syncPack && packRecord(cid).pieces) {
+    const bag = new Set(packRecord(cid).pieces || []);
+    const before = bag.size;
+    fresh.forEach(id => bag.add(id));
+    if (bag.size !== before) {
+      await savePackRecord(cid, { pieces: [...bag] });
+      if (typeof _packState !== "undefined" && _packState && _packState.cid === cid) {
+        _packState.pack = [...bag];
+        _packState.res = null;          // outfits re-derive on next open
+        packRegroup(_packState);
+      }
+    }
+  }
   // `packed` is omitted so this works before the column migration; DB default fills it after.
   const payload = fresh.map(id => ({ capsule_id: cid, item_id: id }));
   const rows = await rest("/capsule_items?select=*", {

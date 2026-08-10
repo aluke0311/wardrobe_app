@@ -83,7 +83,18 @@ const PACK_TRIP_QUOTA = { Tops: 20, Bottoms: 12, Dresses: 8, Shoes: 10, Outerwea
    quarter of one. */
 const PACK_REPEAT_DAY = 1500;   // identical outfit on consecutive days (~1.5 pieces)
 const PACK_REPEAT_ANY = 400;    // identical outfit again later in the trip
-const PACK_REPEAT_TOP = 150;    // per earlier DAY this top/dress already went out
+const PACK_REPEAT_TOP = 150;
+/* ⚠️ WHAT MAKES "PROVEN" A TIER RATHER THAN A THUMB ON THE SCALE (2026-08-09).
+   Sitting proven outfits in the candidate list does nothing on its own — the
+   solver costs by pieces added and repetition, so an outfit she has actually
+   worn loses to any generated one that happens to add the same pieces.
+   This is deliberately SMALL: `added * 1000` and the repetition floors both
+   dwarf it, so it can never make the bag bigger, never buy a repeated look, and
+   never override a laundry violation (5000). It decides between candidates that
+   are otherwise equal — which is exactly what "prefer the one she's worn"
+   should mean, and no more. */
+const PACK_WORN_BONUS = 600;    // an outfit she has worn
+const PACK_SHAPE_BONUS = 220;   // a shape she rebuilds, other pieces    // per earlier DAY this top/dress already went out
 /* ⚠️ The suggester's own combo score spreads only about 2.5–5.5 points
    (measured), so against cost terms of 1000–5000 it was pure rounding error —
    the engine's formality cohesion, colour-pair and item-pair affinity were
@@ -738,6 +749,166 @@ function packOccLevel(occ) {
    ⚠️ Level 1 draws from the WHOLE closet, never the rack — buildRack excludes
    the Workout category on purpose, so a Utility occasion pooled from the rack
    can never form an outfit. Same precedence as _suggBasePool. */
+/* ===================================================================
+   PROVEN OUTFITS — packing from what she has actually worn (2026-08-09)
+   ===================================================================
+   Her report: *"what about pulling in outfits I've already worn — you KNOW
+   those are outfits I would create. The packer is still creating outfits I
+   wouldn't really wear."*
+
+   Measured on a closet with a real outfit history (167 pieces, 420 worn looks),
+   7-day trip, 8 occasions:
+       current packer    13 pieces · 7 distinct looks · 0 outfits she's worn
+       proven + distinct 10 pieces · 8 distinct looks · 8 outfits she's worn
+   Smaller bag, MORE variety, every outfit proven. And there were 298 worn
+   outfits fitting each occasion's level of which only 2 survived inside the bag
+   the old packer built — picking pieces first is what destroys the
+   combinations.
+
+   ⚠️ THE SOLVER IS UNCHANGED. This changes what it chooses FROM, nothing else:
+   distinctness, the laundry schedule, repetition costs, core/spare and the
+   review all work on `{ids, pieces, score}` and don't care where a candidate
+   came from. Building a second solver for proven outfits would fork the engine,
+   which is the thing inversion ① and the `opts` note both forbid.
+
+   ⚠️ A TIER, NOT A WEIGHT (her decision). A scoring bonus for "worn before" is
+   recency weighting through a side door — invisible, unarguable, and exactly
+   what D10 and the rack's four conditions govern. A tier is a POOL decision:
+   nameable, countable, and one tap from being widened. Same call the rack made.
+
+   Three tiers, best evidence first:
+     1. this exact outfit, worn
+     2. this SHAPE worn (her formulas) with pieces suited to the trip
+     3. generated — today's behaviour, and it never disappears
+   Tier 2 matters because tier 1 is rare and tier 3 is a guess: a shape she
+   rebuilds is proof of what she'd put together, even with different pieces. */
+const PACK_PROVEN_TIER = { worn: 1, shape: 2, made: 3 };
+
+// Outfits she has actually worn that could serve this occasion.
+function packWornCandidates(occ, poolIds, { wxFor = null, excluded = null } = {}) {
+  const allow = new Set(poolIds || []);
+  const no = excluded && excluded.size ? excluded : null;
+  const lvl = packOccLevel(occ);
+  const day = occ.date || (occ.leg && occ.leg.dates[0]) || todayStr();
+  const wx = wxFor ? wxFor(day) : null;
+  const season = seasonOf(day);
+  const out = [];
+  for (const o of (typeof activeOutfits === "function" ? activeOutfits() : outfits)) {
+    if (outfitWornCount(o) < 1) continue;                    // proof is the point
+    const ids = (outfitItemMap.get(o.id) || []).slice().sort();
+    if (ids.length < 2) continue;
+    let ok = true;
+    for (const id of ids) {
+      const i = itemById.get(id);
+      /* ⚠️ Availability, her exclusions, the level, and the WEATHER. An outfit
+         proven at 75° is not proof at 40°, and inSeasonWx is the same gate the
+         suggester uses — a proven outfit still has to be wearable there. */
+      if (!i || itemStatus(i) !== "Available" || (no && no.has(id)) ||
+          !packCoversLevel(i, lvl) || !inSeasonWx(i, season, wx)) { ok = false; break; }
+      if (allow.size && !allow.has(id)) { ok = false; break; }
+    }
+    if (!ok) continue;
+    if (!comboMeetsPrefs(ids, occ.prefs)) continue;          // her stated rules still bind
+    out.push({ ids, pieces: ids.map(id => itemById.get(id)).filter(Boolean),
+               score: 0, proven: PACK_PROVEN_TIER.worn, outfitId: o.id,
+               wornDays: outfitWornCount(o), lastWorn: lastWornOutfit(o) });
+  }
+  // Most-worn first: the outfit she reaches for repeatedly is the best evidence.
+  out.sort((a, b) => (b.wornDays - a.wornDays) || (a.ids.join() < b.ids.join() ? -1 : 1));
+  return out;
+}
+// Last day this look went out, or null. Small helper so the card can say when.
+function lastWornOutfit(o) {
+  const s = outfitWearMap.get(o.id);
+  if (!s || !s.size) return null;
+  let max = null;
+  for (const d of s) if (!max || d > max) max = d;
+  return max;
+}
+/* Tier 2: a SHAPE she rebuilds, filled with pieces that suit this trip. Reuses
+   topFormulas/formulaShapeMap rather than inventing a taxonomy, and reuses the
+   suggester to fill the shape — so a "proven shape" candidate is still a
+   normally-generated, cohesive outfit, just constrained to a silhouette she
+   demonstrably wears. */
+function packShapeCandidates(occ, poolIds, { wxFor = null, seed = 1, limit = 6 } = {}) {
+  const shapes = (typeof topFormulas === "function") ? topFormulas(4) : [];
+  if (!shapes.length) return [];
+  const lvl = packOccLevel(occ);
+  const day = occ.date || (occ.leg && occ.leg.dates[0]) || todayStr();
+  const wx = wxFor ? wxFor(day) : null;
+  const season = seasonOf(day);
+  const pool = (poolIds || []).map(id => itemById.get(id)).filter(Boolean);
+  if (!pool.length) return [];
+  const out = [];
+  for (const f of shapes) {
+    const key = f && (f.key || f);
+    if (!key) continue;
+    const got = packWithSeed(seed ^ packHash(String(key)), () =>
+      suggestOutfits(lvl, null, pool, season, wx, null, false, null, key,
+                     { all: true, uniqueCap: 24 })) || [];
+    for (const cmb of got.slice(0, limit)) {
+      const ids = cmb.pieces.map(p => p.id).sort();
+      if (!comboMeetsPrefs(ids, occ.prefs)) continue;
+      out.push({ ids, pieces: cmb.pieces, score: cmb.score,
+                 proven: PACK_PROVEN_TIER.shape, shapeKey: key });
+    }
+  }
+  return out;
+}
+
+/* ⚠️ THE BAG IS SEEDED FROM OUTFITS SHE HAS WORN, and without this the tiers
+   are decoration. Measured: with proven candidates filtered to a bag that
+   packFill had built from slot RATES, exactly 2 of 298 fitting worn outfits
+   survived — the pack could offer proof only where proof happened to coincide
+   with a bag chosen on other grounds. Picking pieces first is what destroys the
+   combinations, which is inversion ① stated from the other end.
+
+   So: choose proven outfits for the demand FIRST, and their union seeds the
+   bag. packFill then tops up around them, and the solver — which already
+   prefers tier 1 — finds those outfits in the bag rather than just outside it.
+
+   ⚠️ Distinct looks required, or this degenerates instantly: "fewest new
+   pieces" alone picks the SAME outfit for every occasion (measured: 8 occasions
+   collapsed to 1 outfit, 2 pieces). Same failure the solver's repetition costs
+   exist to prevent, arriving one layer earlier.
+   ⚠️ Cheapest-first among proven, most-worn breaking ties: a small bag is still
+   the goal, and the outfit she reaches for repeatedly is the better evidence.
+   ⚠️ Bounded — PACK_SEED_MAX stops a long trip seeding the whole wardrobe. */
+// Tier → preference. Nothing else in the solver reads `proven`.
+function packProvenBonus(cd) {
+  if (!cd || !cd.proven) return 0;
+  if (cd.proven === PACK_PROVEN_TIER.worn) return PACK_WORN_BONUS;
+  if (cd.proven === PACK_PROVEN_TIER.shape) return PACK_SHAPE_BONUS;
+  return 0;
+}
+
+const PACK_SEED_MAX = 24;
+function packProvenSeed(demand, { wxFor = null, excluded = null, poolIds = null } = {}) {
+  const seedSet = new Set(), usedLooks = new Set(), chosen = new Map();
+  // Hardest occasions first: the ones with fewest proven options should get
+  // their pick before the common ones spend the overlap.
+  const withCands = (demand || []).map(occ => ({
+    occ, cands: packWornCandidates(occ, poolIds, { wxFor, excluded }),
+  })).filter(x => x.cands.length).sort((a, b) => a.cands.length - b.cands.length);
+  for (const { occ, cands } of withCands) {
+    if (seedSet.size >= PACK_SEED_MAX) break;
+    let best = null, bestAdd = Infinity, bestWorn = -1;
+    for (const cd of cands) {
+      if (usedLooks.has(packLookKey(cd.ids))) continue;
+      const add = cd.ids.filter(id => !seedSet.has(id)).length;
+      if (add < bestAdd || (add === bestAdd && cd.wornDays > bestWorn)) {
+        best = cd; bestAdd = add; bestWorn = cd.wornDays;
+      }
+    }
+    if (!best) continue;
+    if (seedSet.size + bestAdd > PACK_SEED_MAX) continue;
+    usedLooks.add(packLookKey(best.ids));
+    chosen.set(occ.id, best);
+    best.ids.forEach(id => seedSet.add(id));
+  }
+  return { ids: [...seedSet], byOcc: chosen };
+}
+
 function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_CANDIDATES_PER_OCC,
                                         seed = 1, all = false, excluded = null } = {}) {
   /* ⚠️ EXCLUDED HAS TO BITE HERE TOO, not only in packFill. The bag already
@@ -791,7 +962,28 @@ function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_
     score: cmb.score,
   })).filter(x => comboMeetsPrefs(x.ids, occ.prefs));
   out.sort((a, b) => (b.score - a.score) || (a.ids.join() < b.ids.join() ? -1 : 1));
-  return all ? out : packDiversify(out, limit);
+
+  /* ---- proof first (2026-08-09) -----------------------------------------
+     ⚠️ TIERS, NOT WEIGHTS. Outfits she has WORN lead, then shapes she rebuilds,
+     then generated ones — and tier 3 is always present, so a trip her history
+     doesn't cover still gets a full answer. Deduped on packLookKey so a proven
+     outfit and its generated twin don't both appear.
+     ⚠️ Order matters and score does not re-sort across tiers: the whole point
+     is that evidence outranks a score computed from affinity heuristics. */
+  const seenLook = new Set();
+  const tiered = [];
+  const take = (list) => {
+    for (const x of list) {
+      const k = packLookKey(x.ids);
+      if (seenLook.has(k)) continue;
+      seenLook.add(k);
+      tiered.push(x.proven ? x : { ...x, proven: PACK_PROVEN_TIER.made });
+    }
+  };
+  take(packWornCandidates(occ, base.map(i => i.id), { wxFor, excluded }));
+  take(packShapeCandidates(occ, base.map(i => i.id), { wxFor, seed }));
+  take(out);
+  return all ? tiered : packDiversify(tiered, limit);
 }
 
 /* ---- what she actually wears FOR an occasion (2026-08-04 r6) --------------
@@ -1147,6 +1339,7 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
             + (usedCombos.has(key) ? PACK_REPEAT_ANY * repW : 0)
             + topRepeat * PACK_REPEAT_TOP * repW
             + added * 1000
+            - packProvenBonus(cd)
             - prov * PACK_PROVEN_W
             - cd.score * PACK_SCORE_W
             + rnd() * 0.5;
@@ -1470,6 +1663,7 @@ function packRepairAssign(pack, demand, chosen, { candOpts = {}, ls = null, wash
           + (sameKind && sameKind.has(key) ? PACK_REPEAT_DAY : 0)
           + (usedCombos.has(key) ? PACK_REPEAT_ANY * repW : 0)
           + topRepeat * PACK_REPEAT_TOP * repW
+          - packProvenBonus(cd)
           - cd.score * PACK_SCORE_W
           - (key === keepKey ? 1 : 0);   // a genuine tie keeps what she may already be looking at
         if (cost < bestCost) { bestCost = cost; pick = cd; }
@@ -2355,7 +2549,13 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
   if (!resolve && Array.isArray(rec.pieces) && rec.pieces.length) {
     pack = rec.pieces.filter(id => itemById.has(id));           // her pack, as left
   } else {
-    pack = packFill(targets, { c, demand, rack, pinned: [...keeps], subTargets,
+    /* Outfits she's worn seed the bag; packFill tops up around them. Passed as
+       `pinned` only to force inclusion — they are NOT definites, and nothing
+       stores them as such, so she can still drop any of them. */
+    const seed = packProvenSeed(demand, { wxFor: packWxFor(c), excluded: banned,
+                                          poolIds: (rack && rack.ids) || null });
+    pack = packFill(targets, { c, demand, rack,
+                               pinned: [...new Set([...keeps, ...seed.ids])], subTargets,
                                banned: [...banned], wxFor: packWxFor(c) }).pack;
   }
 
@@ -3068,7 +3268,8 @@ async function packSyncMembers(cid, pack) {
   const packedAlready = new Set(links.filter(l => l.packed).map(l => l.item_id));
   const add = [...want].filter(id => !have.has(id));
   const drop = [...have].filter(id => !want.has(id) && !packedAlready.has(id));
-  if (add.length) await addItemsToCapsule(cid, add);
+  // ⚠️ syncPack:false — THIS is the projection; syncing back would recurse.
+  if (add.length) await addItemsToCapsule(cid, add, false, { syncPack: false });
   if (drop.length) {
     const inList = `(${drop.map(id => `"${id}"`).join(",")})`;
     await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=in.${inList}`, { method: "DELETE" });

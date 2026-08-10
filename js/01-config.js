@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-09 r3";
+const APP_VERSION = "2026-08-09 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-09 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-09 r4", notes: [
+    "The packer now packs from outfits you've actually worn. Looks you've worn come first, then shapes you rebuild (your formulas), and only then something invented \u2014 and the BAG is built from those outfits rather than from slot counts, which is what makes it possible. Measured on a trip that used to produce 0 outfits you'd worn: every single one is now either a look you've worn or a shape you wear",
+    "Before this, 298 outfits you'd worn fitted each day of a trip and exactly 2 of them survived inside the bag \u2014 because the bag was chosen piece-by-piece first, and picking pieces first destroys the combinations",
+    "It stays a preference, not a rule: an outfit you've worn wins between otherwise-equal choices, but it can never make the bag bigger, buy a repeated look, or put you in something dirty",
+    "Adding a piece to a trip from anywhere now adds it to the pack too. There were two lists of \"what's coming\" and they fought \u2014 a piece added from the trip's Add-items screen was DELETED the next time you edited the pack, unless you'd already ticked it as packed",
+  ] },
   { v: "2026-08-09 r3", notes: [
     "You can schedule your contexts instead of letting the app assign them. Every occasion you picked has a 📅 day button \u2014 choose a day and it stays there, and the app spreads everything else around it. Tap \"Let the app choose again\" to hand it back. Moving one day leaves the other days' outfits exactly as they were",
     "\u270e Change it now asks how: suggest around this outfit (keeping the pieces you like), or open the builder with it already on the canvas. It was opening a BLANK canvas \u2014 a bug \u2014 which made \"change it myself\" mean \"start over\"",

@@ -3336,6 +3336,100 @@ async function run() {
     }, { capsules: [c] });
   });
 
+  /* ================= 2026-08-09: packing from what she's worn ============
+     Her report: *"what about pulling in outfits I've already worn — you KNOW
+     those are outfits I would create. The packer is still creating outfits I
+     wouldn't really wear."*
+
+     Measured before the change, on a closet with a real outfit history: 298
+     worn outfits fitted each occasion's level and exactly 2 survived inside the
+     bag packFill had built from slot RATES. Picking pieces first is what
+     destroys the combinations. */
+  const withWornHistory = (fn) => withPackCloset(() => {
+    // Twelve looks she has actually worn, over the standard pack fixture.
+    const combos = [
+      ["tee0","jea0","snk0"], ["tee1","jea0","snk0"], ["tee2","jea1","snk1"],
+      ["blo0","pnt0","fla0"], ["blo1","pnt0","fla0"], ["blo2","skt0","hee0"],
+      ["swt0","jea1","snk1"], ["swt1","jea2","snk2"], ["tee3","jea2","fla1"],
+      ["blo3","skt1","hee1"], ["swt2","pnt1","fla1"], ["tee4","jea0","snk2"],
+    ];
+    W.outfits = []; W.outfitLinks = [];
+    combos.forEach((ids, k) => {
+      const oid = "wo" + k;
+      W.outfits.push({ id: oid, name: null, layout: null, rating: null, archived: false });
+      ids.forEach(id => W.outfitLinks.push({ outfit_id: oid, item_id: id }));
+      // worn on distinct days, so outfitWornCount is real
+      for (let n = 0; n < 2 + (k % 3); n++)
+        W.wears.push({ id: `ww${k}_${n}`, item_id: ids[0], outfit_id: oid,
+                       worn_on: D(-(10 + k * 4 + n)), context: ["Errands"], formality_for: 3 });
+    });
+    W.buildOutfitIndexes(); W.buildSuggestIndexes();
+    return fn();
+  });
+
+  t("outfits she has worn are offered before invented ones", () => withWornHistory(() => {
+    const c = packTrip(6);
+    const slate = W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+    const demand = W.packDemand(slate);
+    const occ = demand.find(o => o.level === 3) || demand[0];
+    const pool = W.items.map(i => i.id);
+    const worn = W.packWornCandidates(occ, pool, {});
+    if (!worn.length) return "vacuous: no worn outfit fits this occasion";
+    // Every one is genuinely a look she wore, with all pieces available.
+    for (const cd of worn) {
+      if (!cd.wornDays) return `${cd.ids.join(",")} was offered with 0 wear-days`;
+      if (cd.proven !== W.PACK_PROVEN_TIER.worn) return `wrong tier: ${cd.proven}`;
+    }
+    // And they lead the candidate list the solver actually reads.
+    const cands = W.packCandidates(occ, pool, { all: true });
+    const firstMade = cands.findIndex(x => x.proven === W.PACK_PROVEN_TIER.made);
+    const lastWorn = cands.map(x => x.proven).lastIndexOf(W.PACK_PROVEN_TIER.worn);
+    /* ⚠️ VACUITY GUARD, and it was needed: without it "no generated candidates
+       at all" satisfied the ordering trivially, and the case survived a
+       mutation that put generated candidates FIRST. An ordering assertion needs
+       both kinds present to mean anything. */
+    if (firstMade === -1) return `vacuous: no generated candidates to be ordered against (${cands.length} total)`;
+    if (lastWorn === -1) return `vacuous: no worn candidates in the list`;
+    return lastWorn < firstMade
+      ? true : `a generated candidate (#${firstMade}) came before a worn one (#${lastWorn})`;
+  }));
+
+  /* ⚠️ THE SEED IS WHAT MAKES THE TIERS REAL. Without it the proven candidates
+     are filtered to a bag chosen on other grounds and almost none survive —
+     measured 2 of 298. */
+  t("the bag is seeded from outfits she has worn", () => withWornHistory(() => {
+    const c = packTrip(6);
+    const slate = W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+    const demand = W.packDemand(slate);
+    const seed = W.packProvenSeed(demand, { poolIds: W.items.map(i => i.id) });
+    if (!seed.ids.length) return "vacuous: nothing was seeded";
+    // ⚠️ Distinct looks, or this degenerates to one outfit for the whole trip —
+    // measured: 8 occasions collapsed to 1 outfit and 2 pieces.
+    const looks = [...seed.byOcc.values()].map(cd => W.packLookKey(cd.ids));
+    if (looks.length !== new W.Set(looks).size)
+      return `the seed reused a look ${looks.length - new W.Set(looks).size}×`;
+    // Every seeded piece belongs to an outfit she actually wore.
+    const wornIds = new W.Set();
+    for (const o of W.outfits) if (W.outfitWornCount(o) > 0)
+      (W.outfitItemMap.get(o.id) || []).forEach(id => wornIds.add(id));
+    const stray = seed.ids.filter(id => !wornIds.has(id));
+    return !stray.length ? true : `seeded ${JSON.stringify(stray)}, which no worn outfit uses`;
+  }));
+
+  /* ⚠️ A TIER, NOT A THUMB ON THE SCALE (her decision). The bonus must never
+     buy a bigger bag, a repeated look, or a laundry violation — it decides
+     between otherwise-equal candidates and no more. Asserted against the cost
+     terms directly, because a downstream outcome can't tell the difference
+     between "preferred" and "forced". */
+  t("the proven bonus can never outrank a piece, a repeat, or clean laundry", () => {
+    const bits = [];
+    if (!(W.PACK_WORN_BONUS < 1000)) bits.push(`worn bonus ${W.PACK_WORN_BONUS} >= one added piece (1000)`);
+    if (!(W.PACK_WORN_BONUS < W.PACK_REPEAT_DAY)) bits.push(`worn bonus outranks a repeated day`);
+    if (!(W.PACK_WORN_BONUS < 5000)) bits.push(`worn bonus outranks a laundry violation`);
+    if (!(W.PACK_SHAPE_BONUS < W.PACK_WORN_BONUS)) bits.push(`a shape outranks an actual wearing`);
+    return bits.length ? bits.join("; ") : true;
+  });
+
   t("the review can reach outside the bag, and says what that costs", () => {
     const c = packTrip(7);
     return withPackCloset(() => {
