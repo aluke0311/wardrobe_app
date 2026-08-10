@@ -475,7 +475,7 @@ function itemMatchesFilter(i, state, opts) {
 function outfitMatchesFilter(o, state) {
   if (!hasActiveFilter(state)) return true;
   const { q="", color, fabric, size, season, brand, status, category, subcategory,
-          formality, retailer, acquisition, capsule, liked, context, rack } = state;
+          formality, retailer, acquisition, capsule, liked, context, rack, laundry } = state;
   if (q) {
     const hay = [o.name, o.notes].filter(Boolean).join(" ").toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
@@ -511,6 +511,33 @@ function outfitMatchesFilter(o, state) {
        right now" only means something if the WHOLE look is on it. An ANY-piece
        reading would return almost every look, which is the same as no filter. */
     if (rack?.size && !its.every(i => itemMatchesFilter(i, { rack }, { noStatusDefault: true }))) return false;
+    /* ⚠️ THE LAUNDRY DIM WAS OFFERED HERE AND DID NOTHING (2026-08-10 r4, found
+       by audit). It's in FILTERS, so LOOKS_FILTER_DIMS inherits it and the sheet
+       renders the chips; it's in hasActiveFilter, so it lit the badge and
+       defeated the early return — and then this function, which destructures the
+       dims it applies BY NAME, simply never mentioned it. Measured: one look
+       whose tee was in the hamper matched BOTH "In the hamper" and "Clean" while
+       the badge read 1. The decorative-funnel defect r11 fixed on Closet vs Life,
+       arriving through a dim added two days after the one beside it.
+
+       ⚠️ THE TWO HALVES READ OPPOSITE WAYS, and a plain ALL-pieces copy of the
+       rack rule was wrong — the first version of this fix went red on its own
+       case. "Clean" is ALL-pieces: a look is only wearable right now if every
+       piece is. "In the hamper" is ANY-piece: one dirty tee is what stops the
+       look going out, and requiring the WHOLE look to be dirty asks a question
+       nobody has. So the same look correctly answers no to both when a piece is
+       dirty and the rest aren't — it isn't clean, and it IS blocked.
+
+       ⚠️ And the four-places rule in CLAUDE.md is really FIVE — the predicate
+       that applies the dim is the one nobody lists, and it is the only one whose
+       omission is silent. */
+    if (laundry?.size) {
+      const anyDirty = its.some(i => isDirty(i));
+      const ok = (laundry.has("Clean") && !anyDirty) ||
+                 (laundry.has("In the hamper") && anyDirty) ||
+                 (laundry.has("Worn, not dirty yet") && its.some(i => isWornNotDirty(i)));
+      if (!ok) return false;
+    }
   }
   return true;
 }

@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r4";
+const APP_VERSION = "2026-08-10 r5";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,10 @@ const APP_VERSION = "2026-08-10 r4";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r5", notes: [
+    "Four Stats pages had a filter funnel that did nothing. Year in Review, Most Worn Looks, Contexts and a context's page all count across your whole wardrobe — so narrowing the funnel changed the badge and not one number. The funnel is gone from those four; Contexts keeps its date range, which does work",
+    "The Laundry filter on the Looks tab was the same story: it lit up, counted itself, and never filtered a look. It works now — \"Clean\" means every piece is clean, \"In the hamper\" means something in the look is dirty",
+  ] },
   { v: "2026-08-10 r4", notes: [
     "Changing a pack outfit now SAVES it. The only button on that screen offered to log the outfit as worn today — the thing you never want — while saving it to the trip was hidden in the ✕. It reads \"Use this outfit\" now, and ✕ means never mind",
     "You can pick the layer you actually want. ＋ Layer used to add a random one out of a list you couldn't see, and it disappeared entirely once an outfit already had a layer. Now it shows you the pieces by name, ⇄ changes the one that's there, and anything the app filtered out is still listed — dimmed, with the reason (\"in the wash\", \"not Smart Casual\") — and you can still choose it",

@@ -511,15 +511,24 @@ function statsToolbar(title, showBack, showRange, hideFilter = false) {
   const n = hideFilter ? 0 : statsActiveFilterCount();
   // Root drops the duplicated title (see clToolbar). A filter-less root has
   // nothing left to show, so it renders no row at all.
+  const rangeLbl = statsDateRange === "all" ? "Range" : dateRangeHuman();
   if (hideFilter) {
     if (!showBack) return "";
+    /* ⚠️ hideFilter USED TO SWALLOW showRange (2026-08-10 r4). The signature
+       offers them as independent flags and this branch ignored the second, so
+       "whole-wardrobe numbers, but still scoped to a date range" — which is
+       exactly what the Contexts page is — could not be expressed, and hiding a
+       decorative funnel there would have silently taken the working range
+       button with it. Every pre-existing hideFilter caller passes
+       showRange=false, so honouring it changes nothing that already shipped. */
     return `<div class="cltoolbar">
       <button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
       <div class="cltitle">${esc(title)}</div>
-      <span style="width:34px"></span>
+      ${showRange
+        ? `<button class="lnk" id="stRange" style="font-size:15px;white-space:nowrap;padding:0 6px">${esc(rangeLbl)}</button>`
+        : `<span style="width:34px"></span>`}
     </div>`;
   }
-  const rangeLbl = statsDateRange === "all" ? "Range" : dateRangeHuman();
   return `<div class="cltoolbar${showBack ? "" : " tb-root"}">
     ${showBack ? `<button class="clback" id="stBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
       <div class="cltitle">${esc(title)}</div>` : ""}
@@ -1227,7 +1236,11 @@ function renderStatsOutfitsPage() {
   }).join("")}</div>` : (neglected
     ? `<div class="placeholder"><b>No neglected favorites</b><div>Liked looks you haven't worn in 60+ days will show up here.</div></div>`
     : emptyLooks());
-  body.innerHTML = statsToolbar(neglected ? "Liked but Neglected" : "Most Worn Looks", true, false) + grid;
+  /* ⚠️ NO FUNNEL: this page ranks LOOKS off activeOutfits()/likedNeglectedOutfits(),
+     neither of which reads statsFilter — so the funnel was decorative, the same
+     defect r11 fixed on Closet vs Life. Measured: narrowing the funnel to one
+     colour changed statsPool() 6 → 3 and left this list byte-identical. */
+  body.innerHTML = statsToolbar(neglected ? "Liked but Neglected" : "Most Worn Looks", true, false, true) + grid;
   wireStatsToolbar();
   body.querySelectorAll(".otile").forEach(btn => {
     btn.addEventListener("click", () => openLookFrom(btn.dataset.look));
@@ -1312,7 +1325,11 @@ function renderStatsContextsPage() {
       <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   }).join("");
-  $("#statsBody").innerHTML = statsToolbar("Contexts", true, true)
+  /* ⚠️ Range YES, funnel NO. contextWearCounts() and contextFormalityStats()
+     count WEARS across the whole wardrobe and never consult statsFilter, so the
+     funnel here changed nothing — but the range genuinely works, which is why
+     hideFilter had to learn to keep it (see statsToolbar). */
+  $("#statsBody").innerHTML = statsToolbar("Contexts", true, true, true)
     + (rows ? `<div class="frows" style="padding-top:4px">${rows}</div>`
              : `<div class="placeholder"><b>No context data yet</b><div>Add context when you log a wear and it'll show up here.</div></div>`);
   wireStatsToolbar();
@@ -2006,7 +2023,11 @@ function renderStatsWrapped() {
     <div style="display:flex;gap:8px">${s.dead.slice(0, 4).map(i => `<button data-wr-item="${esc(i.id)}" style="width:56px">${thumbHtml(i.image_path)}</button>`).join("")}${s.dead.length > 4 ? `<div class="muted" style="align-self:center;font-size:12px">+${s.dead.length - 4}</div>` : ""}</div>`
     : `<div style="font-size:14px">🎉 Every piece you owned got worn this year.</div>`));
 
-  $("#statsBody").innerHTML = statsToolbar("Year in Review", true, false)
+  /* ⚠️ buildWrappedStats(year) takes a YEAR and nothing else — no pool, no
+     filter. Measured with the funnel set to one colour: statsPool() 6 → 3 while
+     every number here (48 piece-days, 16 days logged, the top items, both
+     contexts) stayed identical. The year chips are this page's real control. */
+  $("#statsBody").innerHTML = statsToolbar("Year in Review", true, false, true)
     + yearChips
     + (s.daysLogged ? hero + mostWorn + cpwCard + looksCard + ctxCard + newCard + deadCard
       : `<div class="placeholder"><b>No wears logged in ${year}</b></div>`)
@@ -2362,7 +2383,9 @@ function renderStatsContextDetailPage() {
         <div class="ometa">${n} wear${n === 1 ? "" : "s"}</div>
       </button>`).join("")}</div>`
     : `<div class="stats-note" style="padding:8px 18px">No looks logged with this context yet.</div>`;
-  $("#statsBody").innerHTML = statsToolbar(c || "Context", true, false)
+  // Same as the Contexts list it drills in from: contextTopItems/contextTopLooks
+  // are whole-wardrobe, so a funnel here would only pretend to narrow them.
+  $("#statsBody").innerHTML = statsToolbar(c || "Context", true, false, true)
     + `<div class="sf-label">TOP ITEMS</div>${itemGridView(items, { subtitleFn: itemSub, emptyMsg: "No items logged with this context yet" })}
        <div class="sf-label">TOP LOOKS</div>${looksHtml}`;
   wireStatsToolbar();

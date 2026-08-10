@@ -6711,6 +6711,81 @@ async function run() {
     return eq([passesCapsule, readsIt, widenBoth], [true, true, true]);
   });
 
+  /* ==== 2026-08-10 r4 — audit: funnels that only pretended to narrow ======= */
+
+  /* ⚠️ A dim offered in the sheet must be APPLIED by the predicate. `laundry`
+     was in FILTERS (so LOOKS_FILTER_DIMS inherited it) and in hasActiveFilter
+     (so it lit the badge), and outfitMatchesFilter — which destructures the dims
+     it applies by name — never mentioned it. The look below has a tee that is
+     deep in the hamper and jeans that are clean; before the fix it matched BOTH
+     "In the hamper" and "Clean". ⚠️ The two halves read OPPOSITE ways — "Clean"
+     is ALL-pieces (wearable right now), "In the hamper" is ANY-piece (one dirty
+     tee is what blocks the look). A plain ALL-pieces copy of the rack rule made
+     this case go red, which is what caught it. */
+  t("the laundry filter actually narrows the Looks list", () => {
+    const saved = { items: W.items.slice(), outfits: W.outfits.slice(),
+                    links: W.outfitLinks.slice(), wears: W.wears.slice() };
+    try {
+      const today = W.todayStr();
+      const tee = { id: "tee1", name: "White tee", category: "Tops", subcategory: "Tee shirts",
+                    status: "Available", formality: [3], last_washed: "2020-01-01" };
+      const jean = { id: "jean1", name: "Jeans", category: "Bottoms", subcategory: "Jeans",
+                     status: "Available", formality: [3], last_washed: "2020-01-01" };
+      W.items.length = 0; W.items.push(tee, jean);
+      W.outfits.length = 0; W.outfits.push({ id: "o1", name: "Tee+jeans", rating: null, archived: false });
+      W.outfitLinks.length = 0;
+      W.outfitLinks.push({ outfit_id: "o1", item_id: "tee1" }, { outfit_id: "o1", item_id: "jean1" });
+      W.wears.length = 0;
+      for (let k = 1; k <= 12; k++) W.wears.push({ id: "w" + k, item_id: "tee1", outfit_id: "o1", worn_on: W.shiftDate(today, -k), context: [] });
+      W.buildOutfitIndexes();
+      const st = (v) => Object.assign(W.newFilterState(), { laundry: new W.Set([v]) });
+      const o = W.outfits[0];
+      return eq([W.isDirty(tee), W.isDirty(jean),
+                 W.outfitMatchesFilter(o, st("In the hamper")),
+                 W.outfitMatchesFilter(o, st("Clean")),
+                 W.LOOKS_FILTER_DIMS.some(d => d[0] === "laundry")],
+                // dirty tee, clean jeans → the look IS in the hamper and is NOT clean
+                [true, false, true, false, true]);
+    } finally {
+      W.items.length = 0; W.items.push(...saved.items);
+      W.outfits.length = 0; W.outfits.push(...saved.outfits);
+      W.outfitLinks.length = 0; W.outfitLinks.push(...saved.links);
+      W.wears.length = 0; W.wears.push(...saved.wears);
+      W.buildOutfitIndexes();
+    }
+  });
+
+  /* ⚠️ The funnel/pool rule, both directions (CLAUDE.md, after r11): a page whose
+     numbers ignore statsFilter must not render a funnel. Four pages were doing
+     it — Year in Review, Most Worn Looks, Contexts and a context's detail — each
+     one deriving from the whole wardrobe while offering a control that changed
+     nothing. Asserted on the CALL, since that's where the two halves of the
+     decision have to agree. */
+  t("a stats page that ignores the funnel doesn't render one", () => {
+    const wrapped = W.renderStatsWrapped.toString();
+    const looks = W.renderStatsOutfitsPage.toString();
+    const ctxs = W.renderStatsContextsPage.toString();
+    const ctxd = W.renderStatsContextDetailPage.toString();
+    return eq([
+      /statsToolbar\("Year in Review", true, false, true\)/.test(wrapped),
+      /statsToolbar\(neglected \? "Liked but Neglected" : "Most Worn Looks", true, false, true\)/.test(looks),
+      /statsToolbar\("Contexts", true, true, true\)/.test(ctxs),
+      /statsToolbar\(c \|\| "Context", true, false, true\)/.test(ctxd),
+    ], [true, true, true, true]);
+  });
+
+  /* ⚠️ …and hiding the funnel must not take the RANGE with it. The two flags are
+     independent in the signature and were not in the body, which is why the
+     Contexts page — whose range genuinely works — could not drop its decorative
+     funnel without losing a control that does something. */
+  t("hiding the funnel keeps a page's range button", () => {
+    const withRange = W.statsToolbar("Contexts", true, true, true);
+    const without = W.statsToolbar("Rotation", true, false, true);
+    return eq([withRange.includes('id="stRange"'), withRange.includes('id="stFilter"'),
+               without.includes('id="stRange"'), without.includes('id="stBack"')],
+              [true, false, false, true]);
+  });
+
   // ---- render summary ----
   await Promise.all(pending);
   const ul = document.getElementById("results");
