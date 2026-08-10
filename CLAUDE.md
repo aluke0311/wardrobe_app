@@ -227,6 +227,87 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-10 r1 — ONE SUPPLY OF OUTFITS, DEALT ACROSS THE TRIP. Selftest 374 →
+**378**, run green; all 4 new cases mutation-checked red in the same session
+(five mutations, one per guarded behaviour).** Her report: *"when it gives
+alternative outfits, each context occasion gets the same set — so I can't choose
+freely. They should all be different… or once I've chosen, the others change. I
+want that either way — once I've selected an option, the pack is reoptimized
+around all locked outfits/items automatically."*
+
+⚠️ **THE OPTIONS WERE COMPUTED PER CARD, WHICH MAKES IDENTICAL SETS INEVITABLE.**
+Every occasion at one level enumerates the same bag against the same score, so
+the top three by shape are the same three on every card. **Measured on a 6-day
+fixture: four Errands days offered the IDENTICAL trio and both Work days
+another, out of 8 and 10 in-bag looks.** Worse, two of the three were what OTHER
+days were already wearing — so "choosing" could only produce the repeat the
+solver had already priced against.
+- **`packOccCandidatesRanked`** is the old per-occasion body, extracted;
+  **`packReviewOptionsAll`** deals the supply out and `packReviewOptions` reads
+  the deal. ⚠️ **Per-occasion lists are NOT interchangeable** — `packOccasionSlotFit`
+  and her per-occasion rules bite — so this deals from each occasion's own list
+  rather than one list per level.
+- **Round by round**, or the first card takes every fresh look for itself (the
+  first version did exactly that: one card got all 3 free looks and the other
+  three fell back to an identical rescue trio).
+- ⚠️ **THE PREFERENCE ORDER WAS MEASURED, AND BOTH SIMPLE RULES FAILED.**
+  Weight-first put the four Errands days back on an identical trio (a bag with
+  two bottoms and four tops holds 8 looks and five days had claimed most of
+  them). Freshness-first produced a card whose three alternatives each cost +2
+  pieces — the app growing the suitcase to win an argument about variety. Final
+  order: a look nobody else was offered and the bag already holds · then ONE
+  from the closet, priced (`PACK_REVIEW_BEYOND_MAX`) · then a look another card
+  is also showing · then, only if the card would otherwise be EMPTY, another
+  day's outfit.
+- ⚠️ **Being OFFERED the same look as another day is harmless** — it only
+  becomes a repeat if she picks it twice. Being offered another day's CURRENT
+  outfit is not, which is why that one is last.
+- ⚠️ **The beyond list is materialised LAZILY**, per card that the bag couldn't
+  fill — enumerating the trip rack for every occasion on every render is the
+  measured hang `packCandidates` caches against. Whole-trip deal: **5–7ms**.
+- ⚠️ **Never a costed variant of a look the bag can already make.** `packLookKey`
+  drops shoes, so "the same outfit in a shoe you'd have to pack" enumerates as a
+  beyond-bag candidate — it rendered as a "+1" option two cards from the
+  identical look offered free. Charging her a piece for a different shoe is the
+  distinction r13 removed from the solver.
+- **`packAmbiguity` deliberately reads the RAW ranked list, not the deal** — the
+  deal depends on the assignment, a choice changes the assignment, and the
+  review queue would reshuffle under her.
+- Result across roomy / scarce / 10-day fixtures: **0 identical option sets, 3
+  options per card, at most 1 costed option per card.**
+
+⚠️ **AND A CHOICE NOW RE-SOLVES THE TRIP AROUND HER LOCKS.** `packChooseOutfit`
+already locked the occasion and `packEnsureSolve` already knew how to solve
+around locks — **nothing asked it to**, so a choice stayed local and the other
+days kept outfits chosen against a bag she had just changed. It now re-solves
+via the same `packLoadState({resolve:true})` path "✨ Re-solve" uses, so there is
+no second solving mode. **Measured: 22ms; earlier choices survive because each
+one locked its own occasion.**
+- ⚠️ **ONLY WHEN THE OUTFIT ACTUALLY CHANGED.** "This one" is her saying the day
+  is settled; reshuffling days she never looked at in reply is the slot machine
+  inversion ③ exists to prevent.
+- ⚠️ **Undo restores the whole RECORD**, not just this occasion — once a choice
+  moves other days, putting one outfit back leaves a trip that was never on
+  screen. It reloads with `packLoadState` (**not `packStateReady`**, which would
+  hand back the stale in-memory state) and re-runs `packPersist` to re-sync
+  `capsule_items`.
+- The full options screen still shows everything, but an option another day is
+  wearing **says so** ("Thu, Aug 13 is wearing this") — a fact, never a block.
+
+⚠️ **THE ASYNC-FIXTURE TRAP, AGAIN, AND IT COST A MEASUREMENT.** `withPackCloset`
+restores in a `finally`, so an `async` body's fixture is gone by the first
+`await` — every candidate list came back empty and it looked like a bug in the
+code under test. `packClosetInstall` + **`withPackClosetA`** now share one setup.
+⚠️ **Stubbing `rest` to return `[]` WIPES THE PACK:** `kvUpdate` reads `[]` as
+"the row is gone" and re-applies the patch onto an empty record. The kv
+freshness read must THROW (offline) instead.
+⚠️ **A case that measured the choice itself passed with the fix deleted** — it
+counted broken days including the one she chose for, and setting that outfit
+counted as a repair. It asserts on OTHER days now. ⚠️ And "another day moved" is
+not assertable: holding one more lock can legitimately leave the same optimum
+(0 days moved on one fixture, 5 on another). **The case breaks a day by dropping
+a piece and asserts only a re-solve can fill it back in.**
+
 **▶ PICKING THIS UP COLD? Read `HANDOFF_2026-08-09.md` in the repo root.** It
 carries the current state, her locked decisions from this arc, what is
 deliberately NOT built, and — most importantly — **what has not been verified**:
@@ -2840,7 +2921,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-09 r5`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-10 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3187,7 +3268,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **374/374** (2026-08-09 r5, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **378/378** (2026-08-10 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-09 r5";
+const APP_VERSION = "2026-08-10 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-09 r5";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r1", notes: [
+    "Every occasion now gets its OWN alternatives. They used to be worked out one card at a time from the same bag and the same ranking, so four days of one context were offered the identical three outfits — and two of those three were what other days were already wearing, so \"choosing\" could only produce a repeat. The options are dealt across the whole trip now: no card is offered another day's outfit while it still has something else to show you",
+    "When the bag can't give a day anything the other days aren't already being offered, one option comes from the rest of your closet, priced (\"+1 to your bag\") — one per card, never more",
+    "Choosing an outfit now re-plans the rest of the trip around it, automatically. Your choice is locked, every earlier choice stays locked, and only the days you haven't decided move. Undo puts the whole trip back",
+    "On the full \"what to wear\" screen, an outfit another day is already wearing says so",
+  ] },
   { v: "2026-08-09 r5", notes: [
     "A trip is one screen now. Plan · Bag · Outfits, with the section that matters chosen by where the trip is — Plan before you've built, Outfits once you're travelling. The build sheet is gone as a separate modal; setting what's happening, what you're definitely bringing and how much to bring all live on Plan, where you can see them",
     "Nothing was dropped: rename, dates, duplicate, share, archive, delete, locations and weather all moved to the ⋯ menu, and they're the same actions, not copies",

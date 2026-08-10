@@ -2445,7 +2445,10 @@ async function run() {
        ③ the solve is an event — same inputs, same pack
      Case "a 10-day trip with two dressy evenings doesn't pack one pair of shoes"
      is a GATE on decision D2, not a regression test. */
-  const withPackCloset = (fn, opt = {}) => {
+  /* Install the fixture and hand back its teardown, so the sync and async
+     wrappers below share ONE setup — two copies would drift, and the closet
+     these cases assert against is half the assertion. */
+  const packClosetInstall = (opt = {}) => {
     const saved = { items: W.items, wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
                     caps: W.capsules, links: W.capsuleLinks, excl: W.exclusions,
                     ready: W.dataReady, rack: W.kvData.get("rack"), plan: W.kvData.get("dayplan") };
@@ -2499,15 +2502,29 @@ async function run() {
     W.kvData.delete("rack");
     if (opt.dayplan) W.kvData.set("dayplan", opt.dayplan); else W.kvData.delete("dayplan");
     W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildSuggestIndexes(); W.buildExcludeSet();
-    try { return fn(); }
-    finally {
+    return () => {
       W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
       W.outfitLinks = saved.outfitLinks; W.capsules = saved.caps; W.capsuleLinks = saved.links;
       W.exclusions = saved.excl; W.dataReady = saved.ready;
       if (saved.rack === undefined) W.kvData.delete("rack"); else W.kvData.set("rack", saved.rack);
       if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
       W.buildOutfitIndexes(); W.buildCapsuleIndexes(); W.buildSuggestIndexes(); W.buildExcludeSet();
-    }
+    };
+  };
+  const withPackCloset = (fn, opt = {}) => {
+    const restore = packClosetInstall(opt);
+    try { return fn(); } finally { restore(); }
+  };
+  /* ⚠️ THE ASYNC TWIN, and it is not optional. withPackCloset restores in a
+     `finally`, so an `async` body hands back a promise and the fixture is torn
+     down before the first `await` resumes — the documented trap, and it cost a
+     measurement on 2026-08-10: every candidate list came back empty because the
+     app was reading her real closet by then, which looked exactly like a bug in
+     the code under test. Anything that awaits an app handler (packChooseOutfit,
+     packPersist) must use this one. */
+  const withPackClosetA = async (fn, opt = {}) => {
+    const restore = packClosetInstall(opt);
+    try { return await fn(); } finally { restore(); }
   };
   // A dated trip capsule, n days from tomorrow.
   const packTrip = (n, locs) => ({ id: "tripc", name: "Test trip", kind: "packing",
@@ -3169,6 +3186,13 @@ async function run() {
     return st;
   };
 
+  /* The console probe hook. Measuring through the entry point she actually uses
+     is a standing rule here (driving packSolve directly once produced confident,
+     wrong numbers), and every such measurement needs the fixtures — which live
+     in this closure. Exported so a session can run one from the browser console
+     without adding a throwaway case. Nothing in the suite reads it. */
+  window.__t = { withPackCloset, withPackClosetA, packTrip, appSolve, solveFor, scarceCloset, W, D };
+
   t("the app path spends the options it builds", () => withPackCloset(() => {
     const c = packTrip(5);
     const st = appSolve(c, { K: 2, tripContexts: [{ ctx: "Errands", n: 5 }] });
@@ -3269,6 +3293,97 @@ async function run() {
           return `${occ.context || occ.level}: ${JSON.stringify(labels)}`;
       }
       return checked ? true : "vacuous: no occasion offered two alternatives";
+    }, { capsules: [c] });
+  });
+
+  /* ================= 2026-08-10: one supply, dealt out ===================
+     Her report: *"when it gives alternative outfits, each context occasion gets
+     the same set — so I can't choose freely."*
+
+     Structural, not a ranking accident: every occasion at one level enumerates
+     the same bag against the same score, so the top three by shape were the
+     same three on every card. Measured on this fixture before the fix — four
+     Errands days offered the IDENTICAL trio, both Work days another identical
+     trio, out of 8 and 10 in-bag looks respectively.
+     ⚠️ Compared as SETS. The same three in a different order is the same three. */
+  t("two days of one context are not offered the same alternatives", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }] });
+      if (!st || !st.res) return "no pack state";
+      const sets = new Map();
+      let checked = 0;
+      for (const occ of st.demand) {
+        const opts = W.packReviewOptions(st, occ);
+        if (opts.length < 2) continue;            // nothing to be identical with
+        checked++;
+        const key = opts.map(o => W.packLookKey(o.ids)).sort().join("|");
+        if (sets.has(key)) return `${sets.get(key)} and ${occ.context || occ.level} were offered the same set: ${key}`;
+        sets.set(key, occ.context || occ.level);
+      }
+      // ⚠️ Vacuity guard: with fewer than two reviewable cards nothing can collide.
+      return checked >= 4 ? true : `vacuous: only ${checked} cards offered alternatives`;
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ AND NEVER ANOTHER DAY'S OUTFIT WHILE ANYTHING ELSE IS LEFT. Picking one
+     could only produce the duplicate the solver had already priced against —
+     two of the three options on a card were exactly that before the deal
+     existed.
+     ⚠️ It is a LAST RESORT, not a prohibition, and the case has to say so or it
+     asserts something the app doesn't promise: an empty card is worse than a
+     repeated one, so the final pass allows it. What must never happen is a
+     repeat while an unclaimed candidate the card was never shown still sits in
+     its own supply — which is exactly the version of this that went red. */
+  t("a review option repeats another day only when nothing else is left", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }] });
+      if (!st || !st.res) return "no pack state";
+      const worn = new Map();
+      for (const o of st.demand) {
+        const cd = st.res.assign.get(o.id);
+        if (cd) worn.set(W.packLookKey(cd.ids), o.id);
+      }
+      let checked = 0;
+      for (const occ of st.demand) {
+        const opts = W.packReviewOptions(st, occ);
+        const shown = new W.Set(opts.map(o => W.packLookKey(o.ids)));
+        for (const opt of opts) {
+          const look = W.packLookKey(opt.ids);
+          checked++;
+          const other = worn.get(look);
+          if (!other || other === occ.id) continue;
+          const spare = W.packOccCandidatesRanked(st, occ, 12)
+            .filter(x => !worn.has(x.look) && !shown.has(x.look));
+          if (spare.length)
+            return `${occ.context || occ.level} was offered what ${other} is wearing, `
+                 + `with ${spare.length} unclaimed looks it was never shown`;
+        }
+      }
+      return checked >= 8 ? true : `vacuous: only ${checked} options across the trip`;
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ AND A CARD MAY SPEND AT MOST ONE PIECE OF WEIGHT. The deal reaches past
+     the bag when it can't give a card anything fresh, which is the r1 answer to
+     a bag-confined review — but unbounded it becomes the app repacking the
+     suitcase to win an argument about variety. Measured at the intermediate
+     ordering: one card came back with three alternatives costing +2 each. */
+  t("at most one review option per card costs weight", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }] });
+      if (!st || !st.res) return "no pack state";
+      let seenCosted = 0;
+      for (const occ of st.demand) {
+        const costed = W.packReviewOptions(st, occ).filter(o => o.adds);
+        seenCosted += costed.length;
+        if (costed.length > 1)
+          return `${occ.context || occ.level} was offered ${costed.length} options that add pieces`;
+      }
+      // ⚠️ Vacuous if the bag is rich enough that nothing ever reaches past it.
+      return seenCosted ? true : "vacuous: no card ever needed the closet";
     }, { capsules: [c] });
   });
 
@@ -3561,6 +3676,83 @@ async function run() {
       return (after === before - 1 && locked.has(occ.id))
         ? true : `queue ${before} -> ${after}, locked=${locked.has(occ.id)}`;
     }, { capsules: [c] });
+  });
+
+  /* ⚠️ AND A CHOICE RE-PLANS THE REST OF THE TRIP AROUND IT (2026-08-10, her
+     ask: *"once I've selected an option, the pack is reoptimized around all
+     locked outfits/items automatically again"*).
+
+     The choice already locked the occasion and packEnsureSolve already knew how
+     to solve around locks — nothing asked it to, so a choice stayed local and
+     the other days kept outfits chosen against a bag she had just changed.
+
+     ⚠️ ASSERTED ON THE MECHANISM, NOT ON "SOMETHING ELSE MOVED", and the first
+     version of this case made exactly that mistake. Whether a re-solve changes
+     another day is the SOLVER's business — holding one more lock can perfectly
+     well leave the same optimum, and it did on one fixture and moved five days
+     on another. A case asserting the outcome measures the fixture.
+     So: break a day by dropping a piece it needs, then choose an outfit for a
+     different day. Only a re-solve can fill the broken one back in, and if none
+     runs it stays empty. Deterministic, and it is the user-visible promise.
+     ⚠️ The other half is the one that silently rots: an EARLIER choice has to
+     survive the next re-solve, which it does only because each choice locks its
+     own occasion. A re-solve that dropped the locks would still pass the first
+     half on its own.
+     ⚠️ Async, so it needs withPackClosetA — the sync wrapper restores the closet
+     in a `finally` and the fixture would be gone by the first await.
+     ⚠️ The kv freshness READ must fail rather than return []: kvUpdate reads []
+     as "the row is gone" and re-applies the patch to an empty record, which
+     wipes the pack and makes this case pass for the wrong reason. */
+  await ta("choosing an outfit re-plans the other days, and earlier choices hold", async () => {
+    const c = packTrip(6);
+    const saved = { rest: W.rest, render: W.renderCapsules, toast: W.toast, cid: W.capsuleId };
+    W.rest = async (path) => { if (String(path).startsWith("/kv?")) throw new Error("stub"); return []; };
+    W.renderCapsules = () => {}; W.toast = () => {};
+    try {
+      return await withPackClosetA(async () => {
+        const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }] });
+        if (!st || !st.res) return "no pack state";
+        const chooser = st.demand.find(o => o.context === "Errands");
+        const alt1 = chooser && W.packReviewOptions(st, chooser)[0];
+        if (!alt1) return "vacuous: nothing to choose";
+        // Break a DIFFERENT day: drop a piece it needs and the chosen one doesn't.
+        const victim = st.demand.find(o => {
+          const cd = st.res.assign.get(o.id);
+          return o.id !== chooser.id && cd && cd.ids.some(id => !alt1.ids.includes(id));
+        });
+        if (!victim) return "vacuous: no other dressed day to break";
+        const piece = st.res.assign.get(victim.id).ids.find(id => !alt1.ids.includes(id));
+        await W.packDropPiece(piece);
+        if (W._packState.res.assign.get(victim.id)) return "fixture drift: dropping the piece didn't break that day";
+        /* ⚠️ COUNTED EXCLUDING THE DAY SHE CHOOSES FOR, and the first version
+           didn't — dropping a piece can break the chooser's own outfit too, so
+           setting it counted as "one fewer broken day" and the case passed with
+           the re-solve deleted. It survived its own mutation check by measuring
+           the choice itself. */
+        const stillBroken = () => [...st.demand]
+          .filter(o => o.id !== chooser.id && !W._packState.res.assign.get(o.id)).length;
+        const broken = stillBroken();
+        if (!broken) return "fixture drift: no OTHER day was left without an outfit";
+
+        await W.packChooseOutfit(chooser.id, alt1.ids);
+        if (stillBroken() >= broken) return `${broken} other days had no outfit and the choice re-planned none of them`;
+
+        const second = W._packState.demand.find(o => o.context === "Errands" && o.id !== chooser.id);
+        const alt2 = second && W.packReviewOptions(W._packState, second)[0];
+        if (!alt2) return "vacuous: no second occasion to choose for";
+        await W.packChooseOutfit(second.id, alt2.ids);
+        const held = (id, ids) => {
+          const cd = W._packState.res.assign.get(id);
+          return cd && cd.ids.join(",") === ids.slice().sort().join(",");
+        };
+        if (!held(chooser.id, alt1.ids)) return "the first choice was overwritten by the second re-solve";
+        return held(second.id, alt2.ids) ? true : "the second choice didn't stick";
+      }, { capsules: [c] });
+    } finally {
+      W.rest = saved.rest; W.renderCapsules = saved.render; W.toast = saved.toast;
+      W.capsuleId = saved.cid; W._packState = null;
+      W.kvData.delete("pack:" + c.id);
+    }
   });
 
   /* ⚠️ SKIPPING IS NOT CHOOSING. "These all look fine" marks them decided so

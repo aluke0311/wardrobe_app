@@ -4032,7 +4032,7 @@ const PACK_REVIEW_OPTS = 3;
    "a different shape" is a definition already in use rather than a new rule
    invented here. Falls back to look-distinct once shapes run out, so a closet
    with one shape still offers real alternatives. */
-function packReviewOptions(st, occ, n = PACK_REVIEW_OPTS) {
+function packOccCandidatesRanked(st, occ, n = PACK_REVIEW_OPTS) {
   const wxFor = packWxFor(st.c);
   /* ⚠️ `st.pack` OR the solve's copy. They're the same thing on every real
      path, but the card renderer is reachable from states assembled elsewhere
@@ -4049,16 +4049,166 @@ function packReviewOptions(st, occ, n = PACK_REVIEW_OPTS) {
     const look = packLookKey(c.ids), shape = shapeOf(c);
     if (seenLook.has(look) || seenShape.has(shape)) continue;
     seenLook.add(look); seenShape.add(shape);
-    out.push({ ...c, shape });
+    out.push({ ...c, shape, look });
   }
   for (const c of all) {                       // pass 2: top up on distinct looks
     if (out.length >= n) break;
     const look = packLookKey(c.ids);
     if (seenLook.has(look)) continue;
     seenLook.add(look);
-    out.push({ ...c, shape: shapeOf(c) });
+    out.push({ ...c, shape: shapeOf(c), look });
   }
   return out;
+}
+
+/* ⚠️ THE OPTIONS ARE DEALT ACROSS THE WHOLE TRIP, NOT COMPUTED PER CARD
+   (2026-08-10, her report: *"when it gives alternative outfits, each context
+   occasion gets the same set — so I can't choose freely. They should all be
+   different so I can choose from among them"*).
+
+   She was right, and it was structural rather than a ranking accident. Every
+   occasion at one level enumerates the same bag against the same score, so the
+   top three by shape are the same three on every card — measured on a 6-day
+   fixture, four Errands days were offered the IDENTICAL trio and both Work days
+   another identical trio, out of 8 and 10 in-bag looks respectively. Two of the
+   three offered to a day were what OTHER days were already wearing, so
+   "choosing" could only produce a duplicate the solver had already priced
+   against.
+
+   So the supply is dealt out instead: each occasion's own ranked list (contexts
+   differ, so the lists are NOT interchangeable — packOccasionSlotFit and her
+   per-occasion rules both bite), minus its own outfit, minus every other
+   occasion's outfit, preferring looks nothing else has been offered yet.
+
+   ⚠️ RESCUE-SHAPED, like every other narrowing in this app. Supply runs out
+   before the demand does on a scarce closet — four days sharing eight looks
+   cannot each have three private alternatives — so the passes relax in order
+   and the last one allows anything rather than hand her an empty card. What is
+   never relaxed: an option is never another day's current outfit while any
+   other candidate exists.
+   ⚠️ Dealt in `st.demand` order, which is the order she reads them in. Not the
+   review-queue order — that is sorted by ambiguity, which is itself computed
+   from these lists, and one deriving from the other would make the sets move
+   every time a choice changed the queue. */
+/* How deep the per-occasion list has to run before dealing. Three occasions all
+   wanting three private alternatives need nine distinct looks between them. */
+const PACK_REVIEW_SUPPLY = 4;
+// How much of one card may cost weight. One: enough to tell the cards apart,
+// never enough to repack the bag from a review row.
+const PACK_REVIEW_BEYOND_MAX = 1;
+function packReviewOptionsAll(st, n = PACK_REVIEW_OPTS) {
+  const stamp = st.demand.map(o => {
+    const cd = st.res && st.res.assign.get(o.id);
+    return o.id + ":" + (cd ? cd.ids.join("-") : "");
+  }).join(";") + "|" + ((st.pack || []).length) + "|" + n;
+  if (st._revOpts && st._revOpts.stamp === stamp) return st._revOpts.map;
+
+  const cur = new Map();                 // occId → the look it is wearing now
+  const claimed = new Set();             // every look some occasion is wearing
+  for (const o of st.demand) {
+    const cd = st.res && st.res.assign.get(o.id);
+    if (!cd) continue;
+    const k = packLookKey(cd.ids);
+    cur.set(o.id, k);
+    claimed.add(k);
+  }
+  // A deeper supply than n, or the deal has nothing left to spread on day two.
+  const supply = new Map();
+  for (const o of st.demand) {
+    supply.set(o.id, { bag: packOccCandidatesRanked(st, o, n * PACK_REVIEW_SUPPLY), out: null });
+  }
+
+  const map = new Map(), taken = new Map(), shapes = new Map(), beyondUsed = new Map();
+  const dealt = new Map();               // look → how many occasions were offered it
+  for (const o of st.demand) { map.set(o.id, []); taken.set(o.id, new Set()); shapes.set(o.id, new Set()); }
+
+  const less = (a, b) => {               // lexicographic on the preference key
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
+    return false;
+  };
+  /* One option for one occasion, in preference order: a look nobody else has
+     been offered and the bag already holds · then ONE from the closet, priced ·
+     then a look another card is also showing.
+
+     ⚠️ THE ORDER OF THOSE THREE WAS MEASURED, NOT ARGUED, and both of the
+     simpler rules were tried first. Weight-first alone put the four Errands
+     days back on an identical trio, because a bag with two bottoms and four
+     tops at one level holds eight looks and five days had already claimed most
+     of them — her exact report, reintroduced. Freshness-first alone came back
+     with a card whose three alternatives each cost +2 pieces, which is the app
+     growing the suitcase to win an argument about variety.
+     So the closet is capped at PACK_REVIEW_BEYOND_MAX per card: enough that
+     every card differs from every other, never enough to repack the bag by
+     itself. Being OFFERED the same look as another day is harmless anyway — it
+     only becomes a repeat if she picks it twice, and the solver prices that. */
+  const chooseFor = (o, allowClaimed) => {
+    const mine = cur.get(o.id), mySet = taken.get(o.id), myShapes = shapes.get(o.id);
+    const pick = (list, keyOf) => {
+      let best = null, bestKey = null;
+      (list || []).forEach((c, rank) => {
+        if (c.look === mine || mySet.has(c.look)) return;
+        if (claimed.has(c.look) && !allowClaimed) return;
+        const key = keyOf(c, rank);
+        if (!bestKey || less(key, bestKey)) { best = c; bestKey = key; }
+      });
+      return best;
+    };
+    const s = supply.get(o.id);
+    const bagPick = pick(s.bag, (c, rank) =>
+      [dealt.get(c.look) || 0, myShapes.has(c.shape) ? 1 : 0, rank]);
+    if (bagPick && !(dealt.get(bagPick.look) || 0)) return bagPick;
+    /* ⚠️ THE CLOSET IS THE OVERFLOW WHEN THE BAG RUNS DRY, and paying for it
+       lazily is deliberate. A bag holding three looks for a level cannot give
+       four days three private alternatives, and the honest answer is not to
+       hand everyone the same three — it is the r1 answer: an option the bag
+       doesn't hold yet, priced. But enumerating the trip rack for every
+       occasion on every render is the measured hang packCandidates caches
+       against, so it only happens for a card the bag itself couldn't fill. */
+    if ((beyondUsed.get(o.id) || 0) < PACK_REVIEW_BEYOND_MAX) {
+      if (s.out === null) {
+        /* ⚠️ AND NEVER A COSTED VARIANT OF A LOOK THE BAG CAN ALREADY MAKE.
+           packLookKey drops shoes, so "the same outfit in a shoe you'd have to
+           pack" enumerates as a beyond-bag candidate — it showed up as an
+           option marked "+1" sitting two cards away from the identical look
+           offered free. Charging her a piece for a different shoe is exactly
+           the distinction r13 removed from the solver. */
+        const bagLooks = new Set(s.bag.map(x => x.look));
+        s.out = packReviewBeyond(st, o, n * PACK_REVIEW_SUPPLY)
+          .map(x => ({ ...x, look: packLookKey(x.ids) }))
+          .filter(x => !bagLooks.has(x.look));
+      }
+      const outPick = pick(s.out, (c, rank) =>
+        [dealt.get(c.look) || 0, c.adds || 0, myShapes.has(c.shape) ? 1 : 0, rank]);
+      if (outPick) return outPick;
+    }
+    return bagPick;
+  };
+
+  // Round by round, so the first card can't take every fresh look for itself.
+  for (let round = 0; round < n; round++) {
+    for (const o of st.demand) {
+      const got = map.get(o.id);
+      if (got.length > round) continue;
+      const c = chooseFor(o, false) || chooseFor(o, true);   // an empty card is worse
+      if (!c) continue;
+      got.push(c);
+      taken.get(o.id).add(c.look);
+      shapes.get(o.id).add(c.shape);
+      dealt.set(c.look, (dealt.get(c.look) || 0) + 1);
+      if (c.adds) beyondUsed.set(o.id, (beyondUsed.get(o.id) || 0) + 1);
+    }
+  }
+  st._revOpts = { stamp, map };
+  return map;
+}
+
+function packReviewOptions(st, occ, n = PACK_REVIEW_OPTS) {
+  if (!occ) return [];
+  const map = packReviewOptionsAll(st, Math.max(n, PACK_REVIEW_OPTS));
+  const got = map.get(occ.id);
+  if (got) return got.slice(0, n);
+  // An occasion the deal never saw (a card rendered from a hand-built state).
+  return packOccCandidatesRanked(st, occ, n);
 }
 /* ⚠️ AND OPTIONS THAT AREN'T IN THE BAG YET — because a review confined to the
    bag is a review of a decision she was never part of (2026-08-08, her report:
@@ -4086,7 +4236,8 @@ function packReviewBeyond(st, occ, n = PACK_REVIEW_OPTS) {
   const shapeOf = (c) => formulaKeyFor(c.ids.map(id => itemById.get(id)).filter(Boolean)) || "";
   const all = packCandidates(occ, pool, { wxFor, all: true })
     .filter(x => !x.ids.every(id => inPack.has(id)))       // in-bag ones are tier 1
-    .map(x => ({ ...x, shape: shapeOf(x), adds: x.ids.filter(id => !inPack.has(id)).length }));
+    .map(x => ({ ...x, shape: shapeOf(x), look: packLookKey(x.ids),
+                 adds: x.ids.filter(id => !inPack.has(id)).length }));
   /* Cheapest first — one new piece before three — then by score. Packing light
      is the default preference; she can still scroll to the expensive one. */
   all.sort((a, b) => (a.adds - b.adds) || (b.score - a.score) || (a.ids.join() < b.ids.join() ? -1 : 1));
@@ -4111,8 +4262,13 @@ function packReviewBeyond(st, occ, n = PACK_REVIEW_OPTS) {
 /* How little basis the app has for its pick. Higher = ask sooner. Two options
    of DIFFERENT shape scoring almost the same is the strongest signal; the same
    shape twice is a weak one however close the scores. */
+/* ⚠️ READS THE RAW RANKED LIST, NOT THE DEALT ONE. Ambiguity is a property of
+   the occasion — how close its two best answers are — and the deal is a
+   presentation decision about who gets shown what. Pointing this at the deal
+   would make the review ORDER depend on the deal, which depends on the
+   assignment, which a choice changes: the queue would reshuffle under her. */
 function packAmbiguity(st, occ) {
-  const o = packReviewOptions(st, occ, 2);
+  const o = packOccCandidatesRanked(st, occ, 2);
   if (o.length < 2) return 0;                       // no choice to make
   const gap = Math.max(0, (o[0].score || 0) - (o[1].score || 0));
   const spread = (o[0].shape !== o[1].shape ? 1 : 0.4) / (1 + gap);
@@ -4253,14 +4409,28 @@ function renderPackOptionsPage() {
     .filter(x => { const k = packLookKey(x.ids); if (seenLook.has(k)) return false; seenLook.add(k); return true; });
   const rule = prefsLabel(occ.prefs);
 
+  /* ⚠️ THIS PAGE STILL SHOWS EVERYTHING — she asked for many options and the
+     inline card is where the app narrows. But an option another day is already
+     wearing SAYS SO, because picking it is the one choice here with a
+     consequence she can't see from the tile: two days in the same clothes.
+     A fact, never a block — same rule as "packed 3×, worn 0×". */
+  const elsewhere = new Map();
+  for (const o of st.demand) {
+    if (o.id === occ.id) continue;
+    const other = st.res.assign.get(o.id);
+    if (other) elsewhere.set(packLookKey(other.ids), o);
+  }
   const tile = (x, extra) => {
     const on = cd && !packDistinct(x, cd);
+    const dup = !on && elsewhere.get(packLookKey(x.ids));
+    const dupNote = dup ? `${dup.date ? planDayLabel(dup.date) : (dup.context || "Another day")} is wearing this` : "";
+    const note = [dupNote, extra].filter(Boolean).join(" · ");
     return `<button class="pack-opt-tile${on ? " on" : ""}" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(x.ids.join(","))}">
       <div class="pack-opt-thumbs">${x.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "pack-opt-th")).join("")}</div>
       <div class="pack-opt-meta">
         <div class="pack-opt-names">${esc(x.ids.map(id => (itemById.get(id) || {}).name || "piece").join(" · "))}</div>
         ${on ? `<div class="pack-opt-cost" style="color:var(--accent)">What you have now</div>`
-             : extra ? `<div class="pack-opt-cost">${esc(extra)}</div>` : ""}
+             : note ? `<div class="pack-opt-cost">${esc(note)}</div>` : ""}
       </div>
     </button>`;
   };
@@ -4343,7 +4513,12 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
         <div class="pack-review-q">Which would you actually wear?</div>
         <div class="pack-review-opts">
           ${opt(cd.ids, "This one", " on", "")}
-          ${alts.map((x, _ai) => opt(x.ids, altLabels[_ai], "", "")).join("")}
+          ${/* ⚠️ An option the bag doesn't hold yet SAYS SO. The deal reaches
+                past the bag when it can't give this card anything the others
+                aren't already being offered, and an unpriced option would be
+                the app quietly growing the suitcase on her behalf. */""}
+          ${alts.map((x, _ai) => opt(x.ids, altLabels[_ai], "",
+                                     x.adds ? `+${x.adds} to your bag` : "")).join("")}
         </div>
         <div class="pack-review-more">
           <button class="lnk" data-pack-rather="${esc(occ.id)}">I'd rather\u2026</button>
@@ -5015,32 +5190,76 @@ function openPackRatherSheet(occId) {
   });
 }
 
+/* \u26a0\ufe0f A CHOICE RE-OPTIMISES THE REST OF THE TRIP AROUND IT (2026-08-10, her
+   ask: *"once I've selected an option, the pack is reoptimized around all
+   locked outfits/items automatically again"*).
+
+   The choice already LOCKED that occasion, and `packEnsureSolve` already knows
+   how to solve around locks \u2014 the only thing missing was that nothing asked it
+   to. Without this, a choice was purely local: the other days kept outfits
+   chosen against a bag she had just changed, and the alternatives they offered
+   never moved however much she picked.
+
+   \u26a0\ufe0f ONLY WHEN THE OUTFIT ACTUALLY CHANGED. Answering "this one" is her saying
+   the day is settled; reshuffling days she never looked at in reply to that is
+   the slot machine inversion \u2462 exists to prevent, and re-solving under one more
+   lock can legitimately return a different global answer. So keeping the
+   current outfit locks it and stops.
+   \u26a0\ufe0f Her earlier choices survive, because each one locked its occasion \u2014 the
+   re-solve carries every lock and only the unlocked days move. That is the same
+   arrangement "\u2728 Re-solve" runs under, so there is no second solving mode here.
+   \u26a0\ufe0f Undo restores the RECORD, not just this occasion. Once a choice moves other
+   days, putting one outfit back would leave the trip in a state that was never
+   on screen. */
 async function packChooseOutfit(occId, ids) {
   const st = packStateReady();
-  if (!st || !st.res) return;
+  if (!st || !st.res || _packBusy) return;
   const occ = st.demand.find(o => o.id === occId);
   if (!occ) return;
   const clean = [...new Set(ids)].filter(id => itemById.has(id)).sort();
   if (clean.length < 2) return;
+  const cid = st.cid;
   const cur = st.res.assign.get(occId);
+  const same = cur && !packDistinct({ ids: clean }, cur);
+  const before = JSON.parse(JSON.stringify(packRecord(cid)));
   const alts = packReviewOptions(st, occ).map(x => x.ids);
   st.res.assign.set(occId, { ids: clean, pieces: clean.map(id => itemById.get(id)).filter(Boolean), score: 0 });
   packRepack(st); packRegroup(st); packRefresh(st);
-  const rec = packRecord(st.cid);
-  const chosen = [...new Set([...(rec.chosen || []), occId])];
-  await savePackRecord(st.cid, { chosen, locked: packMarkLocked(st.cid, occId) });
+  const chosen = [...new Set([...(packRecord(cid).chosen || []), occId])];
+  await savePackRecord(cid, { chosen, locked: packMarkLocked(cid, occId) });
   await recordContextChoice(occ.context, occ.level, clean,
                             alts.filter(a => a.join() !== clean.join()));
-  await packPersist(st.cid);
+  await packPersist(cid);
+
+  let moved = 0;
+  if (!same) {
+    _packBusy = true;
+    try {
+      const kept = new Map(st.res.assign);
+      packLoadState(cid, { resolve: true });      // consumed once by packEnsureSolve
+      const st2 = _packState;
+      if (st2) {
+        packEnsureSolve(st2);
+        for (const [id, cd] of st2.res.assign) {
+          const was = kept.get(id);
+          if (was && packDistinct(cd, was)) moved++;
+        }
+        await packPersist(cid);
+      }
+    } finally { _packBusy = false; }
+  }
   renderCapsules();
-  const same = cur && !packDistinct({ ids: clean }, cur);
-  toast(same ? "Kept \u00b7 locked in" : "Updated around your choice", {
+  toast(same ? "Kept \u00b7 locked in"
+             : moved ? `Locked in \u00b7 ${moved} other day${moved === 1 ? "" : "s"} re-planned around it`
+                     : "Locked in", {
     label: "Undo", fn: async () => {
-      const r = packRecord(st.cid);
-      await savePackRecord(st.cid, { chosen: (r.chosen || []).filter(x => x !== occId) });
-      if (cur) st.res.assign.set(occId, cur);
-      packRepack(st); packRegroup(st); packRefresh(st);
-      await packPersist(st.cid);
+      await kvUpdate(PACK_KEY_PREFIX + cid, () => before);
+      /* ⚠️ packLoadState, not packStateReady — the state for this capsule is
+         already in memory and packStateReady would hand back that stale copy
+         rather than re-read the record we just restored. Then re-sync the bag:
+         the re-solve may have added pieces the old record doesn't carry. */
+      packLoadState(cid);
+      if (_packState) { packEnsureSolve(_packState); await packPersist(cid); }
       renderCapsules();
     },
   });
