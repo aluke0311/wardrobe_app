@@ -6572,6 +6572,145 @@ async function run() {
     } finally { W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i])); }
   });
 
+  /* ==== 2026-08-10 r4 — five reports from her live use ==================== */
+
+  // A fixture for the suggester's layer/shirt picker. Photos on everything but
+  // the piece deliberately missing one, so "no photo yet" is exercised.
+  const withLayerCloset = (fn) => {
+    const mk = (id, name, cat, sub, f, extra) => Object.assign(
+      { id, name, category: cat, subcategory: sub, status: "Available",
+        formality: f, image_path: "p/" + id + ".webp", tags: [], last_washed: "2026-08-01" }, extra || {});
+    const saved = { items: W.items.slice(), wears: W.wears.slice(), sugg: W._sugg };
+    try {
+      W.items.length = 0;
+      W.items.push(
+        mk("tee", "White tee", "Tops", "Tee shirts", [3]),
+        mk("jean", "Blue jeans", "Bottoms", "Jeans", [3]),
+        mk("sneak", "Sneakers", "Shoes", "Sneakers", [3]),
+        mk("card1", "Oatmeal cardigan", "Tops", "Cardigans", [3, 4]),
+        mk("card2", "Navy cardigan", "Tops", "Cardigans", [3]),
+        mk("blazerA", "Black blazer", "Outerwear", "Blazers", [5, 6]),
+        mk("jacket", "Denim jacket", "Outerwear", "Jackets", [2, 3]),
+        mk("nophoto", "Grey cardigan", "Tops", "Cardigans", [3], { image_path: null }),
+        mk("btn", "Chambray button-up", "Tops", "Blouses", [3], { tags: ["layer"] }),
+        mk("tank", "Black tank", "Tops", "Sleeveless", [3]));
+      W.wears.length = 0;
+      W.buildOutfitIndexes();
+      Object.assign(W._sugg, { capsuleId: null, wholeCloset: true, targetLevel: null,
+        season: null, useWx: false, useClean: false, banned: new W.Set(),
+        locked: new W.Set(), unworn: null, shapeKey: null, occPrefs: null,
+        layerPick: null, idx: 0 });
+      return fn(mk);
+    } finally {
+      W.items.length = 0; W.items.push(...saved.items);
+      W.wears.length = 0; W.wears.push(...saved.wears);
+      W.buildOutfitIndexes();
+    }
+  };
+
+  /* ⚠️ Her report: *"trying to use the suggester to add a particular layer that
+     I know is in the bag but it won't add it."* ＋ Layer drew at RANDOM from a
+     list she never saw, and seven filters could silently remove her piece. The
+     guarantee is that the pool is ENUMERATED and a filtered-out piece is named
+     with its reason rather than disappearing. */
+  t("the layer picker names its candidates instead of drawing one at random", () => withLayerCloset(() => {
+    const combo = { pieces: ["tee", "jean", "sneak"].map(x => W.itemById.get(x)), score: 0 };
+    W._sugg.results = [combo]; W._sugg.idx = 0;
+    const { cands, blocked } = W.suggestLayerCandidates(combo, { role: "layer" });
+    // The button-up is layer-TAGGED, so it belongs in the layer list too — that
+    // clause ("isLayer && category Tops") is what makes a shirt usable as one.
+    return eq([cands.map(i => i.name), blocked.map(b => b.i.name + "|" + b.why)],
+              [["Chambray button-up", "Denim jacket", "Navy cardigan", "Oatmeal cardigan"],
+               ["Black blazer|shares no level with the rest", "Grey cardigan|no photo yet"]]);
+  }));
+
+  /* A blocked piece must stay REACHABLE — the filters are the engine's guesses,
+     "I want this cardigan" is her decision. Same line as "locking an off-rack
+     piece must never fail". If this ever goes red the picker has become a cage. */
+  t("a piece the rules filtered out can still be chosen", () => withLayerCloset(() => {
+    const combo = { pieces: ["tee", "jean", "sneak"].map(x => W.itemById.get(x)), score: 0 };
+    W._sugg.results = [combo]; W._sugg.idx = 0;
+    W._sugg.layerPick = { role: "layer", excludeId: null, showBlocked: true };
+    const html = W.suggestLayerPickHtml(combo);
+    const offered = html.includes('data-spickadd="blazerA"');   // rendered, tappable
+    W.suggestPickPiece("blazerA", "layer", null);
+    return eq([offered, combo.pieces.map(p => p.id), W._sugg.layerPick],
+              [true, ["tee", "jean", "sneak", "blazerA"], null]);
+  }));
+
+  /* ⚠️ Her report: *"if something is used as a shirt in a suggested outfit but
+     can be a layer, I should have the option to add a layer OR add a shirt (and
+     this top is now used as a layer)."* The parenthesis is the assertion — the
+     new shirt is spliced in BEFORE the old top, because layerPieceOf reads the
+     LAST layer-flagged top as the layer. Appending would leave the button-up
+     labelled "Top" and the tee labelled "Layer", i.e. backwards. */
+  t("adding a shirt under a layerable top makes that top the layer", () => withLayerCloset(() => {
+    const combo = { pieces: ["btn", "jean", "sneak"].map(x => W.itemById.get(x)), score: 0 };
+    W._sugg.results = [combo]; W._sugg.idx = 0;
+    const before = (W.layerPieceOf(combo.pieces) || {}).id || null;
+    const tops = combo.pieces.filter(p => p.category === "Tops");
+    const chipShows = !W.layerPieceOf(combo.pieces) && tops.length === 1 && W.isLayer(tops[0]);
+    const { cands } = W.suggestLayerCandidates(combo, { role: "top" });
+    W.suggestPickPiece("tee", "top", null);
+    const after = (W.layerPieceOf(combo.pieces) || {}).id || null;
+    return eq([before, chipShows, cands.map(i => i.id).sort(), combo.pieces.map(p => p.id), after],
+              [null, true, ["tank", "tee"], ["tee", "btn", "jean", "sneak"], "btn"]);
+  }));
+
+  /* ⚠️ Her report: *"when I change an outfit in the pack planner, it offers me
+     to log it today — which I never want to do — but not to save it as the
+     revised version for the pack plan."* The writeback existed but lived only in
+     the ✕ handler, so the one prominent button did the one thing she never
+     wants. The button's LABEL is the contract; a pack occasion is usually a
+     future day, so "Wear this today" is wrong about the date as well. */
+  t("the pack's suggester offers to save the outfit, never to log it today", () => {
+    const src = W.renderSuggestSheet.toString();
+    // The label branches on packOcc, and does so BEFORE planCtx — a pack
+    // occasion that also carried a plan context must still save, not log.
+    const labelI = src.indexOf('_sugg.packOcc ? "Use this outfit"');
+    const planI = src.indexOf("_sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET");
+    // The primary button's handler writes the outfit back to the occasion.
+    const saves = /_sugg\.packOcc\) wearBtn\.onclick[\s\S]{0,320}packSetOccasionOutfit\(cid, occId/.test(src);
+    // …and ✕ no longer commits, or the sheet would have no way to back out.
+    const closeCancels = /_sugg\.packOcc\) \{\s*_sugg\.packOcc = null;\s*hideSheet\("logSheet"\);\s*return;/.test(src);
+    return eq([labelI > -1, planI > -1, labelI < planI, saves, closeCancels],
+              [true, true, true, true, true]);
+  });
+
+  /* ⚠️ Her report: *"'what would you actually wear' only shows up sometimes
+     rather than always if an outfit is unlocked."* The card used to return ""
+     when the deal handed it no alternatives — which the deal legitimately does,
+     since r1 gives each look to ONE card. Two things were wrong: the review bar
+     still COUNTED that occasion, so it promised decisions over cards with
+     nothing on them, and unlock (built in r2 to re-open the question) looked
+     dead. Her decision ③ was every occasion, not the ambiguous few. */
+  t("the review asks its question even when the bag offers no alternative", () => {
+    const src = W.packOccCardHtml.toString();
+    // the early return on an empty deal is what the bug was
+    const bails = /alts\s*=\s*[^;]+;\s*if\s*\(!alts\.length\)\s*return\s*""/.test(src);
+    const asksAnyway = src.includes("pack-review-q") && src.includes("pack-review-none");
+    return eq([bails, asksAnyway], [false, true]);
+  });
+
+  /* ⚠️ Her report: *"the build it / change it myself should filter to what's in
+     the pack — with the option to add from outside the pack too."* builderPool
+     reads builder.scopeCapsuleId, which openBuilder takes from planCtx.capsuleId
+     — and the pack passed only packOcc, so revising opened the whole closet. It
+     LOOKED scoped whenever she was already in trip mode (builderPool also falls
+     back to tripModeId), which is why it survived: planning a trip that hadn't
+     started got the whole closet. The widen must exist in the RAIL too, since a
+     scoped builder defaults to pickAll. */
+  t("revising a pack outfit in the builder starts in the bag, with a widen", () => {
+    const pack = W.packBuildOccasion.toString();
+    const passesCapsule = /packOcc:\s*\{\s*cid:\s*st\.cid,\s*occId\s*\},\s*capsuleId:\s*st\.cid/.test(pack);
+    const openSrc = W.openBuilder.toString();
+    const readsIt = openSrc.includes("scopeCapsuleId: planCtx ? planCtx.capsuleId : null");
+    const picker = W.renderBuilderPicker.toString();
+    const rail = W.renderBuilderRail.toString();
+    const widenBoth = picker.includes("Whole closet") && rail.includes("Whole closet");
+    return eq([passesCapsule, readsIt, widenBoth], [true, true, true]);
+  });
+
   // ---- render summary ----
   await Promise.all(pending);
   const ul = document.getElementById("results");

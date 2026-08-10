@@ -4715,7 +4715,19 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
          cards offer the alternatives; a decided one just says so. */
       if (packChosenSet(st.cid).has(occ.id)) return "";
       const alts = packReviewOptions(st, occ).filter(x => packDistinct(x, cd));
-      if (!alts.length) return "";
+      /* ⚠️ THE QUESTION IS ALWAYS ASKED (2026-08-10 r4, her report: *"'what
+         would you actually wear' only shows up sometimes rather than always if
+         an outfit is unlocked"*). It used to `return ""` on an empty deal, and
+         the deal legitimately comes back empty: r1 hands each look to ONE card,
+         so a card can be left with nothing the others aren't already showing.
+         Two things were wrong with going silent. `packReviewQueue` still counts
+         that occasion, so the bar promised "5 decisions for you" over cards with
+         nothing to decide on them — and unlocking, which r2 built precisely to
+         re-open the question, appeared to do nothing. Her decision ③ was that
+         EVERY occasion is offered with a prominent skip, not the ambiguous few.
+         With no alternatives the honest card still confirms the outfit and keeps
+         both escapes ("I'd rather…" and See other outfits), and says why it has
+         nothing to put beside it rather than hiding. */
       const altLabels = packOptionLabels([cd, ...alts]).slice(1);
       const opt = (ids, label, cls, note) => `<button class="pack-review-opt${cls}" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(ids.join(","))}">
             <div class="pack-review-thumbs">${ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "tdl-minith")).join("")}</div>
@@ -4734,6 +4746,7 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
                                      [x.laundry ? "🧺 " + x.laundry : "",
                                       x.adds ? `+${x.adds} to your bag` : ""].filter(Boolean).join(" · "))).join("")}
         </div>
+        ${alts.length ? "" : `<div class="pack-review-none">Nothing else in the bag makes a different outfit for this one — other days have claimed what it could reuse.</div>`}
         <div class="pack-review-more">
           <button class="lnk" data-pack-rather="${esc(occ.id)}">I'd rather\u2026</button>
         </div>
@@ -5365,7 +5378,16 @@ function packBuildOccasion(occId) {
   $("#moveInner").querySelectorAll("[data-packrevise]").forEach(b => {
     b.onclick = () => {
       hideSheet("moveSheet");
-      if (b.dataset.packrevise === "canvas") openBuilder(null, null, { packOcc: { cid: st.cid, occId } }, ids);
+      /* ⚠️ `capsuleId` IS WHAT SCOPES THE PICKER (2026-08-10 r4, her report:
+         *"the build it / change it myself should filter to what's in the pack —
+         with the option to add from outside the pack too"*). `builderPool` reads
+         `builder.scopeCapsuleId`, which `openBuilder` takes from
+         `planCtx.capsuleId` — and this call passed only `packOcc`, so revising a
+         trip outfit opened the WHOLE closet. It happened to look scoped whenever
+         she was already in trip mode, because `builderPool` also falls back to
+         `tripModeId`; planning a trip that hadn't started got the whole closet.
+         The widen is the bag/closet chip bar in renderBuilderPicker. */
+      if (b.dataset.packrevise === "canvas") openBuilder(null, null, { packOcc: { cid: st.cid, occId }, capsuleId: st.cid }, ids);
       else packOpenSuggest(occId, { seedCombo: cd || null });
     };
   });

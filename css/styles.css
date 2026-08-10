@@ -389,6 +389,20 @@
   .sthumb { width: 44px; height: 44px; flex: none; border-radius: 9px; background: var(--panel) center/contain no-repeat; box-shadow: 0 1px 3px rgba(33,29,26,.08); }
   .sthumb.empty { display: flex; align-items: center; justify-content: center; background-color: var(--panel); }
   .sthumb.empty svg { width: 22px; height: 22px; stroke: var(--line); stroke-width: 1.5; fill: none; }
+
+  /* The suggester's layer / shirt picker (2026-08-10 r4). A horizontal strip of
+     REAL pieces, because the whole point is naming the one she wants instead of
+     accepting a random draw. Blocked pieces render dimmed with their reason and
+     stay tappable — the rules are the engine's guesses, the choice is hers. */
+  .sg-pick { margin: 10px 0 2px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .sg-pick-hdr { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .sg-pick-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+  .sg-pick-tile { flex: none; width: 64px; background: none; border: 0; padding: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
+  .sg-pick-tile.dim { opacity: .5; }
+  .sg-pick-nm { font-size: 10px; line-height: 1.2; text-align: center; color: var(--ink); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .sg-pick-why { font-size: 9.5px; line-height: 1.2; text-align: center; color: var(--accent); font-weight: 600; }
+  .sg-pick-more { font-size: 12px; font-weight: 600; color: var(--accent); padding: 6px 0 0; }
+  .sg-pick-note { font-size: 11px; color: var(--muted); padding-top: 6px; line-height: 1.35; }
   .tm-strip { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .tm-thumb { width: 48px; height: 48px; flex: none; border-radius: 8px; background: var(--panel) center/contain no-repeat; }
   .tm-thumb.empty { display: flex; align-items: center; justify-content: center; background-color: var(--panel); }
@@ -1223,6 +1237,9 @@
   .pack-review-opt.beyond { border-style: dashed; }
   .pack-review-cost { font-size: 10.5px; font-weight: 600; color: var(--accent); margin-top: 3px; }
   .pack-review-more { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+  /* Why this card has one option and not three. Stated, not hidden — the card
+     used to render nothing at all here, which read as the question failing. */
+  .pack-review-none { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
 
   /* The full-screen options list. A ROW per outfit rather than a horizontal
      strip: this screen exists because three chips on a card weren't enough

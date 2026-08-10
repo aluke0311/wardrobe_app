@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r3";
+const APP_VERSION = "2026-08-10 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,13 @@ const APP_VERSION = "2026-08-10 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r4", notes: [
+    "Changing a pack outfit now SAVES it. The only button on that screen offered to log the outfit as worn today — the thing you never want — while saving it to the trip was hidden in the ✕. It reads \"Use this outfit\" now, and ✕ means never mind",
+    "You can pick the layer you actually want. ＋ Layer used to add a random one out of a list you couldn't see, and it disappeared entirely once an outfit already had a layer. Now it shows you the pieces by name, ⇄ changes the one that's there, and anything the app filtered out is still listed — dimmed, with the reason (\"in the wash\", \"not Smart Casual\") — and you can still choose it",
+    "New: ＋ Shirt. If an outfit is wearing a shirt that can also be a layer, you can add a top underneath and that shirt becomes the layer",
+    "\"Change it myself\" opens your suitcase, not your whole closet — with a Whole closet tap when you do want something from outside the bag",
+    "\"Which would you actually wear?\" now appears on every undecided outfit. It used to vanish whenever the other days had claimed all the alternatives, so unlocking an outfit could look like it did nothing",
+  ] },
   { v: "2026-08-10 r3", notes: [
     "Fixed: every row in a trip's ⋯ menu did nothing. By-day plan, Add items, Rename, Dates, Duplicate, Share, Archive, Delete — all of them. They were wired to handlers that can't see inside a sheet, and only Locations (which was wired differently) ever worked",
     "The by-day plan is yours to arrange. Every occasion you picked has 📅 Move day right on its card, each one says whether the day is your choice or the app's, and \"Keep these days\" pins the lot where they are so nothing gets re-spread",

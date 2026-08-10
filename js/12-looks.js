@@ -1759,6 +1759,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.tmPick = null;                // set only by openTomorrowRevise
   _sugg.packOcc = null;               // set only by packOpenSuggest
   _sugg.varyFrom = null;              // set only by openVaryLook
+  _sugg.layerPick = null;             // the open layer/shirt picker, if any
   // Default pool is THE RACK (2026-07-26). Her four conditions when she approved
   // the narrowing: the rack is always a visible screen, the suggester always
   // names its pool with a count and a one-tap widen, pull-in works from
@@ -2427,6 +2428,107 @@ function addSuggestionLayer() {
   renderSuggestSheet();
 }
 
+/* ---- PICKING A LAYER (or a shirt under one) BY NAME -----------------------
+   2026-08-10 r4, two of her reports at once:
+   *"trying to use the suggester to add a particular layer that I know is in the
+   bag but it won't add it"*, and *"if something is used as a shirt in a
+   suggested outfit but can be a layer, I should have the option to add a layer
+   OR add a shirt (and this top is now used as a layer)"*.
+
+   ⚠️ "＋ Layer" NEVER LET HER NAME A PIECE. It drew at RANDOM from a candidate
+   list she couldn't see (addSuggestionLayer, above — still used by nothing but
+   the old random path), so asking for one particular cardigan was a coin flip,
+   and when the piece she wanted had been filtered out the app said "No layer
+   fits this look" — about a bag she was looking at. Seven filters can remove it
+   (photo, no-suggest, an exclusion pair, the clean lens, the hard target level,
+   season/weather, cohesion) and NOT ONE of them was named on screen. That is
+   the invisible-narrowing mistake the rack's four conditions exist to prevent:
+   name the pool, count it, and put the widen one tap away.
+
+   ⚠️ So a blocked piece is SHOWN, with its reason, and she can still add it.
+   The filters are the engine's guesses about what goes together; "I want this
+   cardigan" is a decision. Same line as "locking an off-rack piece must never
+   fail" — the difference between a tool and a cage. */
+function suggestLayerSlotOk(i, role) {
+  return role === "top"
+    ? suggestSlot(i) === "Tops"
+    : (suggestSlot(i) === "Outerwear" || (isLayer(i) && i.category === "Tops"));
+}
+function suggestLayerCandidates(combo, { role = "layer", excludeId = null } = {}) {
+  const pool = _suggPool();               // bans already excluded; the bag in pack mode
+  const others = combo.pieces.filter(p => p.id !== excludeId);
+  const have = new Set(others.map(p => p.id));
+  const ls = laundryState();
+  const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
+  const cands = [], blocked = [];
+  for (const i of pool) {
+    if (have.has(i.id) || i.id === excludeId) continue;
+    if (!suggestLayerSlotOk(i, role)) continue;   // wrong slot entirely — not a near miss
+    if (isNoSuggest(i)) continue;                  // she took it out of suggestions herself
+    let why = null;
+    if (!i.image_path) why = "no photo yet";
+    else if (others.some(p => isExcluded(i.id, p.id))) why = "you ruled out this pairing";
+    else if (_suggCleanArg() && !suggestibleClean(i, ls)) why = "in the wash";
+    else if (_sugg.targetLevel && !(itemFormalitySet(i) || []).includes(_sugg.targetLevel))
+      why = `not ${occLabel(_sugg.targetLevel) || "that level"}`;
+    else if (!inSeasonWx(i, _sugg.season, _suggWx())) why = "wrong for the weather";
+    else {
+      const test = [...others, i];
+      if (test.some(isPureFunc) && !test.every(p => (itemFormalitySet(p) || []).includes(1))) why = "workout gear";
+      else if (!comboSharesALevel(test)) why = "shares no level with the rest";
+    }
+    if (why) blocked.push({ i, why }); else cands.push(i);
+  }
+  const nm = x => (x.name || x.subcategory || "").toLowerCase();
+  cands.sort((a, b) => nm(a).localeCompare(nm(b)));
+  blocked.sort((a, b) => nm(a.i).localeCompare(nm(b.i)));
+  return { cands, blocked };
+}
+/* Put the chosen piece in. ⚠️ ROLE DECIDES THE POSITION, and it has to:
+   `layerPieceOf` reads the LAST layer-flagged top as the layer, so a new base
+   shirt is spliced in BEFORE the existing top — which is exactly what makes
+   "and this top is now used as a layer" true rather than just claimed. */
+function suggestPickPiece(itemId, role, excludeId) {
+  const combo = _sugg.results[_sugg.idx];
+  if (!combo) return;
+  const it = itemById.get(itemId);
+  if (!it) return;
+  let pieces = combo.pieces.filter(p => p.id !== excludeId && p.id !== itemId);
+  if (role === "top") {
+    const at = pieces.findIndex(p => p.category === "Tops");
+    if (at >= 0) pieces.splice(at, 0, it); else pieces.unshift(it);
+  } else pieces = [...pieces, it];
+  combo.pieces = pieces;
+  _sugg.layerPick = null;
+  renderSuggestSheet();
+}
+function suggestLayerPickHtml(combo) {
+  const lp = _sugg.layerPick;
+  if (!lp) return "";
+  const { cands, blocked } = suggestLayerCandidates(combo, lp);
+  const noun = lp.role === "top" ? "shirt" : "layer";
+  const title = lp.role === "top" ? "Add a shirt under it"
+              : lp.excludeId ? "Change the layer" : "Add a layer";
+  const tile = (i, why) => `<button class="sg-pick-tile${why ? " dim" : ""}" data-spickadd="${esc(i.id)}">
+      ${thumbHtml(i.image_path, "sthumb")}
+      <div class="sg-pick-nm">${esc(i.name || i.subcategory || "Piece")}</div>
+      ${why ? `<div class="sg-pick-why">${esc(why)}</div>` : ""}
+    </button>`;
+  return `<div class="sg-pick">
+    <div class="sg-pick-hdr">
+      <span>${esc(title)} · ${cands.length} from this ${_sugg.capsuleId ? "bag" : "pool"}</span>
+      <button class="lnk" data-spickclose>Cancel</button>
+    </div>
+    ${cands.length
+      ? `<div class="sg-pick-row">${cands.map(i => tile(i, null)).join("")}</div>`
+      : `<div class="muted" style="font-size:12px;padding:2px 0 4px">Nothing here fits as a ${noun} on the engine's rules.</div>`}
+    ${blocked.length ? (lp.showBlocked
+      ? `<div class="sg-pick-row">${blocked.map(b => tile(b.i, b.why)).join("")}</div>
+         <div class="sg-pick-note">Tap one anyway if you want it — these are the app's rules, not yours.</div>`
+      : `<button class="lnk sg-pick-more" data-spickmore>${blocked.length} more ${blocked.length === 1 ? "isn't" : "aren't"} offered — show ${blocked.length === 1 ? "it" : "them"} anyway</button>`) : ""}
+  </div>`;
+}
+
 // "Wear this today" (non-plan): a suggested outfit logs AS AN OUTFIT — create-or-
 // merge a real look (saveComboAsOutfit dedups by item-set + saves the layout), then
 // log one wear row per piece with that outfit_id. Same soft dup guard as
@@ -2615,11 +2717,25 @@ function renderSuggestSheet() {
             ${suggCanRemove(combo, p) ? `<button class="cap-chip" data-sdrop="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Take it out of this outfit">✕</button>` : ""}
           </span>`;
         }).join("")}
+        ${/* ⚠️ "＋ Layer" USED TO VANISH once a look had one, so the only way to
+              a DIFFERENT layer was ✕ then a fresh random draw. Now: ⇄ changes it,
+              × removes it, and both open the picker rather than rolling dice. */""}
         ${!layerPc
-          ? `<button class="cap-chip" data-saddlayer style="font-size:12px">＋ Layer</button>`
-          : (_sugg.locked.has(layerPc.id) ? "" : `<button class="cap-chip" data-sunlayer="${esc(layerPc.id)}" style="font-size:12px">× Layer</button>`)}
+          ? `<button class="cap-chip" data-spicklayer="" style="font-size:12px">＋ Layer</button>`
+          : (_sugg.locked.has(layerPc.id) ? "" :
+             `<button class="cap-chip" data-spicklayer="${esc(layerPc.id)}" style="font-size:12px">⇄ Layer</button>
+              <button class="cap-chip" data-sunlayer="${esc(layerPc.id)}" style="font-size:12px">× Layer</button>`)}
+        ${/* Her ask: a layer-capable top being worn AS the shirt should be able to
+              become the layer, by putting a shirt under it. Offered only when
+              that's actually the situation — one top, and it can layer. */""}
+        ${(() => {
+          const tops = combo.pieces.filter(p => p.category === "Tops");
+          return (!layerPc && tops.length === 1 && isLayer(tops[0]))
+            ? `<button class="cap-chip" data-spickshirt style="font-size:12px">＋ Shirt</button>` : "";
+        })()}
       </div>`;
       })() : ""}
+      ${combo ? suggestLayerPickHtml(combo) : ""}
       ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it · ⃠ swaps it out · ✕ takes it out${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
       ${nav}
       ${suggestStarvationNote()}
@@ -2628,7 +2744,19 @@ function renderSuggestSheet() {
     </div>
     ${combo ? `
     <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
-      <button class="btn" data-swear>${_sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date))) : "Wear this today"}</button>
+      ${/* ⚠️ THE PACK SAVES, IT DOES NOT LOG (2026-08-10 r4, her report: *"when I
+            change an outfit in the pack planner, it offers me to log it today —
+            which I never want to do — but not to save it as the revised version
+            for the pack plan"*). The writeback existed but lived ONLY in the ✕
+            handler, so the single prominent button on the screen did the one
+            thing she never wants, and the thing she came for had no control at
+            all. Logging a trip outfit belongs to the trip dash and the by-day
+            plan ("Wore it"), never here — a pack occasion is usually a FUTURE
+            day, so "wear this today" is wrong about the date as well. */""}
+      <button class="btn" data-swear>${
+        _sugg.packOcc ? "Use this outfit"
+        : _sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date)))
+        : "Wear this today"}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
       <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>✨ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
@@ -2641,12 +2769,14 @@ function renderSuggestSheet() {
        packing list or from outside of it"). Whatever it ends as becomes that
        occasion's outfit. The pool starts at the suitcase and the sheet's own
        one-tap widen is the "or from outside of it" — no second control. */
+    /* ⚠️ ✕ NOW CANCELS (2026-08-10 r4). It used to be the ONLY way to save an
+       occasion's revision, which is why she reported having no way to save one
+       — a writeback nothing on screen named. With "Use this outfit" carrying
+       that job explicitly, a close that also committed would mean the sheet had
+       no way to back out at all. Save is the button; ✕ is "never mind". */
     if (_sugg.packOcc) {
-      const c = _sugg.results[_sugg.idx];
-      const { cid, occId } = _sugg.packOcc;
       _sugg.packOcc = null;
       hideSheet("logSheet");
-      if (c) packSetOccasionOutfit(cid, occId, c.pieces.map(p => p.id));
       return;
     }
     // Opened from the Tomorrow card: whatever it ends as is what the card keeps.
@@ -2663,6 +2793,8 @@ function renderSuggestSheet() {
 
   const regen = () => {
     _sugg.idx = 0;
+    // A picker open over the OLD combo would add its piece to a different outfit.
+    _sugg.layerPick = null;
     _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
     renderSuggestSheet();
   };
@@ -2836,6 +2968,31 @@ function renderSuggestSheet() {
 
   const addLayerBtn = $("#logInner").querySelector("[data-saddlayer]");
   if (addLayerBtn) addLayerBtn.onclick = () => addSuggestionLayer();
+  // The layer/shirt picker: open, close, widen, choose.
+  $("#logInner").querySelectorAll("[data-spicklayer]").forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      _sugg.layerPick = { role: "layer", excludeId: b.dataset.spicklayer || null, showBlocked: false };
+      renderSuggestSheet();
+    };
+  });
+  const pickShirt = $("#logInner").querySelector("[data-spickshirt]");
+  if (pickShirt) pickShirt.onclick = (e) => {
+    e.stopPropagation();
+    _sugg.layerPick = { role: "top", excludeId: null, showBlocked: false };
+    renderSuggestSheet();
+  };
+  const pickClose = $("#logInner").querySelector("[data-spickclose]");
+  if (pickClose) pickClose.onclick = () => { _sugg.layerPick = null; renderSuggestSheet(); };
+  const pickMore = $("#logInner").querySelector("[data-spickmore]");
+  if (pickMore) pickMore.onclick = () => { _sugg.layerPick.showBlocked = true; renderSuggestSheet(); };
+  $("#logInner").querySelectorAll("[data-spickadd]").forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const lp = _sugg.layerPick || {};
+      suggestPickPiece(b.dataset.spickadd, lp.role || "layer", lp.excludeId || null);
+    };
+  });
   const unLayerBtn = $("#logInner").querySelector("[data-sunlayer]");
   if (unLayerBtn) unLayerBtn.onclick = () => {
     const combo2 = _sugg.results[_sugg.idx];
@@ -2845,8 +3002,10 @@ function renderSuggestSheet() {
   };
 
   const go = (dir) => {
-    if (dir === "next" && _sugg.idx < total - 1) { _suggSlideDir = "next"; _sugg.idx++; renderSuggestSheet(); }
-    else if (dir === "prev" && _sugg.idx > 0) { _suggSlideDir = "prev"; _sugg.idx--; renderSuggestSheet(); }
+    // Moving to another outfit closes the picker — its candidate list was
+    // computed against the one she was looking at.
+    if (dir === "next" && _sugg.idx < total - 1) { _suggSlideDir = "next"; _sugg.idx++; _sugg.layerPick = null; renderSuggestSheet(); }
+    else if (dir === "prev" && _sugg.idx > 0) { _suggSlideDir = "prev"; _sugg.idx--; _sugg.layerPick = null; renderSuggestSheet(); }
   };
   const prevBtn = $("#logInner").querySelector("[data-sprev]");
   const nextBtn = $("#logInner").querySelector("[data-snext]");
@@ -2883,7 +3042,16 @@ function renderSuggestSheet() {
   });
 
   const wearBtn = $("#logInner").querySelector("[data-swear]");
-  if (wearBtn && combo && _sugg.planCtx) wearBtn.onclick = async () => {
+  /* Pack occasion: the button IS the save. Ordered first so it wins over the
+     planCtx branch — packOpenSuggest deliberately passes no planCtx, but a
+     future caller passing both should still save to the occasion. */
+  if (wearBtn && combo && _sugg.packOcc) wearBtn.onclick = () => {
+    const { cid, occId } = _sugg.packOcc;
+    _sugg.packOcc = null;
+    hideSheet("logSheet");
+    packSetOccasionOutfit(cid, occId, combo.pieces.map(p => p.id));
+  };
+  else if (wearBtn && combo && _sugg.planCtx) wearBtn.onclick = async () => {
     const pc = _sugg.planCtx;
     try {
       const oid = await saveComboAsOutfit(combo.pieces);

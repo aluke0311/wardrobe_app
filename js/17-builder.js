@@ -111,13 +111,25 @@ function renderBuilderRail() {
     ? list.map(i => `<div class="bld-rail-item${have.has(i.id) ? " in" : ""}" data-railadd="${esc(i.id)}" data-photo="${esc(i.image_path || "")}"></div>`).join("")
     : `<div class="muted" style="padding:20px 12px;font-size:13px">No items</div>`;
   let chips = "";
+  /* The same named-pool + one-tap widen as the full picker. ⚠️ It has to be HERE
+     too: a capsule-scoped builder defaults to `pickAll`, i.e. this rail is the
+     mode she actually lands in, and a widen that only exists on the screen she
+     never opens is no widen at all. */
+  if (builder.planCtx && builder.planCtx.packOcc) {
+    const cid = builder.planCtx.packOcc.cid;
+    const n = (capsuleLinkMap.get(cid) || []).length;
+    const sc = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
+    chips += `<div class="cap-catbar" style="padding:0 10px 6px">${
+      sc(cid, `\u{1F9F3} In the bag · ${n}`, builder.scopeCapsuleId === cid)}${
+      sc("", "Whole closet", !builder.scopeCapsuleId)}</div>`;
+  }
   if (builder.pickAll) {
     const pool = builderPool();
     const counts = new Map();
     for (const i of pool) { const c = i.category || "Other"; counts.set(c, (counts.get(c) || 0) + 1); }
     const cats = [...counts.keys()].sort((a, b) => { const r = catRank(a) - catRank(b); return r !== 0 ? r : a.localeCompare(b); });
     const chip = (key, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-railcat="${esc(key)}">${esc(lbl)}</button>`;
-    chips = `<div class="cap-catbar" style="padding:0 10px 6px">${chip("", `All ${pool.length}`, !builder.pickCat)}${cats.map(c => chip(c, `${c} ${counts.get(c)}`, builder.pickCat === c)).join("")}</div>`;
+    chips += `<div class="cap-catbar" style="padding:0 10px 6px">${chip("", `All ${pool.length}`, !builder.pickCat)}${cats.map(c => chip(c, `${c} ${counts.get(c)}`, builder.pickCat === c)).join("")}</div>`;
   }
   const backBtn = builder.pickAll
     ? `<button class="lnk" data-railbrowse>🗂 Browse</button>`
@@ -249,9 +261,20 @@ function renderBuilderPicker() {
   const q = builder.pickQ.trim();
   const backLabel = builder.pickSub ? builder.pickCat : builder.pickCat && !q ? "Categories" : "Done";
   const title = builder.pickSub ? builder.pickSub : builder.pickCat && !q ? builder.pickCat : "Add clothing";
+  const chip = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
   let capBar = "";
-  if (!builder.planCtx && capsules.length) {
-    const chip = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
+  /* ⚠️ THE PACK GETS A NAMED POOL AND A ONE-TAP WIDEN — the rack's rule, which
+     applies to any surface that narrows what she can reach. Revising a trip
+     outfit starts in the suitcase (that's the question she's answering), and
+     "Whole closet" is the "or from outside the pack too" half of her ask. The
+     full capsule list would be noise here: only one trip is in play. */
+  if (builder.planCtx && builder.planCtx.packOcc) {
+    const cid = builder.planCtx.packOcc.cid;
+    const n = (capsuleLinkMap.get(cid) || []).length;
+    capBar = `<div class="cap-catbar" style="padding-top:6px">${
+      chip(cid, `\u{1F9F3} In the bag · ${n}`, builder.scopeCapsuleId === cid)}${
+      chip("", "Whole closet", !builder.scopeCapsuleId)}</div>`;
+  } else if (!builder.planCtx && capsules.length) {
     capBar = `<div class="cap-catbar" style="padding-top:6px">${chip("", "All", !builder.scopeCapsuleId)}${capsules.map(c => chip(c.id, c.name, builder.scopeCapsuleId === c.id)).join("")}</div>`;
   }
   body.innerHTML = `
