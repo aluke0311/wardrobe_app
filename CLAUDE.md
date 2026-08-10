@@ -227,6 +227,99 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-09 r1–r5 — THE PACKING REWORK, ROUNDS 2–6. Selftest 365 → **374**,
+all green; every new case mutation-checked red in the same session.** Five
+rounds off her live use, each one finding something structural the previous
+round's fix had exposed.
+
+⚠️ **r1 — THE REVIEW WAS RESHUFFLING A BAG SHE HAD NO SAY IN.** Her words:
+*"it treats the pack as built… all from within one settled bag. If I don't like
+those options the way to change is not clear. I want input before the bag is
+finalized."* **Measured: 21 alternatives offered across 8 occasions against
+3,171 that existed in her closet at those levels — 0.7%.** `packReviewOptions`
+hard-filtered to the bag, and the bag came from `packFill` with no input from
+her. `packReviewBeyond` draws from the trip rack, cheapest-first, each option
+priced ("+1 to your bag"); choosing one flows through `packRepack`'s UNION, so
+the pieces join the bag. **That union was the r1 audit fix; this is the second
+thing it bought.** Also: definites became a pre-build INPUT, and "I'd rather…"
+RE-SOLVES the day rather than re-picking inside the old bag.
+
+⚠️ **r2 — ONE PICKER, ONE DOOR, AND A COUNT THAT MATCHED ITS LIST.** Her
+reports: the definites screen was "bizarre" (the pack had grown a second item
+picker with none of the funnel/laundry-lens/status/category machinery the real
+one has); "See all the options" and "See other outfits" were one door with two
+names; and ✨ Another / Suggester / Other options *"are not clear what they
+do"* — three doors onto "show me a different outfit", none named that.
+**Two defects found by RENDERING the new options page:** it said "52 from your
+bag" while showing 40, and TWO tiles rendered as "What you have now" because the
+enumeration held outfits differing only by shoes. Deduped on `packLookKey`.
+
+⚠️ **r3 — "CHANGE IT MYSELF" OPENED A BLANK CANVAS.** `saveComboAsOutfit` takes
+an ARRAY and was handed an object; it threw, the catch swallowed it, `openBuilder`
+got a null id. **Creating a look just to open the builder was the wrong shape
+anyway** — every tap would leave a record, which is the Looks-list flooding that
+got bulk creation removed. `openBuilder` takes `seedIds`; the look is created at
+SAVE. Also **scheduling**: her ask *"need to be able to schedule the contexts,
+not just have things auto-assigned to days"*.
+⚠️ **The first scheduling version silently ignored her.** `_nth` is assigned as
+occasions are PLACED, so the loop looked for a pin on `#0`, found none and
+stopped — a pin on `#2` was never reached — and placing pinned ones first would
+have renumbered them and changed the id the pin is keyed on. **Ids are minted up
+front now.** Only `selected` occasions are schedulable: their ids are date-free
+(D6), so moving one keeps its outfit; a declared or floor occasion is keyed BY
+its date. Measured: the target lands on the chosen day and all four untouched
+days keep their outfits.
+
+⚠️ **r4 — PACKING FROM OUTFITS SHE HAS ACTUALLY WORN.** Her ask: *"you KNOW
+those are outfits I would create. The packer is still creating outfits I
+wouldn't really wear."* **Measured first: 298 worn outfits fitted each occasion's
+level and exactly 2 survived inside the bag `packFill` built from slot RATES.**
+Picking pieces first is what destroys the combinations — inversion ① from the
+other end.
+- **Three tiers in `packCandidates`:** worn → shape she rebuilds (`formulaKeyFor`,
+  her suggestion) → generated. **Tier 3 never disappears.** Proof is still gated
+  on availability, level, weather, exclusions and her stated rules.
+- ⚠️ **`packProvenSeed` is what makes the tiers real.** Filtering proven
+  candidates to a bag chosen on other grounds is why only 2 of 298 survived, so
+  proven outfits are chosen FIRST and their union seeds the bag. **Distinctness
+  is required there or it degenerates instantly — measured, 8 occasions collapsed
+  to 1 outfit and 2 pieces.**
+- ⚠️ **A TIER, NOT A THUMB ON THE SCALE (her decision).** Sitting proven
+  candidates in the list did nothing — the solver costs by pieces added and
+  repetition and never read them. `PACK_WORN_BONUS`(600) is deliberately below
+  `added * 1000`, `PACK_REPEAT_DAY`(1500) and the violation term (5000), so it
+  can never grow the bag, buy a repeat, or dress her in something dirty. **A case
+  asserts that against the constants directly** — an outcome can't tell
+  "preferred" from "forced".
+- **Result: every assigned outfit on a 7/10/14-day trip is one she has worn or in
+  a shape she wears. Zero invented.**
+- ⚠️ **The ordering case was VACUOUS on first write and survived its own
+  mutation** — with generated candidates first, the `packLookKey` dedup ERASES
+  the proven ones, so "no generated candidates" satisfied the assertion
+  trivially. It needs both tiers present to mean anything.
+
+⚠️ **r4 also — ONE LIST OF WHAT'S COMING.** `capsule_items` and `rec.pieces`
+were two, and `packSyncMembers` computes `drop = members − bag − packed` — so
+**a piece added from the trip's Add-items screen was DELETED at the next pack
+edit.** Ten callers reach `addItemsToCapsule`, so the sync lives there rather
+than in ten patches (`syncPack:false` marks the projection, or it recurses).
+
+**r5 — ONE TRIP SCREEN.** Plan · Bag · Outfits, section chosen by `tripPhase`.
+⚠️ **It ABSORBS, it doesn't delete** — she asked "do we lose anything?" and the
+answer is only if the detail page's administration is dropped, so rename, dates,
+duplicate, share, archive, delete, locations and weather moved to a ⋯ menu
+**carrying the same data attributes**, i.e. one implementation, not two. Undated
+capsules keep the old page. Composes the existing renderers so Bag and Outfits
+can't drift.
+⚠️ **Every pack screen scrolled sideways by 14px, and had been before this
+round** — the "Day by day" row is `.frow` (width:100%) plus 14px side margins.
+**The 181px `.log-cta` trap from the other direction**; fixed with `calc()`, and
+a case now measures all three sections plus the fold.
+
+**STILL NOT BUILT:** finalise ("I'm done packing" + the deterministic conflict
+check + a what-changed trail), and the learned-preference PROPOSAL (choice
+evidence has been accumulating in `kv "ctxchoices"` since 2026-08-08 r4).
+
 **2026-08-08 r2–r4 — THE PACKING REWORK. Selftest 357 → **365**, all green.**
 Driven by a design document she brought (a decision-authority philosophy written
 about packing) plus the r1 audit. **Her decisions, taken as answers to direct
@@ -2740,7 +2833,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-08 r4`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-09 r5`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3087,7 +3180,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **365/365** (2026-08-08 r4, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **374/374** (2026-08-09 r5, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
