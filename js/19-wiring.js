@@ -761,6 +761,7 @@ function wireEvents() {
     if (e.target.closest("[data-trip-definites]"))
       return openCapsulePicker(capsuleId, { mode: "definites",
         back: () => { capsuleView = "trip"; _tripSection = "plan"; renderCapsules(); } });
+    if (e.target.closest("[data-trip-laundry]")) return openTripLaundrySheet();
     const tripMode = e.target.closest("[data-trip-mode]");
     if (tripMode) return (async () => {
       await savePackRecord(capsuleId, { mode: tripMode.dataset.tripMode });

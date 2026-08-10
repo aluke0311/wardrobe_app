@@ -308,6 +308,61 @@ not assertable: holding one more lock can legitimately leave the same optimum
 (0 days moved on one fixture, 5 on another). **The case breaks a day by dropping
 a piece and asserts only a re-solve can fill it back in.**
 
+**2026-08-10 r2 — THE REVIEW CAN SEE THE LAUNDRY, AND UNLOCK RE-OPENS THE
+QUESTION. Selftest 378 → **382**, run green; all 4 new cases mutation-checked
+red in the same session.** Her report: *"if I unlock an outfit, I want it to show
+me the alternatives again. And it should stop offering or flag for me if I've
+chosen something too many times for laundry. Maybe the bag should have a laundry
+setting? I will/won't do laundry on this trip. Right now I've selected the same
+t shirt 4 times and that's a problem."*
+
+⚠️ **UNLOCK CLEARED HALF OF WHAT A CHOICE WRITES.** `packChooseOutfit` writes
+BOTH `chosen` (decided → the review row hides) and `locked` (held through every
+re-solve); `packToggleLock` only ever cleared the second. So unlocking gave her
+an editable card with nothing to compare against and no way back to the
+comparison short of choosing something else. ⚠️ **Locking does NOT mark it
+chosen** — `packSkipReview` already marks decided without locking, so making
+lock imply chosen would collapse two things she does for different reasons.
+
+⚠️ **THE REVIEW WAS STRUCTURALLY BLIND TO LAUNDRY, and it is the one narrowing
+`packCandidates` deliberately doesn't do.** `cleanOnly=FALSE` is correct there —
+laundry is a SCHEDULE constraint, not a pool filter (inversion ②) — so every
+option was legal in isolation and nothing costed the fourth wear of one tee. The
+solver knew; **the review, which is where r1 moved the actual choosing, didn't.**
+- **`packLaundryProbe(st)`** re-walks the WHOLE TRIP through `packSchedule` with
+  one occasion's outfit swapped in. It does not count wears inside the outfit —
+  placement is what decides this, and the same four wears are fine either side
+  of a wash day.
+- ⚠️ **TWO ANSWERS, NOT ONE.** `over` = "would a piece in THIS outfit be past its
+  wears" and drives the LABEL; `cost` = the delta against what's already planned
+  and drives the RANKING. Getting this wrong is silent: an option that merely
+  MOVES a violation from one tee to another has cost 0 and rendered as clean.
+- **Ranked down, never removed** — `[over, cost]` leads the deal's key, ahead of
+  weight and freshness. On a trip whose whole bag is over the line every option
+  is flagged, which is the honest answer; removing them empties the card.
+- ⚠️ **`packLaundryNote` NAMES THE DAY when the violation isn't on this card's
+  own date.** The schedule is trip-wide, so putting a tee on Monday can be what
+  pushes its FRIDAY wear over — and "2nd wear of the white tee" on day one reads
+  as an outright error. **Found by rendering the cards**: every option on the
+  first day carried a 2nd-wear flag.
+- **A day whose own outfit is over gets `.pack-occ-laun`** on the card. The fact
+  was already derived and already shown — on the ITEMS screen, three taps from
+  where she was choosing. ⚠️ It states the count and stops; **no wash order**
+  (2026-08-03 r6).
+
+⚠️ **"WILL I DO LAUNDRY ON THIS TRIP" IS A CONTROL NOW.** It was a sentence on
+the Plan tab pointing at the by-day planner — which is folded away behind "Day
+by day", so the single input that decides how many tees the trip needs lived
+three taps from the screen that decides how many tees the trip needs.
+**`openTripLaundrySheet`** writes the **same `PLAN_LAUNDRY` sentinel** the by-day
+planner writes, so `packSchedule`, `packSolve` and `packMidTripWash` all see it —
+two controls, one fact, zero new state. ⚠️ **"No laundry" is not stored as an
+answer**: it is the absence of wash days, which is what the schedule already
+assumes, and a stored "no" would be a second way to say the same thing that
+could disagree. ⚠️ It re-solves afterwards holding her locks — it changes the
+constraint the outfits were solved under. **Measured on a scarce 8-day fixture:
+one mid-trip wash day took violations 3 → 0 and flagged options 25 → 4.**
+
 **▶ PICKING THIS UP COLD? Read `HANDOFF_2026-08-09.md` in the repo root.** It
 carries the current state, her locked decisions from this arc, what is
 deliberately NOT built, and — most importantly — **what has not been verified**:
@@ -2921,7 +2976,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-10 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-10 r2`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3268,7 +3323,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **378/378** (2026-08-10 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **382/382** (2026-08-10 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

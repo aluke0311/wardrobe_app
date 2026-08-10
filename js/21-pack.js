@@ -3398,10 +3398,21 @@ function tripPlanSectionHtml(c, st) {
       flexible: "More options and backups." }[mode])}${
       st ? ` · about ${packCoreOptional(st).core.length + spare} pieces` : ""}</div>
 
+    ${/* ⚠️ THE LAUNDRY QUESTION IS ASKED HERE NOW (2026-08-10 r2, her ask:
+          "maybe the bag should have a laundry setting? I will/won't do laundry
+          on this trip"). It was a sentence pointing at the by-day planner —
+          which is folded away behind "Day by day", so the one input that
+          decides how many tees the trip needs lived three taps from the screen
+          that decides how many tees the trip needs.
+          ⚠️ ZERO NEW STATE: it writes the SAME PLAN_LAUNDRY sentinel the by-day
+          planner writes, which packSchedule, packSolve and packMidTripWash all
+          already read. Two controls, one fact. */""}
     <div class="fld" style="margin-top:16px">Laundry</div>
     <div class="pack-warn-note" style="padding:2px 0 6px">${washDays.length
-      ? `Washing on ${esc(washDays.map(d => fmtDate(d)).join(", "))} — set on the by-day planner.`
-      : `No wash planned. Set a laundry day on the by-day planner if you'll have one.`}</div>
+      ? `Washing on ${esc(washDays.map(d => fmtDate(d)).join(", "))} — everything resets that day, so the pack can be smaller.`
+      : `No wash on this trip, so nothing can go out more times than it has clean wears.`}</div>
+    <button class="btn btn-sec" data-trip-laundry style="width:100%">${washDays.length
+      ? "Change your wash days" : "I'll do laundry on this trip"}</button>
 
     <button class="btn" data-trip-build style="margin:14px 0 8px">${
       packRecord(cid).built ? "✨ Rebuild the pack" : "✨ Build the pack"}</button>
@@ -4096,6 +4107,70 @@ const PACK_REVIEW_SUPPLY = 4;
 // How much of one card may cost weight. One: enough to tell the cards apart,
 // never enough to repack the bag from a review row.
 const PACK_REVIEW_BEYOND_MAX = 1;
+
+/* ---- what an option would do to the laundry (2026-08-10 r2) ---------------
+   Her report: *"it should stop offering or flag for me if I've chosen something
+   too many times for laundry. Right now I've selected the same t shirt 4 times
+   and that's a problem."*
+
+   She was right and the review was structurally blind to it. `packCandidates`
+   passes `cleanOnly=false` ON PURPOSE — laundry is a SCHEDULE constraint here,
+   not a pool filter (inversion ②) — so every option was laundry-legal in
+   isolation and nothing costed the fourth wear of one tee. The solver knew;
+   the review didn't, and the review is where she now makes the choice.
+
+   ⚠️ IT RE-WALKS THE WHOLE TRIP, it does not count wears in the outfit. Placement
+   is what decides this: the same four wears are fine either side of a wash day
+   and a violation without one. `packSchedule` already answers exactly this
+   question with a DATE, so the probe swaps one occasion's outfit into the real
+   assignment and asks it again.
+   ⚠️ TWO ANSWERS, AND THEY ARE NOT THE SAME QUESTION. `over` is "would a piece
+   in THIS outfit be past its wears" — that is what the label must say, because
+   an option that merely MOVES a violation from one tee to another shows a delta
+   of zero and would otherwise render as clean. `cost` is the delta against
+   what's already planned, which is what the ranking needs: a day that is
+   already over shouldn't make every option for it look equally bad, and an
+   option that FIXES a violation elsewhere scores below zero. */
+function packLaundryProbe(st) {
+  const base = assignOf(st.demand, st.res.assign);
+  const dates = tripDates(st.c);
+  const washDays = packWashDays(st.c);
+  const ls = laundryState();
+  const dateOf = new Map(st.demand.map(o => [o.id, o.date]));
+  const was = packSchedule(base, { dates, ls, washDays }).violations.length;
+  return (occId, ids) => {
+    const date = dateOf.get(occId);
+    if (!date) return { cost: 0, over: [] };
+    let found = false;
+    const swapped = base.map(a => {
+      if (a.occId !== occId) return a;
+      found = true;
+      return { ...a, ids };
+    });
+    if (!found) swapped.push({ date, ids, occId });
+    const v = packSchedule(swapped, { dates, ls, washDays }).violations;
+    const mine = new Set(ids);
+    return { cost: v.length - was, over: v.filter(x => mine.has(x.itemId)) };
+  };
+}
+/* "3rd wear of the white tee" — the fact, with the number, and nothing else.
+   ⚠️ No instruction. The app doesn't tell her to wash things (2026-08-03 r6,
+   her words: "I don't like the app telling me to wash x"); the laundry row on
+   the Plan tab is where she says what she'll actually do. */
+/* ⚠️ IT HAS TO NAME THE DAY WHEN THE DAY ISN'T THIS ONE. The schedule is
+   trip-wide, so putting a tee on Monday can be what pushes its FRIDAY wear past
+   the line — and "2nd wear of the white tee" on the first card of the trip
+   reads as an outright error. Found by rendering the cards: every option on day
+   one carried a 2nd-wear flag. */
+function packLaundryNote(over, onDate = null) {
+  if (!over || !over.length) return "";
+  const v = over.slice().sort((a, b) => a.date < b.date ? -1 : 1)[0];
+  // ⚠️ Her name for the piece, verbatim — lowercasing it turns "J.Crew Tee"
+  // into "j.crew tee", and the app never edits what she typed.
+  const when = (onDate && v.date && v.date !== onDate) ? ` (${planDayLabel(v.date)})` : "";
+  return `${ordinal(v.nth)} wear of ${v.name}${when}`;
+}
+
 function packReviewOptionsAll(st, n = PACK_REVIEW_OPTS) {
   const stamp = st.demand.map(o => {
     const cd = st.res && st.res.assign.get(o.id);
@@ -4121,6 +4196,13 @@ function packReviewOptionsAll(st, n = PACK_REVIEW_OPTS) {
   const map = new Map(), taken = new Map(), shapes = new Map(), beyondUsed = new Map();
   const dealt = new Map();               // look → how many occasions were offered it
   for (const o of st.demand) { map.set(o.id, []); taken.set(o.id, new Set()); shapes.set(o.id, new Set()); }
+  const probe = packLaundryProbe(st);
+  const laundry = new Map();             // occId|look → what it would cost the wash
+  const lc = (o, c) => {
+    const k = o.id + "|" + c.look;
+    if (!laundry.has(k)) laundry.set(k, probe(o.id, c.ids));
+    return laundry.get(k);
+  };
 
   const less = (a, b) => {               // lexicographic on the preference key
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
@@ -4154,9 +4236,15 @@ function packReviewOptionsAll(st, n = PACK_REVIEW_OPTS) {
       return best;
     };
     const s = supply.get(o.id);
+    /* ⚠️ LAUNDRY IS THE FIRST TERM, ahead of both weight and freshness. An
+       option that puts a piece past its wears is the thing she asked the app to
+       stop handing her; a repeated offer or one extra piece are costs she can
+       weigh. Ranked, never REMOVED — if her whole bag is over the line, the
+       honest answer is to show it flagged rather than to empty the card. */
+    const lKey = (c) => { const l = lc(o, c); return [l.over.length ? 1 : 0, l.cost > 0 ? 1 : 0]; };
     const bagPick = pick(s.bag, (c, rank) =>
-      [dealt.get(c.look) || 0, myShapes.has(c.shape) ? 1 : 0, rank]);
-    if (bagPick && !(dealt.get(bagPick.look) || 0)) return bagPick;
+      [...lKey(c), dealt.get(c.look) || 0, myShapes.has(c.shape) ? 1 : 0, rank]);
+    if (bagPick && !(dealt.get(bagPick.look) || 0) && !lc(o, bagPick).over.length) return bagPick;
     /* ⚠️ THE CLOSET IS THE OVERFLOW WHEN THE BAG RUNS DRY, and paying for it
        lazily is deliberate. A bag holding three looks for a level cannot give
        four days three private alternatives, and the honest answer is not to
@@ -4178,8 +4266,10 @@ function packReviewOptionsAll(st, n = PACK_REVIEW_OPTS) {
           .filter(x => !bagLooks.has(x.look));
       }
       const outPick = pick(s.out, (c, rank) =>
-        [dealt.get(c.look) || 0, c.adds || 0, myShapes.has(c.shape) ? 1 : 0, rank]);
-      if (outPick) return outPick;
+        [...lKey(c), dealt.get(c.look) || 0, c.adds || 0, myShapes.has(c.shape) ? 1 : 0, rank]);
+      // ⚠️ Only take it if it beats the bag on the thing that sent us here.
+      // Paying a piece for an option that ALSO breaks the wash is both costs.
+      if (outPick && (!bagPick || !less(lKey(bagPick), lKey(outPick)))) return outPick;
     }
     return bagPick;
   };
@@ -4191,7 +4281,9 @@ function packReviewOptionsAll(st, n = PACK_REVIEW_OPTS) {
       if (got.length > round) continue;
       const c = chooseFor(o, false) || chooseFor(o, true);   // an empty card is worse
       if (!c) continue;
-      got.push(c);
+      // Carried on the option so every surface says the same thing about it.
+      const l = lc(o, c);
+      got.push(l.over.length ? { ...c, laundry: packLaundryNote(l.over, o.date) } : c);
       taken.get(o.id).add(c.look);
       shapes.get(o.id).add(c.shape);
       dealt.set(c.look, (dealt.get(c.look) || 0) + 1);
@@ -4420,11 +4512,15 @@ function renderPackOptionsPage() {
     const other = st.res.assign.get(o.id);
     if (other) elsewhere.set(packLookKey(other.ids), o);
   }
+  // The same laundry answer as the inline card — one derivation, both surfaces.
+  const probe = packLaundryProbe(st);
   const tile = (x, extra) => {
     const on = cd && !packDistinct(x, cd);
     const dup = !on && elsewhere.get(packLookKey(x.ids));
     const dupNote = dup ? `${dup.date ? planDayLabel(dup.date) : (dup.context || "Another day")} is wearing this` : "";
-    const note = [dupNote, extra].filter(Boolean).join(" · ");
+    const l = probe(occ.id, x.ids);
+    const lNote = l.over.length ? "🧺 " + packLaundryNote(l.over, occ.date) : "";
+    const note = [lNote, dupNote, extra].filter(Boolean).join(" · ");
     return `<button class="pack-opt-tile${on ? " on" : ""}" data-pack-choose="${esc(occ.id)}" data-pack-ids="${esc(x.ids.join(","))}">
       <div class="pack-opt-thumbs">${x.ids.map(id => thumbHtml((itemById.get(id) || {}).image_path, "pack-opt-th")).join("")}</div>
       <div class="pack-opt-meta">
@@ -4495,6 +4591,20 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
         <div class="pack-pname">${esc(i.name || "Untitled")}</div>
       </button>`).join("")}
     </div>
+    ${/* ⚠️ THE LAUNDRY FLAG SITS ON THE CARD, NOT ONLY IN THE WARNINGS BLOCK
+          (2026-08-10 r2, her report: "I've selected the same t shirt 4 times
+          and that's a problem"). The violation was already derived and already
+          shown — on the ITEMS screen, three taps from where she was choosing.
+          A consequence reported somewhere she isn't standing is one she finds
+          out about while packing. It names the day's own piece and stops; the
+          Laundry row on Plan is where she says what she'll do about it. */""}
+    ${(() => {
+      const mine = new Set(cd.ids);
+      const over = (res.violations || []).filter(v => v.date === occ.date && mine.has(v.itemId));
+      if (!over.length) return "";
+      return `<div class="pack-occ-laun">🧺 ${over.slice(0, 2).map(v =>
+        `${esc(v.name)} — ${esc(ordinal(v.nth))} wear since its last wash (goes ${v.tol})`).join("; ")}</div>`;
+    })()}
     ${(() => {
       /* THE REVIEW, INLINE. Not a separate screen — the Outfits tab already
          shows one card per occasion, so asking here means review isn't a mode
@@ -4518,7 +4628,8 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
                 aren't already being offered, and an unpriced option would be
                 the app quietly growing the suitcase on her behalf. */""}
           ${alts.map((x, _ai) => opt(x.ids, altLabels[_ai], "",
-                                     x.adds ? `+${x.adds} to your bag` : "")).join("")}
+                                     [x.laundry ? "🧺 " + x.laundry : "",
+                                      x.adds ? `+${x.adds} to your bag` : ""].filter(Boolean).join(" · "))).join("")}
         </div>
         <div class="pack-review-more">
           <button class="lnk" data-pack-rather="${esc(occ.id)}">I'd rather\u2026</button>
@@ -5249,7 +5360,15 @@ async function packChooseOutfit(occId, ids) {
     } finally { _packBusy = false; }
   }
   renderCapsules();
-  toast(same ? "Kept \u00b7 locked in"
+  /* \u26a0\ufe0f AND IT SAYS SO WHEN THE CHOICE BREAKS THE WASH. The deal ranks these
+     options last, so reaching one usually means she picked it deliberately from
+     the full options screen or nothing else was left \u2014 either way the moment
+     she chooses is the moment to say it, not the items screen later. */
+  const laun = (_packState && _packState.res
+    ? (_packState.res.violations || []).filter(v => v.date === occ.date && clean.includes(v.itemId))
+    : []);
+  toast(laun.length ? `Locked in \u00b7 \u{1F9FA} ${packLaundryNote(laun, occ.date)}`
+             : same ? "Kept \u00b7 locked in"
              : moved ? `Locked in \u00b7 ${moved} other day${moved === 1 ? "" : "s"} re-planned around it`
                      : "Locked in", {
     label: "Undo", fn: async () => {
@@ -5291,13 +5410,29 @@ async function packSetOccasionOutfit(cid, occId, ids) {
   toast("Set — anything new is in the bag");
 }
 
+/* ⚠️ UNLOCKING RE-OPENS THE QUESTION (2026-08-10 r2, her ask: *"if I unlock an
+   outfit, I want it to show me the alternatives again"*). A choice writes BOTH
+   `chosen` (decided — the review row hides) and `locked` (held through every
+   re-solve), and unlock only ever cleared the second, so the card came back
+   editable with nothing to compare against and no way to get the comparison
+   back short of choosing something else.
+   ⚠️ Locking does NOT mark it chosen, and the asymmetry is deliberate: locking
+   is "hold this one still", which is an answer to the review, but skipping
+   already marks decided without locking, so making lock imply chosen would
+   collapse two different things she does for different reasons. */
 async function packToggleLock(occId) {
   const st = packStateReady();
   if (!st) return;
   const rec = packRecord(st.cid);
   const set = new Set(rec.locked || []);
-  if (set.has(occId)) set.delete(occId); else set.add(occId);
-  await savePackRecord(st.cid, { locked: [...set] });
+  if (set.has(occId)) {
+    set.delete(occId);
+    await savePackRecord(st.cid, { locked: [...set],
+      chosen: (rec.chosen || []).filter(x => x !== occId) });
+  } else {
+    set.add(occId);
+    await savePackRecord(st.cid, { locked: [...set] });
+  }
   renderCapsules();
 }
 
@@ -5476,6 +5611,77 @@ function openPackModeSheet() {
       } finally { _packBusy = false; }
     };
   });
+}
+
+/* ---- "will I do laundry on this trip?" (2026-08-10 r2) --------------------
+   Her ask, verbatim: *"maybe the bag should have a laundry setting? I will/won't
+   do laundry on this trip"*. It is the single input that decides how many tees
+   the trip needs, and it was a sentence on the Plan tab pointing at the by-day
+   planner — which is folded away behind "Day by day".
+
+   ⚠️ IT WRITES THE SAME SENTINEL the by-day planner writes (PLAN_LAUNDRY inside
+   capsules.plan), so packSchedule, packSolve and packMidTripWash all see it with
+   no new state and no second source of truth to drift.
+   ⚠️ RE-SOLVES AFTERWARDS, holding her locks, because this changes the constraint
+   the outfits were solved under — leaving them would mean a pack built for no
+   laundry sitting under a plan that says there is some. Same path as a review
+   choice; her chosen days can't move.
+   ⚠️ "No laundry" is not stored as an answer. It is the absence of wash days,
+   which is what the schedule already assumes — a stored "no" would be a second
+   way to say the same thing, and they could disagree. */
+function openTripLaundrySheet() {
+  const c = capsuleById.get(capsuleId);
+  if (!c) return;
+  const dates = tripDates(c);
+  if (!dates.length) return toast("This trip has no dates yet");
+  const on = new Set(packWashDays(c));
+  // ⚠️ The date sub-line only when the label isn't already the date — otherwise
+  // every row read "Tue, Aug 11 / Aug 11". planDayLabel says "Today" near the
+  // trip and the full date further out, so it can't just be dropped.
+  const rows = dates.map(d => `<button class="sheet-row" data-launday="${esc(d)}">
+      <span>${esc(planDayLabel(d))}${planDayLabel(d).includes(fmtDate(d)) ? ""
+        : `<div class="muted" style="font-size:12px;font-weight:400">${esc(fmtDate(d))}</div>`}</span>
+      <span class="rt" style="color:${on.has(d) ? "var(--accent)" : "var(--muted)"};font-weight:${on.has(d) ? "700" : "400"}">${on.has(d) ? "🧺 washing ✓" : "no wash"}</span>
+    </button>`).join("");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="tripLaunCancel">Close</button>
+      <h2>Laundry on this trip</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="sheet-note">Pick the days you'll wash. Everything resets that day, so the pack needs fewer of the things you wear most. Leave them all off if you won't do laundry — then nothing goes out more times than it has clean wears.</div>
+    ${on.size ? `<button class="sheet-row" data-launnone><span>No laundry on this trip</span><span class="rt">Clear all</span></button>` : ""}
+    ${rows}`;
+  showSheet("moveSheet");
+  $("#tripLaunCancel").onclick = () => hideSheet("moveSheet");
+  const apply = async (fn, msg) => {
+    hideSheet("moveSheet");
+    if (_packBusy) return;
+    _packBusy = true;
+    try {
+      const cid = capsuleId;
+      await fn(cid);
+      if (packRecord(cid).built) {
+        const st2 = packLoadState(cid, { resolve: true });
+        packEnsureSolve(st2, { force: true });
+        await packPersist(cid);
+      }
+      renderCapsules();
+      toast(msg(capsuleById.get(cid)));
+    } finally { _packBusy = false; }
+  };
+  $("#moveInner").querySelectorAll("[data-launday]").forEach(b => {
+    b.onclick = () => apply(
+      (cid) => togglePlanLaundry(cid, b.dataset.launday),
+      (c2) => {
+        const days = packWashDays(c2);
+        return days.length ? `Washing on ${days.map(d => fmtDate(d)).join(", ")}` : "No laundry planned";
+      });
+  });
+  const none = $("#moveInner").querySelector("[data-launnone]");
+  if (none) none.onclick = () => apply(async (cid) => {
+    for (const d of packWashDays(capsuleById.get(cid))) await togglePlanLaundry(cid, d);
+  }, () => "No laundry on this trip");
 }
 
 /* ⚠️ packSendToPlan is GONE (2026-08-04 r5). It materialised every assignment as

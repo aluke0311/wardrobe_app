@@ -1192,6 +1192,10 @@
   .pack-occ-hd b { font-size: var(--fs-base); }
   .pack-occ-hd span { font-size: var(--fs-xs); color: var(--muted); text-align: right; }
   .pack-occ-gap { font-size: 13px; color: var(--muted); }
+  /* The laundry flag on a day's own outfit. Muted, not alarming — it is a fact
+     about the schedule, not an error, and on a long trip it may be the plan. */
+  .pack-occ-laun { font-size: 12px; color: var(--muted); margin-top: 8px;
+    padding: 6px 8px; background: var(--panel); border-radius: 8px; line-height: 1.35; }
   .pack-occ-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 
   /* The review, inline on the occasion card. ⚠️ The options row SCROLLS

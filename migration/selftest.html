@@ -3387,6 +3387,95 @@ async function run() {
     }, { capsules: [c] });
   });
 
+  /* ================= 2026-08-10 r2: the review can see the wash ==========
+     Her report: *"it should stop offering or flag for me if I've chosen
+     something too many times for laundry. Right now I've selected the same
+     t shirt 4 times and that's a problem."*
+
+     `packCandidates` passes `cleanOnly=false` deliberately — laundry is a
+     SCHEDULE constraint, not a pool filter (inversion ②) — so every option was
+     legal in isolation and nothing costed the fourth wear of one tee. The
+     solver knew; the review, which is where she now actually chooses, didn't.
+     ⚠️ NEEDS A CLOSET WHERE THE WASH BINDS. The general fixture has eight tees
+     and never runs out — the documented "fixture tidier than her closet" trap,
+     and it would make every case here vacuous. Tee shirts are tolerance-1. */
+  const washCloset = { replace: (add) => {
+    for (let n = 0; n < 4; n++) add("tee" + n, "Tops", "Tee shirts", [2, 3]);
+    for (let n = 0; n < 2; n++) add("jea" + n, "Bottoms", "Jeans", [2, 3, 4]);
+    for (let n = 0; n < 2; n++) add("snk" + n, "Shoes", "Sneakers", [2, 3]);
+  } };
+
+  t("an option that would push a piece past its wears says so", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 5 }] });
+      if (!st || !st.res) return "no pack state";
+      const probe = W.packLaundryProbe(st);
+      let checked = 0, flagged = 0;
+      for (const occ of st.demand) {
+        for (const opt of W.packReviewOptions(st, occ)) {
+          checked++;
+          const over = probe(occ.id, opt.ids).over;
+          if (over.length) flagged++;
+          // The flag and the schedule must agree — a note on a clean option is
+          // as wrong as silence on a dirty one.
+          if (!!over.length !== !!opt.laundry)
+            return `${occ.date}: schedule says ${over.length} over, label says "${opt.laundry || ""}"`;
+        }
+      }
+      if (!checked) return "vacuous: no options at all";
+      return flagged ? true : "vacuous: nothing on this trip was ever past its wears";
+    }, Object.assign({ capsules: [c] }, washCloset));
+  });
+
+  /* ⚠️ RANKED DOWN, NOT REMOVED. "Stop offering" has to mean "offer the clean
+     ones first" — on a trip whose whole bag is over the line, removing them
+     empties the card, and an empty card is the r12 partial-result bug again.
+     So: no card may show a flagged option above a clean one. */
+  t("clean options are offered before ones that break the wash", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 5 }] });
+      if (!st || !st.res) return "no pack state";
+      let mixed = 0;
+      for (const occ of st.demand) {
+        const flags = W.packReviewOptions(st, occ).map(o => !!o.laundry);
+        if (flags.some(Boolean) && flags.some(f => !f)) mixed++;
+        for (let i = 1; i < flags.length; i++)
+          if (flags[i - 1] && !flags[i])
+            return `${occ.date}: a flagged option was offered above a clean one`;
+      }
+      // ⚠️ Vacuity guard: all-clean or all-flagged cards can't order wrongly.
+      return mixed ? true : "vacuous: no card offered both a clean and a flagged option";
+    }, Object.assign({ capsules: [c] }, washCloset));
+  });
+
+  /* ⚠️ AND THE TRIP'S LAUNDRY ANSWER HAS TO REACH ALL OF IT (her ask: "maybe
+     the bag should have a laundry setting? I will/won't do laundry on this
+     trip"). The sheet writes the SAME PLAN_LAUNDRY sentinel the by-day planner
+     writes, so this asserts through that sentinel rather than through the sheet:
+     one wash day mid-trip, and the schedule the flags come from resets. */
+  t("a wash day clears the laundry flags it should", () => {
+    const c = packTrip(8);
+    return withPackCloset(() => {
+      const before = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 7 }] });
+      const wasViol = before.res.violations.length;
+      const wasFlag = before.demand.reduce((n, o) =>
+        n + W.packReviewOptions(before, o).filter(x => x.laundry).length, 0);
+      if (!wasViol) return "vacuous: nothing was over its wears to begin with";
+      const cap = W.capsuleById.get(c.id);
+      const mid = W.tripDates(cap)[4];
+      cap.plan = Object.assign({}, cap.plan, { [mid]: [W.PLAN_LAUNDRY] });
+      if (!W.packWashDays(cap).includes(mid)) return "fixture drift: the wash day didn't register";
+      const after = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 7 }] });
+      const nowViol = after.res.violations.length;
+      const nowFlag = after.demand.reduce((n, o) =>
+        n + W.packReviewOptions(after, o).filter(x => x.laundry).length, 0);
+      return (nowViol < wasViol && nowFlag < wasFlag)
+        ? true : `violations ${wasViol} -> ${nowViol}, flagged options ${wasFlag} -> ${nowFlag}`;
+    }, Object.assign({ capsules: [c] }, washCloset));
+  });
+
   /* ⚠️ A REVIEW CONFINED TO THE BAG IS A REVIEW OF A DECISION SHE WASN'T PART OF
      (2026-08-08, her report: *"it treats the pack as built… all from within one
      settled bag. If I don't like those options the way to change is not clear.
@@ -3752,6 +3841,43 @@ async function run() {
       W.rest = saved.rest; W.renderCapsules = saved.render; W.toast = saved.toast;
       W.capsuleId = saved.cid; W._packState = null;
       W.kvData.delete("pack:" + c.id);
+    }
+  });
+
+  /* ⚠️ UNLOCKING RE-OPENS THE QUESTION (2026-08-10 r2, her ask: *"if I unlock an
+     outfit, I want it to show me the alternatives again"*). A choice writes both
+     `chosen` (decided — the review row hides) and `locked` (held through every
+     re-solve); unlock only ever cleared the second, so the card came back
+     editable with nothing to compare against.
+     ⚠️ Asserted on the RENDERED card, not on the record: the record is two
+     flags and the thing she reported is what the card shows. */
+  await ta("unlocking an outfit brings its alternatives back", async () => {
+    const c = packTrip(6);
+    const saved = { rest: W.rest, render: W.renderCapsules, toast: W.toast, cid: W.capsuleId };
+    W.rest = async (path) => { if (String(path).startsWith("/kv?")) throw new Error("stub"); return []; };
+    W.renderCapsules = () => {}; W.toast = () => {};
+    try {
+      return await withPackClosetA(async () => {
+        const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }] });
+        if (!st || !st.res) return "no pack state";
+        const occ = st.demand.find(o => o.context === "Errands");
+        const asks = () => {
+          const s = W._packState;
+          return W.packOccCardHtml(s, s.demand.find(o => o.id === occ.id)).includes("pack-review-q");
+        };
+        if (!asks()) return "vacuous: the card wasn't asking before she chose";
+        const alt = W.packReviewOptions(st, occ)[0];
+        if (!alt) return "vacuous: nothing to choose";
+        await W.packChooseOutfit(occ.id, alt.ids);
+        if (asks()) return "the card kept asking after she chose";
+        await W.packToggleLock(occ.id);                      // unlock
+        if (!asks()) return "unlocking left the card with no alternatives";
+        return W.packReviewOptions(W._packState, W._packState.demand.find(o => o.id === occ.id)).length
+          ? true : "the card asks but has nothing to offer";
+      }, { capsules: [c] });
+    } finally {
+      W.rest = saved.rest; W.renderCapsules = saved.render; W.toast = saved.toast;
+      W.capsuleId = saved.cid; W._packState = null; W.kvData.delete("pack:" + c.id);
     }
   });
 

@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r1";
+const APP_VERSION = "2026-08-10 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-10 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r2", notes: [
+    "Unlocking an outfit shows you the alternatives again. Choosing marked the day decided AND locked it; unlocking only ever undid the lock, so the card came back editable with nothing to compare against",
+    "The review can see the laundry now. An option that would put a piece past its clean wears says so (\"🧺 3rd wear of the white tee\"), and clean options are always offered first — they're ranked down, never hidden, because on a long trip your whole bag can be over the line and an empty card would be worse",
+    "A day whose outfit is already past its wears says so on the card, where you're choosing — that fact existed, but only on the Items screen",
+    "Laundry is a real setting on the trip's Plan tab: pick the days you'll wash, or leave them off. Everything resets on a wash day, so the pack needs fewer of the things you wear most — and setting one re-plans the trip around it, keeping every outfit you've locked",
+  ] },
   { v: "2026-08-10 r1", notes: [
     "Every occasion now gets its OWN alternatives. They used to be worked out one card at a time from the same bag and the same ranking, so four days of one context were offered the identical three outfits — and two of those three were what other days were already wearing, so \"choosing\" could only produce a repeat. The options are dealt across the whole trip now: no card is offered another day's outfit while it still has something else to show you",
     "When the bag can't give a day anything the other days aren't already being offered, one option comes from the rest of your closet, priced (\"+1 to your bag\") — one per card, never more",
