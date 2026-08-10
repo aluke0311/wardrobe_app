@@ -507,6 +507,50 @@ still present and simply never rendered.
 - The ⋯ menu is untouched and still carries dates, locations, add items, share,
   recap, archive, delete.
 
+**2026-08-10 r7 — THE LAST DOORS INTO THE SOLVER. Selftest 395/395, run GREEN;
+one existing case REVERSED with the decision it guarded (mutation-checked red).**
+Her report: *"it still builds it if I hit build the pack / rebuild the plan
+button — can you remove any buttons that no longer are relevant."*
+
+⚠️ **r6 STRIPPED THE TRIP SCREEN AND LEFT FIVE OTHER SURFACES STILL DRIVING THE
+SOLVE.** The trip screen was the one I was looking at; the pack was reachable
+from four other places and rendered its output in two more. **When you switch a
+feature off, grep for its ENTRY POINTS, not for its screen.** What was left:
+- **`renderCapsuleDetail`'s "✨ Build the pack" / "✨ Rebuild · N things changed"**
+  (`data-cap-pack`) — the button she found. That page is still reachable from the
+  ⋯ menu's "📍 Locations & weather" row, so the old detail screen and every
+  button on it survived the r6 strip untouched.
+- **`renderCapsulePlan`** rendered `packPlanCardsHtml` + `packDaySpreadRowHtml`,
+  so the by-day plan filled itself in from the stored solve.
+- **`tripDashHtml`** rendered the pack's outfit for today (`from your pack`,
+  `data-td-packwore`) and the mid-trip wash row (`packMidTripWash`).
+- **`openTripRecap`** rendered `packGradeRowHtml` — a grade for a plan that no
+  longer exists.
+⚠️ **All of these read the STORED record, so they kept working perfectly on a
+pack built before the strip** — which is exactly her situation and why she still
+saw a plan she hadn't agreed to. A case now pins the dash against a fixture that
+deliberately keeps a `pack:<cid>` record.
+⚠️ **The `data-cap-pack` HANDLER was deleted too, not just the button.** Leaving
+a live handler for removed markup is how a switched-off feature comes back: the
+next round re-adds the button, finds it already wired, and the solver is running.
+- **Still no reachable path to `packEnsureSolve`:** `capsuleView = "pack"` can
+  now only be set by the definites-picker branch and the builder's
+  `planCtx.packOcc` branch, and nothing renders an entry to either.
+  `tripPlanSectionHtml` has zero callers. Verified by rendering all four screens
+  plus the dash with a stored pack record and scanning for every pack string.
+- **What deliberately SURVIVES:** the by-day planner's own manual planning
+  (assign a look, ✨ Suggest, ✎ Build, wash-day toggle, "Wore it"), `tripUnwornNow`,
+  `tripMissingPieces`, the suitcase hamper row, and the recap's worn/once/dead
+  sections — none of those are solver-derived.
+
+⚠️ **A GUARD CASE REVERSED, AND THAT IS NOT A REGRESSION.** "the generic hamper
+row folds when the wash plan already names everything dirty" asserted
+`washplan===1 && generic===0`; with the wash plan gone there is nothing to fold
+against. Rewritten to the surviving contract — the hamper row must still SPEAK
+(`generic===1`) — because asserting only "no wash-plan row" would pass trivially
+if the row were silenced altogether, which is the test-that-can't-fail trap from
+the other direction. **Mutation-checked: breaking the hamper row turns it red.**
+
 **▶ PICKING THIS UP COLD? Read `HANDOFF_2026-08-09.md` in the repo root.** It
 carries the current state, her locked decisions from this arc, what is
 deliberately NOT built, and — most importantly — **what has not been verified**:
@@ -3120,7 +3164,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-10 r6`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-10 r7`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,

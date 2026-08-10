@@ -690,10 +690,10 @@ function wireEvents() {
       else enterTripMode(capsuleId);
       return;
     }
-    // ---- trip builder / pack plan ----
-    if (e.target.closest("[data-cap-pack]")) {
-      return packHasPlan(capsuleId) ? openPackPlan(capsuleId) : openPackBuildSheet(capsuleId);
-    }
+    /* ⚠️ `data-cap-pack` no longer exists in any rendered markup (2026-08-10 r6)
+       and its handler is gone with it. Leaving a live handler for a removed
+       button is how a switched-off feature comes back: the next round adds the
+       button again, finds it "already wired", and the solver is running. */
     // ---- items-first pack screen (2026-07-30) ----
     const packMode = e.target.closest("[data-packmode]");
     if (packMode) { _packMode = packMode.dataset.packmode; return renderCapsules(); }

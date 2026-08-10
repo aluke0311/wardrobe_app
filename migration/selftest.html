@@ -5050,11 +5050,24 @@ async function run() {
     return W.packMidTripWash(c, D(-30)) === null ? true : "spoke before the trip";
   }));
 
-  /* ⚠️ Found by rendering the trip dash and reading it: "🧼 Wash 1 piece · white
-     tee" sat directly above "🧺 1 of 7 pieces in the hamper" — two rows for one
-     fact. The wash-plan row is the actionable version, so the generic one folds
-     when it adds nothing. */
-  t("the generic hamper row folds when the wash plan already names everything dirty", () => midTripCloset(() => {
+  /* ⚠️ THIS CASE REVERSED WITH THE DECISION IT GUARDS (2026-08-10 r7).
+
+     It used to assert the mid-trip WASH-PLAN row appeared and the generic
+     hamper row folded behind it — two rows for one fact, found by rendering
+     the dash. The wash plan was derived entirely from the stored pack solve,
+     and r6/r7 switched the solver off, so there is nothing to fold against any
+     more and the honest dash shows the plain hamper row alone.
+
+     What it guards NOW is the half that still has to be true: the hamper row
+     must still SPEAK on a real hamper. Silencing it always would satisfy "no
+     wash-plan row" trivially — the test-that-can't-fail trap from the other
+     direction — so the assertion needs `generic === 1`, which the fixture only
+     produces because tee0 is genuinely dirty.
+
+     ⚠️ The stored `pack:onnow` record is left in place DELIBERATELY: it is her
+     actual situation (a pack built before the strip), and it proves the row
+     cannot come back through a record that still exists. */
+  t("a trip with a pre-existing pack shows the plain hamper row and no wash plan", () => midTripCloset(() => {
     const c = W.capsuleById.get("onnow");
     W.itemById.get("tee0").last_washed = D(-5);
     W.wears.push({ id: "mtf", item_id: "tee0", worn_on: D(-1), context: ["Errands"], formality_for: 3 });
@@ -5068,8 +5081,9 @@ async function run() {
     try { html = W.tripDashHtml(c); } finally { W.tripModeId = savedTrip; }
     const plan = (html.match(/data-td-washplan/g) || []).length;
     const generic = (html.match(/data-td-laundry/g) || []).length;
-    return plan === 1 && generic === 0
-      ? true : `washplanRows=${plan} genericHamperRows=${generic}`;
+    const packRows = (html.match(/data-td-packwore|from your pack/g) || []).length;
+    return plan === 0 && generic === 1 && packRows === 0
+      ? true : `washplanRows=${plan} genericHamperRows=${generic} packRows=${packRows}`;
   }, { members: ["tee0", "jea0", "snk0"] }));
 
   /* ---- what the bag line says (r4) ----

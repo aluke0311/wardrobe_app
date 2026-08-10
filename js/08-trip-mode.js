@@ -282,7 +282,10 @@ function openTripRecap(cid, { unpack = false } = {}) {
       ${onceHtml}
       ${deadHtml}
       ${unpackedHtml}
-      ${typeof packGradeRowHtml === "function" && packHasPlan(cid) ? packGradeRowHtml(c) : ""}
+      ${/* The pack's "how did the bag do" grade went with the solver (2026-08-10
+            r6) — it scored a plan that no longer exists. The recap's own
+            worn/once/dead sections above answer the same question from what she
+            actually wore, which was always the better source. */""}
       ${canHamper ? `<button class="btn" id="unpHamper" style="margin-top:20px">🧺 Send ${r.worn.length} worn piece${r.worn.length === 1 ? "" : "s"} to the hamper</button>` : ""}
       ${unpack ? `<button class="btn${canHamper ? " btn-sec" : ""}" id="unpEnd" style="margin-top:10px">End trip mode</button>` : ""}
     </div>`;

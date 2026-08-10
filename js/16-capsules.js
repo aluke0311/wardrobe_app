@@ -547,21 +547,12 @@ function renderCapsuleDetail() {
       ${tripModeId === c.id ? (isDatedTrip(c) ? "End trip mode" : "Exit capsule mode")
         : (isDatedTrip(c) ? "✈️ Start trip mode" : "Enter capsule mode")}
     </button>
-    ${(() => {
-      // The pack builder. Reachable the moment a trip has dates — NOT gated
-      // behind the 3-day pack phase, because the whole value of an early gap
-      // flag is that she can still do something about it.
-      if (!isDatedTrip(c)) return "";
-      const df = packDiff(capsuleId);
-      const label = !df ? "✨ Build the pack"
-        : df.changed ? `✨ Rebuild · ${df.reasons.length} thing${df.reasons.length === 1 ? "" : "s"} changed`
-        : "The pack";
-      return `<button class="cap-plan" data-cap-pack style="background:var(--accent);margin-bottom:8px">
-        <svg viewBox="0 0 24 24"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/></svg>
-        ${label}
-      </button>
-      ${df && df.changed ? `<div class="pack-tip" style="margin:-4px 14px 8px">Since ${esc(fmtDate(df.built))}: ${esc(df.reasons.join("; "))}. Anything you've ticked as packed stays.</div>` : ""}`;
-    })()}
+    ${/* ⚠️ THE "✨ Build the pack" BUTTON IS GONE (2026-08-10 r6). The solver is
+          switched off — see the r6 entry in CLAUDE.md — and this button was the
+          last thing still starting it: she reported "it still builds it if I hit
+          build the pack". A dated trip's outfits come from `tripOutfitsHtml`
+          now, proposed from her own list. The pack functions are all still
+          present and still tested; nothing calls them. */""}
     ${trip && c.start_date && c.end_date ? `<button class="cap-plan" data-cap-byday>
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
       Plan outfits by day
@@ -881,14 +872,13 @@ function renderCapsulePlan() {
   </div>`;
 
   const rewearFlags = planRewearFlags(c, dates);
-  /* The pack's own outfits, shown here without ever having been "sent" (r5).
-     Derived from the pack record — no look records, no capsules.plan writes.
-     See the "THE PACK IS THE PLAN" header in js/21-pack.js. */
-  const packByDate = (typeof packPlanByDate === "function") ? packPlanByDate(c) : null;
+  /* ⚠️ THE PACK'S OUTFITS NO LONGER APPEAR HERE (2026-08-10 r6). They were
+     derived live from the stored solve, so with the solver switched off this
+     screen would have gone on showing a plan she isn't following — worse than
+     showing nothing, because it looks current. What's left is HER planning:
+     assign a saved look, suggest, build, mark a wash day, "Wore it". */
   const dayCards = dates.map(date => {
     const looks = planActiveLooks(c, date);
-    const packCards = packByDate && packByDate.get(date)
-      ? packPlanCardsHtml(packByDate.get(date), date) : "";
     const isLaun = planLaundryDay(c, date);
     const rw = rewearFlags.get(date);
     const looksHtml = looks.map(oid => {
@@ -909,7 +899,6 @@ function renderCapsulePlan() {
       ${isLaun ? `<div class="plan-launday">🧺 Laundry day — rewear counts reset</div>` : ""}
       ${rw ? `<div class="plan-rewarn">${rw.map(f => `⚠︎ ${esc(f.name)} — ${ordinal(f.nth)} wear since laundry`).join("<br>")}</div>` : ""}
       ${looks.length ? `<div class="plan-looks">${looksHtml}</div>` : ""}
-      ${packCards}
       <div class="plan-add-row">
         ${bucketIds.length ? `<button class="plan-act" data-plan-frombucket="${esc(date)}">🪣 From bucket</button>` : ""}
         <button class="plan-act" data-plan-assign="${esc(date)}">＋ Look</button>
@@ -927,14 +916,9 @@ function renderCapsulePlan() {
       <div class="ch-sub">${dates.length ? `${dates.length} day${dates.length === 1 ? "" : "s"} · ` : ""}${memberCount} piece${memberCount === 1 ? "" : "s"} in this ${esc(kind)}</div>
     </div>
     ${memberCount ? "" : `<div class="placeholder" style="padding:24px 32px"><b>No pieces yet</b><div>Add items to the ${esc(kind)} first — planning is scoped to its pieces.</div></div>`}
-    ${/* ⚠️ SAY THAT THE SPREAD IS A GUESS, AND OFFER THE ONE TAP THAT ENDS IT
-          (2026-08-10 r3, her report: "the by day plan should not auto assign
-          days — I should be able to do it myself"). Every occasion could be
-          moved already; nothing on this screen said so, and nothing let her
-          settle the lot, so each rebuild re-spread the ones she hadn't
-          touched. "Keep these days" pins them exactly where they are — after
-          that the app places nothing it wasn't asked to. */""}
-    ${(typeof packDaySpreadRowHtml === "function") ? packDaySpreadRowHtml(c) : ""}
+    ${/* The "the app placed N of these days · Keep these days" row went with the
+          solver (r6): nothing auto-assigns a day any more, so a control that
+          exists to stop it would be answering a question nobody asked. */""}
     ${bucketCard}
     ${dayCards}
     <div style="height:30px"></div>`;

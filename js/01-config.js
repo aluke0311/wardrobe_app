@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r6";
+const APP_VERSION = "2026-08-10 r7";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-10 r6";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r7", notes: [
+    "Removed the last buttons that could still start the old pack solver — \"Build the pack\" / \"Rebuild\" on a trip's page was still building one",
+    "The by-day plan no longer fills itself in from the solver, and Home no longer proposes today's outfit from it — both were showing you a plan you hadn't agreed to",
+    "Gone with them: the day-spread \"keep these days\" row, the mid-trip wash heads-up and the pack's after-the-trip grade, all of which described a plan that no longer exists",
+  ] },
   { v: "2026-08-10 r6", notes: [
     "A trip is two screens now: Your list, and Outfits. You add the pieces you're taking; the app proposes outfits made only from those pieces, and never adds anything of its own",
     "Every outfit it shows you is one you can actually make from your bag — tap ＋ Save as a look to keep one, or ✎ Change it to open the builder with those pieces already on the canvas",

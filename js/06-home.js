@@ -730,28 +730,15 @@ function tripDashHtml(c) {
         ${planWorn(today, oid) ? `<span class="tdl-worn">✓ Worn</span>` : `<button class="tdl-wore" data-td-wore="${esc(oid)}">Wore it</button>`}
       </div>`;
     }).join("");
-    /* The pack's outfit for today, with no "send to the plan" step in between
-       (2026-08-04 r5). Same derivation the by-day planner uses; tapping the
-       card opens the planner, where every editing option lives. */
-    const packToday = (typeof packPlanByDate === "function") ? packPlanByDate(c) : null;
-    const packRows = ((packToday && packToday.get(today)) || []).map(e => {
-      const pieces = e.cd.pieces.length ? e.cd.pieces : e.cd.ids.map(id => itemById.get(id)).filter(Boolean);
-      const label = [e.occ.context, ...e.alsoFor.map(o => o.context)].filter(Boolean).join(" + ")
-        || (OCCASION_LADDER[(e.occ.level || 1) - 1] || "Today");
-      /* ⚠️ .tdl-collage is a FIXED 56px box and .pack-pthumb is a FIXED 62px
-         thumb — dropping four of those in here is the documented .cthumb trap
-         (they don't shrink, they overflow onto the name beside them). Its own
-         2×2 class at 26px, per "any new thumb size is a new class". */
-      return `<div class="td-look" data-td-plandate="${esc(today)}">
-        <div class="tdl-collage tdl-mini">${pieces.slice(0, 4).map(i => thumbHtml(i.image_path, "tdl-minith")).join("")}</div>
-        <div class="tdl-name">${esc(label)} <span style="font-weight:400;color:var(--muted)">· from your pack</span></div>
-        <button class="tdl-wore" data-td-packwore="${esc(e.occ.id)}">Wore it</button>
-      </div>`;
-    }).join("");
+    /* ⚠️ THE PACK'S OUTFIT FOR TODAY IS GONE FROM THE DASH (2026-08-10 r6).
+       It was read live from the stored solve, so with the solver switched off
+       Home would have kept proposing today's outfit from a plan she never
+       agreed to — on the one screen that is supposed to say what's actually
+       happening. What's left here is what SHE planned. */
     planHtml = `<div class="td-plan">
       <div class="td-plan-lbl">Today${laundryDay ? " · 🧺 laundry day" : ""}</div>
-      ${rows}${packRows}
-      ${rows || packRows ? "" : `<div class="muted" style="font-size:13.5px;padding:2px 0 4px">Nothing planned for today.</div>`}
+      ${rows}
+      ${rows ? "" : `<div class="muted" style="font-size:13.5px;padding:2px 0 4px">Nothing planned for today.</div>`}
     </div>`;
   }
 
@@ -767,35 +754,14 @@ function tripDashHtml(c) {
       <span style="color:var(--accent);font-weight:600">›</span></button>`;
   }
 
-  /* Mid-trip wash plan: the specific pieces the REST of the trip needs washed,
-     from re-running the schedule forward over the days that are left. Sits above
-     the generic hamper row because it's the actionable version of it — "wash
-     these six" instead of "6 things are dirty". packMidTripWash owns whether to
-     speak; null on the last day and whenever nothing would actually run out. */
-  let washPlanHtml = "";
-  const mtw = (phase === "trip" && LAUNDRY_READY() && typeof packMidTripWash === "function")
-    ? packMidTripWash(c, today) : null;
-  if (mtw) {
-    /* ⚠️ COPY REWRITTEN 2026-08-03 r5 — her report: "the packing thing — wash x
-       item for rest of trip — what was that? seeing it on the trip made no
-       sense to me." It said "Wash 3 pieces for the rest of the trip · white
-       tee, jeans…", which named neither the DAY nor what happens if she does
-       nothing, and read as a chore she hadn't asked for. It is a heads-up, not
-       an instruction: the plan needs these pieces again and they're out of
-       clean wears, so lead with THAT and let the wash be the offer. */
-    const first = mtw.list[0];
-    const nm = (i) => i && (i.name || "a piece");
-    const when = first ? weekDayLabel(first.date, today) : "later in the trip";
-    const rest = mtw.items.length - 1;
-    /* ⚠️ NO INSTRUCTION (2026-08-03 r6, her words: "I don't like the app telling
-       me to wash x"). This states what the PLAN does and leaves the conclusion
-       to her — same rule as "packed 3×, worn 0×" being a fact, never advice.
-       It used to read "Wash 3 pieces for the rest of the trip" and open the
-       mark-as-washed form, which is an instruction plus a chore. */
-    washPlanHtml = `<button class="td-laun" data-td-washplan style="align-items:flex-start">🧺
-      <span style="flex:1;line-height:1.4">Your plan has the <b>${esc(nm(first && first.item))}</b> out again ${esc(when)} — that's past its wears since the last wash${rest > 0 ? `, and ${rest} other${rest === 1 ? " is" : "s are"} in the same place` : ""}.</span>
-      <span style="color:var(--accent);font-weight:600">›</span></button>`;
-  }
+  /* ⚠️ THE MID-TRIP WASH ROW WENT WITH THE SOLVER (2026-08-10 r6). It re-ran
+     `packSchedule` forward over the days left and named the pieces the back
+     half of the trip would run short of — genuinely useful, and entirely
+     derived from the stored solve. With nothing solving, it would be reporting
+     shortages in a plan she isn't following. `mtw` stays declared as null so
+     the hamper row below keeps its "don't say the same thing twice" fold. */
+  const mtw = null;
+  const washPlanHtml = "";
 
   // Suitcase hamper (works for every phase, incl. capsule mode).
   let launHtml = "";
@@ -1854,13 +1820,6 @@ function wireTripDash(tc) {
   on("[data-td-unpack]", () => openTripRecap(tc.id, { unpack: true }));
   on("[data-td-suggest]", () => openSuggestSheet(null, tc.id));
   on("[data-td-build]", () => openBuilder(null, null, { capsuleId: tc.id, date: PLAN_BUCKET }));
-  // Straight into the wash sheet, pre-scoped to exactly those pieces — the point
-  // of the row is that she doesn't have to work out which ones.
-  on("[data-td-washplan]", () => {
-    const m = packMidTripWash(tc, todayStr());
-    if (!m) { renderHome(); return; }
-    openLaundrySheet({ pool: m.items });
-  });
   on("[data-td-laundry]", () => {
     switchTab("closet");
     closetHamper = true; hamperLoad = null; closetWorn = false; closetRack = false; closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
@@ -1884,15 +1843,6 @@ function wireTripDash(tc) {
     el.onclick = async (e) => {
       e.stopPropagation();
       await planWoreIt(todayStr(), el.dataset.tdWore);
-      renderHome();
-    };
-  });
-  // The pack's own outfit for today — materialises the look at wear time.
-  body.querySelectorAll("[data-td-packwore]").forEach(el => {
-    el.onclick = async (e) => {
-      e.stopPropagation();
-      capsuleId = tc.id;
-      await packWoreOccasion(el.dataset.tdPackwore, todayStr());
       renderHome();
     };
   });
