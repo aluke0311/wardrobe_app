@@ -3367,6 +3367,36 @@ async function run() {
     return fn();
   });
 
+  /* ⚠️ NOTHING MAY SCROLL THE PAGE SIDEWAYS. Wide content scrolls inside its own
+     container; the column never does. The by-day fold broke this on every pack
+     screen — `.frow` is width:100% and the row adds 14px side margins, so it
+     overflowed its column by exactly that. Same trap as the 181px .log-cta,
+     from the other side: a full-width control with margins needs calc(). */
+  t("the pack screens don't scroll sideways", () => withPackCloset(() => {
+    const c = packTrip(6);
+    const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
+    if (!st || !st.res) return "no pack state";
+    W.capsuleId = c.id;
+    const measure = (html) => {
+      const h = W.document.createElement("div");
+      h.style.cssText = "position:absolute;left:-9999px;top:0;width:390px";
+      h.innerHTML = html; W.document.body.appendChild(h);
+      const over = Math.round(h.scrollWidth - 390);
+      h.remove(); return over;
+    };
+    const bits = [];
+    W._packDaysOpen = false;
+    const fold = measure(W.packDaysFoldHtml(st));
+    if (fold > 0) bits.push(`the by-day fold overflows by ${fold}px`);
+    for (const sec of ["plan", "bag", "outfits"]) {
+      W._tripSection = sec;
+      const over = measure(W.renderCapsuleTrip());
+      if (over > 0) bits.push(`trip/${sec} overflows by ${over}px`);
+    }
+    W._tripSection = null;
+    return bits.length ? bits.join("; ") : true;
+  }, { capsules: [packTrip(6)] }));
+
   t("outfits she has worn are offered before invented ones", () => withWornHistory(() => {
     const c = packTrip(6);
     const slate = W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });

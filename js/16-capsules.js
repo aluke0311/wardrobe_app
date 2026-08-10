@@ -96,6 +96,7 @@ function renderCapsules() {
   else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
   else if (capsuleView === "pack" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePack();
   else if (capsuleView === "packopts" && capsuleById.get(capsuleId)) body.innerHTML = renderPackOptionsPage();
+  else if (capsuleView === "trip" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleTrip();
   else if (capsuleView === "plan" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePlan();
   else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
   else { capsuleView = "list"; body.innerHTML = renderCapsuleList(); }
@@ -389,10 +390,17 @@ function syncCapForm() {
 }
 
 // ---- detail ----
+/* ⚠️ A DATED TRIP OPENS THE ONE TRIP SCREEN (2026-08-09, her ask to unify the
+   packing/trip screens). The old detail page is still the right screen for an
+   undated capsule — no phases, no bag, no occasions — and it stays reachable
+   for a trip through ⋯ → Locations & weather, which is the part of it that
+   isn't duplicated anywhere else. */
 function openCapsule(id) {
   navDeeper("capsules");
   capsuleId = id;
-  capsuleView = "detail";
+  const c = capsuleById.get(id);
+  capsuleView = (typeof isDatedTrip === "function" && isDatedTrip(c)) ? "trip" : "detail";
+  _tripSection = null;                 // let the trip's phase choose
   _capUnpackedOnly = false;
   _capUnwornOnly = false;
   renderCapsules();

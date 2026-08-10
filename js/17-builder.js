@@ -677,7 +677,10 @@ function finishBuilder(id, msg) {
 }
 
 function capsuleBack() {
-  if (capsuleView === "packopts") { capsuleView = "pack"; renderCapsules(); return navShallower("capsules"); }
+  /* ⚠️ The options page returns to whichever screen opened it — the unified
+     trip screen for a dated trip, the old pack screen otherwise. */
+  if (capsuleView === "packopts") { capsuleView = _packOptsFrom || "pack"; renderCapsules(); return navShallower("capsules"); }
+  if (capsuleView === "trip") { capsuleView = "list"; capsuleId = null; _packState = null; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pack") { capsuleView = "detail"; _packState = null; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "plan") { capsuleView = "detail"; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pick") { capsuleView = "detail"; return renderCapsules(); }

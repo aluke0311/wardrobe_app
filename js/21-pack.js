@@ -3287,6 +3287,168 @@ let _packOpen = new Set();      // slots whose subcategory breakdown is expanded
 let _packSel = new Set();       // bulk-swap selection
 let _packLastCid = null;
 
+/* ===================================================================
+   ONE TRIP SCREEN  (2026-08-09)
+   ===================================================================
+   Her ask: *"we need to make sure all packing/trip screens go to one machine —
+   if I change something from the bag, it should change the build a pack part
+   too. We need to unify these and maybe combine them."*
+
+   One trip had EIGHT surfaces: the capsule detail page, the build sheet, Pack →
+   Items, Pack → Outfits, the options page, the by-day plan, the trip dash, and
+   the add-items picker. Each showed a slice, several could disagree, and the
+   state seam underneath them (two lists of "what's coming") is fixed separately.
+
+   ⚠️ IT ABSORBS, IT DOESN'T DELETE. Replacing the detail page outright would
+   lose rename, dates, duplicate, share, archive, delete, locations and weather
+   — administration she still needs. Those move behind one ⋯ menu; nothing is
+   gone. "Replace" means one place to go, not fewer capabilities.
+   ⚠️ Composes the existing renderers rather than reimplementing them, so the
+   Bag and Outfits sections cannot drift from what the pack screen showed.
+   ⚠️ Dated trips only. An undated capsule has no phases, no bag and no
+   occasions, so the old detail page is still the right screen for it. */
+const TRIP_SECTIONS = ["plan", "bag", "outfits"];
+let _tripSection = null;     // null = pick from the trip's phase
+
+function tripDefaultSection(c) {
+  const ph = tripPhase(c);
+  if (ph === "trip" || ph === "unpack") return "outfits";   // you're living it
+  return packRecord(c.id).built ? "bag" : "plan";
+}
+function renderCapsuleTrip() {
+  const c = capsuleById.get(capsuleId);
+  if (!c) { capsuleView = "list"; return renderCapsuleList(); }
+  const built = !!packRecord(c.id).built;
+  const sec = TRIP_SECTIONS.includes(_tripSection) ? _tripSection : tripDefaultSection(c);
+  const st = built ? packStateReady(c.id) : null;
+  const ph = tripPhase(c);
+  const phaseLbl = ph === "pack" ? "Packing" : ph === "trip" ? "On the trip"
+                 : ph === "unpack" ? "Just back" : capDateLabel(c);
+
+  const seg = `<div class="cap-orgbar">
+    <div class="cap-seg">
+      ${TRIP_SECTIONS.map(k => `<button data-tripsec="${k}" class="${sec === k ? "on" : ""}">${
+        k === "plan" ? "Plan" : k === "bag" ? "Bag" : "Outfits"}</button>`).join("")}
+    </div>
+    <button class="cap-chip" data-trip-more>⋯</button>
+  </div>`;
+
+  let body = "";
+  if (!built && sec !== "plan") {
+    body = `<div class="placeholder"><b>No pack yet</b><div>Set up what's happening, then build it.</div>
+      <button class="btn" data-trip-tosetup style="margin-top:12px;width:auto;padding:0 18px">Go to Plan</button></div>`;
+  } else if (sec === "plan") {
+    body = tripPlanSectionHtml(c, st);
+  } else if (sec === "bag") {
+    const co = packCoreOptional(st);
+    body = st ? `<div class="pack-tip">${st.pack.length} pieces · ${co.core.length} core${
+      co.optional.length ? ` + ${co.optional.length} spare` : ""}${
+      st.cov ? ` · ${st.cov.outfits} outfits they make` : ""}</div>` + packSlotsHtml(st) : "";
+  } else {
+    body = st ? (packReviewBarHtml(st) + packBucketsHtml(st) + packDaysFoldHtml(st)) : "";
+  }
+  return capToolbar(`${c.name} · ${phaseLbl}`, true) + seg + body + `<div style="height:26px"></div>`;
+}
+
+/* The Plan section: what the trip needs, what's definitely coming, how much to
+   bring. This is the build sheet's content, no longer trapped in a modal — it
+   was the only place definites could be set BEFORE a build, which made the one
+   genuine pre-build input the hardest thing to find. */
+function tripPlanSectionHtml(c, st) {
+  const cid = c.id;
+  const rec = packRecord(cid);
+  /* ⚠️ An empty stored list is a DECISION; only null means "she hasn't said".
+     Falling back on .length would hand her proposal back to someone who had
+     just cleared it — the 2026-08-05 bug, and the reason contexts she never
+     chose kept turning up in the outfits. */
+  const mine = packTripContexts(cid);
+  const picked = mine || packSuggestTripContexts(c);
+  const { demand } = packDemandFor(cid, c);
+  const mode = packMode(cid);
+  const washDays = packWashDays(c);
+  const pins = (rec.pinned || []).filter(id => itemById.has(id));
+  const spare = packModeSpareTarget(mode, demand.length);
+  const rows = picked.length
+    ? picked.map(e => {
+        const lvl = e.level || contextFormalityLevel(e.ctx) || CONTEXT_FORMALITY_SEED[e.ctx];
+        return `<div class="pack-mixrow"><span>${esc(e.ctx)}${lvl ? ` · ${esc(occLabel(lvl))}` : ""}</span><b>${e.n || 1}d</b></div>`;
+      }).join("")
+    : `<div class="pack-warn-note" style="padding:4px 0">Nothing picked.</div>`;
+  return `<div style="padding:6px 16px 0">
+    <div class="fld">What's happening · ${demand.length} occasion${demand.length === 1 ? "" : "s"}</div>
+    <div class="pack-mix">${rows}</div>
+    <div class="pack-warn-note" style="padding:6px 0">${mine
+      ? "Your picks. A day you've set a fixed event for wins over these."
+      : "A starting guess from the contexts you wear most — change it and it's yours."}</div>
+    <button class="btn btn-sec" data-trip-ctx style="margin-top:8px;width:100%">${
+      picked.length ? "Change what's happening" : "Pick what's happening"}</button>
+
+    <div class="fld" style="margin-top:16px">Definitely bringing${pins.length ? ` · ${pins.length}` : ""}</div>
+    ${pins.length ? `<div class="pack-opt-thumbs" style="margin-bottom:8px">${
+      pins.slice(0, 8).map(id => thumbHtml((itemById.get(id) || {}).image_path, "pack-opt-th")).join("")}</div>`
+      : `<div class="pack-warn-note" style="padding:2px 0 6px">Nothing yet. Anything you add here, the pack gets built around.</div>`}
+    <button class="btn btn-sec" data-trip-definites style="width:100%">＋ Pieces you're bringing</button>
+
+    <div class="fld" style="margin-top:16px">How much to bring</div>
+    <div class="pack-chiprow">${PACK_MODES.map(m =>
+      `<button class="cap-chip${mode === m ? " on" : ""}" data-trip-mode="${esc(m)}">${esc(m)}</button>`).join("")}</div>
+    <div class="pack-warn-note" style="padding:2px 0 0">${esc({
+      light: "Smallest practical bag — no spare pieces.",
+      balanced: "Compact, with a little room to change your mind.",
+      flexible: "More options and backups." }[mode])}${
+      st ? ` · about ${packCoreOptional(st).core.length + spare} pieces` : ""}</div>
+
+    <div class="fld" style="margin-top:16px">Laundry</div>
+    <div class="pack-warn-note" style="padding:2px 0 6px">${washDays.length
+      ? `Washing on ${esc(washDays.map(d => fmtDate(d)).join(", "))} — set on the by-day planner.`
+      : `No wash planned. Set a laundry day on the by-day planner if you'll have one.`}</div>
+
+    <button class="btn" data-trip-build style="margin:14px 0 8px">${
+      packRecord(cid).built ? "✨ Rebuild the pack" : "✨ Build the pack"}</button>
+    <div class="pack-warn-note" style="padding:0 0 10px">${(c.locations || []).length
+      ? `Weather comes from your locations — past about two weeks out it's a typical-for-the-date average, not a forecast.`
+      : `⚠️ No locations set, so this packs for the season only. Add one from ⋯ above.`}</div>
+  </div>`;
+}
+
+/* Everything the old detail page could do, in one place, so absorbing it costs
+   nothing. Reuses the detail page's own handlers — these are the same actions,
+   not copies of them. */
+function openTripMoreSheet() {
+  const c = capsuleById.get(capsuleId);
+  if (!c) return;
+  const row = (attr, label, sub) => `<button class="sheet-row" ${attr}>
+    <span>${label}${sub ? `<div class="muted" style="font-size:12px;font-weight:400">${esc(sub)}</div>` : ""}</span></button>`;
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="tripMoreCancel">Close</button>
+      <h2>${esc(c.name)}</h2>
+      <span style="width:54px"></span>
+    </div>
+    ${row("data-cap-add", "＋ Add items", "Browse your closet")}
+    ${row("data-cap-byday", "📅 By-day plan", "Day cards, wash days, wore-it")}
+    ${row("data-trip-detail", "📍 Locations & weather", (c.locations || []).length
+        ? (c.locations || []).map(l => l.name).join(", ") : "None set")}
+    ${row("data-cap-rename", "Rename")}
+    ${row("data-cap-dates", "Dates", capDateLabel(c) || "Not set")}
+    ${row("data-cap-dup", "Duplicate")}
+    ${row("data-cap-share", "Share list")}
+    ${completedTrips().some(x => x.id === c.id) ? row("data-cap-recap", "Trip recap") : ""}
+    ${row("data-cap-arch", isCapsuleArchived(c.id) ? "Unarchive" : "Archive")}
+    ${row("data-cap-del", "Delete trip")}`;
+  showSheet("moveSheet");
+  $("#tripMoreCancel").onclick = () => hideSheet("moveSheet");
+  /* ⚠️ The sheet closes and the EXISTING delegated handlers take it from there
+     — these rows carry the same data attributes the detail page uses, so there
+     is one implementation of "rename a trip", not two. */
+  $("#moveInner").querySelectorAll("[data-cap-add],[data-cap-byday],[data-cap-rename],[data-cap-dates],[data-cap-dup],[data-cap-share],[data-cap-recap],[data-cap-arch],[data-cap-del],[data-trip-detail]").forEach(b => {
+    const inner = b.onclick;
+    b.addEventListener("click", () => { hideSheet("moveSheet"); }, { capture: true });
+  });
+  const det = $("#moveInner [data-trip-detail]");
+  if (det) det.onclick = () => { hideSheet("moveSheet"); capsuleView = "detail"; renderCapsules(); };
+}
+
 function renderCapsulePack() {
   /* ⚠️ Reset on entry, like _sugg.wholeCloset and _rackExtrasOpen: a widened
      occasion is a thing she did just now, not a setting she has to remember
@@ -4053,10 +4215,12 @@ function packOptionLabels(options) {
 const PACK_OPTS_PAGE = 40;
 let _packOptsOcc = null;          // which occasion the options screen is showing
 
+let _packOptsFrom = null;      // which screen opened the options page
 function openPackOptionsPage(occId) {
   const st = packStateReady();
   if (!st) return;
   _packOptsOcc = occId;
+  _packOptsFrom = (capsuleView === "trip") ? "trip" : "pack";
   navDeeper("capsules");
   capsuleView = "packopts";
   renderCapsules();
@@ -4209,7 +4373,12 @@ function packOccCardHtml(st, occ, { showDate = false, canDrop = false } = {}) {
 // laundry schedule, which is the one thing that genuinely needs dates.
 let _packDaysOpen = false;
 function packDaysFoldHtml(st) {
-  return `<button class="frow" data-pack-daysfold style="margin:14px 14px 0;border-radius:14px">
+  /* ⚠️ `width: calc(100% - 28px)` — .frow is width:100%, and 100% PLUS 14px
+     side margins overflows its column, so this row scrolled the whole screen
+     sideways by 14px on every pack. Same trap as the 181px .log-cta, from the
+     other direction: a full-width control with margins needs the calc, not the
+     percentage. It was doing this on the old pack screen too. */
+  return `<button class="frow" data-pack-daysfold style="margin:14px 14px 0;width:calc(100% - 28px);border-radius:14px">
       <span style="flex:1;text-align:left">📅 Day by day · ${st.slate.length} days</span>
       <svg class="chev" viewBox="0 0 24 24" style="${_packDaysOpen ? "transform:rotate(90deg)" : ""}"><path d="M9 6l6 6-6 6"/></svg>
     </button>

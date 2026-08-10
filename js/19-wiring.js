@@ -749,6 +749,42 @@ function wireEvents() {
     if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
     const packOptsPage = e.target.closest("[data-pack-optspage]");
     if (packOptsPage) return openPackOptionsPage(packOptsPage.dataset.packOptspage);
+    /* ---- the unified trip screen ---- */
+    const tripSec = e.target.closest("[data-tripsec]");
+    if (tripSec) { _tripSection = tripSec.dataset.tripsec; return renderCapsules(); }
+    if (e.target.closest("[data-trip-more]")) return openTripMoreSheet();
+    if (e.target.closest("[data-trip-tosetup]")) { _tripSection = "plan"; return renderCapsules(); }
+    if (e.target.closest("[data-trip-ctx]")) {
+      if (!_packState || _packState.cid !== capsuleId) packLoadState(capsuleId);
+      return openPackContexts();
+    }
+    if (e.target.closest("[data-trip-definites]"))
+      return openCapsulePicker(capsuleId, { mode: "definites",
+        back: () => { capsuleView = "trip"; _tripSection = "plan"; renderCapsules(); } });
+    const tripMode = e.target.closest("[data-trip-mode]");
+    if (tripMode) return (async () => {
+      await savePackRecord(capsuleId, { mode: tripMode.dataset.tripMode });
+      if (packRecord(capsuleId).built) {
+        const st2 = packLoadState(capsuleId, { resolve: true });
+        packEnsureSolve(st2, { force: true });
+        await packPersist(capsuleId);
+      }
+      renderCapsules();
+    })();
+    if (e.target.closest("[data-trip-build]")) return (async () => {
+      const cid = capsuleId;
+      /* ⚠️ Whatever the Plan section is showing becomes HERS on build, so the
+         pack isn't built on a guess that then re-guesses differently next time.
+         Same rule the build sheet already followed. */
+      if (!packTripContexts(cid))
+        await setPackTripContexts(cid, packSuggestTripContexts(capsuleById.get(cid)));
+      const st2 = packLoadState(cid, { resolve: true });
+      packEnsureSolve(st2, { force: true });
+      await packPersist(cid);
+      _tripSection = "outfits";
+      renderCapsules();
+      toast(`${st2.pack.length} pieces → ${st2.res ? st2.res.assign.size : 0} outfits`);
+    })();
     const packMoveDay = e.target.closest("[data-pack-moveday]");
     if (packMoveDay) return openPackMoveDaySheet(packMoveDay.dataset.packMoveday);
     const packBuildOcc = e.target.closest("[data-pack-buildocc]");

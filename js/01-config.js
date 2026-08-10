@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-09 r4";
+const APP_VERSION = "2026-08-09 r5";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-09 r4";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-09 r5", notes: [
+    "A trip is one screen now. Plan · Bag · Outfits, with the section that matters chosen by where the trip is — Plan before you've built, Outfits once you're travelling. The build sheet is gone as a separate modal; setting what's happening, what you're definitely bringing and how much to bring all live on Plan, where you can see them",
+    "Nothing was dropped: rename, dates, duplicate, share, archive, delete, locations and weather all moved to the ⋯ menu, and they're the same actions, not copies",
+    "Undated capsules keep the old page \u2014 they have no dates, no bag and no occasions, so a trip screen would be mostly empty boxes",
+    "Fixed a sideways scroll on every pack screen: the \"Day by day\" row was 14px wider than the column it sat in",
+  ] },
   { v: "2026-08-09 r4", notes: [
     "The packer now packs from outfits you've actually worn. Looks you've worn come first, then shapes you rebuild (your formulas), and only then something invented \u2014 and the BAG is built from those outfits rather than from slot counts, which is what makes it possible. Measured on a trip that used to produce 0 outfits you'd worn: every single one is now either a look you've worn or a shape you wear",
     "Before this, 298 outfits you'd worn fitted each day of a trip and exactly 2 of them survived inside the bag \u2014 because the bag was chosen piece-by-piece first, and picking pieces first destroys the combinations",
