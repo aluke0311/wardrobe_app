@@ -3601,6 +3601,72 @@ async function run() {
     return bits.length ? bits.join("; ") : true;
   }, { capsules: [packTrip(6)] }));
 
+  /* ================= 2026-08-10 r3 =====================================
+     ⚠️ EVERY ROW IN THE ⋯ MENU HAS TO DO SOMETHING (her report: *"tapping 'by
+     day plan' from the three dot menu doesn't do anything"*).
+
+     The rows carried the same `data-cap-*` attributes the detail page uses, on
+     the theory that the delegated handler would pick them up. It couldn't: that
+     listener is on `#capsulesBody` and the sheet renders into `#moveInner`,
+     outside it. So every row was dead except Locations, which had its own
+     onclick — the one that didn't rely on the theory was the one that worked.
+     ⚠️ Asserted on the RENDERED sheet, because that is where the wiring is: a
+     test of CAPSULE_ACTIONS alone would have passed throughout the bug. */
+  t("every row in the trip ⋯ menu is wired to a real action", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      W.capsuleId = c.id;
+      W.openTripMoreSheet();
+      const rows = [...W.document.querySelectorAll("#moveInner [data-tripmore]")];
+      W.hideSheet("moveSheet");
+      if (rows.length < 5) return `only ${rows.length} rows rendered`;
+      for (const b of rows) {
+        const act = b.dataset.tripmore;
+        if (typeof b.onclick !== "function") return `"${act}" has no handler`;
+        if (act !== "detail" && typeof W.CAPSULE_ACTIONS[act] !== "function")
+          return `"${act}" names no action`;
+      }
+      return true;
+    }, { capsules: [c] });
+  });
+
+  /* ⚠️ THE DAY IS HERS TO SET (her report: *"the by day plan should not auto
+     assign days — I should be able to do it myself"*). The control existed but
+     only on the Outfits section, so the one screen that IS about days was the
+     one where a day couldn't be changed, and the app's spread read as a
+     decision rather than a starting point.
+     ⚠️ Only a `selected` occasion may move: its id is date-free (D6) so it keeps
+     its outfit, while a declared occasion IS its date and a floor occasion is
+     keyed by it. A move control on those would orphan them. */
+  t("the by-day plan lets her move a day, and says whose choice it is", () => {
+    const c = packTrip(6);
+    return withPackCloset(() => {
+      const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }],
+                               rec: { built: W.todayStr() } });
+      if (!st || !st.res) return "no pack state";
+      W.capsuleId = c.id;
+      W.packPersistSolve(st);
+      const byDate = W.packPlanByDate(W.capsuleById.get(c.id));
+      if (!byDate || !byDate.size) return "vacuous: the by-day plan showed nothing";
+      let movable = 0, fixed = 0;
+      for (const [date, entries] of byDate) {
+        const h = W.document.createElement("div");
+        h.innerHTML = W.packPlanCardsHtml(entries, date);
+        const cards = [...h.querySelectorAll(".pack-occ")];
+        entries.forEach((e, n) => {
+          const has = !!cards[n].querySelector("[data-pack-moveday]");
+          if (e.occ.source === "selected") { movable++; if (!has) movable = -99; }
+          else { fixed++; if (has) fixed = -99; }
+        });
+      }
+      if (movable < 0) return "an occasion she picked had no way to change its day";
+      if (fixed < 0) return "a date-anchored occasion offered a move it can't honour";
+      if (!movable) return "vacuous: nothing on this trip was movable";
+      return W.packDaySpreadRowHtml(W.capsuleById.get(c.id)).includes("data-pack-keepdays")
+        ? true : "the plan never offers to keep the days it chose";
+    }, { capsules: [c] });
+  });
+
   t("outfits she has worn are offered before invented ones", () => withWornHistory(() => {
     const c = packTrip(6);
     const slate = W.packSlate(c, { tripContexts: [{ ctx: "Errands", n: 4 }] });
@@ -3878,6 +3944,93 @@ async function run() {
     } finally {
       W.rest = saved.rest; W.renderCapsules = saved.render; W.toast = saved.toast;
       W.capsuleId = saved.cid; W._packState = null; W.kvData.delete("pack:" + c.id);
+    }
+  });
+
+  /* ⚠️ WHAT SHE ADDS BY HAND IS PART OF THE PLAN, NOT LUGGAGE (2026-08-10 r3,
+     her ask: *"make sure adding items individually works as expected, including
+     incorporating into suggested outfits — I want the packing algorithm to try
+     to use the whole list unless I mark something as 'do not plan'"*).
+
+     Two failures compounded. A hand-added piece went into the bag unmarked, so
+     it counted as "spare" — the mode's trim could drop it and packSyncMembers
+     would then delete it from the trip. And `res = null` never produced a new
+     solve, because the stored assignment still described the trip perfectly and
+     the rehydrate guard passed: the piece sat in the suitcase with no outfit
+     knowing about it.
+     ⚠️ Asserted at LIGHT, the mode most likely to trim, or the survival half is
+     about a mode that wasn't trimming anything. */
+  await ta("a piece added by hand survives and gets into an outfit", async () => {
+    const c = packTrip(6);
+    const saved = { rest: W.rest, render: W.renderCapsules, toast: W.toast, cid: W.capsuleId };
+    W.rest = async (path) => { if (String(path).startsWith("/kv?")) throw new Error("stub"); return []; };
+    W.renderCapsules = () => {}; W.toast = () => {};
+    try {
+      return await withPackClosetA(async () => {
+        const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }],
+                                 rec: { built: W.todayStr(), mode: "light" } });
+        if (!st || !st.res) return "no pack state";
+        await W.packPersist(c.id);
+        const add = W.items.filter(i => !st.pack.includes(i.id)).slice(0, 3).map(i => i.id);
+        if (add.length < 3) return "vacuous: the closet had nothing outside the bag";
+        await W.addItemsToCapsule(c.id, add);
+        const st2 = W.packStateReady(c.id);          // how a screen reaches it
+        await W.packPersist(c.id);
+        const used = new Set();
+        for (const cd of st2.res.assign.values()) for (const id of cd.ids) used.add(id);
+        const members = (W.capsuleLinkMap.get(c.id) || []).map(l => l.item_id);
+        const gone = add.filter(id => !st2.pack.includes(id) || !members.includes(id));
+        if (gone.length) return `${gone.length} of 3 added pieces were dropped from the trip`;
+        return add.some(id => used.has(id))
+          ? true : "none of the added pieces reached an outfit";
+      }, { capsules: [c] });
+    } finally {
+      W.rest = saved.rest; W.renderCapsules = saved.render; W.toast = saved.toast;
+      W.capsuleId = saved.cid; W._packState = null; W.kvData.delete("pack:" + c.id);
+    }
+  });
+
+  /* ⚠️ AND "DON'T PLAN AROUND IT" IS THE OPT-OUT, not a delete. The piece stays
+     packed and stays on the checklist; only the outfit building stops. It is
+     deliberately NOT `banned`, which means "keep it out of the bag".
+     ⚠️ It implies kept, or it would be a slow way of deleting: a piece nothing
+     plans around is in no outfit, which makes it spare, which the mode trims. */
+  await ta("\"don't plan around it\" keeps the piece and drops it from the outfits", async () => {
+    const c = packTrip(6);
+    const saved = { rest: W.rest, render: W.renderCapsules, toast: W.toast,
+                    cid: W.capsuleId, busy: W._packBusy };
+    W.rest = async (path) => { if (String(path).startsWith("/kv?")) throw new Error("stub"); return []; };
+    W.renderCapsules = () => {}; W.toast = () => {};
+    try {
+      return await withPackClosetA(async () => {
+        const st = appSolve(c, { tripContexts: [{ ctx: "Errands", n: 4 }, { ctx: "Work", n: 2 }],
+                                 rec: { built: W.todayStr() } });
+        if (!st || !st.res) return "no pack state";
+        await W.packPersist(c.id);
+        const usedIds = () => {
+          const u = new W.Set();
+          for (const cd of W._packState.res.assign.values()) for (const id of cd.ids) u.add(id);
+          return u;
+        };
+        const victim = [...usedIds()].find(id => (W.itemById.get(id) || {}).category === "Tops");
+        if (!victim) return "vacuous: no top was in an outfit to begin with";
+        W._packSel.clear(); W._packSel.add(victim);
+        await W.packNoPlanSelected(true);
+        if (usedIds().has(victim)) return "it is still in an outfit";
+        if (!W._packState.pack.includes(victim)) return "it was taken out of the bag";
+        if (!(W.capsuleLinkMap.get(c.id) || []).some(l => l.item_id === victim))
+          return "it was removed from the trip";
+        if (W._packState.demand.some(o => W.packReviewOptions(W._packState, o).some(x => x.ids.includes(victim))))
+          return "the review still offers outfits built from it";
+        // …and it comes back.
+        W._packSel.clear(); W._packSel.add(victim);
+        await W.packNoPlanSelected(false);
+        return usedIds().has(victim) ? true : "unmarking it didn't put it back in the plan";
+      }, { capsules: [c] });
+    } finally {
+      W.rest = saved.rest; W.renderCapsules = saved.render; W.toast = saved.toast;
+      W.capsuleId = saved.cid; W._packBusy = saved.busy;
+      W._packState = null; W._packSel.clear(); W.kvData.delete("pack:" + c.id);
     }
   });
 

@@ -734,11 +734,14 @@ function wireEvents() {
       return renderCapsules();
     }
     if (e.target.closest("[data-pack-swapsel]")) return packSwapSelected();
+    const noPlanSel = e.target.closest("[data-pack-noplansel]");
+    if (noPlanSel) return packNoPlanSelected(noPlanSel.dataset.packNoplansel === "on");
     if (e.target.closest("[data-pack-selclear]")) { _packSel.clear(); return renderCapsules(); }
     if (e.target.closest("[data-pack-occasions]")) return openPackContexts();
     if (e.target.closest("[data-pack-rebuild]")) return packRebuildFromProposal();
     if (e.target.closest("[data-pack-resolve]")) return packResolveUnlocked();
     if (e.target.closest("[data-pack-byday]")) return openTripPlan(capsuleId);
+    if (e.target.closest("[data-pack-keepdays]")) return packKeepDays();
     if (e.target.closest("[data-pack-tight]")) return openPackModeSheet();
     if (e.target.closest("[data-pack-addany]")) return openPackAddSheet();
     const packSwap = e.target.closest("[data-pack-swap]");
@@ -828,8 +831,8 @@ function wireEvents() {
       _capForm.anchors.splice(parseInt(capAnchDel.dataset.capanchorDel), 1);
       return renderCapsules();
     }
-    if (e.target.closest("[data-cap-byday]")) return openTripPlan(capsuleId);
-    if (e.target.closest("[data-cap-recap]")) return openTripRecap(capsuleId);
+    if (e.target.closest("[data-cap-byday]")) return CAPSULE_ACTIONS.byday(capsuleId);
+    if (e.target.closest("[data-cap-recap]")) return CAPSULE_ACTIONS.recap(capsuleId);
     if (e.target.closest("[data-cap-plan]")) return planFromCapsule(capsuleId);
     if (e.target.closest("[data-cap-suggest]")) return openSuggestSheet(null, capsuleId);
     const planRemove = e.target.closest("[data-plan-remove]");
@@ -848,29 +851,17 @@ function wireEvents() {
     if (planSuggest) return openSuggestSheet(null, capsuleId, { capsuleId, date: planSuggest.dataset.planSuggest });
     const planBuild = e.target.closest("[data-plan-build]");
     if (planBuild) return openBuilder(null, null, { capsuleId, date: planBuild.dataset.planBuild });
-    if (e.target.closest("[data-cap-add]")) return openCapsulePicker(capsuleId);
+    if (e.target.closest("[data-cap-add]")) return CAPSULE_ACTIONS.add(capsuleId);
     if (e.target.closest("[data-cap-look-add]")) return openCapsuleLookPicker();
     const capLook = e.target.closest("[data-cap-look]");
     if (capLook) { looksLens = "All"; looksFolder = null; return openLookFrom(capLook.dataset.capLook); }
-    if (e.target.closest("[data-cap-rename]")) return renameCapsule(capsuleId);
-    if (e.target.closest("[data-cap-dates]")) return editCapsuleDates(capsuleId);
-    if (e.target.closest("[data-cap-dup]")) return duplicateCapsule(capsuleId);
-    if (e.target.closest("[data-cap-share]")) return shareCapsuleList(capsuleId);
-    if (e.target.closest("[data-cap-del]")) return deleteCapsule(capsuleId);
+    if (e.target.closest("[data-cap-rename]")) return CAPSULE_ACTIONS.rename(capsuleId);
+    if (e.target.closest("[data-cap-dates]")) return CAPSULE_ACTIONS.dates(capsuleId);
+    if (e.target.closest("[data-cap-dup]")) return CAPSULE_ACTIONS.dup(capsuleId);
+    if (e.target.closest("[data-cap-share]")) return CAPSULE_ACTIONS.share(capsuleId);
+    if (e.target.closest("[data-cap-del]")) return CAPSULE_ACTIONS.del(capsuleId);
     if (e.target.closest("[data-cap-archtoggle]")) { _capArchiveOpen = !_capArchiveOpen; return renderCapsules(); }
-    if (e.target.closest("[data-cap-arch]")) {
-      // Capture the id — capsuleId moves when we drop back to the list, and the
-      // Undo closure must still point at the capsule she just archived.
-      const cid = capsuleId;
-      const on = !isCapsuleArchived(cid);
-      const c = capsuleById.get(cid);
-      return setCapsuleArchived(cid, on).then(() => {
-        capsuleView = "list";
-        renderCapsules();
-        toast(on ? `Archived · ${(c && c.name) || "capsule"}` : "Back in the list",
-          on ? { label: "Undo", fn: () => setCapsuleArchived(cid, false).then(() => renderCapsules()) } : undefined);
-      });
-    }
+    if (e.target.closest("[data-cap-arch]")) return CAPSULE_ACTIONS.arch(capsuleId);
     if (e.target.closest("[data-wx-refresh]")) {
       const c = capsuleById.get(capsuleId);
       if (c) { delete _wxCache[c.id]; const el = $("#wxStrip"); if (el) el.innerHTML = `<div class="wx-loading muted">Refreshing…</div>`; loadTripWeather(c); }

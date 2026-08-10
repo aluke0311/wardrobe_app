@@ -807,6 +807,44 @@ function openTripPlan(id) {
   renderCapsules();
 }
 
+/* ⚠️ ONE IMPLEMENTATION OF EVERY TRIP ADMIN ACTION — and the claim that there
+   already was one turned out to be false (2026-08-10 r3, her report: *"tapping
+   'by day plan' from the three dot menu doesn't do anything"*).
+
+   The ⋯ sheet's rows carry the same `data-cap-*` attributes the detail page
+   uses, on the theory that the delegated handler would pick them up. It can't:
+   that listener is on `#capsulesBody` and the sheet renders into `#moveInner`,
+   which is outside it. So EVERY row in that menu was dead except Locations,
+   which had been given an explicit onclick — the one that worked is the one
+   that didn't rely on the theory.
+
+   A shared map is the honest version of "one implementation": the delegated
+   handler and the sheet both call these, so a row can't be wired to nothing. */
+const CAPSULE_ACTIONS = {
+  add: (cid) => openCapsulePicker(cid),
+  byday: (cid) => openTripPlan(cid),
+  recap: (cid) => openTripRecap(cid),
+  rename: (cid) => renameCapsule(cid),
+  dates: (cid) => editCapsuleDates(cid),
+  dup: (cid) => duplicateCapsule(cid),
+  share: (cid) => shareCapsuleList(cid),
+  del: (cid) => deleteCapsule(cid),
+  arch: (cid) => capsuleArchiveToggle(cid),
+};
+// Archive/unarchive, with the Undo that has to outlive the screen change.
+function capsuleArchiveToggle(cid) {
+  // ⚠️ Capture the id — capsuleId moves when we drop back to the list, and the
+  // Undo closure must still point at the capsule she just archived.
+  const on = !isCapsuleArchived(cid);
+  const c = capsuleById.get(cid);
+  return setCapsuleArchived(cid, on).then(() => {
+    capsuleView = "list";
+    renderCapsules();
+    toast(on ? `Archived · ${(c && c.name) || "capsule"}` : "Back in the list",
+      on ? { label: "Undo", fn: () => setCapsuleArchived(cid, false).then(() => renderCapsules()) } : undefined);
+  });
+}
+
 function planDayWxHtml(date) {
   const w = _planWx[date];
   if (!w || w.maxT == null) return "";
@@ -889,6 +927,14 @@ function renderCapsulePlan() {
       <div class="ch-sub">${dates.length ? `${dates.length} day${dates.length === 1 ? "" : "s"} · ` : ""}${memberCount} piece${memberCount === 1 ? "" : "s"} in this ${esc(kind)}</div>
     </div>
     ${memberCount ? "" : `<div class="placeholder" style="padding:24px 32px"><b>No pieces yet</b><div>Add items to the ${esc(kind)} first — planning is scoped to its pieces.</div></div>`}
+    ${/* ⚠️ SAY THAT THE SPREAD IS A GUESS, AND OFFER THE ONE TAP THAT ENDS IT
+          (2026-08-10 r3, her report: "the by day plan should not auto assign
+          days — I should be able to do it myself"). Every occasion could be
+          moved already; nothing on this screen said so, and nothing let her
+          settle the lot, so each rebuild re-spread the ones she hadn't
+          touched. "Keep these days" pins them exactly where they are — after
+          that the app places nothing it wasn't asked to. */""}
+    ${(typeof packDaySpreadRowHtml === "function") ? packDaySpreadRowHtml(c) : ""}
     ${bucketCard}
     ${dayCards}
     <div style="height:30px"></div>`;
@@ -1460,15 +1506,35 @@ async function saveCapsulePicker() {
 async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild, { syncPack = true } = {}) {
   const fresh = itemIds.filter(id => !(capsuleLinkMap.get(cid) || []).some(l => l.item_id === id));
   if (!fresh.length) return;
+  /* ⚠️ WHAT SHE ADDS BY HAND IS A DEFINITE, AND THE OUTFITS RE-DERIVE AROUND IT
+     (2026-08-10 r3, her ask: "make sure adding items individually works as
+     expected, including incorporating into suggested outfits — I want the
+     packing algorithm to try to use the whole list").
+
+     Two things were wrong and they compounded. A hand-added piece went into the
+     bag but wasn't marked hers, so it was "optional" — in no outfit, so the
+     mode's spare trim could drop it, and packSyncMembers would then DELETE it
+     from the trip on the next persist. And `res = null` alone never produced a
+     new solve: the stored assignment still described the trip perfectly, so
+     packEnsureSolve's rehydrate guard passed and the piece sat in the suitcase
+     with no outfit knowing about it.
+     ⚠️ `syncPack` false means this is packSyncMembers projecting the bag BACK —
+     pinning there would turn every piece the solver happened to choose into a
+     definite she never picked. */
   if (syncPack && packRecord(cid).pieces) {
-    const bag = new Set(packRecord(cid).pieces || []);
+    const rec = packRecord(cid);
+    const bag = new Set(rec.pieces || []);
     const before = bag.size;
     fresh.forEach(id => bag.add(id));
     if (bag.size !== before) {
-      await savePackRecord(cid, { pieces: [...bag] });
+      const pinned = new Set(rec.pinned || []);
+      fresh.forEach(id => pinned.add(id));
+      await savePackRecord(cid, { pieces: [...bag], pinned: [...pinned], needsResolve: true });
       if (typeof _packState !== "undefined" && _packState && _packState.cid === cid) {
         _packState.pack = [...bag];
-        _packState.res = null;          // outfits re-derive on next open
+        fresh.forEach(id => _packState.keeps.add(id));
+        _packState.res = null;
+        _packState.forceSolve = true;   // the outfits have to see it, not just the bag
         packRegroup(_packState);
       }
     }

@@ -234,6 +234,30 @@ async function packSetOccDate(cid, occId, date) {
   await savePackRecord(cid, { occDates: all });
 }
 
+/* ---- "don't plan around it" (2026-08-10 r3) --------------------------------
+   Her ask: *"I want the packing algorithm to try to use the whole list unless I
+   mark something as 'do not plan'. We can still have extras but I don't want to
+   artificially limit myself."*
+
+   So the default flipped: everything in the trip's list is something the solver
+   should try to build with, and THIS is the opt-out. It is deliberately not
+   `banned`, which means "don't put this in the bag at all" — a piece marked here
+   is still packed, still on the checklist, still hers. The app just stops
+   building outfits around it.
+   ⚠️ IT IMPLIES KEPT. A piece nothing plans around appears in no outfit, which
+   makes it "spare" — and the mode trims spare. Without the pin, saying "don't
+   plan around this" would be a slow way of deleting it from the trip. */
+function packNoPlan(cid) { return new Set(packRecord(cid).noplan || []); }
+async function packSetNoPlan(cid, ids, on) {
+  const set = packNoPlan(cid);
+  const keeps = new Set(packRecord(cid).pinned || []);
+  for (const id of (ids || [])) {
+    if (on) { set.add(id); keeps.add(id); } else set.delete(id);
+  }
+  await savePackRecord(cid, { noplan: [...set], pinned: [...keeps] });
+  packInvalidateState(cid);
+}
+
 function packDemandFor(cid, c, { wearRows = null, tripContexts = undefined } = {}) {
   const cap = c || capsuleById.get(cid);
   if (!cap) return { slate: [], demand: [] };
@@ -917,7 +941,17 @@ function packCandidates(occ, rackIds, { pool = null, wxFor = null, limit = PACK_
      are Sneakers at [2,3]), which walked straight past the exclusion. "Not this
      trip" that still turns up on the hiking day is not a decision, it's a
      suggestion. */
-  const no = excluded && excluded.size ? excluded : null;
+  /* ⚠️ AND "DON'T PLAN AROUND IT" DEFAULTS IN FROM THE OPEN PACK, rather than
+     being threaded through fifteen call sites. Coverage, the option counts, the
+     review lists, every re-pick path and the solver all enumerate through here,
+     and a rule half of them honoured would be the "when you add a reader, audit
+     them all" trap arriving in its fifth costume. `packSolve` still passes it
+     explicitly, so the solve never depends on this fallback.
+     ⚠️ Sound because every caller enumerates for the OPEN pack — the dash paths
+     (packPlanByDate, packMidTripWash) read the stored assignment and never come
+     through here. */
+  const auto = (typeof _packState !== "undefined" && _packState && _packState.noplan) || null;
+  const no = excluded && excluded.size ? excluded : (auto && auto.size ? auto : null);
   const okay = (i) => i && itemStatus(i) === "Available" && !(no && no.has(i.id));
   const avail = (pool || items).filter(okay);
   const lvl = packOccLevel(occ);
@@ -1197,7 +1231,8 @@ function packSchedule(assign, { dates = null, ls = null, washDays = null } = {})
    buys nothing — the base pack barely differs between good restarts. */
 function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = null,
                      K = PACK_OPTIONS.normal, ls = null, washDays = null, dates = null,
-                     pinned = null, locked = null, restarts = PACK_RESTARTS, seed = null } = {}) {
+                     pinned = null, locked = null, noplan = null,
+                     restarts = PACK_RESTARTS, seed = null } = {}) {
   const dem = demand || [];
   const rackIds = (rack && rack.ids) || [];
   const lst = ls || laundryState();
@@ -1218,7 +1253,12 @@ function packSolve({ c = null, demand = null, rack = null, pool = null, wxFor = 
      function as the pack fills, which is where it belongs.
      The temperature band keeps genuine hot/cold differences inside a long leg
      from being flattened; with no weather loaded it collapses to level+leg. */
-  const candOpts = { pool, wxFor, seed: sd, limit: PACK_SOLVE_CANDIDATES };
+  /* ⚠️ `noplan` bites HERE, not in the bag. A piece she has told the app not to
+     plan around is still packed and still on the checklist — it just can't be
+     enumerated into an outfit, which is the only thing "don't plan around it"
+     can honestly mean. */
+  const candOpts = { pool, wxFor, seed: sd, limit: PACK_SOLVE_CANDIDATES,
+                     excluded: (noplan && noplan.size) ? noplan : null };
   const bandOf = (day) => {
     const w = day && wxFor ? wxFor(day) : null;
     return w && w.maxT != null ? Math.round(w.maxT / 8) : "x";
@@ -2535,6 +2575,7 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
   const kk = K != null ? K : (rec.K || PACK_OPTIONS.normal);
   const keeps = new Set(rec.pinned || []);
   const banned = new Set(rec.banned || []);
+  const noplan = packNoPlan(cid);
 
   // The app's PROPOSAL always exists, so a dial can show what it would have said
   // even after she's overridden it.
@@ -2573,8 +2614,16 @@ function packLoadState(cid, { resolve = false, K = null } = {}) {
 
      Rehydration is right for a screen that only wants to display; it is wrong
      for an explicit "recompute this". `forceSolve` is that distinction. */
+  /* ⚠️ ADDING A PIECE BY HAND HAS TO REACH THE OUTFITS (2026-08-10 r3, her ask:
+     "make sure adding items individually works as expected, including
+     incorporating into suggested outfits"). It didn't: `addItemsToCapsule` put
+     the piece in the bag, but the stored assignment still described the trip
+     perfectly, so packEnsureSolve's rehydrate guard passed and no solve ever
+     ran. The piece sat in the suitcase and no outfit knew about it.
+     One flag, consumed once, so it works whether or not the pack screen was
+     open when she added — an in-memory forceSolve can't survive navigation. */
   _packState = { cid, c, slate, demand, rack, counts, targets, subTargets,
-                 pack, keeps, banned, K: kk, res: null, forceSolve: !!resolve };
+                 pack, keeps, banned, noplan, K: kk, res: null, forceSolve: !!resolve };
   packRegroup(_packState);
   return _packState;
 }
@@ -2599,6 +2648,15 @@ function packRegroup(st) {
 // Outfits are on demand (her call), so the solve is only run when something asks
 // for it — scoped to the pack she's actually taking.
 function packEnsureSolve(st, { force = false } = {}) {
+  /* ⚠️ CONSUMED HERE, ABOVE THE EARLY RETURN, and not in packLoadState — a
+     screen reached with the state already warm (packStateReady returns it
+     untouched) would otherwise skip the check and leave the flag set, so the
+     re-solve would fire again on some unrelated later open. One flag, one
+     consumer, spent the first time anything asks for the outfits. */
+  if (!force && st.cid && packRecord(st.cid).needsResolve) {
+    force = true;
+    savePackRecord(st.cid, { needsResolve: false });
+  }
   if (st.res && !force) return st.res;
   // An explicit recompute (a tightness change, "start over") consumes its flag
   // here — one forced solve, not a screen that can never rehydrate again.
@@ -2662,7 +2720,7 @@ function packEnsureSolve(st, { force = false } = {}) {
        If a future round wants it, the evidence to bring is a fixture where
        `packOptionCount` on the filled bag comes in UNDER optionTarget. */
     wxFor: packWxFor(st.c), K: st.K, washDays: packWashDays(st.c),
-    pinned: [...st.keeps], locked: carry,
+    pinned: [...st.keeps], locked: carry, noplan: st.noplan,
   });
   /* ⚠️ INVERSION ① IS NOT SELF-ENFORCING AFTER A SOLVE (2026-08-05, her report:
      "it has hiking boots in a workout context that are not listed in the items
@@ -2970,6 +3028,29 @@ function packUniqueCoverIds(st, slot) {
 }
 
 // Bulk: swap every selected piece at once.
+/* ⚠️ MARKING RE-SOLVES, exactly like unmarking. Telling the app to stop planning
+   around a piece leaves every outfit that used it standing — she'd have said
+   "don't plan around this" and watched it stay in three outfits. Holds her
+   locks, so decided days don't move. */
+async function packNoPlanSelected(on) {
+  const st = _packState;
+  if (!st || !_packSel.size || _packBusy) return;
+  const cid = st.cid;
+  const ids = [..._packSel];
+  _packSel.clear();
+  _packBusy = true;
+  try {
+    await packSetNoPlan(cid, ids, on);
+    const st2 = packLoadState(cid, { resolve: true });
+    packEnsureSolve(st2, { force: true });
+    await packPersist(cid);
+    renderCapsules();
+    toast(on
+      ? `${ids.length} piece${ids.length === 1 ? "" : "s"} still coming · nothing planned around ${ids.length === 1 ? "it" : "them"}`
+      : `Back in the plan`);
+  } finally { _packBusy = false; }
+}
+
 async function packSwapSelected() {
   const st = _packState;
   if (!st || !_packSel.size) return;
@@ -3428,7 +3509,7 @@ function tripPlanSectionHtml(c, st) {
 function openTripMoreSheet() {
   const c = capsuleById.get(capsuleId);
   if (!c) return;
-  const row = (attr, label, sub) => `<button class="sheet-row" ${attr}>
+  const row = (act, label, sub) => `<button class="sheet-row" data-tripmore="${esc(act)}">
     <span>${label}${sub ? `<div class="muted" style="font-size:12px;font-weight:400">${esc(sub)}</div>` : ""}</span></button>`;
   $("#moveInner").innerHTML = `
     <div class="sheet-hdr">
@@ -3436,28 +3517,37 @@ function openTripMoreSheet() {
       <h2>${esc(c.name)}</h2>
       <span style="width:54px"></span>
     </div>
-    ${row("data-cap-add", "＋ Add items", "Browse your closet")}
-    ${row("data-cap-byday", "📅 By-day plan", "Day cards, wash days, wore-it")}
-    ${row("data-trip-detail", "📍 Locations & weather", (c.locations || []).length
+    ${row("add", "＋ Add items", "Browse your closet")}
+    ${row("byday", "📅 By-day plan", "Day cards, wash days, wore-it")}
+    ${row("detail", "📍 Locations & weather", (c.locations || []).length
         ? (c.locations || []).map(l => l.name).join(", ") : "None set")}
-    ${row("data-cap-rename", "Rename")}
-    ${row("data-cap-dates", "Dates", capDateLabel(c) || "Not set")}
-    ${row("data-cap-dup", "Duplicate")}
-    ${row("data-cap-share", "Share list")}
-    ${completedTrips().some(x => x.id === c.id) ? row("data-cap-recap", "Trip recap") : ""}
-    ${row("data-cap-arch", isCapsuleArchived(c.id) ? "Unarchive" : "Archive")}
-    ${row("data-cap-del", "Delete trip")}`;
+    ${row("rename", "Rename")}
+    ${row("dates", "Dates", capDateLabel(c) || "Not set")}
+    ${row("dup", "Duplicate")}
+    ${row("share", "Share list")}
+    ${completedTrips().some(x => x.id === c.id) ? row("recap", "Trip recap") : ""}
+    ${row("arch", isCapsuleArchived(c.id) ? "Unarchive" : "Archive")}
+    ${row("del", "Delete trip")}`;
   showSheet("moveSheet");
   $("#tripMoreCancel").onclick = () => hideSheet("moveSheet");
-  /* ⚠️ The sheet closes and the EXISTING delegated handlers take it from there
-     — these rows carry the same data attributes the detail page uses, so there
-     is one implementation of "rename a trip", not two. */
-  $("#moveInner").querySelectorAll("[data-cap-add],[data-cap-byday],[data-cap-rename],[data-cap-dates],[data-cap-dup],[data-cap-share],[data-cap-recap],[data-cap-arch],[data-cap-del],[data-trip-detail]").forEach(b => {
-    const inner = b.onclick;
-    b.addEventListener("click", () => { hideSheet("moveSheet"); }, { capture: true });
+  /* ⚠️ WIRED DIRECTLY, because the delegated handlers CANNOT see this sheet
+     (2026-08-10 r3, her report: "tapping 'by day plan' from the three dot menu
+     doesn't do anything"). That listener is on `#capsulesBody` and this renders
+     into `#moveInner`, which is outside it — so the data attributes these rows
+     carried reached nothing at all, and every row here was dead except
+     Locations, which happened to have its own onclick.
+     The "one implementation" the old comment claimed is real now: CAPSULE_ACTIONS
+     is what the delegated handler calls too. */
+  const cid = c.id;
+  $("#moveInner").querySelectorAll("[data-tripmore]").forEach(b => {
+    b.onclick = () => {
+      hideSheet("moveSheet");
+      const act = b.dataset.tripmore;
+      if (act === "detail") { capsuleId = cid; capsuleView = "detail"; return renderCapsules(); }
+      const fn = CAPSULE_ACTIONS[act];
+      if (fn) { capsuleId = cid; fn(cid); }
+    };
   });
-  const det = $("#moveInner [data-trip-detail]");
-  if (det) det.onclick = () => { hideSheet("moveSheet"); capsuleView = "detail"; renderCapsules(); };
 }
 
 function renderCapsulePack() {
@@ -3548,10 +3638,18 @@ function renderCapsulePack() {
     <button class="cap-chip" data-pack-tight>${esc(packMode(st.cid))} ✎</button>
   </div>`;
 
+  /* ⚠️ "Don't plan around it" lives on the SELECTION BAR, not on the piece row.
+     The row already carries a tick, a thumb, two lines of text and two buttons
+     in a 390px column — a fifth control is the `.cap-actions` overflow lesson
+     waiting to happen, and this is an occasional decision, not a per-piece one.
+     Toggles both ways off the same button, so nothing is one-way. */
+  const allNoPlan = _packSel.size && [..._packSel].every(id => st.noplan.has(id));
   const selBar = _packSel.size ? `<div class="cap-orgbar">
     <div class="cap-cov-lbl">${_packSel.size} selected</div>
-    <div style="display:flex;gap:6px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
       <button class="plan-act" data-pack-swapsel>✨ Swap these</button>
+      <button class="plan-act" data-pack-noplansel="${allNoPlan ? "off" : "on"}">${
+        allNoPlan ? "Plan around these" : "Don't plan around"}</button>
       <button class="plan-act" data-pack-selclear>Cancel</button>
     </div>
   </div>` : "";
@@ -3605,9 +3703,14 @@ function packSlotsHtml(st) {
       const kept = st.keeps.has(id);
       const sel = _packSel.has(id);
       const isOpt = optLooks.has(id);
-      const why = isOpt
-        ? `spare \u00b7 in ${optLooks.get(id)} of the looks this bag can make`
-        : packItemWhy(i, optionFor.get(id), st.demand);
+      /* \u26a0\ufe0f A piece she's told the app not to plan around says so INSTEAD of
+         "spare \u00b7 in 0 of the looks" \u2014 which would be technically true and read
+         as the app complaining about a decision she made. */
+      const why = st.noplan.has(id)
+        ? "coming, but nothing is planned around it"
+        : isOpt
+          ? `spare \u00b7 in ${optLooks.get(id)} of the looks this bag can make`
+          : packItemWhy(i, optionFor.get(id), st.demand);
       return `<div class="pack-bagrow${packedSet.has(id) ? " on" : ""}"${sel ? ` style="background:var(--panel2)"` : ""}>
         <button class="pack-tick" data-pack-sel="${esc(id)}" aria-label="Select">${sel ? "✓" : ""}</button>
         ${thumbHtml(i.image_path, "pack-pthumb")}
@@ -4755,6 +4858,38 @@ function packPlanByDate(c) {
   return out.size ? out : null;
 }
 
+/* Whose choice the day layout is, and the one tap that makes it entirely hers.
+   ⚠️ It pins where things ALREADY ARE — it never moves anything. "Keep these
+   days" has to be a no-op on screen and a change in who owns it, or the control
+   that promises to stop the app rearranging her trip would rearrange it once on
+   the way out. */
+function packDaySpreadRowHtml(c) {
+  if (!c || !tripDates(c).length || !packRecord(c.id).built) return "";
+  const { demand } = packDemandFor(c.id, c);
+  const movable = demand.filter(o => o.source === "selected" && o.date);
+  if (!movable.length) return "";
+  const pins = packOccDates(c.id);
+  const loose = movable.filter(o => !pins[o.id]);
+  return `<div class="pack-warn-note" style="padding:10px 16px 0">${loose.length
+    ? `The app spread ${loose.length} of these across your free days. Tap 📅 on any one to move it — or keep them where they are.`
+    : `Every day here is one you chose. The app won't move them.`}</div>
+    ${loose.length ? `<button class="btn btn-sec" data-pack-keepdays style="margin:8px 16px 0;width:calc(100% - 32px)">📅 Keep these days</button>` : ""}`;
+}
+async function packKeepDays() {
+  const cid = capsuleId;
+  const c = capsuleById.get(cid);
+  if (!c) return;
+  const { demand } = packDemandFor(cid, c);
+  const all = { ...packOccDates(cid) };
+  let n = 0;
+  for (const o of demand) if (o.source === "selected" && o.date && !all[o.id]) { all[o.id] = o.date; n++; }
+  if (!n) return;
+  await savePackRecord(cid, { occDates: all });
+  if (_packState && _packState.cid === cid) packLoadState(cid);
+  renderCapsules();
+  toast(`${n} day${n === 1 ? "" : "s"} pinned — the app won't move them`);
+}
+
 /* One day's pack outfits, rendered for the by-day planner. Carries the SAME
    data-pack-* hooks as the pack screen's own cards, so every editing option is
    available here without a second set of handlers to drift. */
@@ -4769,7 +4904,20 @@ function packPlanCardsHtml(entries, date) {
        the level again beside it reads as "Casual · Casual". Found by rendering
        the plan and reading it, not by a test — same as the three defects this
        feature shipped with. */
-    const sub = [labels.length && lvl ? lvl : "", "from your pack", e.locked ? "🔒" : ""].filter(Boolean).join(" · ");
+    /* ⚠️ WHOSE DAY THIS IS, SAID OUT LOUD (2026-08-10 r3, her report: *"the by
+       day plan should not auto assign days — I should be able to do it
+       myself"*). The app spreads her occasions across the free days, and the
+       control that moves one existed but only on the Outfits section — so the
+       screen that IS about days was the one screen where the day couldn't be
+       changed, and the spread read as a decision rather than a starting point.
+       ⚠️ Only a `selected` occasion can move: its id is date-free by design
+       (D6), so it keeps its outfit when it lands somewhere else. A declared
+       occasion IS its date (that's the calendar event) and a floor occasion is
+       keyed by its date, so moving either would orphan it. */
+    const movable = occ.source === "selected";
+    const pinnedDay = packOccDates(capsuleId)[occ.id];
+    const sub = [labels.length && lvl ? lvl : "", movable ? (pinnedDay ? "your day" : "app's pick") : "",
+                 "from your pack", e.locked ? "🔒" : ""].filter(Boolean).join(" · ");
     const pieces = cd.pieces.length ? cd.pieces : cd.ids.map(id => itemById.get(id)).filter(Boolean);
     return `<div class="pack-occ${e.locked ? " locked" : ""}">
       <div class="pack-occ-hd">
@@ -4786,6 +4934,7 @@ function packPlanCardsHtml(entries, date) {
         <button class="plan-act" data-pack-wore="${esc(occ.id)}" data-pack-date="${esc(date)}">Wore it</button>
         <button class="plan-act" data-pack-optspage="${esc(occ.id)}">See other outfits</button>
         <button class="plan-act" data-pack-buildocc="${esc(occ.id)}">✎ Change it</button>
+        ${movable ? `<button class="plan-act" data-pack-moveday="${esc(occ.id)}">📅 Move day</button>` : ""}
         <button class="plan-act" data-pack-lock="${esc(occ.id)}">${e.locked ? "Unlock" : "🔒 Lock"}</button>
       </div>
     </div>`;

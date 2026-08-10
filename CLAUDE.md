@@ -363,6 +363,73 @@ could disagree. ⚠️ It re-solves afterwards holding her locks — it changes 
 constraint the outfits were solved under. **Measured on a scarce 8-day fixture:
 one mid-trip wash day took violations 3 → 0 and flagged options 25 → 4.**
 
+**2026-08-10 r3 — THE WHOLE LIST IS THE PLAN, AND THE ⋯ MENU WAS DEAD.
+Selftest 382 → **386**, run green; all 4 new cases mutation-checked red in the
+same session.** Her reports: *"tapping 'by day plan' from the three dot menu
+doesn't do anything"*; *"the by day plan should not auto assign days — I should
+be able to do it myself"*; *"make sure adding items individually works as
+expected, including incorporating into suggested outfits — I want the packing
+algorithm to try to use the whole list unless I mark something as 'do not plan'.
+We can still have extras but I don't want to artificially limit myself."*
+
+⚠️ **EVERY ROW IN THE ⋯ MENU WAS DEAD, NOT JUST THAT ONE.** `openTripMoreSheet`
+renders into `#moveInner`; the delegated capsule handler is on **`#capsulesBody`**,
+which does not contain it. So the `data-cap-*` attributes those rows carried
+reached nothing — Add items, By-day plan, Rename, Dates, Duplicate, Share,
+Archive, Delete. **The only row that worked was Locations, the one given an
+explicit `onclick`** — i.e. the one that didn't rely on the theory the comment
+was asserting. **`CAPSULE_ACTIONS` (js/16-capsules.js) is that comment made
+true**: the sheet and the delegated handler both call it, and `capsuleArchiveToggle`
+was extracted so the archive/undo logic isn't duplicated. ⚠️ **A case asserts on
+the RENDERED sheet** — every row has a handler AND names a real action; a test of
+the map alone would have passed throughout the bug.
+
+⚠️ **THE BY-DAY PLAN COULDN'T CHANGE A DAY — the one screen that is about days.**
+`packOccDates` pins and `openPackMoveDaySheet` shipped in 2026-08-09 r3, but only
+on the Outfits section, so the spread read as a decision. Now: **📅 Move day on
+every by-day card**, the sub-line says **"your day" / "app's pick"**, and
+**`packDaySpreadRowHtml` + `packKeepDays`** name how many the app placed and pin
+them all in one tap. ⚠️ **Only a `selected` occasion may move** — its id is
+date-free (D6) so it keeps its outfit; a declared occasion IS its date and a
+floor occasion is keyed by it, so a move control there would orphan them (pinned
+by the case). ⚠️ **"Keep these days" pins where things ALREADY ARE** and must
+never move anything — a control that promises to stop the app rearranging her
+trip cannot rearrange it on the way out.
+
+⚠️ **THE DEFAULT FLIPPED: EVERYTHING IN THE TRIP'S LIST IS SOMETHING TO PLAN
+WITH.** Two failures compounded, and together they made hand-adding pointless:
+- **A hand-added piece was never marked hers.** `addItemsToCapsule` put it in
+  `rec.pieces` and stopped, so it was "optional" — the mode's spare trim could
+  drop it and **`packSyncMembers` would then DELETE it from `capsule_items`**.
+  It now joins `rec.pinned`, which makes it core: never trimmed, never dropped.
+  ⚠️ **Gated on `syncPack`** — false means `packSyncMembers` is projecting the
+  bag back, and pinning there would turn every solver-chosen piece into a
+  definite she never picked.
+- **`res = null` never produced a new solve.** The stored assignment still
+  described the trip perfectly, so `packEnsureSolve`'s rehydrate guard passed and
+  the piece sat in the suitcase with no outfit knowing about it. **`rec.needsResolve`**
+  forces one, ⚠️ **consumed in `packEnsureSolve` ABOVE the early return** — not in
+  `packLoadState`, because `packStateReady` hands back a warm state untouched and
+  the flag would survive to fire on some unrelated later open.
+- **Measured (Light mode, 6-day trip): five pieces added by hand, all five in
+  outfits, none trimmed, 11 of 11 bag pieces used.**
+
+⚠️ **`packNoPlan` IS THE OPT-OUT, AND IT IS NOT `banned`.** `banned` means "keep
+it out of the bag"; this means "it's coming, stop building outfits around it".
+⚠️ **It implies pinned** — a piece nothing plans around is in no outfit, which
+makes it spare, which the mode trims, so without the pin "don't plan around
+this" would be a slow way of deleting it. ⚠️ **`packCandidates` DEFAULTS the
+exclusion in from the open pack** rather than being threaded through fifteen call
+sites (coverage, option counts, the review lists, every re-pick path); a rule
+half of them honoured is the "when you add a reader, audit them all" trap in its
+fifth costume. `packSolve` still passes it explicitly so the solve never depends
+on the fallback, and the dash paths (`packPlanByDate`, `packMidTripWash`) read
+the stored assignment and never enumerate. Marking or unmarking **re-solves**
+holding her locks — otherwise the outfits that used it just stand there.
+⚠️ **The control lives on the SELECTION BAR, not the piece row**: that row is
+already a tick, a thumb, two lines and two buttons in a 390px column, and this is
+an occasional decision. Measured: the bar wraps to two lines, nothing overflows.
+
 **▶ PICKING THIS UP COLD? Read `HANDOFF_2026-08-09.md` in the repo root.** It
 carries the current state, her locked decisions from this arc, what is
 deliberately NOT built, and — most importantly — **what has not been verified**:
@@ -2976,7 +3043,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-10 r2`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-10 r3`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3323,7 +3390,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **382/382** (2026-08-10 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **386/386** (2026-08-10 r3, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

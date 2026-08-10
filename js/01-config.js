@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r2";
+const APP_VERSION = "2026-08-10 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,12 @@ const APP_VERSION = "2026-08-10 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r3", notes: [
+    "Fixed: every row in a trip's ⋯ menu did nothing. By-day plan, Add items, Rename, Dates, Duplicate, Share, Archive, Delete — all of them. They were wired to handlers that can't see inside a sheet, and only Locations (which was wired differently) ever worked",
+    "The by-day plan is yours to arrange. Every occasion you picked has 📅 Move day right on its card, each one says whether the day is your choice or the app's, and \"Keep these days\" pins the lot where they are so nothing gets re-spread",
+    "The packer now tries to use your whole list. Anything you add to a trip by hand counts as something you're bringing: it can't be trimmed as spare, it can't be dropped from the trip, and the outfits re-derive so it actually gets worn. Measured on a Light-mode trip: five pieces added by hand, all five in outfits",
+    "New: \"Don't plan around\" — select pieces on the Items screen and mark them. They stay packed and stay on your checklist; the app just stops building outfits with them. Tap again to put them back in the plan",
+  ] },
   { v: "2026-08-10 r2", notes: [
     "Unlocking an outfit shows you the alternatives again. Choosing marked the day decided AND locked it; unlocking only ever undid the lock, so the card came back editable with nothing to compare against",
     "The review can see the laundry now. An option that would put a piece past its clean wears says so (\"🧺 3rd wear of the white tee\"), and clean options are always offered first — they're ranked down, never hidden, because on a long trip your whole bag can be over the line and an empty card would be worse",
