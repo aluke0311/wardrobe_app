@@ -3388,20 +3388,46 @@ let _packLastCid = null;
    Bag and Outfits sections cannot drift from what the pack screen showed.
    ⚠️ Dated trips only. An undated capsule has no phases, no bag and no
    occasions, so the old detail page is still the right screen for it. */
-const TRIP_SECTIONS = ["plan", "bag", "outfits"];
-let _tripSection = null;     // null = pick from the trip's phase
+/* ===========================================================================
+   THE TRIP SCREEN — STRIPPED BACK (2026-08-10 r4)
+
+   Her decision, after reviewing the packing feature together: *"let's remove
+   almost everything — I give you the list of items I'm packing, and you can
+   propose outfits, which I can pull from to plan or create my own outfits
+   from the list. You don't invent or add items at all."*
+
+   What that replaced, and why. The builder had grown to ~45 controls, 10
+   sheets and 6,099 lines across five rounds, and the three complaints it
+   produced were one complaint: it asked her for four coarse inputs, solved the
+   whole trip, and then asked her to correct the answer 8–13 times with a
+   four-word vocabulary. Every round added a door and no round removed one.
+   The shape below has no solver, no bag, no review queue, no laundry schedule
+   and no modes — two sections, and the app never decides anything she can't see.
+
+   ⚠️ NOTHING WAS DELETED. Every pack function below still exists and still
+   passes its tests; it is simply no longer reachable from the UI. That is
+   deliberate — it is reversible in one commit, and it kept this change small
+   enough to ship before she leaves. If the stripped version is the keeper, the
+   removal is a separate, unhurried pass.
+   =========================================================================== */
+const TRIP_SECTIONS = ["list", "outfits"];
+let _tripSection = null;     // null = pick from what the trip has in it
+/* ⚠️ Declared HERE, above their first use: `_tripSuggShow` is initialised from
+   TRIP_SUGG_PAGE at load time, and a `const` further down the file is still in
+   its temporal dead zone when that top-level statement runs. Function bodies
+   could reference them from anywhere; a top-level initialiser cannot. */
+const TRIP_SUGG_PAGE = 12;   // outfits added per "Show more"
+const TRIP_SUGG_MAX = 120;   // hard cap on what we enumerate at once
 
 function tripDefaultSection(c) {
-  const ph = tripPhase(c);
-  if (ph === "trip" || ph === "unpack") return "outfits";   // you're living it
-  return packRecord(c.id).built ? "bag" : "plan";
+  // Nothing in the list yet means there is nothing to propose from, so start
+  // where the work is. Otherwise lead with the payoff.
+  return capsuleItems(c.id).length ? "outfits" : "list";
 }
 function renderCapsuleTrip() {
   const c = capsuleById.get(capsuleId);
   if (!c) { capsuleView = "list"; return renderCapsuleList(); }
-  const built = !!packRecord(c.id).built;
   const sec = TRIP_SECTIONS.includes(_tripSection) ? _tripSection : tripDefaultSection(c);
-  const st = built ? packStateReady(c.id) : null;
   const ph = tripPhase(c);
   const phaseLbl = ph === "pack" ? "Packing" : ph === "trip" ? "On the trip"
                  : ph === "unpack" ? "Just back" : capDateLabel(c);
@@ -3409,26 +3435,139 @@ function renderCapsuleTrip() {
   const seg = `<div class="cap-orgbar">
     <div class="cap-seg">
       ${TRIP_SECTIONS.map(k => `<button data-tripsec="${k}" class="${sec === k ? "on" : ""}">${
-        k === "plan" ? "Plan" : k === "bag" ? "Bag" : "Outfits"}</button>`).join("")}
+        k === "list" ? "Your list" : "Outfits"}</button>`).join("")}
     </div>
     <button class="cap-chip" data-trip-more>⋯</button>
   </div>`;
 
-  let body = "";
-  if (!built && sec !== "plan") {
-    body = `<div class="placeholder"><b>No pack yet</b><div>Set up what's happening, then build it.</div>
-      <button class="btn" data-trip-tosetup style="margin-top:12px;width:auto;padding:0 18px">Go to Plan</button></div>`;
-  } else if (sec === "plan") {
-    body = tripPlanSectionHtml(c, st);
-  } else if (sec === "bag") {
-    const co = packCoreOptional(st);
-    body = st ? `<div class="pack-tip">${st.pack.length} pieces · ${co.core.length} core${
-      co.optional.length ? ` + ${co.optional.length} spare` : ""}${
-      st.cov ? ` · ${st.cov.outfits} outfits they make` : ""}</div>` + packSlotsHtml(st) : "";
-  } else {
-    body = st ? (packReviewBarHtml(st) + packBucketsHtml(st) + packDaysFoldHtml(st)) : "";
+  const body = sec === "list" ? tripListSectionHtml(c) : tripOutfitsHtml(c);
+  return capToolbar(`${c.name}${phaseLbl ? " · " + phaseLbl : ""}`, true) + seg + body +
+         `<div style="height:26px"></div>`;
+}
+
+/* The list IS the input, and the only input. Reuses the capsule detail page's
+   own grid so the packed-ticks, sorting and thumbnails can't drift from it. */
+function tripListSectionHtml(c) {
+  const list = capsuleItems(c.id);
+  const addBtn = (cls, style) => `<button class="${cls}" data-trip-add style="${style}">＋ Add items</button>`;
+  if (!list.length) {
+    return `<div class="placeholder"><b>Nothing in your list yet</b>
+      <div>Add the pieces you're taking. Outfits get proposed from these and nothing else.</div>
+      ${addBtn("btn", "margin-top:12px;width:auto;padding:0 18px")}</div>`;
   }
-  return capToolbar(`${c.name} · ${phaseLbl}`, true) + seg + body + `<div style="height:26px"></div>`;
+  const packedSet = new Set((capsuleLinkMap.get(c.id) || []).filter(l => l.packed).map(l => l.item_id));
+  const packed = list.filter(i => packedSet.has(i.id)).length;
+  const dirty = LAUNDRY_READY()
+    ? (() => { const ls = laundryState();
+               return list.filter(i => itemStatus(i) === "Available" && isDirty(i, ls)).length; })()
+    : 0;
+  return `<div class="pack-tip">${list.length} piece${list.length === 1 ? "" : "s"}${
+      packed ? ` · ${packed} packed` : ""} · tap the circle on a piece to check it off</div>
+    ${dirty ? `<div class="cap-launwarn">🧺 ${dirty} piece${dirty === 1 ? " is" : "s are"} in the hamper — wash before you pack</div>` : ""}
+    <div style="padding:0 14px 10px">${addBtn("btn btn-sec", "width:100%")}</div>
+    ${capGroupsHtml(list, true, packedSet)}`;
+}
+
+/* ---- outfits from the list, and only from the list ------------------------
+   ⚠️ IT CANNOT INVENT OR ADD A PIECE, and that is STRUCTURAL rather than a rule
+   someone has to remember: `suggestOutfits` only ever draws from the pool it is
+   handed, so passing the capsule's own members IS the guarantee. There is no
+   second pool, no rack, no widen, no "beyond the bag" — the whole class of bug
+   where the app quietly grew the suitcase cannot occur here.
+
+   ⚠️ EXHAUSTIVE, NOT SAMPLED (`opts.all`). The sampled path exists to make a
+   sheet feel fresh each time it opens; this is a list she browses, leaves and
+   comes back to, so it is score-ordered and STABLE — the same outfits in the
+   same order every time. That is what lets "I'll take that one" survive a
+   screen change, and it's the same reason the rack is deterministic.
+
+   ⚠️ `cleanOnly = FALSE`. Laundry is not a filter on a packing list — she washes
+   before she leaves, and hiding a piece she's about to pack would be the app
+   deciding something behind her. The hamper count is stated on the list instead.
+
+   ⚠️ Cohesion still applies. `formalityOk` + `comboSharesALevel` are inside
+   `suggestOutfits`, so a proposal is never three pieces with no level in common.
+   The engine's judgment about what goes together is the one thing worth keeping. */
+let _tripSuggLevel = null;               // session-only formality ask
+let _tripSuggShow = TRIP_SUGG_PAGE;      // how many are on screen right now
+
+function tripOutfitPool(c) {
+  return capsuleItems(c.id).filter(i => itemStatus(i) !== "Archive");
+}
+function tripOutfitCombos(c, pool = null) {
+  const list = pool || tripOutfitPool(c);
+  if (!list.length) return [];
+  // Season anchors on the trip, not on today — packing in August for October.
+  const season = c.start_date ? seasonOf(c.start_date) : currentSeason();
+  return suggestOutfits(_tripSuggLevel, null, list, season, null, null, false, null, null,
+                        { all: true, uniqueCap: TRIP_SUGG_MAX });
+}
+
+function tripOutfitsHtml(c) {
+  const list = tripOutfitPool(c);
+  if (!list.length) {
+    return `<div class="placeholder"><b>Nothing to work with yet</b>
+      <div>Add the pieces you're taking and outfits get proposed from them.</div>
+      <button class="btn" data-trip-add style="margin-top:12px;width:auto;padding:0 18px">＋ Add items</button></div>`;
+  }
+  const combos = tripOutfitCombos(c, list);
+
+  /* Only offer a level this list can actually BUILD at, so a chip can never come
+     back empty — an empty result reads as a broken filter, not as an answer.
+     ⚠️ `poolCoversLevel`, NOT "some piece's set contains the level". Those are
+     different questions and the difference is the whole 2026-08-04 r2 empty-sheet
+     bug: heels and a silk cami put 6 in the covered set while the list holds no
+     level-6 bottom, so a "6. Dressed Up" chip rendered and returned nothing.
+     Caught here by rendering the screen and counting, not by reading the code. */
+  const chips = `<div class="pack-chiprow" style="padding:0 14px 8px">
+    <button class="cap-chip${_tripSuggLevel == null ? " on" : ""}" data-trip-lvl="">All</button>
+    ${OCCASION_LADDER.map((lbl, idx) => poolCoversLevel(idx + 1, list)
+      ? `<button class="cap-chip${_tripSuggLevel === idx + 1 ? " on" : ""}" data-trip-lvl="${idx + 1}">${idx + 1}. ${esc(lbl)}</button>`
+      : "").join("")}
+  </div>`;
+
+  const own = `<div style="padding:0 14px 10px">
+    <button class="btn btn-sec" data-trip-buildown style="width:100%">✎ Build one yourself from the list</button></div>`;
+
+  if (!combos.length) {
+    return `<div class="pack-tip">${list.length} piece${list.length === 1 ? "" : "s"} in your list</div>
+      ${chips}${own}
+      <div class="placeholder" style="padding:30px 32px"><b>No complete outfit at that level</b>
+        <div>Your list doesn't cover it yet — try All, or add a piece.</div></div>`;
+  }
+
+  const shown = combos.slice(0, _tripSuggShow);
+  const cards = shown.map(cb => {
+    const ids = cb.pieces.map(p => p.id);
+    // Already a real look? Say so rather than offering to save it twice —
+    // saveComboAsOutfit would merge anyway, but the card would be lying.
+    const dup = findDuplicateOutfit(ids, null);
+    const idAttr = esc(ids.join(","));
+    return `<div class="pack-occ">
+      <div class="pack-pieces">
+        ${cb.pieces.map(i => `<button class="pack-piece" data-trip-piece="${esc(i.id)}">
+          ${thumbHtml(i.image_path, "pack-pthumb")}
+          <div class="pack-pname">${esc(i.name || "Untitled")}</div>
+        </button>`).join("")}
+      </div>
+      <div class="pack-occ-acts">
+        ${dup
+          ? `<button class="plan-act" data-trip-openlook="${esc(dup.id)}">✓ Saved · open it</button>`
+          : `<button class="plan-act" data-trip-save="${idAttr}">＋ Save as a look</button>`}
+        <button class="plan-act" data-trip-edit="${idAttr}">✎ Change it</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  const left = combos.length - shown.length;
+  const more = left > 0
+    ? `<div style="padding:0 14px 10px"><button class="btn btn-sec" data-trip-showmore style="width:100%">Show ${Math.min(TRIP_SUGG_PAGE, left)} more</button></div>`
+    : "";
+
+  return `<div class="pack-tip">${combos.length}${combos.length >= TRIP_SUGG_MAX ? "+" : ""} outfit${
+      combos.length === 1 ? "" : "s"} from your ${list.length} piece${list.length === 1 ? "" : "s"}${
+      _tripSuggLevel ? ` at ${esc(occLabel(_tripSuggLevel))}` : ""}</div>
+    ${chips}${own}${cards}${more}`;
 }
 
 /* The Plan section: what the trip needs, what's definitely coming, how much to

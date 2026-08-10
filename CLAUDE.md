@@ -430,6 +430,83 @@ holding her locks — otherwise the outfits that used it just stand there.
 already a tick, a thumb, two lines and two buttons in a 390px column, and this is
 an occasional decision. Measured: the bar wraps to two lines, nothing overflows.
 
+**2026-08-10 r6 — THE PACK IS SWITCHED OFF. THE TRIP SCREEN IS TWO SECTIONS.
+Selftest 395/395, run GREEN (no new cases — this round REMOVES surface).**
+Her words, after we reviewed the feature together: *"let's remove almost
+everything — I give you the list of items I'm packing, and you can propose
+outfits, which I can pull from to plan or create my own outfits from the list.
+You don't invent or add items at all."*
+
+⚠️ **THE REVIEW THAT PRODUCED THIS, because the diagnosis is the reusable part.**
+She reported all three of "the outfits are wrong", "I can't get my input in" and
+"it's confusing" at once, which is the signature of a structural problem rather
+than three bugs. Measured: **6,099 lines, ~45 controls, 10 sheets, 3 sections, 2
+full screens** — and **seven ways to change one outfit on ONE card** (tap a piece,
+pick an alternative, "I'd rather…", See other outfits, ✎ Change it, 🔒 Lock,
+✕ Not this trip). The 2026-08-09 r2 round had consolidated *three* unclear doors
+into one; the inline review then shipped **beside** it rather than through it, so
+the card ended with more doors than when she complained about the doors.
+- **The shape was the bug: 4 coarse inputs → 1 big solve → 8–13 fine corrections.**
+  Three of the four upstream inputs (days, quantity, laundry) aren't about
+  clothes, so everything that makes an outfit an outfit was decided by the solver
+  and she could only correct it afterwards — from inside the bag it had already
+  chosen, while each choice re-solved the trip and moved the other cards.
+- **`openPackRatherSheet` was the entire vocabulary for "this is wrong":** not a
+  dress · a dress · dress down · dress up. **"None of these" was agreed and never
+  built**, so the honest answer to a bad option had no button.
+- **The general lesson: adding a control per report makes a feature worse if
+  nothing is ever removed.** Every individual round here was correct and
+  well-tested; the sum was unusable. Compress-don't-delete (2026-07-26) applied
+  to the one feature built after it was written.
+
+⚠️ **NOTHING WAS DELETED — the pack solver is INTACT AND UNREACHABLE.** Every
+`pack*` function still exists and still passes its cases; only the UI stopped
+calling them. Deliberate: reversible in one commit, and small enough to ship
+before she left. **Do not "clean up" the dead pack code as an unrelated tidy-up** —
+if the stripped version is the keeper, that removal is its own unhurried pass.
+`tripPlanSectionHtml`, `packSlotsHtml`, `packBucketsHtml`, `packReviewBarHtml`
+and the `data-trip-ctx`/`-definites`/`-laundry`/`-mode`/`-build` handlers are all
+still present and simply never rendered.
+
+**What the trip screen is now:** `TRIP_SECTIONS = ["list","outfits"]`.
+- **Your list** (`tripListSectionHtml`) — the capsule's members, ＋ Add items,
+  packed ticks, hamper count. **Reuses `capGroupsHtml`**, so it cannot drift from
+  the capsule detail page.
+- **Outfits** (`tripOutfitsHtml`) — proposals built from the list and nothing
+  else, level chips, ＋ Save as a look, ✎ Change it, ✎ Build one yourself.
+- ⚠️ **"NEVER INVENTS OR ADDS" IS STRUCTURAL, NOT A RULE TO REMEMBER.**
+  `suggestOutfits` only ever draws from the pool it is handed, so passing
+  `capsuleItems(cid)` IS the guarantee. There is no rack, no widen, no
+  "beyond the bag" — the whole class of bug where the app quietly grew the
+  suitcase cannot occur. **Verified on a fixture with 3 decoy pieces outside the
+  list: 12 pieces → 43 outfits, ZERO leaked.**
+- ⚠️ **EXHAUSTIVE, NOT SAMPLED (`opts.all`), and that's the point.** The sampled
+  path exists to make a sheet feel fresh per open; this is a list she browses,
+  leaves and returns to, so it is score-ordered and **stable** — the same outfits
+  in the same order every time. `TRIP_SUGG_PAGE`(12) / `TRIP_SUGG_MAX`(120).
+- ⚠️ **`cleanOnly = FALSE`.** Laundry is not a filter on a packing list — she
+  washes before she leaves. The hamper count is *stated* on the list instead.
+- ⚠️ **Level chips are gated on `poolCoversLevel`, NOT on "some piece's set
+  contains the level".** Those are different questions and the gap is the
+  2026-08-04 r2 empty-sheet bug: heels + a silk cami put 6 in the covered set
+  while the list held no level-6 bottom, so a "6. Dressed Up" chip rendered and
+  returned **0 outfits**. **Found by rendering the screen and counting every
+  chip's result** — the code read fine.
+- ⚠️ **`TRIP_SUGG_PAGE` is declared beside `TRIP_SECTIONS`, above its first use.**
+  `_tripSuggShow` is initialised from it in a TOP-LEVEL statement, and a `const`
+  further down the file is still in its temporal dead zone when that runs — a
+  boot-time ReferenceError. Function bodies may reference anything; top-level
+  initialisers may not.
+- ⚠️ **`✎ Change it` seeds the builder, it does not save.** `openBuilder(null,
+  null, null, seedIds)` — the look is created at SAVE (2026-08-09 r3). Creating
+  one per tap is the Looks-list flooding that got bulk creation removed.
+  ⚠️ Scope is set as `builder.scopeCapsuleId` **after** opening, never via
+  `planCtx` — a planCtx routes the save into `capsules.plan`.
+- Section switches and level changes **reset `_tripSuggShow`**, or "Show more"
+  survives a trip to the list and she returns to 60 cards.
+- The ⋯ menu is untouched and still carries dates, locations, add items, share,
+  recap, archive, delete.
+
 **▶ PICKING THIS UP COLD? Read `HANDOFF_2026-08-09.md` in the repo root.** It
 carries the current state, her locked decisions from this arc, what is
 deliberately NOT built, and — most importantly — **what has not been verified**:
@@ -3043,7 +3120,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-10 r3`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-10 r6`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,

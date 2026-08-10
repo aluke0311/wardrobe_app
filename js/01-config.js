@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r5";
+const APP_VERSION = "2026-08-10 r6";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,13 @@ const APP_VERSION = "2026-08-10 r5";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-10 r6", notes: [
+    "A trip is two screens now: Your list, and Outfits. You add the pieces you're taking; the app proposes outfits made only from those pieces, and never adds anything of its own",
+    "Every outfit it shows you is one you can actually make from your bag — tap ＋ Save as a look to keep one, or ✎ Change it to open the builder with those pieces already on the canvas",
+    "Build one yourself from the list, with the picker already scoped to what you're bringing",
+    "Filter the proposals by how dressy you need — only the levels your list can actually put a whole outfit together at are offered",
+    "Gone from the trip screen: the pack solver, the bag, the review queue, the laundry schedule and the Light/Balanced/Flexible modes. Nothing was deleted — it's switched off while you try this simpler version",
+  ] },
   { v: "2026-08-10 r5", notes: [
     "Four Stats pages had a filter funnel that did nothing. Year in Review, Most Worn Looks, Contexts and a context's page all count across your whole wardrobe — so narrowing the funnel changed the badge and not one number. The funnel is gone from those four; Contexts keeps its date range, which does work",
     "The Laundry filter on the Looks tab was the same story: it lit up, counted itself, and never filtered a look. It works now — \"Clean\" means every piece is clean, \"In the hamper\" means something in the look is dirty",

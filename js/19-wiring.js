@@ -752,10 +752,56 @@ function wireEvents() {
     if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
     const packOptsPage = e.target.closest("[data-pack-optspage]");
     if (packOptsPage) return openPackOptionsPage(packOptsPage.dataset.packOptspage);
-    /* ---- the unified trip screen ---- */
+    /* ---- the trip screen: Your list · Outfits (2026-08-10 r4) ----
+       ⚠️ Section switches reset the paging, or "Show more" on Outfits survives
+       a trip to the list and she comes back to 60 cards. */
     const tripSec = e.target.closest("[data-tripsec]");
-    if (tripSec) { _tripSection = tripSec.dataset.tripsec; return renderCapsules(); }
+    if (tripSec) { _tripSection = tripSec.dataset.tripsec; _tripSuggShow = TRIP_SUGG_PAGE; return renderCapsules(); }
     if (e.target.closest("[data-trip-more]")) return openTripMoreSheet();
+    if (e.target.closest("[data-trip-add]"))
+      return openCapsulePicker(capsuleId, {
+        back: () => { capsuleView = "trip"; renderCapsules(); } });
+    const tripLvl = e.target.closest("[data-trip-lvl]");
+    if (tripLvl) {
+      const v = tripLvl.dataset.tripLvl;
+      _tripSuggLevel = v === "" ? null : +v;
+      _tripSuggShow = TRIP_SUGG_PAGE;          // a new question starts at the top
+      return renderCapsules();
+    }
+    if (e.target.closest("[data-trip-showmore]")) { _tripSuggShow += TRIP_SUGG_PAGE; return renderCapsules(); }
+    const tripPiece = e.target.closest("[data-trip-piece]");
+    if (tripPiece) return openItemFrom(tripPiece.dataset.tripPiece);
+    const tripOpenLook = e.target.closest("[data-trip-openlook]");
+    if (tripOpenLook) return openLookFrom(tripOpenLook.dataset.tripOpenlook);
+    const tripSave = e.target.closest("[data-trip-save]");
+    if (tripSave) return (async () => {
+      const ids = tripSave.dataset.tripSave.split(",").filter(id => itemById.has(id));
+      if (ids.length < 2) return;              // one-piece looks are outlawed app-wide
+      try {
+        const oid = await saveComboAsOutfit(ids.map(id => itemById.get(id)));
+        renderCapsules();                      // the card flips to "✓ Saved"
+        toast("Saved as a look", [{ label: "Open it", fn: () => openLookFrom(oid) }]);
+      } catch (err) { toast("Couldn't save that look"); }
+    })();
+    const tripEdit = e.target.closest("[data-trip-edit]");
+    if (tripEdit) {
+      /* Seeded, NOT saved — openBuilder takes seedIds and the look is created at
+         SAVE. Creating one just to open the canvas is what flooded the Looks
+         list before (2026-08-09 r3), and every tap here would leave a record. */
+      const ids = tripEdit.dataset.tripEdit.split(",").filter(id => itemById.has(id));
+      openBuilder(null, null, null, ids);
+      if (builder) builder.scopeCapsuleId = capsuleId;   // picker opens on the list
+      return;
+    }
+    if (e.target.closest("[data-trip-buildown]")) {
+      openBuilder();
+      /* ⚠️ Scope is set AFTER opening, not via planCtx. Passing a planCtx would
+         route the save into `capsules.plan` — the bulk look-creation path that
+         was deliberately removed — when all that's wanted is the picker
+         defaulting to the trip's own pieces. */
+      if (builder) builder.scopeCapsuleId = capsuleId;
+      return;
+    }
     if (e.target.closest("[data-trip-tosetup]")) { _tripSection = "plan"; return renderCapsules(); }
     if (e.target.closest("[data-trip-ctx]")) {
       if (!_packState || _packState.cid !== capsuleId) packLoadState(capsuleId);
