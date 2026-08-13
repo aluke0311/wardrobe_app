@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-13 r1";
+const APP_VERSION = "2026-08-13 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-13 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-13 r2", notes: [
+    "Pieces without a photo can now be suggested and packed like any other — they show as the grey tee placeholder. They'd been invisible to the outfit suggester, the rack and the trip screen, which on a small packing list could hide most of the outfits it could have offered",
+    "Fixed the \"Not now\" button on Home's weather-history offer running off the right edge of the screen, and squashing \"Look it up\" next to it",
+    "When a trip's list can't make a whole outfit yet, it now tells you what it's short of — shoes, a bottom — instead of suggesting you tap the filter you're already on",
+  ] },
   { v: "2026-08-13 r1", notes: [
     "\"What should I wear?\" is now a proper button on the trip screen too — same one as Home, asking the suitcase instead of the closet (it replaces the small ✨ Suggest chip, so there's still one way in)",
   ] },

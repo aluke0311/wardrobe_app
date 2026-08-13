@@ -1609,8 +1609,18 @@ function renderHome() {
       </button>`;
     }
   }
-  // One-time weather backfill offer (Round C). This card is the real entry
-  // point — the Settings row exists only as a re-run hatch.
+  /* One-time weather backfill offer (Round C). This card is the real entry
+     point — the Settings row exists only as a re-run hatch.
+
+     ⚠️ `width:auto` on the "Not now" button is load-bearing. `.btn-sec` sets
+     `width:100%`, and `flex:none` (= `flex: 0 0 auto`) takes its BASIS from that
+     width — so the button claimed the entire 332px row and ran 41.6px past the
+     right edge of a 390px screen, while "Look it up" was crushed to 62.6px and
+     both labels wrapped to four lines. Measured 2026-08-13; with `width:auto`
+     they are 227px / 97px and one line each.
+     Same family as the `.log-cta` trap from the opposite direction: there a
+     full-width button needed an explicit width, here a `width:100%` button in a
+     flex row needs an explicit auto. */
   let wxb = "";
   if (dataReady && !kvData.get(WX_BACKFILL_KEY) && wears.length > 100
       && (store.getItem(WX_SNOOZE_KEY) || "") <= todayStr()) {
@@ -1618,7 +1628,7 @@ function renderHome() {
       <div style="font-size:13.5px;line-height:1.45">Match today's weather to what you actually wore — a one-time lookup of past weather for every day you've logged.</div>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn" id="homeWxFill" style="flex:1">Look it up</button>
-        <button class="btn btn-sec" id="homeWxNo" style="flex:none">Not now</button>
+        <button class="btn btn-sec" id="homeWxNo" style="flex:none;width:auto;padding-left:16px;padding-right:16px">Not now</button>
       </div>
     </div>`;
   }

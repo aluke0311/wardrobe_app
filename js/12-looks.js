@@ -1210,7 +1210,26 @@ function scoreCombo(its, target, season = null, wx = null) {
    engine and inversion ① of TRIP_BUILDER.md is broken. */
 function suggestOutfits(targetLevel = null, seedItemId = null, capsulePool = null, season = currentSeason(), wx = null, lockedIds = null, cleanOnly = true, lockedRoles = null, shapeKey = null, opts = {}) {
   const base = capsulePool || items.filter(i => itemStatus(i) === "Available");
-  let avail = base.filter(i => i.image_path && !isNoSuggest(i));
+  /* ⚠️ A PHOTOLESS PIECE IS STILL A PIECE (2026-08-13). This filtered on
+     `i.image_path` until the audit measured what that costs: on a 10-piece
+     packing list holding ONE photoless shoe, the trip screen offered 12 outfits;
+     giving that shoe a photo took it to 26, and the only dress went from 0
+     appearances to 2 (it was the one shoe sharing a formality level with it).
+
+     The rest of the app decided this in 2026-07-11 r1 — grids, collages,
+     `layoutCanvasHtml` and `builderPool` all render photoless pieces through
+     PHOTO_PLACEHOLDER, and builderPool's comment says so outright. The suggester
+     never got that pass, and r6 then made this function the whole engine of the
+     trip screen, so the omission started deciding what she packs.
+
+     It also broke a rule the app holds everywhere else: the rack is ALLOWED to
+     narrow the pool only because it is labelled, counted and one tap from being
+     widened. This narrowed with no label, no count and no way out — and it
+     contradicted 2026-08-10 r3's "use the whole list unless I mark something as
+     'do not plan'" three days after that shipped.
+     ⚠️ Do not reintroduce it. A selftest case fails if any suggester pool
+     filters on image_path again. */
+  let avail = base.filter(i => !isNoSuggest(i));
   /* ⚠️ Level 1 (Utility) IS the function-wear mode — there is no separate
      "activity" mode any more (2026-07-26 r13, her call: "I should just have
      workout formality and that can fix it").
@@ -2097,7 +2116,7 @@ function suggestPoolChipHtml() {
 function suggestStarvationNote() {
   if (!_sugg.results || _sugg.results.length >= 8) return "";
   const base = _suggBasePool();
-  const eligible = base.filter(i => i.image_path && !isNoSuggest(i));
+  const eligible = base.filter(i => !isNoSuggest(i));
   const bits = [];
   if (_suggClean() && LAUNDRY_READY()) {
     const ls = laundryState();
@@ -2124,7 +2143,7 @@ function suggestLevelDoorHtml() {
   if (!_sugg.capsuleId || !_sugg.targetLevel || (_sugg.results && _sugg.results.length)) return "";
   const members = new Set((capsuleLinkMap.get(_sugg.capsuleId) || []).map(l => l.item_id));
   const cands = items.filter(i => itemStatus(i) === "Available" && !members.has(i.id)
-    && i.image_path && !isNoSuggest(i)
+    && !isNoSuggest(i)
     && (itemFormalitySet(i) || []).includes(_sugg.targetLevel)).slice(0, 8);
   if (!cands.length) return "";
   return `<div style="padding:12px 16px 0">
@@ -2299,7 +2318,7 @@ function swapSuggestionPiece(pieceId) {
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
   const ls = laundryState();
   let cands = pool.filter(i =>
-    i.image_path && !isNoSuggest(i) && i.id !== pieceId &&
+    !isNoSuggest(i) && i.id !== pieceId &&
     (!_suggCleanArg() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
     inSeasonWx(i, _sugg.season, _suggWx()) &&
@@ -2432,7 +2451,7 @@ function addSuggestionLayer() {
   const isPureFunc = p => { const s = itemFormalitySet(p) || []; return s.length === 1 && s[0] === 1; };
   const ls = laundryState();
   let cands = pool.filter(i =>
-    i.image_path && !isNoSuggest(i) &&
+    !isNoSuggest(i) &&
     !combo.pieces.some(p => p.id === i.id) &&
     (!_suggCleanArg() || suggestibleClean(i, ls)) &&
     (suggestSlot(i) === "Outerwear" || (isLayer(i) && i.category === "Tops")) &&
@@ -2492,9 +2511,10 @@ function suggestLayerCandidates(combo, { role = "layer", excludeId = null } = {}
     if (have.has(i.id) || i.id === excludeId) continue;
     if (!suggestLayerSlotOk(i, role)) continue;   // wrong slot entirely — not a near miss
     if (isNoSuggest(i)) continue;                  // she took it out of suggestions herself
+    // ⚠️ There is no "no photo yet" reason any more — a photoless piece is
+    // suggestible and renders as the tee placeholder (2026-08-13).
     let why = null;
-    if (!i.image_path) why = "no photo yet";
-    else if (others.some(p => isExcluded(i.id, p.id))) why = "you ruled out this pairing";
+    if (others.some(p => isExcluded(i.id, p.id))) why = "you ruled out this pairing";
     else if (_suggCleanArg() && !suggestibleClean(i, ls)) why = "in the wash";
     else if (_sugg.targetLevel && !(itemFormalitySet(i) || []).includes(_sugg.targetLevel))
       why = `not ${occLabel(_sugg.targetLevel) || "that level"}`;

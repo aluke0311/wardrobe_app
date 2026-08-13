@@ -223,6 +223,153 @@ async function run() {
       ? true : `wrappers=${JSON.stringify(wrappers)} missing=${JSON.stringify(missing)}`;
   });
 
+  /* ---- sheet stacking order (2026-08-13 audit) ----
+     Every sheet wrapper stacks equally, so DOM ORDER decides which paints on
+     top. #fieldSheet sat 5th of 9 — under a comment claiming it was last — with
+     four sheets after it. Nothing was visibly broken only because the one live
+     path across that boundary (the rack's "wrong formality"/"wrong season"
+     answers) closes its host sheet first. This is the 2026-07-25 r19 bug that
+     cost a day of "the button does nothing", pre-armed. */
+  t("#fieldSheet is genuinely last among the sheet wrappers", () => {
+    const wrappers = [...W.document.querySelectorAll('div[id$="Sheet"]')]
+      .filter(d => d.querySelector(":scope > .sheet")).map(d => d.id);
+    const i = wrappers.indexOf("fieldSheet");
+    return i === wrappers.length - 1
+      ? true : `fieldSheet is ${i + 1} of ${wrappers.length}: ${JSON.stringify(wrappers)}`;
+  });
+
+  /* ---- photoless pieces are suggestible (2026-08-13 audit) ----
+     `i.image_path &&` in the suggester pool made a photoless piece invisible to
+     every outfit engine while the rest of the app rendered it happily through
+     PHOTO_PLACEHOLDER. Measured cost on a 10-piece packing list holding ONE
+     photoless shoe: 12 outfits, rising to 26 once it had a photo — and the only
+     dress went 0 → 2 appearances, because that shoe was the one sharing a
+     formality level with it. It also narrowed the pool with no label, no count
+     and no widen, which is exactly what the rack's four conditions forbid. */
+  t("a photoless piece can still be suggested", () => {
+    const saved = { items: W.items, wears: W.wears, outfits: W.outfits,
+                    outfitLinks: W.outfitLinks, exclusions: W.exclusions,
+                    ready: W.dataReady, byId: W.itemById };
+    const mk = (id, cat, sub, photo) => ({ id, name: id, category: cat, subcategory: sub,
+      status: "Available", image_path: photo, color_family: "Blue", formality: [3],
+      season: ["Spring", "Summer", "Fall", "Winter"], tags: [], last_washed: null });
+    // Only ONE shoe, and it has no photo — so every outfit must use it or none exist.
+    W.items = [mk("t1", "Tops", "Tee shirts", "t1.jpg"), mk("b1", "Bottoms", "Jeans", "b1.jpg"),
+               mk("s1", "Shoes", "Flats", null)];
+    W.wears = []; W.outfits = []; W.outfitLinks = []; W.exclusions = []; W.dataReady = true;
+    W.itemById = new W.Map(W.items.map(i => [i.id, i]));
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    try {
+      const out = W.suggestOutfits(null, null, W.items, "Summer", null, null, false,
+                                   null, null, { all: true, uniqueCap: 50 });
+      return out.length && out.every(cb => cb.pieces.some(p => p.id === "s1"))
+        ? true : `got ${out.length} combos; the photoless shoe was filtered out`;
+    } finally {
+      W.items = saved.items; W.wears = saved.wears; W.outfits = saved.outfits;
+      W.outfitLinks = saved.outfitLinks; W.exclusions = saved.exclusions;
+      W.dataReady = saved.ready; W.itemById = saved.byId;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes();
+    }
+  });
+
+  /* Structural guard, not a behavioural one: the filter lived in seven places
+     across three modules and the rack's copy explicitly "mirrors the suggester's
+     pool", so putting it back in ANY of them re-breaks the others silently. */
+  t("no outfit engine filters its pool on image_path", () => {
+    const src = window.__src || {};
+    const guarded = ["js/12-looks.js", "js/20-rack.js", "js/21-pack.js"];
+    const guilty = [];
+    for (const p of guarded) {
+      const code = (src[p] || "")
+        .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+      for (const m of code.matchAll(/[\w.]*image_path\s*&&|&&\s*[\w.]*\.image_path\b/g))
+        guilty.push(`${p}: ${m[0].trim()}`);
+    }
+    return guarded.every(p => src[p]) && !guilty.length
+      ? true : `pool filter on image_path is back: ${JSON.stringify(guilty)}`;
+  });
+
+  /* ---- the Home weather offer fits the screen (2026-08-13 audit) ----
+     `.btn-sec` sets width:100%, and `flex:none` (= flex 0 0 auto) takes its
+     BASIS from that width — so "Not now" claimed the whole 332px row and ran
+     41.6px off a 390px screen while "Look it up" was crushed to 62.6px and both
+     labels wrapped to four lines. Same family as the .log-cta trap from the
+     opposite direction. Detached nodes in a fixed-width host, so no app state
+     is touched. */
+  /* ⚠️ This case MUST lift the two buttons out of the real source. Written with
+     its own hand-typed markup it passed happily while the app shipped the broken
+     version — it was asserting that the string in the test had width:auto, which
+     is the "test that can't fail" trap in its purest form (caught by its own
+     mutation check, 2026-08-13). */
+  t("the weather-offer buttons fit inside the card", () => {
+    const src = (window.__src || {})["js/06-home.js"] || "";
+    const row = src.match(/<div style="display:flex;gap:8px;margin-top:10px">([\s\S]*?)<\/div>/);
+    const btns = row && row[1].match(/<button[^>]*id="homeWx(?:Fill|No)"[^>]*>[^<]*<\/button>/g);
+    if (!btns || btns.length !== 2) return "couldn't find both homeWx buttons in js/06-home.js";
+    const d = W.document;
+    const host = d.createElement("div");
+    // 390px screen − 2×16px card margin − 2×12px card padding = 332px inner row
+    host.style.cssText = "width:332px;position:absolute;left:-9999px;top:0";
+    host.innerHTML = `<div style="display:flex;gap:8px">${btns.join("")}</div>`;
+    d.body.appendChild(host);
+    const [a, b] = [...host.querySelectorAll("button")].map(el => el.getBoundingClientRect());
+    const hostR = host.getBoundingClientRect();
+    host.remove();
+    return b.right <= hostR.right + 0.5 && a.width > 120
+      ? true : `"Look it up" is ${Math.round(a.width)}px and "Not now" overhangs the card by ${Math.round(b.right - hostR.right)}px`;
+  });
+
+  /* ---- the trip screen's dead ends (2026-08-13 audit) ----
+     First coverage of tripOutfitsHtml — the r6 rework shipped deliberately
+     without cases ("this round REMOVES surface"), which left the app's entire
+     packing feature untested.
+
+     The level chips are gated on poolCoversLevel so a chip can never come back
+     empty, but the "All" chip is NOT gated — so it is the only one that can, and
+     the copy it landed on said "try All" while All was already selected.
+     Reachable on day one of every trip: add a few tops before anything else. */
+  const withTripList = (subs, fn) => {
+    const saved = { items: W.items, caps: W.capsules, links: W.capsuleLinks,
+                    wears: W.wears, outfits: W.outfits, outfitLinks: W.outfitLinks,
+                    exclusions: W.exclusions, ready: W.dataReady, byId: W.itemById,
+                    lvl: W._tripSuggLevel };
+    W.items = subs.map(([cat, sub], n) => ({ id: "x" + n, name: sub + " " + n, category: cat,
+      subcategory: sub, status: "Available", image_path: "x" + n + ".jpg", color_family: "Blue",
+      formality: [3], season: ["Spring", "Summer", "Fall", "Winter"], tags: [], last_washed: null }));
+    W.capsules = [{ id: "tc", name: "Trip", kind: "travel", start_date: today,
+                    end_date: W.shiftDate(today, 4), locations: [], plan: {} }];
+    W.capsuleLinks = W.items.map(i => ({ capsule_id: "tc", item_id: i.id, packed: false }));
+    W.wears = []; W.outfits = []; W.outfitLinks = []; W.exclusions = []; W.dataReady = true;
+    W.itemById = new W.Map(W.items.map(i => [i.id, i]));
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes(); W.buildCapsuleIndexes();
+    try { return fn(W.capsuleById.get("tc")); }
+    finally {
+      W.items = saved.items; W.capsules = saved.caps; W.capsuleLinks = saved.links;
+      W.wears = saved.wears; W.outfits = saved.outfits; W.outfitLinks = saved.outfitLinks;
+      W.exclusions = saved.exclusions; W.dataReady = saved.ready; W.itemById = saved.byId;
+      W._tripSuggLevel = saved.lvl;
+      W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes(); W.buildCapsuleIndexes();
+    }
+  };
+
+  t("a tops-only trip list is told what it's missing, not to 'try All'", () =>
+    withTripList([["Tops", "Tee shirts"], ["Tops", "Tee shirts"], ["Tops", "Blouses"]], c => {
+      W._tripSuggLevel = null;
+      const html = W.tripOutfitsHtml(c);
+      if (/try All/i.test(html)) return "still says 'try All' while All is the selected chip";
+      // must name BOTH gaps: no shoes, and no bottom
+      return /shoes/i.test(html) && /bottom/i.test(html)
+        ? true : `didn't name the missing slots: ${html.replace(/<[^>]*>/g, " ").slice(0, 200)}`;
+    }));
+
+  t("on a LEVEL chip, widening back to All is still the advice", () =>
+    withTripList([["Tops", "Tee shirts"], ["Bottoms", "Jeans"], ["Shoes", "Flats"]], c => {
+      W._tripSuggLevel = 6;               // nothing in the list covers Dressed Up
+      const html = W.tripOutfitsHtml(c);
+      return /tap All|try All/i.test(html)
+        ? true : `a level dead end should point back at All: ${html.replace(/<[^>]*>/g, " ").slice(0, 200)}`;
+    }));
+
   // ---- dates ----
   t("shiftDate crosses month boundaries", () =>
     eq([W.shiftDate("2026-07-01", -3), W.shiftDate("2026-07-31", 2)], ["2026-06-28", "2026-08-02"]));
@@ -6652,9 +6799,14 @@ async function run() {
     const { cands, blocked } = W.suggestLayerCandidates(combo, { role: "layer" });
     // The button-up is layer-TAGGED, so it belongs in the layer list too — that
     // clause ("isLayer && category Tops") is what makes a shirt usable as one.
+    /* ⚠️ The Grey cardigan (image_path: null) moved from BLOCKED to OFFERED on
+       2026-08-13, and that is the decision changing, not a regression: a
+       photoless piece is suggestible now and renders as the tee placeholder.
+       The "no photo yet" reason no longer exists. Kept in the fixture on purpose
+       so this case kills the filter if anyone puts it back. */
     return eq([cands.map(i => i.name), blocked.map(b => b.i.name + "|" + b.why)],
-              [["Chambray button-up", "Denim jacket", "Navy cardigan", "Oatmeal cardigan"],
-               ["Black blazer|shares no level with the rest", "Grey cardigan|no photo yet"]]);
+              [["Chambray button-up", "Denim jacket", "Grey cardigan", "Navy cardigan", "Oatmeal cardigan"],
+               ["Black blazer|shares no level with the rest"]]);
   }));
 
   /* A blocked piece must stay REACHABLE — the filters are the engine's guesses,

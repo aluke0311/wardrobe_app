@@ -2101,7 +2101,8 @@ function packFill(targets, { c = null, demand = null, rack = null, pinned = null
   const sig = packWearSignals({ caps: c ? capsules.filter(x => x.id !== c.id) : null });
   const wantLevels = [...new Set(dem.map(o => o.level).filter(Boolean))];
 
-  const avail = (pool || items).filter(i => itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i));
+  // image_path is deliberately NOT required — see suggestOutfits (2026-08-13).
+  const avail = (pool || items).filter(i => itemStatus(i) === "Available" && !isNoSuggest(i));
   const rackSet = new Set(rackIds);
   // Level 1 (Utility) draws from the whole closet, never the rack — the rack
   // excludes the Workout category on purpose. Same precedence as _suggBasePool.
@@ -3530,10 +3531,35 @@ function tripOutfitsHtml(c) {
     <button class="btn btn-sec" data-trip-buildown style="width:100%">✎ Build one yourself from the list</button></div>`;
 
   if (!combos.length) {
+    /* ⚠️ TWO DIFFERENT DEAD ENDS, AND ONE MESSAGE USED TO COVER BOTH (2026-08-13).
+
+       The level chips above are gated on `poolCoversLevel` precisely so a chip
+       can never come back empty — but the "All" chip is NOT gated, so it is the
+       only one that can, and the copy it landed on read "try All" while All was
+       the chip already selected. Reachable on day one of essentially every trip:
+       add three tops before anything else and the screen renders a one-option
+       filter above advice to use that option.
+
+       On a LEVEL, "try All" is real advice. On All, the honest answer is what the
+       list is short of — the engine needs shoes, plus either a dress or a
+       top-and-bottom (see suggestOutfits' two combo loops), so that is what gets
+       named rather than a generic shrug. */
+    const have = new Set(list.map(i => suggestSlot(i)));
+    const missing = [];
+    if (!have.has("Shoes")) missing.push("shoes");
+    if (!have.has("Dresses") && !(have.has("Tops") && have.has("Bottoms")))
+      missing.push(have.has("Tops") ? "a bottom" : have.has("Bottoms") ? "a top" : "a top and a bottom");
+    const onAll = _tripSuggLevel == null;
+    const head = onAll ? "Not a complete outfit yet" : "No complete outfit at that level";
+    const body = onAll
+      ? (missing.length
+          ? `Your list needs ${esc(missing.join(" and "))} before it can make one.`
+          : "Nothing in the list goes together yet — the pieces share no formality level.")
+      : "Your list doesn't cover it yet — tap All, or add a piece.";
     return `<div class="pack-tip">${list.length} piece${list.length === 1 ? "" : "s"} in your list</div>
       ${chips}${own}
-      <div class="placeholder" style="padding:30px 32px"><b>No complete outfit at that level</b>
-        <div>Your list doesn't cover it yet — try All, or add a piece.</div></div>`;
+      <div class="placeholder" style="padding:30px 32px"><b>${head}</b>
+        <div>${body}</div></div>`;
   }
 
   const shown = combos.slice(0, _tripSuggShow);
@@ -5237,7 +5263,7 @@ function packSwapCandidates(st, occ, cd, pieceId) {
   const season = seasonOf(occ.date || st.c.start_date);
   const pool = new Set([...(st.rack.ids || []), ...st.res.pack]);
   return [...pool].map(id => itemById.get(id)).filter(i =>
-    i && i.id !== pieceId && itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i) &&
+    i && i.id !== pieceId && itemStatus(i) === "Available" && !isNoSuggest(i) &&
     (suggestSlot(i) === slot || (slot === "Outerwear" && isLayer(i) && i.category === "Tops")) &&
     (occ.level === 1 ? isFunctionWear(i) : (itemFormalitySet(i) || []).includes(occ.level)) &&
     inSeasonWx(i, season, wx) &&

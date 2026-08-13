@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 8;   // 8 = travel plans don't stock the home rack (2026-08-06 r1)
+const RACK_ALGO = 9;   // 9 = photoless pieces are eligible (2026-08-13)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -501,7 +501,7 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
     // excluded must not come back in through having been worn. Dress-only is
     // NOT re-checked here: forcing means she planned or wore it, which is the
     // "unless I select that as a need" case arriving as a fact.
-    return !!(i && itemStatus(i) === "Available" && i.image_path && !isNoSuggest(i) &&
+    return !!(i && itemStatus(i) === "Available" && !isNoSuggest(i) &&
               !isNoRack(i) &&
               i.category !== "Workout" && !push.has(id) && (!inPool || inPool.has(id)));
   };
@@ -662,8 +662,12 @@ function buildRack({ pool = null, wearRows = null, today = todayStr(), season = 
 
   // Candidates mirror the suggester's own normal-mode pool so the rack can never
   // offer something the engine would refuse. Laundry is NOT considered — see header.
+  // ⚠️ The image_path clause came out on 2026-08-13 IN STEP with suggestOutfits.
+  // Leaving it here would have been worse than useless: the home suggester draws
+  // from the rack, so a photoless piece would still never be offered anywhere
+  // except the trip screen, and the fix would look half-applied.
   const base = (pool || items).filter(i =>
-    i && itemStatus(i) === "Available" && i.image_path &&
+    i && itemStatus(i) === "Available" &&
     !isNoSuggest(i) && !isNoRack(i) &&
     i.category !== "Workout" && !push.has(i.id));
 

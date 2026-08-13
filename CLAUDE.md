@@ -227,6 +227,127 @@ change — every number derives from `wears` + `capsule_items` + capsule dates.
   packed for 60°, it was 78°"). The data exists and it is the r19 guessing-layer
   trap in a new hat — an insight nobody acts on.
 
+**2026-08-13 r1 — THE MORNING QUESTION IS A REAL BUTTON IN TRIP MODE TOO.
+Selftest 395 → 396, run green; the new case mutation-checked red.** Her report:
+*"I still need a 'what should I wear' button like I have in the home screen on
+trip mode home screen."* Home suppresses its own primary ask whenever trip mode
+is on, on the grounds that the dash owns the suitcase-scoped version — but that
+was ✨ Suggest, **a chip in a row of four**, i.e. the morning decision at the same
+weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same handler,
+same data attribute, same suitcase pool, so there is still exactly one door to
+the suggester. `.td-ask` measured 326px in a 390px column.
+
+**2026-08-13 r2 — A FULL-APP AUDIT, AND THE ENGINE COULD NOT SEE PART OF THE
+CLOSET. Selftest 396 → **402**, run GREEN; all 6 new cases mutation-checked red
+in the same session, and 1 existing case REVERSED with the decision it guarded.**
+She asked for an audit and then for everything fixable to be fixed.
+
+⚠️ **A PHOTOLESS PIECE WAS INVISIBLE TO EVERY OUTFIT ENGINE — the headline find,
+and it had become load-bearing three days earlier without anyone touching it.**
+`suggestOutfits` opened with `base.filter(i => i.image_path && !isNoSuggest(i))`,
+and the same clause sat in swap, add-layer, `buildRack` (×2) and `packCandidates`
+(×2). The rest of the app decided the opposite in **2026-07-11 r1** — grids,
+collages, `layoutCanvasHtml` and `builderPool` all render photoless pieces
+through `PHOTO_PLACEHOLDER`, and builderPool's comment says so outright. The
+suggester never got that pass.
+- ⚠️ **r6 is what made it matter.** Switching the pack off made `suggestOutfits`
+  the WHOLE engine of the trip screen, so a filter that used to cost a slightly
+  thinner sheet started deciding what she packs.
+- **Measured on a 10-piece list holding ONE photoless shoe: 12 outfits. Give that
+  shoe a photo: 26 — and the only dress went 0 → 2 appearances**, because that
+  shoe was the one sharing a formality level with it. The screen meanwhile said
+  *"12 outfits from your 10 pieces"*; the 10 was a claim about a list the engine
+  had already cut to 9.
+- ⚠️ **It broke a rule the app holds everywhere else.** The rack is ALLOWED to
+  narrow the default pool only because it is **labelled, counted and one tap from
+  widening**. This narrowed with no label, no count and no way out — and it
+  contradicted **2026-08-10 r3**'s *"use the whole list unless I mark something as
+  'do not plan'"* three days after that shipped.
+- ⚠️ **The rack clause had to come out IN STEP.** Its own comment says the rack
+  "mirrors the suggester's pool"; leaving it would have been worse than useless,
+  since the home suggester draws FROM the rack — a photoless piece would still
+  never be offered anywhere except the trip screen, and the fix would look
+  half-applied. **`RACK_ALGO` 8 → 9**, because selection changed and a stored rack
+  cannot otherwise see that the code did (the 2026-08-04 r2 lesson).
+- **`suggestLayerCandidates`' `why = "no photo yet"` blocked-reason is gone** — it
+  can no longer happen. The fixture keeps its photoless cardigan on purpose so
+  that case kills the filter if anyone puts it back.
+- ⚠️ A **structural** case now fails if `image_path` reappears in any pool filter
+  in `12-looks` / `20-rack` / `21-pack`. Seven sites across three modules, one of
+  which explicitly mirrors another, is precisely the "when you add a reader, audit
+  them all" trap — a behavioural case on one of them would not have held.
+
+⚠️ **HOME'S WEATHER OFFER RAN 41.6px OFF THE RIGHT EDGE OF THE PHONE.**
+`.btn-sec` sets `width:100%`, and `style="flex:none"` (= `flex: 0 0 auto`) takes
+its **basis from that width** — so "Not now" claimed the entire 332px row and
+overhung the screen, while "Look it up" was crushed to **62.6px** and both labels
+wrapped to **four lines** (72.4px tall). With `width:auto`: **227px / 97px, one
+line each, 51.2px**. Same family as the `.log-cta` trap **from the opposite
+direction** — there a full-width button needed an explicit width; here a
+`width:100%` button in a flex row needs an explicit auto.
+⚠️ It is the real entry point for the ERA5 backfill (gated on `wears.length >
+100`), so it has been rendering for her since Round C.
+⚠️ **The first version of its guard case was VACUOUS and its own mutation check
+caught it** — written with hand-typed markup it asserted that the string *in the
+test* had `width:auto`, and passed happily with the app still broken. It now
+lifts both buttons out of `js/06-home.js` source and measures those.
+
+⚠️ **THE TRIP'S EMPTY STATE TOLD HER TO "TRY ALL" WHILE ALL WAS SELECTED.** The
+level chips are gated on `poolCoversLevel` under a comment explaining that this
+is so *"a chip can never come back empty"* — but **the "All" chip is not gated**,
+so it is the only one that can, and it landed on that copy. Reachable on **day one
+of essentially every trip**: add a few tops before anything else and the screen
+renders a one-option filter above advice to use that option. It now names the
+gap — the engine needs shoes plus either a dress or a top-and-bottom, from
+`suggestOutfits`' two combo loops — and only says "tap All" when a LEVEL is
+selected, which is the one case where that is real advice.
+⚠️ **This is the first test coverage `tripOutfitsHtml` has ever had.** r6 shipped
+the trip rework with "no new cases — this round REMOVES surface", which left the
+app's entire packing feature untested.
+
+⚠️ **`#fieldSheet` WAS 5th OF 9 SHEETS, UNDER A COMMENT SAYING IT WAS LAST.** The
+r19 rule is that every sheet hosting a field edit is declared BEFORE it; four
+(log, stats filter, filter, stats range) were declared after. **Proved by
+hit-testing with two open: `#logSheet` painted over `#fieldSheet`.** Nothing was
+visibly broken only because the one live path across that boundary — the rack's
+"wrong formality"/"wrong season" answers — calls `hideSheet("logSheet")` first.
+Moved to genuinely last, and a case now asserts its index.
+
+**Verified correct under probing, so a later round needn't re-audit:** no
+undefined global function references in 27.8k lines / 930 top-level functions; no
+horizontal scroll on any of 11 rendered screens (`body.scrollWidth` 390
+everywhere — the r5 sideways-scroll bug has not regressed); all 13 stats views
+render without throwing and with no oversized thumbs; Closet vs Life still agrees
+with itself across both surfaces; Contexts counts DAYS not rows.
+
+⚠️ **THE PACK IS CONFIRMED UNREACHABLE, AND r6 AND r7 STATE OPPOSITE RULES ABOUT
+IT — left alone deliberately, because it is her call.** 6,238 lines / 173
+functions dormant, ~40 handlers still live in wiring, but the entry markup
+(`data-trip-build`/`-mode`/`-ctx`/`-definites`/`-laundry`) exists only inside
+`tripPlanSectionHtml`, which has **zero callers**, and `TRIP_SECTIONS` falls back
+on unknown values so the surviving `data-trip-tosetup` handler is inert. r6 kept
+it whole for one-commit reversibility; r7 wrote *"leaving a live handler for
+removed markup is how a switched-off feature comes back"* and applied it to
+`data-cap-pack` alone. **Both are now in this file as guidance.** One live
+residue: `addItemsToCapsule` still writes `savePackRecord(… needsResolve:true)`
+whenever `rec.pieces` exists, so every add-to-trip does a DB write for a
+switched-off feature.
+
+⚠️ **TWO PROCESS FAILURES IN THIS SESSION, BOTH OF THE DOCUMENTED KIND.**
+① **The first layout sweep reported "0 overflow" on all 11 screens and was
+worthless** — `#app` is `display:none` behind the login screen, so every
+`getBoundingClientRect()` returned 0. That is the display:none trap the selftest
+header already documents, arriving through a different door. **Any layout probe
+must assert a known element has non-zero width before a single number is
+trusted.** ② **A `jsc` parse check reported "no syntax errors in any module" while
+`jsc` was not on PATH** — the binary lives at
+`/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc`,
+and the loop only surfaced failures matching a string, so 23 empty outputs read as
+success. It hid a real syntax error (backticks inside a template literal in
+`js/06-home.js`) that took the whole module out — 82 cases red — and **the selftest
+freshness case is what actually caught it.** Check the tool runs before believing
+the tool.
+
 **2026-08-10 r1 — ONE SUPPLY OF OUTFITS, DEALT ACROSS THE TRIP. Selftest 374 →
 **378**, run green; all 4 new cases mutation-checked red in the same session
 (five mutations, one per guarded behaviour).** Her report: *"when it gives
@@ -3164,7 +3285,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-10 r7`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-13 r2`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3511,7 +3632,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **386/386** (2026-08-10 r3, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **402/402** (2026-08-13 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
