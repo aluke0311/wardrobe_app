@@ -320,6 +320,11 @@
     background-size: contain; background-position: center; background-repeat: no-repeat; }
   .trip-dash .td-chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 14px 12px; }
   .trip-dash .td-laun { display: flex; align-items: center; gap: 8px; width: calc(100% - 28px); margin: 0 14px; padding: 9px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; font-size: 13.5px; text-align: left; }
+  /* Same primary button as Home's .log-cta, at the dash's own 14px gutter
+     (⚠️ a full-width <button> needs an explicit width — display:block is not
+     enough; see the .log-cta note above). */
+  .trip-dash .td-ask { display: block; width: calc(100% - 28px); margin: 10px 14px 0; padding: 13px; background: var(--accent); color: var(--on-accent); border-radius: 14px; font-size: 16px; font-weight: 600; text-align: center; box-shadow: 0 3px 10px rgba(107,39,55,.22); transition: transform .1s ease; }
+  .trip-dash .td-ask:active { transform: scale(.98); }
   .td-days { display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; padding: 2px 14px 12px; scrollbar-width: none; }
   .td-days::-webkit-scrollbar { display: none; }
   .td-day { flex: none; min-width: 52px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 12px; text-align: center; font-size: 11.5px; color: var(--muted); }

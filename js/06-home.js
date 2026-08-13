@@ -803,8 +803,16 @@ function tripDashHtml(c) {
     }
   }
 
+  /* The morning question owns a primary button here too (her report: "I still
+     need a 'what should I wear' button like I have on the home screen"). Home
+     was exempted from it in trip mode on the grounds that the dash already had
+     ✨ Suggest — but that was a small chip in a row of four, i.e. the same
+     decision demoted to the same weight as "Packing list". Same wording, same
+     shape, same scope as the chip it REPLACES (the suitcase pool), so there is
+     still exactly one door to it. */
+  const askHtml = `<button class="td-ask" data-td-suggest>What should I wear?</button>`;
+
   const chips = [
-    `<button class="cap-chip" data-td-suggest>✨ Suggest</button>`,
     `<button class="cap-chip" data-td-build>✎ Build</button>`,
     dated ? `<button class="cap-chip" data-td-plans>🗓 Trip plan</button>`
           : `<button class="cap-chip" data-td-plans>Planned outfits</button>`,
@@ -830,6 +838,7 @@ function tripDashHtml(c) {
     ${unwornHtml}
     ${washPlanHtml}
     ${launHtml}
+    ${askHtml}
     <div class="td-chips">${chips}</div>
     ${daysHtml}
   </div>`;

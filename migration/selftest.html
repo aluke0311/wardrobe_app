@@ -5086,6 +5086,25 @@ async function run() {
       ? true : `washplanRows=${plan} genericHamperRows=${generic} packRows=${packRows}`;
   }, { members: ["tee0", "jea0", "snk0"] }));
 
+  /* ⚠️ THE MORNING QUESTION IS A PRIMARY BUTTON IN TRIP MODE TOO (2026-08-13).
+     Home suppresses its own "What should I wear?" whenever trip mode is on,
+     on the grounds that the dash owns the suitcase-scoped version — so if the
+     dash ever loses it, the app has NO primary route to the suggester on the
+     one screen she opens every morning of a trip. Asserting the class alone
+     would pass on a button that says something else, so this reads the copy;
+     asserting only its presence would pass with the old chip still there
+     beside it, so it also pins ONE door (`data-td-suggest` exactly once). */
+  t("the trip dash carries the primary 'What should I wear?' button, once", () => midTripCloset(() => {
+    const c = W.capsuleById.get("onnow");
+    const savedTrip = W.tripModeId;
+    W.tripModeId = "onnow";
+    let html = "";
+    try { html = W.tripDashHtml(c); } finally { W.tripModeId = savedTrip; }
+    const doors = (html.match(/data-td-suggest/g) || []).length;
+    const primary = /class="td-ask"[^>]*data-td-suggest[^>]*>What should I wear\?</.test(html);
+    return doors === 1 && primary ? true : `suggestDoors=${doors} primaryAsk=${primary}`;
+  }, { members: ["tee0", "jea0", "snk0"] }));
+
   /* ---- what the bag line says (r4) ----
      Stage B adds pieces purely to raise the option count. Those rows read
      "another option", which is true and unusable — §13 flagged it and nothing in

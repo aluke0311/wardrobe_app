@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-10 r7";
+const APP_VERSION = "2026-08-13 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,9 @@ const APP_VERSION = "2026-08-10 r7";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-13 r1", notes: [
+    "\"What should I wear?\" is now a proper button on the trip screen too — same one as Home, asking the suitcase instead of the closet (it replaces the small ✨ Suggest chip, so there's still one way in)",
+  ] },
   { v: "2026-08-10 r7", notes: [
     "Removed the last buttons that could still start the old pack solver — \"Build the pack\" / \"Rebuild\" on a trip's page was still building one",
     "The by-day plan no longer fills itself in from the solver, and Home no longer proposes today's outfit from it — both were showing you a plan you hadn't agreed to",
