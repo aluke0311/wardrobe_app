@@ -57,7 +57,7 @@ function switchTab(name) {
 }
 
 function renderSettings() {
-  const lastBk = store.getItem("wardrobe.lastBackup");
+  const lastBk = lastBackupDate();
   $("#settingsBody").innerHTML = `
     <div style="padding:24px 18px" class="stack">
       <div class="card stack">
@@ -355,7 +355,7 @@ function downloadBackup() {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  store.setItem("wardrobe.lastBackup", todayStr());
+  setLastBackupDate(todayStr());
   toast("Backup downloaded — keep it somewhere safe");
   const scr = $(".screen.active")?.id;
   if (scr === "tab-home") renderHome();       // E1 nudge row lives here too

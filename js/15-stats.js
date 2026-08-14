@@ -747,6 +747,93 @@ function closetVsLifeHtml() {
   </div>`;
 }
 
+/* ---- "Lately": what moved since last time (2026-08-14) ----
+
+   She opens Stats daily, to LOOK rather than to learn — it is the app's stated
+   identity, and the reward for logging. It opened on Closet vs. Your Life: a
+   supply-versus-demand chart over eight formality levels, which shifts by
+   fractions of a percent per day. Opened every morning it is the same picture,
+   and the sections that do move ("Looking back") sat 2,600px down, 3.5 screens
+   below the fold. This is the top of the page answering "what changed".
+
+   Nothing here is new arithmetic — wear-days, first outings and rediscoveries
+   are the same notions the month review and milestones already use. It is one
+   pass over `wears` (4,000+ rows on her closet), so first-seen, last-seen-before
+   and the in-window rows are all collected together rather than in a filter per
+   question — the items × wears trap that got context scoring thrown out of
+   packFill.
+   ⚠️ A WEAR IS A DAY: every count here dedupes on worn_on.
+   ⚠️ Deliberately NOT range-scoped. The page's Range control scopes the wear
+   lists below; this block states its own window in its subtitle, exactly as
+   Rotation does with its own chips. A "lately" block that silently meant "all
+   time" because Range said so would be the opposite of the point. */
+const PULSE_DAYS = 7;
+const PULSE_REDISCOVER_DAYS = 90;   // same threshold the month review calls "back from the deep"
+function buildRecentPulse(days = PULSE_DAYS, wearRows, today) {
+  const t = today || todayStr();
+  const from = shiftDate(t, -(days - 1));
+  const rows = wearRows || wears;
+  const firstEver = new Map();      // item → earliest worn_on anywhere
+  const lastBefore = new Map();     // item → latest worn_on strictly before the window
+  const inWin = [];
+  for (const w of rows) {
+    const d = w.worn_on, id = w.item_id;
+    if (!d || !id) continue;
+    const f = firstEver.get(id);
+    if (f === undefined || d < f) firstEver.set(id, d);
+    if (d < from) {
+      const l = lastBefore.get(id);
+      if (l === undefined || d > l) lastBefore.set(id, d);
+    } else if (d <= t) inWin.push(w);
+  }
+  const dayCounts = countByDay(inWin, w => [w.item_id]);
+  const days_ = new Set(inWin.map(w => w.worn_on));
+  const cut = shiftDate(t, -PULSE_REDISCOVER_DAYS);
+  const worn = [...dayCounts.entries()]
+    .map(([id, n]) => ({ item: itemById.get(id), n }))
+    .filter(x => x.item)
+    .sort((a, b) => b.n - a.n);
+  // "First outing" = nothing before the window at all. "Back out" = a real gap.
+  const firstOutings = worn.filter(x => (firstEver.get(x.item.id) || "") >= from);
+  const rediscovered = worn.filter(x => {
+    const l = lastBefore.get(x.item.id);
+    return l && l <= cut;
+  });
+  return {
+    days, from, to: t,
+    daysLogged: days_.size,
+    pieces: worn.length,
+    top: worn[0] || null,
+    firstOutings,
+    rediscovered,
+  };
+}
+function recentPulseHtml() {
+  const p = buildRecentPulse();
+  // Nothing logged in the window: say so plainly rather than rendering zeros.
+  // ⚠️ Not silent — an empty week is itself the honest answer on a daily screen,
+  // and a block that vanishes would make the page jump around week to week.
+  const facts = [];
+  if (p.top) facts.push(`<b>${esc(p.top.item.name)}</b> went out ${p.top.n} day${p.top.n === 1 ? "" : "s"}`);
+  if (p.firstOutings.length) facts.push(`${p.firstOutings.length} first outing${p.firstOutings.length === 1 ? "" : "s"}`);
+  if (p.rediscovered.length) facts.push(`${p.rediscovered.length} back out after ${PULSE_REDISCOVER_DAYS}+ days`);
+  return `<div class="stats-sec">
+    <div class="stats-sec-hdr">
+      <div class="t">Lately</div>
+      <div class="s">The last ${p.days} days</div>
+    </div>
+    <div class="stats-sec-body" style="padding:14px 16px 12px">
+      <div class="kpi-row" style="border:0;padding:0">
+        <div class="kpi-cell"><div class="kpi-val">${p.daysLogged}</div><div class="kpi-lbl">day${p.daysLogged === 1 ? "" : "s"} logged</div></div>
+        <div class="kpi-cell"><div class="kpi-val">${p.pieces}</div><div class="kpi-lbl">pieces worn</div></div>
+      </div>
+      ${facts.length
+        ? `<div style="font-size:13px;color:var(--muted);margin-top:8px">${facts.join(" · ")}</div>`
+        : `<div style="font-size:13px;color:var(--muted);margin-top:8px">Nothing logged this week yet.</div>`}
+    </div>
+  </div>`;
+}
+
 /* Rotation: one number for "am I actually wearing my closet". Uses the full
    Available closet, NOT statsPool() — the whole point is the denominator being
    everything wearable, so a filter can't flatter it. Window is session-only. */
@@ -905,6 +992,8 @@ function renderStatsMain() {
   $("#statsBody").innerHTML = `
     ${statsToolbar("Style Stats", false, true)}
     <div style="padding-bottom:32px">
+      ${/* What moved comes before what is structurally true — see recentPulseHtml. */""}
+      ${recentPulseHtml()}
       ${closetVsLifeHtml()}
       <div class="stats-sec">
         <div class="stats-sec-hdr"><div class="t">Clothing Stats</div><div class="s">All about your wardrobe</div></div>

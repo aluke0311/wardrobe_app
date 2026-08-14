@@ -567,14 +567,26 @@ async function run() {
     W.capsuleLinkMap = new Map([["c1", W.capsuleLinks]]);
     return c;
   }
-  t("tripWearContext stamps Travel only inside trip dates + mode", () => {
+  /* ⚠️ REVERSED 2026-08-14, and deliberately: this used to assert "inside trip
+     dates AND trip mode on". Trip mode is a localStorage flag; the trip's dates
+     are in the database. Being on the trip is a fact about her week, so the same
+     wear on the same day was stamped Travel from her phone and left unstamped
+     from anywhere else — a second device, a cleared site, a reinstalled PWA —
+     and that lands silently in the wear history the context pages read.
+     The contract now is: the DATES decide. The mode stays hers to toggle; it is
+     just not what makes the stamp true.
+     The fourth assertion is what stops this passing trivially by always saying
+     Travel — a date inside no trip at all must still be null. */
+  t("tripWearContext stamps Travel from the trip DATES, not from trip mode", () => {
     tripSetup();
     W.tripModeId = "c1";
-    const inRange = W.tripWearContext(today);
-    const outRange = W.tripWearContext(D(30));
+    const inRangeModeOn = W.tripWearContext(today);
+    const outRangeModeOn = W.tripWearContext(D(30));
     W.tripModeId = null;
-    const off = W.tripWearContext(today);
-    return eq([inRange, outRange, off], [["Travel"], null, null]);
+    const inRangeModeOff = W.tripWearContext(today);
+    const noTripAtAll = W.tripWearContext(D(30));
+    return eq([inRangeModeOn, outRangeModeOn, inRangeModeOff, noTripAtAll],
+              [["Travel"], null, ["Travel"], null]);
   });
   t("tripMissingPieces: member → null, non-member → offer", () => {
     tripSetup();
@@ -1886,6 +1898,11 @@ async function run() {
   t("the 🏋️ Workout chip is level 1, not a mode of its own", () => withGearCloset(() => {
     W.openSuggestSheet();
     const doc = document.getElementById("app").contentDocument;
+    // The level chips live behind "Refine" since 2026-08-14 (the sheet opens on
+    // the outfit). What this case guards — the chip IS level 1 — is unchanged,
+    // so it opens the fold through the real control rather than asserting on a
+    // screen the app no longer shows first.
+    doc.querySelector("[data-srefine]").click();
     const chip = [...doc.querySelectorAll("[data-slvl]")].find(b => /Workout/.test(b.textContent));
     if (!chip) return "the Workout chip is missing";
     if (chip.dataset.slvl !== "1") return `chip targets level ${chip.dataset.slvl}, not 1`;
@@ -1904,12 +1921,77 @@ async function run() {
         [0, 1, 2].map(d => ({ id: `cx${k}${d}`, item_id: "tp0", worn_on: W.shiftDate(today, -(20 + k * 3 + d)),
                               outfit_id: null, context: [c], formality_for: 3 }))));
     W.openSuggestSheet();
-    const html = document.getElementById("app").contentDocument.getElementById("logInner").innerHTML;
+    const doc = document.getElementById("app").contentDocument;
+    doc.querySelector("[data-srefine]").click();   // context chips fold under Refine
+    const html = doc.getElementById("logInner").innerHTML;
     const chips = [...html.matchAll(/data-sctx="([^"]+)"/g)].map(m => m[1]);
     // Workout is still a real context for logging and planning — just not a
     // second way to ask the suggester for what level 1 already says.
     return chips.length > 0 && !chips.includes("Workout") ? true : JSON.stringify(chips);
   }));
+
+  /* ---- the sheet answers before it asks (2026-08-14) ----
+     Measured on her live closet before the change: 25 chips and 587px of filters
+     ahead of the outfit, which began at y=765 with "Wear this today" 1,300px
+     down. These pin the reorder, not the styling. */
+  t("the suggestion sheet opens on the outfit, not on the filters", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    const doc = document.getElementById("app").contentDocument;
+    const prev = doc.getElementById("sgPreview");
+    const ref = doc.querySelector("[data-srefine]");
+    if (!prev) return "no #sgPreview";
+    if (!ref) return "no Refine control";
+    // 4 = DOCUMENT_POSITION_FOLLOWING: refine must come AFTER the outfit.
+    if (!(prev.compareDocumentPosition(ref) & 4)) return "Refine renders before the outfit";
+    const levels = doc.querySelectorAll("[data-slvl]").length;
+    return levels === 0 ? true : `${levels} formality chips rendered before she asked for them`;
+  }));
+
+  /* ⚠️ Her explicit condition when she approved the rack narrowing the pool:
+     "the suggester always names its pool with a count and a one-tap widen".
+     The refine fold must never swallow that — a folded pool chip keeps the
+     letter of the sheet and breaks the deal. */
+  t("the pool chip stays visible with Refine closed", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    const doc = document.getElementById("app").contentDocument;
+    if (W._sugg.refineOpen) return "plain open should start folded";
+    const pool = doc.querySelector("[data-spool]");
+    if (!pool) return "the pool chip is hidden behind the fold";
+    return /\d/.test(pool.textContent) ? true : `pool chip names no count: ${pool.textContent.trim()}`;
+  }));
+
+  t("the piece legend names only controls that are on screen", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    const doc = document.getElementById("app").contentDocument;
+    const leg = [...doc.querySelectorAll("#sgPreview div")]
+      .filter(e => /Tap a piece/.test(e.textContent) && e.children.length === 0).pop();
+    if (!leg) return "no legend";
+    const txt = leg.textContent;
+    // ⃠ was removed with the ban chip; claiming it is what made the old copy wrong.
+    if (/⃠/.test(txt)) return "legend still names the removed ⃠ control";
+    if (/✨/.test(txt) && !doc.querySelector("[data-sswap]")) return "legend claims ✨ with no swap chip";
+    if (/✕/.test(txt) && !doc.querySelector("[data-sdrop]")) return "legend promises ✕ but none is rendered";
+    return /✨/.test(txt) ? true : `legend never mentions the swap: ${txt}`;
+  }));
+
+  t("the outfit canvas is sized to its arrangement, not a fixed 3/4", () => {
+    const h = (a) => parseFloat(String(a).split("/")[1]);   // "1 / 0.51" → 0.51
+    const two = h(W.suggestionCanvasAspect([{ y: .5, s: .45 }, { y: .5, s: .45 }]));
+    const four = h(W.suggestionCanvasAspect([{ y: .28, s: .44 }, { y: .28, s: .44 },
+                                             { y: .72, s: .44 }, { y: .72, s: .44 }]));
+    if (!(two < four)) return `a one-row look (${two}) is not shorter than a two-row one (${four})`;
+    if (!(four <= 4 / 3 + 1e-9)) return `four-piece box ${four} is taller than the old fixed 3/4`;
+    // The whole point: a dress-and-shoes look must be substantially shorter.
+    return two < 0.75 ? true : `two-piece box ${two} saves nothing against 3/4`;
+  });
+
+  /* Structural, like the ↻ case: the chip AND its handler went together, and a
+     later round re-adding the markup must not find live wiring waiting for it. */
+  t("the removed ⃠ ban control leaves nothing behind", () => {
+    const src = window.__src || {};
+    const hits = Object.keys(src).filter(p => p.endsWith(".js") && /data-sban|banSuggestionPiece\s*\(/.test(src[p]));
+    return hits.length === 0 ? true : `still referenced in ${hits.join(", ")}`;
+  });
 
   // ---- "Things you might be wrong about" (2026-07-26 r10) ----
   const withMisfitCloset = (fn) => {
@@ -2673,6 +2755,87 @@ async function run() {
     const restore = packClosetInstall(opt);
     try { return await fn(); } finally { restore(); }
   };
+  /* ---- Home: order, and the nav strip (2026-08-14) ----
+     ⚠️ Home had NO render coverage before this. Measured on her live closet at
+     375×812: the launcher grid took 533px — 71% of the usable screen — to
+     duplicate the tab bar, which left "What should I wear?" 23px above the fold
+     and the log row 39px BEHIND it, with TODAY never visible at all. */
+  const withHome = (fn) => withPackCloset(() => {
+    const savedTrip = W.tripModeId;
+    W.tripModeId = null;
+    W.switchTab("home");
+    W.renderHome();
+    try { return fn(document.getElementById("app").contentDocument.getElementById("homeBody")); }
+    finally { W.tripModeId = savedTrip; }
+  });
+
+  t("Home leads with the day and the daily actions, not with navigation", () => withHome((body) => {
+    const ask = body.querySelector("#homeAsk");
+    const nav = body.querySelector(".hnav");
+    if (!ask) return "no 'What should I wear?' button on Home";
+    if (!nav) return "no nav strip";
+    // 4 = DOCUMENT_POSITION_FOLLOWING
+    if (!(ask.compareDocumentPosition(nav) & 4)) return "navigation still renders above the morning question";
+    if (body.querySelector(".launch")) return "the launcher grid is back above the fold";
+    return true;
+  }));
+
+  /* Compress, don't delete: the grid went, every destination stayed. */
+  t("the Home nav strip still reaches every launcher destination", () => withHome((body) => {
+    const got = [...body.querySelectorAll(".hnav [data-go]")].map(b => b.dataset.go);
+    const want = W.HOME_TILES.map(t => t.tab);
+    const missing = want.filter(x => !got.includes(x));
+    return missing.length === 0 ? true : `unreachable from Home: ${missing.join(", ")}`;
+  }));
+
+  /* ⚠️ The twin of the suggester's own fix. Logging used to switchTab("calendar")
+     before opening the sheet, so a one-tap log started on Home and ended on
+     Calendar — openPostLogSheet's close() re-renders whatever is active. */
+  t("logging from Home opens the sheet without moving her off Home", () => withHome((body) => {
+    const cta = body.querySelector("#homeLogCta");
+    if (!cta) return "no log CTA (fixture logged something today?)";
+    cta.click();
+    const doc = document.getElementById("app").contentDocument;
+    const active = [...doc.querySelectorAll(".screen.active")].map(e => e.id)[0];
+    const sheetOpen = !doc.getElementById("logSheet").hidden;
+    W.hideSheet("logSheet");
+    if (active !== "tab-home") return `logging moved her to ${active}`;
+    return sheetOpen ? true : "the wear-again sheet did not open";
+  }));
+
+  t("a nameless look is called by its shape, not a serial number", () => withPackCloset(() => {
+    W.outfits = [{ id: "o1", name: null, created_at: "2020-01-01" }];
+    W.outfitLinks = [{ outfit_id: "o1", item_id: "drs0" }, { outfit_id: "o1", item_id: "fla0" }];
+    W.buildOutfitIndexes();
+    const o = W.outfitById.get("o1");
+    const n = W.outfitName(o);
+    if (/^Look #/.test(n)) return `still a serial number: ${n}`;
+    if (!/Short/.test(n)) return `shape label doesn't name the garment: ${n}`;
+    o.name = "Sunday best";                       // an explicit name must still win
+    return W.outfitName(o) === "Sunday best" ? true : "explicit name lost to the derived one";
+  }));
+
+  /* ⚠️ A WEAR IS A DAY. tee0 gets three ROWS across two DAYS — a multi-piece
+     outfit writes one row per piece — and must count as 2. */
+  t("Lately counts wear days (not rows) and separates first outings from rediscoveries", () => withPackCloset(() => {
+    const rows = [
+      { item_id: "tee0", worn_on: D(-1) }, { item_id: "tee0", worn_on: D(-1) },
+      { item_id: "tee0", worn_on: D(-2) },
+      { item_id: "jea0", worn_on: D(-200) }, { item_id: "jea0", worn_on: D(-1) },
+      { item_id: "fla0", worn_on: D(-1) },
+    ];
+    const p = W.buildRecentPulse(7, rows, today);
+    if (!p.top || p.top.item.id !== "tee0") return `top piece is ${p.top && p.top.item.id}`;
+    if (p.top.n !== 2) return `counted ${p.top.n} for tee0 — three rows over two days should be 2`;
+    if (p.daysLogged !== 2) return `daysLogged ${p.daysLogged}, expected 2`;
+    const red = p.rediscovered.map(x => x.item.id);
+    const first = p.firstOutings.map(x => x.item.id);
+    if (!red.includes("jea0")) return `jea0 (last worn 200 days ago) is not a rediscovery: ${JSON.stringify(red)}`;
+    if (first.includes("jea0")) return "jea0 has history — it is not a first outing";
+    if (!first.includes("fla0")) return `fla0 has no prior wears and should be a first outing: ${JSON.stringify(first)}`;
+    return true;
+  }));
+
   // A dated trip capsule, n days from tomorrow.
   const packTrip = (n, locs) => ({ id: "tripc", name: "Test trip", kind: "packing",
     start_date: D(1), end_date: D(n), locations: locs || [], plan: {} });

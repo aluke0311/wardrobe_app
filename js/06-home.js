@@ -531,10 +531,29 @@ function wireWxMemory(root) {
   });
 }
 
+/* ⚠️ THE TILE GRID IS A NAV STRIP NOW (2026-08-14), and the reason is that it
+   had stopped carrying anything the tab bar didn't.
+
+   HOME_TILES is closet · looks · calendar · capsules · stats. The tab bar, which
+   is on screen permanently, is home · closet · looks · calendar · capsules ·
+   stats. Every tile was a tab. It cost 533px — 71% of the usable screen on a
+   375×812 phone — to duplicate navigation one tap away either way, which pushed
+   "What should I wear?" to y=674 and left the log row 39px behind the tab bar.
+   It had a real justification once, and CLAUDE.md still recorded it ("Capsules
+   is a Home-tile screen (not in bottom nav)"); that stopped being true and
+   nothing re-read the grid afterwards.
+
+   Compress, don't delete (2026-07-26): the one thing the tiles carried that the
+   tab bar doesn't is the COUNTS, so those survive as a single scrollable row and
+   every destination keeps its tap target. `short()` is that number alone —
+   `sub()` is still the sentence, kept for the label under a full tile if this is
+   ever reverted. */
 const HOME_TILES = [
   { tab: "closet",   label: "Closet",     sub: () => `${availableCount()} items`,
+    short: () => `${availableCount()}`,
     icon: `<path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/>` },
   { tab: "looks",    label: "Looks",      sub: () => `${activeOutfits().length} looks`,
+    short: () => `${activeOutfits().length}`,
     icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
   { tab: "calendar", label: "Calendar",   sub: () => {
       const today = localISO(new Date());
@@ -544,10 +563,13 @@ const HOME_TILES = [
       // the words have to say so.
       return n ? `${n} logged today` : "Nothing logged today";
     },
+    short: () => { const n = dayGroups(localISO(new Date())).length; return n ? `${n}` : ""; },
     icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>` },
   { tab: "capsules", label: "Capsules",   sub: () => capsules.length ? `${capsules.length} set${capsules.length === 1 ? "" : "s"}` : "Sets & packing",
+    short: () => capsules.length ? `${capsules.length}` : "",
     icon: `<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/>` },
-  { tab: "stats",    label: "Style Stats", sub: () => "Insights", wide: true,
+  { tab: "stats",    label: "Stats", sub: () => "Insights", wide: true,
+    short: () => "",
     icon: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>` },
 ];
 
@@ -1542,12 +1564,13 @@ function openWeekPlanSheet() {
 // Session-only: whether the folded Home attention rows are expanded. Not
 // persisted — a fresh open should be calm again.
 function renderHome() {
-  const tiles = HOME_TILES.map(t => `
-    <button class="tile ${t.wide ? "wide" : ""}" data-go="${t.tab}">
-      <svg viewBox="0 0 24 24">${t.icon}</svg>
-      <div class="tlabel">${esc(t.label)}</div>
-      <div class="tsub">${dataReady ? esc(t.sub()) : "&nbsp;"}</div>
-    </button>`).join("");
+  // See HOME_TILES: one scrollable row of counts, not 533px of second navigation.
+  const tiles = HOME_TILES.map(t => {
+    const n = dataReady ? t.short() : "";
+    return `<button class="hnav-chip" data-go="${t.tab}">
+      <svg viewBox="0 0 24 24">${t.icon}</svg><span>${esc(t.label)}</span>${n ? `<b>${esc(n)}</b>` : ""}
+    </button>`;
+  }).join("");
   const today = todayStr();
   const hasWearToday = dataReady && wearDayMap().has(today);
   // The morning question owns the primary button, permanently (2026-07-26 audit
@@ -1601,7 +1624,7 @@ function renderHome() {
   // Backup staleness (E1): one tap runs the download right here.
   let bk = "";
   if (dataReady) {
-    const last = store.getItem("wardrobe.lastBackup");
+    const last = lastBackupDate();
     if (!last || last <= shiftDate(todayStr(), -30)) {
       const ago = last ? `last backup ${Math.round((new Date(todayStr()) - new Date(last)) / 86400000)} days ago` : "no backup yet";
       bk = `<button class="logged-row" id="homeBackupRow" style="border:1px solid var(--line);background:var(--bg)">
@@ -1655,7 +1678,22 @@ function renderHome() {
   // an attention row, so it stays out of the folding group above.
   const otd = (dataReady && !tripModeId) ? onThisDayHtml(today) : "";
 
-  $("#homeBody").innerHTML = `${dash}<div class="launch">${tiles}</div>${ask}${cta}${todayCardHtml()}${tomorrowCardHtml()}${attnHtml}${otd}`;
+  /* ⚠️ ORDER IS THE FIX (2026-08-14). Home used to open launcher-grid first, so
+     on a 375×812 phone the two things she is actually here for — decide, and
+     record — were the last things above the fold (the log row 39px behind the
+     tab bar), and TODAY, the card saying what she has already worn, started at
+     y=797 and was never visible at all.
+
+     Trip mode had the right answer the whole time: its dash leads with the day,
+     then the hamper, then the ask, and pushes the tiles below the fold — which
+     is the proof they were never needed at the top. Non-trip Home is built the
+     same way now: today, ask, log, then navigation, then tomorrow and the
+     quieter rows.
+
+     todayCardHtml() returns "" in trip mode (the dash already IS today), so the
+     dash keeps the top for itself and this ordering costs it nothing. */
+  $("#homeBody").innerHTML =
+    `${dash}${todayCardHtml()}${ask}${cta}<div class="hnav">${tiles}</div>${tomorrowCardHtml()}${attnHtml}${otd}`;
   hydratePhotos($("#homeBody"));
   wireWxMemory($("#homeBody"));
   $("#homeBody").querySelectorAll("[data-otd]").forEach(b => {
@@ -1799,15 +1837,25 @@ function renderHome() {
   const askBtn = $("#homeAsk");
   if (askBtn) askBtn.onclick = () => openSuggestSheet();
   const ctaBtn = $("#homeLogCta");
-  // G6: the most common real log is a repeat — offer "wear again" first, not a
-  // blank picker.
+  /* G6: the most common real log is a repeat — offer "wear again" first, not a
+     blank picker.
+
+     ⚠️ NO TAB CHANGE (2026-08-14). This used to switchTab("calendar") before
+     opening the sheet, so a one-tap log started on Home and ended on Calendar:
+     openPostLogSheet's close() re-renders whichever screen is active, and by
+     then that was the calendar. Measured — tab-home in, tab-calendar out.
+     That is the identical defect fixed for the suggester six lines above, whose
+     comment ("closing the sheet stranded her there instead of on Home") was
+     sitting right here the whole time. One of a symmetric pair had been fixed;
+     this is the twin.
+     `calendarDay` is still set because logLookOnDay reads it — it is the date
+     being logged, not a claim about which screen is showing. */
   if (ctaBtn) ctaBtn.onclick = () => {
-    switchTab("calendar");
     calendarDay = today;
-    renderCalendarDay($("#calendarBody"));
     openWearAgainChooser(today);
   };
   const loggedBtn = $("#homeLoggedRow");
+  // Already-logged: this one is genuinely "show me the day", so it navigates.
   if (loggedBtn) loggedBtn.onclick = () => {
     switchTab("calendar");
     calendarDay = today;

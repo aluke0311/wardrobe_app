@@ -113,7 +113,33 @@ function looksScopedOutfits() {
   if (hasActiveFilter(looksFilter)) list = list.filter(o => outfitMatchesFilter(o, looksFilter));
   return list;
 }
-function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
+/* What a look is CALLED in a list.
+
+   ⚠️ 1,102 of her 1,122 looks have no name — 98% — because almost all of them
+   were logged rather than composed, and the 20 that do are auto-dates. So every
+   text-only list (the Tomorrow card, a trip's by-day plan, the look pickers)
+   asked her to choose between "Look #1081" and "Look #1115": a serial number
+   derived from creation order, which also shifts by one for every look after any
+   look she deletes. Thumbnails carry it where there are thumbnails; the text
+   lists had nothing.
+   The vocabulary already existed and was already used on the Formulas lens —
+   formulaKeyFor + formulaLabel turn a piece set into "Short + Sandals" — so this
+   just calls it. Derived, nothing stored, and an explicit name still wins.
+   ⚠️ Memoised on the outfit object: this runs over every look in a list render
+   (1,100+ of them on the Looks tab) and formulaKeyFor walks and sorts the pieces.
+   `_label` is cleared alongside `_num`/`_bucket` in buildOutfitIndexes, which is
+   the one place the piece map is rebuilt.
+   ⚠️ Falls back to the number, not to a blank: formulaKeyFor returns null for
+   anything without a dress or a top-and-bottom (a two-piece "shoes + coat"), and
+   a nameless list row is worse than a numbered one. */
+function outfitName(o) {
+  if (o.name) return o.name;
+  if (o._label === undefined) {
+    const key = formulaKeyFor(outfitItems(o));
+    o._label = key ? formulaLabel(key) : null;
+  }
+  return o._label || `Look #${o._num || "?"}`;
+}
 
 // Similar looks (2026-07-15): graduated by piece overlap. Off-by-one relatives
 // come first — one piece swapped, added, or removed — each carrying a diff
@@ -689,7 +715,10 @@ function relDate(d) {
 // ---- collage building ----
 // Saved Build-a-look arrangement → positioned-pieces HTML (or null if no usable layout).
 // `wrapCls` frames the container; pieces use absolute % geometry so it scales to any size.
-function layoutCanvasHtml(o, wrapCls) {
+/* `aspect` (optional) overrides the class's fixed box for callers where the
+   canvas IS the content rather than a thumbnail — see suggestionCanvasAspect.
+   Omitted everywhere else, so grids and look pages keep the 3/4 they share. */
+function layoutCanvasHtml(o, wrapCls, aspect) {
   const lay = (Array.isArray(o && o.layout) ? o.layout : [])
     .filter(p => itemById.has(p.item_id));
   if (!lay.length) return null;
@@ -697,7 +726,7 @@ function layoutCanvasHtml(o, wrapCls) {
     const it = itemById.get(p.item_id);
     return `<div class="ocpiece" data-photo="${esc(it.image_path || "")}" data-canvas-item="${esc(p.item_id)}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
   }).join("");
-  return `<div class="${wrapCls}">${cells}</div>`;
+  return `<div class="${wrapCls}"${aspect ? ` style="aspect-ratio:${aspect}"` : ""}>${cells}</div>`;
 }
 
 /* What a look with no saved arrangement looks like (2026-08-04, her ask: "want
@@ -1579,6 +1608,37 @@ function suggestionLayout(pieces) {
   }));
 }
 
+/* How tall the suggester's canvas needs to be, derived from the arrangement
+   rather than fixed (2026-08-14).
+
+   `.ocanvas` is `aspect-ratio: 3/4` everywhere, which is right for a saved look
+   in a grid and wrong for the one place the canvas IS the answer. Pieces are
+   square (`.ocpiece` is `aspect-ratio: 1/1`) and sized as a fraction `s` of the
+   canvas WIDTH, centred on `y` as a fraction of its HEIGHT — so the height a
+   layout actually needs is a function of the grid, and 3/4 overshoots all four
+   of them. Measured on her closet at 320px wide: a dress-and-shoes look put
+   143px of garment in a 427px box, 67% of it empty, which is what pushed
+   "Wear this today" 1,300px down the sheet.
+
+   For each piece, the canvas must be tall enough that `y*H` clears half the
+   piece plus padding at both ends. Take the binding one.
+   ⚠️ Returns a WIDTH/HEIGHT ratio for `aspect-ratio`, so it is the RECIPROCAL
+   of the height factor — getting that backwards yields a plausible-looking box
+   that is wrong in the one direction nobody checks. */
+const SUGG_CANVAS_PAD = 0.03;   // fraction of width kept clear at top and bottom
+function suggestionCanvasAspect(layout) {
+  const lay = (Array.isArray(layout) ? layout : []).filter(p => p && p.y > 0 && p.y < 1);
+  if (!lay.length) return "3 / 4";
+  let factor = 0;                                  // needed height, as a multiple of width
+  for (const p of lay) {
+    const half = (p.s || 0) / 2 + SUGG_CANVAS_PAD;
+    factor = Math.max(factor, half / p.y, half / (1 - p.y));
+  }
+  // Never taller than the old fixed box, never a slot so short it looks clipped.
+  factor = Math.min(4 / 3, Math.max(0.4, factor));
+  return `1 / ${factor.toFixed(3)}`;
+}
+
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
 let _sugg = { results: [], idx: 0, occPrefs: null, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false };
@@ -1813,6 +1873,13 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   // it is session-only and resets every open, so the app never quietly stays
   // narrowed OR quietly stays wide.
   _sugg.wholeCloset = false;
+  /* The refine fold, session-only like wholeCloset — the sheet never remembers a
+     narrowing OR a widening across opens. It starts OPEN when the CALLER pre-set
+     one (a formula from its folder, a planned day's level), because then the
+     results are already narrowed and folding the reason away would be exactly
+     the invisible narrowing the pool chip exists to prevent. A plain "what
+     should I wear" opens closed, on the outfit. */
+  _sugg.refineOpen = !!(shapeKey || (planCtx && planCtx.level));
   _sugg.unworn = null;           // set only by openTripUnwornSuggest; same widen rules
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
@@ -2345,6 +2412,19 @@ function swapSuggestionPiece(pieceId) {
   if (!cands.length) { toast(`No other ${(asLayer ? "layer" : suggSlotLabel(old).toLowerCase())} fits`); return; }
   const pick = cands[Math.floor(Math.random() * cands.length)];
   combo.pieces = combo.pieces.map(p => p.id === pieceId ? pick : p);
+  /* Swapping a piece also retires it for the session (2026-08-14). The pick above
+     is RANDOM over the candidates, so before this a second tap could hand back
+     the very piece she had just rejected — and the separate "⃠ not this" chip
+     existed largely to work around that. banSuggestionPiece already called this
+     function, so the two were nested rather than parallel; folding the exclusion
+     in here makes one control mean "different one, and don't come back to it",
+     which is what repeated taps were always asking for.
+     ⚠️ Only on a SUCCESSFUL swap — the no-candidates path above returns first, so
+     a piece nothing can replace is never silently banned out of its own slot.
+     ⚠️ Never the seed: a seeded shuffle exists to build around that piece, and
+     banSuggestionPiece refuses it for the same reason. Session-only, cleared on
+     every sheet open. */
+  if (pieceId !== _sugg.seedItemId) _sugg.banned.add(pieceId);
   renderSuggestSheet();
 }
 
@@ -2366,32 +2446,10 @@ function comboLayerPiece(combo) { return layerPieceOf(combo.pieces); }
 // V3 "+ Layer": add a compatible outerwear/layer piece to the current combo,
 // using the same filters as a slot swap (season, exclusions, target level,
 // pure-function isolation). Random among candidates, like the engine.
-// "Not this" (C1, 2026-07-18): session-ban a piece — it leaves the pool for
-// every regenerate/swap/layer until the sheet closes, and the current combo
-// swaps it out immediately. Locked pieces unlock first; the seed can't be
-// banned (it's the whole point of a seeded shuffle).
-function banSuggestionPiece(pieceId) {
-  if (pieceId === _sugg.seedItemId) return;
-  _sugg.locked.delete(pieceId);
-  _sugg.banned.add(pieceId);
-  const combo = _sugg.results[_sugg.idx];
-  const inCombo = combo && combo.pieces.some(p => p.id === pieceId);
-  if (!inCombo) return renderSuggestSheet();
-  // Try a targeted swap; if nothing else fits the slot, drop a layer or re-roll.
-  const before = combo.pieces.map(p => p.id).join(",");
-  swapSuggestionPiece(pieceId);
-  const after = _sugg.results[_sugg.idx]?.pieces.map(p => p.id).join(",");
-  if (before === after) {
-    const layerPc = comboLayerPiece(combo);
-    if (layerPc && layerPc.id === pieceId && combo.pieces.length > 2) {
-      combo.pieces = combo.pieces.filter(p => p.id !== pieceId);  // layer is optional — just drop it
-      return renderSuggestSheet();
-    }
-    _sugg.idx = 0;
-    _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
-    renderSuggestSheet();
-  }
-}
+/* "Not this" (⃠) was removed 2026-08-14 — see swapSuggestionPiece, which now
+   retires the piece it replaces. The chip and its handler went in the same
+   commit: leaving a live handler behind removed markup is how a switched-off
+   control comes back (2026-08-10 r7). */
 
 /* ⚠️ REMOVE ≠ BAN (2026-08-05, her ask: "I want to be able to remove an item
    from a suggested outfit entirely — eg shoes from an outfit I'll wear at
@@ -2654,7 +2712,7 @@ function renderSuggestSheet() {
   if (combo) {
     const layout = suggestionLayout(combo.pieces);
     const fakeOutfit = { layout, formality_override: null, _bucket: null };
-    const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas");
+    const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas", suggestionCanvasAspect(layout));
     preview = canvas || combo.pieces.map(p =>
       `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer" data-canvas-item="${esc(p.id)}">
         ${thumbHtml(p.image_path)}
@@ -2709,6 +2767,46 @@ function renderSuggestSheet() {
       `<button class="cap-chip${_sugg.activeContext === c ? " on" : ""}" data-sctx="${esc(c)}" style="font-size:13px">${esc(c)}</button>`).join("")}</div>
   </div>` : "";
 
+  /* ⚠️ THE POOL AND LAUNDRY CHIPS NEVER FOLD (2026-08-14).
+     Everything else that narrows the search moved behind "Refine", but these two
+     are the app's standing promise that a narrowing is never invisible — the
+     explicit condition she approved the rack on ("the suggester always names its
+     pool with a count and a one-tap widen"), and the reason the clean filter
+     spells out "Clean on Thu · N out" rather than quietly dropping pieces.
+     Folding them would keep the letter of the sheet and break the deal. */
+  const wxChip = _sugg.wx && _sugg.wx.maxT != null
+    ? `<button class="cap-chip${_sugg.useWx ? " on" : ""}" data-swx style="font-size:13px" title="Weather-aware picks">${wmoEmoji(_sugg.wx.code)} ${_sugg.wx.maxT}°/${_sugg.wx.minT}°</button>` : "";
+  const cleanChip = (() => {
+    if (!LAUNDRY_READY()) return "";
+    const n = hamperItems().length;
+    const pd = _suggPlanDate();
+    // Name the day when the filter means "clean by then" — an unlabelled
+    // narrowing is the thing she approved the rack on condition of avoiding.
+    const hidden = (pd && _suggClean() && LAUNDRY_READY()) ? plannedDirtyBy(pd).size : n;
+    if (!n && !hidden) return "";
+    const lbl = pd ? `\u{1F9FA} Clean on ${esc(weekDayLabel(pd))} · ${hidden} out` : `\u{1F9FA} Clean only`;
+    return `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="${pd ? "Skip what'll be in the hamper by then" : "Skip items in the hamper"}">${lbl}</button>`;
+  })();
+  const poolRow = `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:10px 16px 0">
+    ${suggestPoolChipHtml()}${cleanChip}${wxChip}
+  </div>`;
+
+  /* Refine: everything that changes WHAT is searched, folded away by default.
+     Opening on the answer is the whole point of the reorder — 25 chips ahead of
+     the outfit made the app respond to "what should I wear" with a query form.
+     It starts OPEN whenever the caller pre-set a narrowing (a formula, a planned
+     day's level), because then the fold would be hiding the reason the results
+     look the way they do. */
+  const refineActive = [
+    _sugg.activeContext,
+    _sugg.targetLevel ? `${_sugg.targetLevel}. ${OCCASION_LADDER[_sugg.targetLevel - 1]}` : null,
+    _sugg.shapeKey ? formulaLabel(_sugg.shapeKey) : null,
+    _sugg.season !== currentSeason() ? (_sugg.season || "Any season") : null,
+  ].filter(Boolean);
+  const refineBtn = `<button class="cap-chip${refineActive.length ? " on" : ""}" data-srefine style="font-size:13px">
+    ${_sugg.refineOpen ? "▾" : "▸"} Refine${refineActive.length ? " · " + esc(refineActive.join(" · ")) : ""}
+  </button>`;
+
   $("#logInner").innerHTML = `
     <div class="sheet-hdr">
       <button class="lnk" id="sgClose">Close</button>
@@ -2718,33 +2816,7 @@ function renderSuggestSheet() {
     ${varyLabel}
     ${shapeLabel}
     ${capLabel}
-    ${suggestShapeChipsHtml()}
-    ${contextChipsHtml}
-    ${suggestContextSpreadHtml()}
-    <div style="padding:12px 16px 4px">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
-      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
-    </div>
-    <div style="padding:4px 16px">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Season</div>
-      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
-        ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
-        <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
-        ${_sugg.wx && _sugg.wx.maxT != null ? `<button class="cap-chip${_sugg.useWx ? " on" : ""}" data-swx style="font-size:13px" title="Weather-aware picks">${wmoEmoji(_sugg.wx.code)} ${_sugg.wx.maxT}°/${_sugg.wx.minT}°</button>` : ""}
-        ${(() => { if (!LAUNDRY_READY()) return ""; const n = hamperItems().length;
-          const pd = _suggPlanDate();
-          // Name the day when the filter means "clean by then" — an unlabelled
-          // narrowing is the thing she approved the rack on condition of avoiding.
-          const hidden = (pd && _suggClean() && LAUNDRY_READY()) ? plannedDirtyBy(pd).size : n;
-          if (!n && !hidden) return "";
-          const lbl = pd ? `\u{1F9FA} Clean on ${esc(weekDayLabel(pd))} \u00b7 ${hidden} out` : `\u{1F9FA} Clean only`;
-          return `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="${pd ? "Skip what'll be in the hamper by then" : "Skip items in the hamper"}">${lbl}</button>`; })()}
-        ${suggestPoolChipHtml()}
-      </div>
-    </div>
-    ${suggestRatherHtml()}
-    ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}
-    <div style="padding:12px 16px" id="sgPreview">
+    <div style="padding:12px 16px 0" id="sgPreview">
       <div id="sgPreviewInner">${combo ? preview : `<div class="center muted" style="padding:32px 0">Not enough items in this ${_sugg.capsuleId ? "capsule" : "closet"} to suggest an outfit.</div>`}</div>
       ${combo ? `<div class="center" style="font-size:12px;color:var(--accent);padding:8px 0 0;font-weight:500">${esc(suggestionWhy(combo))}</div>` : ""}
       ${combo ? (() => {
@@ -2759,8 +2831,12 @@ function renderSuggestSheet() {
           const lbl = (isDirty(p, ls) ? "🧺 " : "") + ((layerPc && layerPc.id === p.id) ? "Layer" : suggSlotLabel(p));
           return `<span style="display:inline-flex;gap:1px">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
-            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""}>✨ ${esc(lbl)}</button>
-            ${p.id === _sugg.seedItemId ? "" : `<button class="cap-chip" data-sban="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Not this piece today">⃠</button>`}
+            <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""} title="Show a different one">✨ ${esc(lbl)}</button>
+            ${/* ⚠️ The "⃠ not this" chip is GONE (2026-08-14). It and ✨ were two
+                  controls for one intention — ban literally called swap — and on a
+                  sheet already carrying six ways to change an outfit it was the
+                  one nobody could name. ✨ now retires the piece it replaces, so
+                  the behaviour survives with one less button. */""}
             ${suggCanRemove(combo, p) ? `<button class="cap-chip" data-sdrop="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Take it out of this outfit">✕</button>` : ""}
           </span>`;
         }).join("")}
@@ -2783,8 +2859,22 @@ function renderSuggestSheet() {
       </div>`;
       })() : ""}
       ${combo ? suggestLayerPickHtml(combo) : ""}
-      ${combo ? `<div class="center muted" style="font-size:12px;padding:6px 0 0">Tap a piece to view it · 🔒 keeps it · ⃠ swaps it out · ✕ takes it out${total > 1 ? " · swipe to browse" : ""}</div>` : ""}
+      ${/* ⚠️ THE LEGEND DESCRIBES WHAT IS ON SCREEN, and used not to (2026-08-14).
+            It was one hardcoded string reading "🔒 keeps it · ⃠ swaps it out ·
+            ✕ takes it out": it called ⃠ a swap when ⃠ was the BAN, promised a ✕
+            that `suggCanRemove` refuses to render on any two-piece outfit — a
+            dress and shoes, one of her commonest shapes — and never mentioned the
+            ✨ chips that actually do the swapping. Two of its four claims were
+            wrong on the default screen. Built from the same conditions as the
+            chips now, so it cannot drift from them again. */""}
+      ${combo ? (() => {
+        const bits = ["Tap a piece to open it", "🔒 keeps it", "✨ swaps it"];
+        if (suggestionPieceOrder(combo.pieces).some(p => suggCanRemove(combo, p))) bits.push("✕ takes it out");
+        if (total > 1) bits.push("swipe to browse");
+        return `<div class="center muted" style="font-size:12px;padding:6px 0 0">${bits.join(" · ")}</div>`;
+      })() : ""}
       ${nav}
+      ${combo ? poolRow : ""}
       ${suggestStarvationNote()}
       ${suggestLevelDoorHtml()}
       ${suggestGearDoorHtml()}
@@ -2808,7 +2898,35 @@ function renderSuggestSheet() {
       <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>✨ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
     </div>` : `
-    <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>✨ Try again</button></div>`}`;
+    <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>✨ Try again</button></div>`}
+    ${/* ⚠️ REFINE COMES AFTER THE ANSWER (2026-08-14). These same chips used to
+          open the sheet — 25 of them, 587px, 90% of the first screen — so asking
+          "what should I wear" produced a query form and the outfit began at
+          y=765 with the button that acts on it 1,300px down. They are
+          refinements, not prerequisites; the sheet opens on the outfit now and
+          these fold underneath it.
+          The pool and laundry chips deliberately did NOT move here — see poolRow. */""}
+    <div style="padding:0 16px 20px;display:flex;flex-direction:column;gap:8px">
+      <div class="cap-catbar" style="justify-content:center">${refineBtn}</div>
+      ${_sugg.refineOpen ? `<div style="border:1px solid var(--line);border-radius:12px;padding:4px 0 10px">
+        ${suggestShapeChipsHtml()}
+        ${contextChipsHtml}
+        ${suggestContextSpreadHtml()}
+        <div style="padding:12px 16px 4px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
+          <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
+        </div>
+        <div style="padding:4px 16px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Season</div>
+          <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
+            ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
+            <button class="cap-chip${_sugg.season === null ? " on" : ""}" data-sseason="" style="font-size:13px">Any</button>
+          </div>
+        </div>
+        ${suggestRatherHtml()}
+        ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}
+      </div>` : ""}
+    </div>`;
 
   $("#sgClose").onclick = () => {
     /* Opened from a pack occasion (2026-08-05, her ask: "I should be able to
@@ -2958,11 +3076,11 @@ function renderSuggestSheet() {
   $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
   });
+  const refBtn = $("#logInner").querySelector("[data-srefine]");
+  // Fold only — it changes nothing about the search, so no regenerate.
+  if (refBtn) refBtn.onclick = (e) => { e.stopPropagation(); _sugg.refineOpen = !_sugg.refineOpen; renderSuggestSheet(); };
 
   // C1 "not this": session-ban + immediate replacement.
-  $("#logInner").querySelectorAll("[data-sban]").forEach(b => {
-    b.onclick = (e) => { e.stopPropagation(); banSuggestionPiece(b.dataset.sban); };
-  });
   // …and its opposite: take the piece OUT, leaving the slot empty.
   $("#logInner").querySelectorAll("[data-sdrop]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); removeSuggestionPiece(b.dataset.sdrop); };

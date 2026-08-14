@@ -1026,8 +1026,15 @@ function openWearAgainChooser(date) {
   $("#waCancel").onclick = () => { hideSheet("logSheet"); };
   const sg = $("#waSuggest");
   if (sg) sg.onclick = () => { hideSheet("logSheet"); openSuggestSheet(); };
-  $("#waAddClothing").onclick = () => { hideSheet("logSheet"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddClothing(); };
-  $("#waAddLook").onclick = () => { hideSheet("logSheet"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddLook(); };
+  /* ⚠️ These two OWN their navigation now (2026-08-14). They render into
+     #calendarBody and then open a picker over it, which only works if the
+     calendar is the visible screen — until now they relied on the caller having
+     already switched tabs, which Home's log CTA did on her behalf. That switch
+     is gone (it stranded her on Calendar after a one-tap log), so the two paths
+     that genuinely need the calendar ask for it themselves. Tapping a look
+     below does NOT: it logs from wherever she is. */
+  $("#waAddClothing").onclick = () => { hideSheet("logSheet"); switchTab("calendar"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddClothing(); };
+  $("#waAddLook").onclick = () => { hideSheet("logSheet"); switchTab("calendar"); calendarDay = date; renderCalendarDay($("#calendarBody")); openCalAddLook(); };
   $("#logInner").querySelectorAll("[data-wa-look]").forEach(b => {
     b.onclick = () => { hideSheet("logSheet"); calendarDay = date; logLookOnDay(b.dataset.waLook); };
   });

@@ -56,10 +56,31 @@ function exitTripMode() {
 }
 // Auto-stamped wear context while ON a trip (dated capsules only — wearing a
 // home capsule isn't "Travel"). Composes with anything she adds in the sheet.
+/* The dated trip a date falls inside, whether or not trip MODE is on.
+
+   ⚠️ Trip mode lives in localStorage; the trip's dates live in the database.
+   Being in St. Louis is a fact about her week, not a preference of one browser —
+   but tripWearContext used to read tripCapsule(), which returns null the moment
+   tripModeId is unset. So the same wear on the same day got the Travel stamp
+   from her phone and no stamp from anywhere else: a second device, a cleared
+   site, a reinstalled PWA. Silent, and it lands in the wear history that
+   contextWearCounts and every context page read.
+   tripPhase() already derives "she is on a trip" from the dates — it is what
+   raises the offer banner — so this asks the same question the same way.
+   The mode is still hers to turn on and off; it just isn't the source of truth
+   for what happened. Prefers the capsule she's actually in when one is set, so
+   overlapping trips resolve to her choice. */
+function tripCapsuleForDate(date) {
+  if (!date) return null;
+  const inRange = c => isDatedTrip(c) && date >= c.start_date && date <= c.end_date;
+  if (tripModeId) {
+    const c = capsuleById.get(tripModeId);
+    if (c && inRange(c)) return c;
+  }
+  return capsules.find(inRange) || null;
+}
 function tripWearContext(date) {
-  const c = tripCapsule();
-  if (!c || !isDatedTrip(c)) return null;
-  return (date >= c.start_date && date <= c.end_date) ? [TRIP_CONTEXT] : null;
+  return tripCapsuleForDate(date) ? [TRIP_CONTEXT] : null;
 }
 // A look logged on a trip day IS that day's plan, fulfilled — record it there
 // so she never has to do both. Fire-and-forget from the wear paths.

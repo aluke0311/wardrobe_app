@@ -217,6 +217,26 @@
   .tile .tlabel { font-size: 14.5px; font-weight: 600; letter-spacing: .01em; }
   .tile .tsub { font-size: 12px; color: var(--muted); margin-top: -6px; }
   .tile.wide { grid-column: 1 / -1; }
+  /* Home nav strip (2026-08-14) — replaces the .launch grid, which duplicated
+     the tab bar for 533px. One scrollable row; the count is the only thing the
+     tiles carried that the tab bar doesn't. .launch/.tile stay defined: the
+     builder and Add screens still use tile styling, and keeping them makes the
+     grid a one-line revert if she wants it back. */
+  .hnav {
+    display: flex; gap: 8px; padding: 14px 16px 4px;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .hnav::-webkit-scrollbar { display: none; }
+  .hnav-chip {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    padding: 8px 13px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line);
+    font-size: 13.5px; color: var(--ink); white-space: nowrap;
+    transition: transform .08s ease, background .12s ease;
+  }
+  .hnav-chip:active { transform: scale(.97); background: var(--accent-soft); }
+  .hnav-chip svg { width: 17px; height: 17px; stroke: var(--accent); stroke-width: 1.7; fill: none; flex: none; }
+  .hnav-chip b { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
   /* V3: "logged today" acknowledgment row on Home (replaces the CTA once logged) */
   .logged-row { display: flex; align-items: center; gap: 8px; width: calc(100% - 32px);
     margin: 12px 16px 0; padding: 12px 14px;

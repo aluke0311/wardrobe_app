@@ -91,6 +91,22 @@ async function kvSet(key, value) {
     saveDataSnapshot();
   } catch (e) { toast(e.message); }
 }
+/* When she last exported her data — kv-backed, not device-backed (2026-08-14).
+
+   ⚠️ This lived only in localStorage, so "no backup yet" was a claim about the
+   BROWSER, not about her data. Opening the app anywhere new asserted she had
+   never backed up 4,000+ wears, and a device that had backed up stayed quiet
+   even if the export was a year old elsewhere. Same class as the Travel stamp
+   reading a per-device toggle: a fact about her, stored as a preference.
+   The old local value is still READ as a fallback, so a device that already has
+   one doesn't start nagging before kv loads (or if it never does). */
+function lastBackupDate() {
+  return kvData.get("lastBackup") || store.getItem("wardrobe.lastBackup") || null;
+}
+function setLastBackupDate(d) {
+  store.setItem("wardrobe.lastBackup", d);   // instant local read; kv is the truth
+  kvSet("lastBackup", d);                    // fire-and-forget, like every other kv write
+}
 async function kvPost(key, value) {
   return rest("/kv", {
     method: "POST",
@@ -495,7 +511,9 @@ function buildOutfitIndexes() {
   // Stable display number: oldest outfit = #1 (Stylebook-style "Look #N").
   outfits.slice()
     .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
-    .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; });
+    // _label is outfitName's derived shape ("Short + Sandals"); it depends on the
+    // piece map rebuilt just above, so it is invalidated in the same pass.
+    .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; o._label = undefined; });
   invalidateArchivedCache();
   buildOutfitWearMap();
 }
