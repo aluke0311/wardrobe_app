@@ -113,33 +113,14 @@ function looksScopedOutfits() {
   if (hasActiveFilter(looksFilter)) list = list.filter(o => outfitMatchesFilter(o, looksFilter));
   return list;
 }
-/* What a look is CALLED in a list.
-
-   ⚠️ 1,102 of her 1,122 looks have no name — 98% — because almost all of them
-   were logged rather than composed, and the 20 that do are auto-dates. So every
-   text-only list (the Tomorrow card, a trip's by-day plan, the look pickers)
-   asked her to choose between "Look #1081" and "Look #1115": a serial number
-   derived from creation order, which also shifts by one for every look after any
-   look she deletes. Thumbnails carry it where there are thumbnails; the text
-   lists had nothing.
-   The vocabulary already existed and was already used on the Formulas lens —
-   formulaKeyFor + formulaLabel turn a piece set into "Short + Sandals" — so this
-   just calls it. Derived, nothing stored, and an explicit name still wins.
-   ⚠️ Memoised on the outfit object: this runs over every look in a list render
-   (1,100+ of them on the Looks tab) and formulaKeyFor walks and sorts the pieces.
-   `_label` is cleared alongside `_num`/`_bucket` in buildOutfitIndexes, which is
-   the one place the piece map is rebuilt.
-   ⚠️ Falls back to the number, not to a blank: formulaKeyFor returns null for
-   anything without a dress or a top-and-bottom (a two-piece "shoes + coat"), and
-   a nameless list row is worse than a numbered one. */
-function outfitName(o) {
-  if (o.name) return o.name;
-  if (o._label === undefined) {
-    const key = formulaKeyFor(outfitItems(o));
-    o._label = key ? formulaLabel(key) : null;
-  }
-  return o._label || `Look #${o._num || "?"}`;
-}
+/* ⚠️ Deliberately the NUMBER, not the shape (her call, 2026-08-14 r2). An
+   earlier pass today fell back to formulaLabel() — "Short + Sandals" — on the
+   reasoning that 1,102 of her 1,122 looks are unnamed and a serial tells her
+   nothing. She didn't like it: a shape is what a look is MADE of, not what it
+   is, and the same three words end up on dozens of different outfits, so the
+   lists read as less distinct rather than more. The thumbnails carry the
+   identity; the number is just a handle. Leave it alone. */
+function outfitName(o) { return o.name || `Look #${o._num || "?"}`; }
 
 // Similar looks (2026-07-15): graduated by piece overlap. Off-by-one relatives
 // come first — one piece swapped, added, or removed — each carrying a diff
@@ -1644,6 +1625,7 @@ function suggestionCanvasAspect(layout) {
 let _sugg = { results: [], idx: 0, occPrefs: null, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
+let _suggSwapSeen = new Map();  // slot → ids ✨ has already offered this session (see swapSuggestionPiece)
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
 
 // C1: context chips on the suggestion sheet. Seed values (tweak here) for when a
@@ -1882,6 +1864,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.refineOpen = !!(shapeKey || (planCtx && planCtx.level));
   _sugg.unworn = null;           // set only by openTripUnwornSuggest; same widen rules
   _sugg.banned = new Set();      // "not this" — session-only, reset every open
+  _suggSwapSeen = new Map();     // ✨ walks each slot's options afresh every open
   _suggSessionSalt = new Map();  // fresh variety lean every open
   _sugg.useWx = true;
   _sugg.useClean = true;
@@ -2410,21 +2393,29 @@ function swapSuggestionPiece(pieceId) {
   // paired with it, and the edit path becomes the way around the invariant.
   cands = cands.filter(i => comboSharesALevel([...others, i]));
   if (!cands.length) { toast(`No other ${(asLayer ? "layer" : suggSlotLabel(old).toLowerCase())} fits`); return; }
-  const pick = cands[Math.floor(Math.random() * cands.length)];
+  /* ⚠️ SWAP IS SWAP, NOT A BAN (her correction, 2026-08-14 r2). An earlier pass
+     today had a successful swap also drop the outgoing piece into `_sugg.banned`,
+     on the reasoning that repeated taps mean "stop showing me this". That was
+     wrong: it made one control quietly do two things, and a piece she merely
+     cycled past was then gone from the whole sheet — reshuffle included — until
+     she closed it. Nothing here touches the pool.
+
+     What it does fix is the thing the ban was covering for: the pick is RANDOM
+     over the candidates, so tapping ✨ twice could hand back exactly the piece
+     she had just moved off. `_suggSwapSeen` remembers, per slot, what this
+     session has already shown and prefers anything it hasn't — then CLEARS and
+     starts round again once the slot is exhausted. So repeated taps walk the
+     options instead of rolling dice, and every piece stays reachable.
+     Session-only, reset on every open, same rule as `wholeCloset`. */
+  const cycleKey = asLayer ? "Outerwear" : slot;
+  let seen = _suggSwapSeen.get(cycleKey);
+  if (!seen) { seen = new Set(); _suggSwapSeen.set(cycleKey, seen); }
+  let fresh = cands.filter(c => !seen.has(c.id));
+  if (!fresh.length) { seen.clear(); fresh = cands; }   // been all the way round
+  const pick = fresh[Math.floor(Math.random() * fresh.length)];
+  seen.add(pick.id);
+  seen.add(pieceId);   // don't hand back the one she just moved off, this time round
   combo.pieces = combo.pieces.map(p => p.id === pieceId ? pick : p);
-  /* Swapping a piece also retires it for the session (2026-08-14). The pick above
-     is RANDOM over the candidates, so before this a second tap could hand back
-     the very piece she had just rejected — and the separate "⃠ not this" chip
-     existed largely to work around that. banSuggestionPiece already called this
-     function, so the two were nested rather than parallel; folding the exclusion
-     in here makes one control mean "different one, and don't come back to it",
-     which is what repeated taps were always asking for.
-     ⚠️ Only on a SUCCESSFUL swap — the no-candidates path above returns first, so
-     a piece nothing can replace is never silently banned out of its own slot.
-     ⚠️ Never the seed: a seeded shuffle exists to build around that piece, and
-     banSuggestionPiece refuses it for the same reason. Session-only, cleared on
-     every sheet open. */
-  if (pieceId !== _sugg.seedItemId) _sugg.banned.add(pieceId);
   renderSuggestSheet();
 }
 
@@ -2787,7 +2778,7 @@ function renderSuggestSheet() {
     const lbl = pd ? `\u{1F9FA} Clean on ${esc(weekDayLabel(pd))} · ${hidden} out` : `\u{1F9FA} Clean only`;
     return `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="${pd ? "Skip what'll be in the hamper by then" : "Skip items in the hamper"}">${lbl}</button>`;
   })();
-  const poolRow = `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:10px 16px 0">
+  const poolRow = `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:14px 16px 18px">
     ${suggestPoolChipHtml()}${cleanChip}${wxChip}
   </div>`;
 
@@ -2823,13 +2814,13 @@ function renderSuggestSheet() {
         const layerPc = comboLayerPiece(combo);
         const ls = laundryState();
         // Same order as the canvas above — see suggestionPieceOrder.
-        return `<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px">
+        return `<div style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:10px">
         ${suggestionPieceOrder(combo.pieces).map(p => {
           const lk = _sugg.locked.has(p.id);
           // 🧺 marks a dirty piece that's in the combo anyway (locked/seeded,
           // 7-day re-entry, or the clean filter toggled off).
           const lbl = (isDirty(p, ls) ? "🧺 " : "") + ((layerPc && layerPc.id === p.id) ? "Layer" : suggSlotLabel(p));
-          return `<span style="display:inline-flex;gap:1px">
+          return `<span class="sg-piece">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
             <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""} title="Show a different one">✨ ${esc(lbl)}</button>
             ${/* ⚠️ The "⃠ not this" chip is GONE (2026-08-14). It and ✨ were two
@@ -2868,9 +2859,9 @@ function renderSuggestSheet() {
             wrong on the default screen. Built from the same conditions as the
             chips now, so it cannot drift from them again. */""}
       ${combo ? (() => {
-        const bits = ["Tap a piece to open it", "🔒 keeps it", "✨ swaps it"];
-        if (suggestionPieceOrder(combo.pieces).some(p => suggCanRemove(combo, p))) bits.push("✕ takes it out");
-        if (total > 1) bits.push("swipe to browse");
+        const bits = ["🔒 keep", "✨ swap"];
+        if (suggestionPieceOrder(combo.pieces).some(p => suggCanRemove(combo, p))) bits.push("✕ remove");
+        bits.push("tap a piece to open it");
         return `<div class="center muted" style="font-size:12px;padding:6px 0 0">${bits.join(" · ")}</div>`;
       })() : ""}
       ${nav}
@@ -2880,7 +2871,7 @@ function renderSuggestSheet() {
       ${suggestGearDoorHtml()}
     </div>
     ${combo ? `
-    <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px">
+    <div style="padding:0 16px 16px;display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:16px">
       ${/* ⚠️ THE PACK SAVES, IT DOES NOT LOG (2026-08-10 r4, her report: *"when I
             change an outfit in the pack planner, it offers me to log it today —
             which I never want to do — but not to save it as the revised version

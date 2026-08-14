@@ -1963,8 +1963,10 @@ async function run() {
   t("the piece legend names only controls that are on screen", () => withGearCloset(() => {
     W.openSuggestSheet();
     const doc = document.getElementById("app").contentDocument;
+    // Found by its content, not its prose — the wording is allowed to change,
+    // the contract (it names only what is rendered) is not.
     const leg = [...doc.querySelectorAll("#sgPreview div")]
-      .filter(e => /Tap a piece/.test(e.textContent) && e.children.length === 0).pop();
+      .filter(e => /keep/i.test(e.textContent) && /swap/i.test(e.textContent) && e.children.length === 0).pop();
     if (!leg) return "no legend";
     const txt = leg.textContent;
     // ⃠ was removed with the ban chip; claiming it is what made the old copy wrong.
@@ -2803,17 +2805,74 @@ async function run() {
     return sheetOpen ? true : "the wear-again sheet did not open";
   }));
 
-  t("a nameless look is called by its shape, not a serial number", () => withPackCloset(() => {
+  /* ⚠️ She rejected shape-based names (2026-08-14 r2): a shape is what a look is
+     made OF, not what it is, and the same three words land on dozens of outfits.
+     outfitName is the serial again, and this pins that it stays that way. */
+  t("a nameless look keeps its number rather than being named after its shape", () => withPackCloset(() => {
     W.outfits = [{ id: "o1", name: null, created_at: "2020-01-01" }];
     W.outfitLinks = [{ outfit_id: "o1", item_id: "drs0" }, { outfit_id: "o1", item_id: "fla0" }];
     W.buildOutfitIndexes();
     const o = W.outfitById.get("o1");
     const n = W.outfitName(o);
-    if (/^Look #/.test(n)) return `still a serial number: ${n}`;
-    if (!/Short/.test(n)) return `shape label doesn't name the garment: ${n}`;
-    o.name = "Sunday best";                       // an explicit name must still win
-    return W.outfitName(o) === "Sunday best" ? true : "explicit name lost to the derived one";
+    if (!/^Look #\d+$/.test(n)) return `expected a serial number, got ${n}`;
+    o.name = "Sunday best";
+    return W.outfitName(o) === "Sunday best" ? true : "explicit name lost";
   }));
+
+  /* ⚠️ HER CORRECTION: "swap should be swap not ban". An earlier pass had a
+     successful swap drop the outgoing piece into _sugg.banned, which removed it
+     from the whole sheet — reshuffle included — until she closed it. */
+  t("swapping a piece does not remove it from the pool", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    const combo = W._sugg.results[W._sugg.idx];
+    if (!combo) return "no combo to swap in";
+    const before = W._suggPool().length;
+    const victim = combo.pieces[0].id;
+    W.swapSuggestionPiece(victim);
+    if (W._sugg.banned.has(victim)) return "swap banned the piece it replaced";
+    const after = W._suggPool().length;
+    if (after !== before) return `pool changed size on a swap: ${before} → ${after}`;
+    return W._suggPool().some(i => i.id === victim) ? true : "the swapped-out piece left the pool";
+  }));
+
+  /* The reason the ban existed: a random pick could hand back what she just
+     moved off. Cycling per slot fixes that without touching the pool. */
+  /* ⚠️ THIS CASE WAS VACUOUS TWICE BEFORE IT BIT, and both ways are instructive.
+     First written against the 30-top gear closet it scored luck: random picks
+     over 30 candidates almost never repeat back-to-back. Rewritten with TWO
+     tops it became structurally unfalsifiable — `cands` already excludes the
+     piece being replaced, so with two tops there is exactly one candidate and
+     alternation is forced by the exclusion, not by the cycling. It passed
+     cleanly with the cycling deleted.
+     What the cycling actually promises is that tapping ✨ WALKS the slot before
+     coming back round — the complaint being that a second or third tap handed
+     back a piece she had just moved off. So: five tops, four swaps, and all
+     five must be distinct. Cycling guarantees that; a random pick does not. */
+  t("repeated swaps walk the slot's options before coming back round", () => withPackCloset(() => {
+    for (let round = 0; round < 2; round++) {
+      W.openSuggestSheet();                       // resets the cycle, like a real open
+      const seen = [];
+      for (let k = 0; k < 4; k++) {
+        const combo = W._sugg.results[W._sugg.idx];
+        const top = combo && combo.pieces.find(p => p.category === "Tops");
+        if (!top) return "no top in the combo to swap";
+        seen.push(top.id);
+        W.swapSuggestionPiece(top.id);
+      }
+      const last = W._sugg.results[W._sugg.idx].pieces.find(p => p.category === "Tops");
+      if (last) seen.push(last.id);
+      if (new Set(seen).size !== 5)
+        return `round ${round}: ${new Set(seen).size} distinct tops over 5, saw ${seen.join(" → ")}`;
+    }
+    return true;
+  }, { replace: (add) => {
+    for (let n = 0; n < 5; n++) add("top" + n, "Tops", "Tee shirts", [2, 3]);
+    add("bot0", "Bottoms", "Jeans", [2, 3]);
+    add("sho0", "Shoes", "Sneakers", [2, 3]);
+  } }));
+;
+
+
 
   /* ⚠️ A WEAR IS A DAY. tee0 gets three ROWS across two DAYS — a multi-piece
      outfit writes one row per piece — and must count as 2. */

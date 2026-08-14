@@ -225,6 +225,12 @@
   .hnav {
     display: flex; gap: 8px; padding: 14px 16px 4px;
     overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    /* The row is wider than the phone by design. Without this the last chip is
+       sliced clean in half at the edge, which reads as a broken layout rather
+       than as "there is more this way" (seen 2026-08-14 r2). Masked rather than
+       painted so it works on both themes with no literal colour. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   }
   .hnav::-webkit-scrollbar { display: none; }
   .hnav-chip {
@@ -235,8 +241,16 @@
     transition: transform .08s ease, background .12s ease;
   }
   .hnav-chip:active { transform: scale(.97); background: var(--accent-soft); }
-  .hnav-chip svg { width: 17px; height: 17px; stroke: var(--accent); stroke-width: 1.7; fill: none; flex: none; }
   .hnav-chip b { font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+  /* One piece's controls are ONE cluster (2026-08-14 r2). Rendered as loose
+     chips at a 1px gap they read as three separate buttons, and the conditional
+     ✕ looked like it belonged to whatever chip it happened to wrap next to. */
+  .sg-piece {
+    display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto;
+    background: var(--panel); border-radius: 999px; padding: 3px;
+  }
+  .sg-piece .cap-chip { border-color: transparent; background: var(--surface); }
+  .sg-piece .cap-chip.on { border-color: var(--accent); }
   /* V3: "logged today" acknowledgment row on Home (replaces the CTA once logged) */
   .logged-row { display: flex; align-items: center; gap: 8px; width: calc(100% - 32px);
     margin: 12px 16px 0; padding: 12px 14px;

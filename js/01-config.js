@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-14 r1";
+const APP_VERSION = "2026-08-14 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,15 +21,20 @@ const APP_VERSION = "2026-08-14 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-14 r2", notes: [
+    "✨ is a swap again, not a swap-and-hide. It no longer takes the piece out of the sheet — it just shows you a different one, and it walks through the options for that slot instead of picking at random, so tapping twice can't hand back what you just moved off",
+    "Outfits are back to \"Look #1082\" rather than being named after their shape",
+    "Room to breathe on the suggestion sheet: the rack and laundry chips were sitting flush against \"Wear this today\", and each piece's 🔒 / ✨ / ✕ now read as one group instead of three loose buttons",
+    "Home's row of counts fades at the edge instead of slicing the last one in half",
+  ] },
   { v: "2026-08-14 r1", notes: [
     "Home leads with your day now — what you've worn, then \"What should I wear?\", then logging. The five big tiles became one small row of counts: every one of them was already a tab along the bottom, and they were taking up 71% of the first screen",
     "\"What should I wear?\" opens on the outfit instead of on the filters. Context, formality, season and shape fold under a \"Refine\" button underneath it — the pool and laundry chips stay put, so you can still always see what's being left out",
     "The outfit picture is sized to the outfit — a dress and shoes no longer sit in a box built for four pieces",
     "Logging from Home stays on Home instead of dropping you on the calendar afterwards",
-    "One less button per piece: ✨ now also retires the piece it replaces, so tapping it again can't hand back what you just rejected. The old ⃠ did the same job under a different name",
+    "One less button per piece: the ⃠ \"not this\" chip is gone — it and ✨ were two names for one intention",
     "The little caption under a suggested outfit was describing buttons that weren't there — it now matches what's actually on screen",
     "Stats opens with \"Lately\": days logged, pieces worn, first outings and anything back out after 90+ days",
-    "Outfits without a name are listed by what they are (\"Short + Sandals\") instead of \"Look #1082\"",
     "Trips stamp \"Travel\" based on the trip's dates, not on whether trip mode happens to be on in that browser — so a wear logged from another device isn't quietly missing it",
   ] },
   { v: "2026-08-13 r2", notes: [

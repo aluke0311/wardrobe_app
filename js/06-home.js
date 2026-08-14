@@ -1568,7 +1568,7 @@ function renderHome() {
   const tiles = HOME_TILES.map(t => {
     const n = dataReady ? t.short() : "";
     return `<button class="hnav-chip" data-go="${t.tab}">
-      <svg viewBox="0 0 24 24">${t.icon}</svg><span>${esc(t.label)}</span>${n ? `<b>${esc(n)}</b>` : ""}
+      <span>${esc(t.label)}</span>${n ? `<b>${esc(n)}</b>` : ""}
     </button>`;
   }).join("");
   const today = todayStr();

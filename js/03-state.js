@@ -511,9 +511,7 @@ function buildOutfitIndexes() {
   // Stable display number: oldest outfit = #1 (Stylebook-style "Look #N").
   outfits.slice()
     .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
-    // _label is outfitName's derived shape ("Short + Sandals"); it depends on the
-    // piece map rebuilt just above, so it is invalidated in the same pass.
-    .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; o._label = undefined; });
+    .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; });
   invalidateArchivedCache();
   buildOutfitWearMap();
 }
