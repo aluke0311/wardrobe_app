@@ -237,6 +237,138 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-14 r1 — A WORKFLOW AUDIT AGAINST HER LIVE CLOSET, AND FOUR SCREENS PUT
+THE ANSWER BELOW THE QUESTION. Selftest 402 → **412**, run GREEN; all 10 new
+cases AND the 1 reversed case mutation-checked red in the same session.** She
+asked for an audit of "what could be improved for the flow through the app",
+then for all of it to be built.
+
+⚠️ **MEASURED ON THE REAL DATABASE, WHICH IS NEW.** She signed in on the live
+site and the audit ran against 491 items / 4,387 wears / 1,122 looks / 9
+capsules at a 375×812 viewport — `HANDOFF_2026-08-09.md` records that none of
+the packing rework had ever been checked against her actual closet. `api()` was
+swapped for a guard absorbing every non-GET; one write was attempted all session
+(a rack `kv` persist on suggester open) and did not land.
+⚠️ **TWO FINDINGS WERE NEARLY REPORTED AND WERE ARTIFACTS OF THE FRESH BROWSER** —
+trip mode read "off" and backup read "never", both `localStorage`. Check what a
+probe is reading BEFORE calling it a defect; they became the real finding below
+instead.
+
+**THE THROUGH-LINE: every screen had been designed, almost none had been
+ORDERED.** Blocks sat in the sequence they were built. On four of five main
+screens the thing she came for rendered below the thing she didn't. This is the
+2026-07-26 "over-*presented*, not overbuilt" diagnosis arriving on the screens
+that round didn't look at, and every fix is a reorder or a deletion.
+
+⚠️ **HOME'S LAUNCHER GRID WAS A SECOND COPY OF THE TAB BAR.** `HOME_TILES` is
+closet · looks · calendar · capsules · stats; the tab bar, permanently on screen,
+is home · closet · looks · calendar · capsules · stats. **Every tile was a tab**,
+costing **533px — 71% of the usable screen** — with the log row **39px BEHIND
+the tab bar** and the Today card (what she actually wore) starting at y=797,
+never visible. It had a justification once, and **this file still carried it**
+("Capsules is a Home-tile screen (not in bottom nav)"); that stopped being true
+and nothing re-read the grid.
+- ⚠️ **TRIP MODE ALREADY HAD THE ANSWER.** Its dash leads with the day, the
+  hamper, then the ask, and pushes the tiles below the fold — proof they were
+  never needed at the top. Non-trip Home is now built the same way:
+  `${dash}${todayCardHtml()}${ask}${cta}<div class="hnav">…`.
+- **Compress, don't delete:** the counts were the one thing the tiles carried
+  that the tab bar doesn't, so they survive as `.hnav` — one scrollable row,
+  every destination still one tap. `HOME_TILES.short()` is that number alone.
+  `.launch`/`.tile` stay defined (the Add/builder screens use them, and it makes
+  the grid a one-line revert).
+- ⚠️ **Home had NEVER had a render case.** `withHome` is the first.
+
+⚠️ **"WHAT SHOULD I WEAR?" ANSWERED WITH A CONTROL PANEL.** The sheet opened on
+**25 filter chips / 587px — 90% of the visible area**; `#sgPreview` began at
+y=765 and **"Wear this today" sat at y=1,411, a ~1,300px scroll**. The answer was
+**143px of content in a 1,492px sheet — 10%**. The chips are refinements, not
+prerequisites: they fold under **Refine** now, below the outfit.
+- ⚠️ **`poolRow` NEVER FOLDS.** The pool chip and the laundry chip are the app's
+  standing promise that a narrowing is never invisible — the explicit condition
+  she approved the rack on ("always names its pool with a count and a one-tap
+  widen"). Folding them keeps the letter of the sheet and breaks the deal.
+  Pinned by a case that runs with Refine CLOSED.
+- **`_sugg.refineOpen` starts OPEN when the CALLER pre-set a narrowing** (a
+  formula, a planned day's level) — otherwise the fold hides the reason the
+  results look the way they do. Session-only, reset every open, same rule as
+  `wholeCloset`.
+- ⚠️ **`suggestionCanvasAspect()` — the fixed `aspect-ratio: 3/4` was too tall
+  for ALL FOUR layouts**, not just the small one: pieces are square and sized as
+  a fraction of WIDTH but centred on a fraction of HEIGHT, so the needed height
+  is a function of the grid (≈0.51W for a one-row look, ≈0.89W for the 2×2, vs
+  1.333W fixed). A dress-and-shoes look was **67% empty**. `layoutCanvasHtml`
+  gained an optional `aspect` used ONLY here — grids and look pages keep 3/4.
+  ⚠️ It returns WIDTH/HEIGHT, the reciprocal of the height factor; inverting it
+  yields a plausible box that is wrong in the one direction nobody checks.
+
+⚠️ **THE PIECE LEGEND DESCRIBED CONTROLS THAT WEREN'T THERE.** One hardcoded
+string: *"🔒 keeps it · ⃠ swaps it out · ✕ takes it out"*. **⃠ was the BAN, not
+the swap**; **✕ can never render on a two-piece outfit** (`suggCanRemove` needs
+two pieces to survive removal — a dress and shoes is one of her commonest
+shapes); and it **never mentioned the ✨ chips that actually swap**. Two of four
+claims wrong on the default screen. Now built from the same conditions as the
+chips, so it can't drift again.
+
+⚠️ **SIX CONTROLS MEANT "GIVE ME A DIFFERENT OUTFIT"** — swap ×2, ban, prev,
+next, reshuffle, plus 25 chips that regenerate. That is the **2026-08-10 r6
+diagnosis ("seven ways to change one outfit on ONE card") still alive on the
+HOME suggester**: r6 fixed that shape on the trip screen and left the original
+instance untouched. **`banSuggestionPiece` literally called `swapSuggestionPiece`**
+— nested, not parallel — so ⃠ is gone and **✨ now retires the piece it
+replaces**. The pick is `Math.random()` over candidates, so before this a second
+tap could hand back the very piece she had just rejected.
+⚠️ Only on a SUCCESSFUL swap (the no-candidates path returns first), and never
+the seed. **The chip AND its handler AND the function went in one commit** —
+r7's rule, pinned by a structural case.
+
+⚠️ **LOGGING FROM HOME LEFT HER ON THE CALENDAR — AND THE FIX WAS SIX LINES
+ABOVE, ALREADY WRITTEN.** The log CTA called `switchTab("calendar")`, and
+`openPostLogSheet`'s `close()` re-renders whatever is active, so a one-tap log
+started on Home and ended on Calendar (verified live: `tab-home → tab-calendar`).
+The suggester's own comment at `js/06-home.js` says exactly this about exactly
+this — *"closing the sheet stranded her there instead of on Home"* — and only one
+of the symmetric pair had been fixed. ⚠️ **`openWearAgainChooser`'s ＋Clothing /
+＋Look handlers now own their navigation**: they render into `#calendarBody` and
+had been relying on the caller having switched.
+
+**STATS LEADS WITH WHAT MOVED (`buildRecentPulse` / `recentPulseHtml`).** She
+opens it daily *to look*; it opened on Closet vs. Your Life, a structural chart
+that shifts fractions of a percent per day, while "Looking back" sat **2,600px
+down**. "Lately" is days logged · pieces worn · top piece · first outings ·
+back-out-after-90-days. ⚠️ **One pass over `wears`** (first-seen, last-seen-before
+and in-window rows together) — a filter per question is the items × wears trap.
+⚠️ **Counts DAYS via `countByDay`.** ⚠️ **Deliberately NOT Range-scoped** — it
+states its own window in the subtitle, the precedent Rotation set; a "lately"
+block silently meaning "all time" is the opposite of the point.
+
+**`outfitName` FALLS BACK TO THE SHAPE.** **1,102 of her 1,122 looks (98%) have
+no name**, so every text-only list asked her to choose between "Look #1081" and
+"Look #1115" — a serial from creation order that also shifts by one for every
+look deleted before it. `formulaKeyFor`/`formulaLabel` already render "Short +
+Sandals" on the Formulas lens. ⚠️ **Memoised as `o._label`**, cleared beside
+`_num`/`_bucket` in `buildOutfitIndexes` — it runs over 1,100+ looks per list
+render. ⚠️ Falls back to the NUMBER, not to blank (a key needs a dress or a
+top-and-bottom); an explicit name still wins.
+
+⚠️ **FACTS ABOUT HER LIFE WERE STORED AS DEVICE PREFERENCES.** `tripWearContext`
+read `tripCapsule()`, which is null unless `tripModeId` — a **localStorage** flag
+— is set, while the trip's DATES are in the database. So the same wear on the
+same day was stamped Travel from her phone and left unstamped from anywhere else,
+silently, into the history every context page reads. **`tripCapsuleForDate`**
+asks the dates, exactly as `tripPhase` already does for the offer banner; the
+mode stays hers to toggle and simply isn't the source of truth. ⚠️ **Its guard
+case REVERSED with the decision** (it asserted "dates AND mode") and gained a
+fourth assertion so it can't pass by always saying Travel. Same fix for the
+backup reminder: **`lastBackupDate`/`setLastBackupDate`** are kv-backed, so "no
+backup yet" stops being a claim about the browser.
+
+**NOT COVERED, and worth a later pass:** closet browsing, the add-item flow, the
+builder, calendar month view, capsule management beyond the trip screen.
+Handler reachability was swept statically over all 293 `data-*` attributes (one
+orphan, `data-grp` in trip-mode); **delegation-SCOPE mismatches like the dead ⋯
+menu need a per-sheet runtime check that was not run.**
+
 **2026-08-13 r2 — A FULL-APP AUDIT, AND THE ENGINE COULD NOT SEE PART OF THE
 CLOSET. Selftest 396 → **402**, run GREEN; all 6 new cases mutation-checked red
 in the same session, and 1 existing case REVERSED with the decision it guarded.**
@@ -3118,7 +3250,8 @@ Top-of-`<script>` config, then logically grouped sections:
   (`saveCalClothingLogAsLook`, shown once ≥2 items are picked).
 - **TABS + WIRING** — `switchTab(name)`, `wireEvents()`, `init()` IIFE.
   Active tabs: home · closet · looks · calendar · stats.
-  Capsules is a Home-tile screen (not in bottom nav). Search/Add are non-tab screens.
+  Capsules is in the bottom nav (the "Home-tile only" note was stale, and it
+  was the standing justification for the launcher grid removed 2026-08-14). Search/Add are non-tab screens.
 
 ## Closet model
 
@@ -3285,7 +3418,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-13 r2`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-14 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3632,7 +3765,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **402/402** (2026-08-13 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **412/412** (2026-08-14 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
