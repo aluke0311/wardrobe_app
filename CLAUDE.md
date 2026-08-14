@@ -237,6 +237,58 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-14 r2 — THREE CORRECTIONS FROM HER, TWO OF THEM UNDOING r1. Selftest
+412 → **414**, run GREEN; both new cases mutation-checked red, and one of them
+was VACUOUS TWICE before it bit.** Her words: *"the new wear builder is too
+squished — rack/clean only buttons right up against wear this today. don't like
+the swap button removing the item as an option — swap should be swap not ban. i
+do not like the named outfits."*
+
+⚠️ **✨ IS A SWAP, NOT A SWAP-AND-HIDE.** r1 had a successful swap drop the
+outgoing piece into `_sugg.banned`, reasoning that repeated taps mean "stop
+showing me this". Wrong: one control quietly did two things, and a piece she
+merely cycled past left the whole sheet — reshuffle included — until she closed
+it. Nothing touches the pool now.
+- **The thing the ban was covering for is fixed properly.** The pick is
+  `Math.random()` over candidates, so ✨ could hand back what she just moved off.
+  **`_suggSwapSeen`** remembers per SLOT what this session has offered and prefers
+  what it hasn't, clearing once the slot is exhausted — taps walk the options and
+  every piece stays reachable. Session-only, reset on open.
+- ⚠️ **ITS GUARD CASE WAS VACUOUS TWICE AND ITS OWN MUTATION CHECK CAUGHT BOTH.**
+  Against the 30-top gear fixture it scored luck (random over 30 rarely repeats
+  back-to-back). Rewritten with TWO tops it became **structurally unfalsifiable**:
+  `cands` already excludes the piece being replaced, so with two tops there is
+  exactly one candidate and alternation is forced by the exclusion — it passed
+  with the cycling deleted. It now uses FIVE tops and asserts all five are seen
+  before any repeat, which fails as `top1 → top2 → top4 → top2 → top4` without it.
+  **A fixture small enough to be deterministic can be small enough to make the
+  assertion free.**
+
+⚠️ **`outfitName` IS THE SERIAL AGAIN.** r1 fell back to `formulaLabel()` because
+98% of her looks are unnamed. Her verdict: a shape is what a look is made OF, not
+what it is, and the same three words land on dozens of outfits — the lists read
+as less distinct, not more. Thumbnails carry identity; the number is a handle.
+**Do not re-derive this.**
+
+**SPACING, from "too squished" — and the number was literally zero.** `poolRow`'s
+bottom and the "Wear this today" button's top measured a **0px gap**. Now 14px
+above / 18px below plus a rule separating the search controls from the actions.
+Each piece's 🔒/✨/✕ render as one cluster (**`.sg-piece`**) instead of three chips
+at a 1px gap, where the conditional ✕ appeared to belong to whichever chip it
+happened to wrap beside. Legend shortened. Home's count row **drops its icons**
+(the tab bar directly below repeats them) and **fades at the right edge** via a
+mask instead of slicing the last chip in half.
+
+⚠️ **HOW TO ACTUALLY LOOK AT THE APP, since this round needed it repeatedly.**
+Drive `http://localhost:4173/` DIRECTLY — inject the eval bridge, install a
+fixture, clear `#login.active`, and set `#app` `.active` + `hidden=false` +
+`style.display="block"` (the class alone is not enough). Screenshots then render
+1:1 because index.html carries a viewport meta. **Do NOT screenshot through the
+selftest harness**: that page has no viewport meta, so mobile emulation lays it
+out at 980px and scales to ~38%, and its iframe is unreadable. ⚠️ The module tags
+carry `?v=<APP_VERSION>`, so a page-level query does NOT bust them — rewrite the
+`?v=` token to a timestamp between edits or the browser replays the last deploy.
+
 **2026-08-14 r1 — A WORKFLOW AUDIT AGAINST HER LIVE CLOSET, AND FOUR SCREENS PUT
 THE ANSWER BELOW THE QUESTION. Selftest 402 → **412**, run GREEN; all 10 new
 cases AND the 1 reversed case mutation-checked red in the same session.** She
@@ -3418,7 +3470,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-14 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-14 r2`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3765,7 +3817,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **412/412** (2026-08-14 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **414/414** (2026-08-14 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves
