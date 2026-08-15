@@ -512,6 +512,8 @@ function buildOutfitIndexes() {
   outfits.slice()
     .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))
     .forEach((o, idx) => { o._num = idx + 1; o._bucket = null; });
+  // A formality edit or a new wear changes every derived level (wearsWithLevels).
+  if (typeof invalidateLevelledWears === "function") invalidateLevelledWears();
   invalidateArchivedCache();
   buildOutfitWearMap();
 }

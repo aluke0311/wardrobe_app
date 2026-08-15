@@ -1654,10 +1654,62 @@ function topContextsByWearCount(limit = 6) {
    A day with two outfits at different levels is two occasions, which is right —
    they were two different things she dressed for. */
 const CONTEXT_LEVEL_MIN_OCCASIONS = 3;
+/* ---- Wears with a formality level, derived backwards where none was stored ----
+   (2026-08-14 r4, her question: "why can't we retroactively assign formality? if
+   a piece has a level it always had that level — am I misunderstanding?")
+
+   She wasn't. `wears.formality_for` has only been WRITTEN since derived formality
+   shipped in July, and her 3,995-wear Airtable import predates it — so the column
+   sits on 290 of 4,398 wears, 3.7% of her wear-days. Everything that reads it was
+   therefore answering from a sliver: the misfit detector could look at 18 of 273
+   Available pieces, and 17 of her 26 contexts fell back to hardcoded seed levels.
+
+   Nothing was stopping the backfill. The level is a pure function of the pieces
+   worn that day, every Available piece carries an explicit formality, and
+   measured on her closet ALL 1,746 unstamped occasions derive cleanly — zero
+   failures. Effect: checkable pieces 18 → 151, contexts with real levels 9 → 17.
+
+   ⚠️ DERIVED ON READ, NOT WRITTEN BACK. A migration over 4,100 rows would be
+   irreversible, and it would go stale the moment she edits a piece's formality —
+   this recomputes from whatever she believes now, which is exactly the question
+   the misfit detector asks. Same shape as itemFormalitySet imputing when nothing
+   is stored. A stored value ALWAYS wins: it is either what the app derived at log
+   time or her own correction via the look's formality edit.
+   ⚠️ Grouped by (day, outfit) because that is how the level is stamped — one
+   outfit, one level — and a day with two outfits genuinely has two.
+   ⚠️ Memoised: this walks every wear, and it is read per item by buildMisfits and
+   per context by contextLevelDays. Invalidated on the same stamp as the outfit
+   indexes, plus item count, since a formality edit changes the answer. */
+let _levelledWears = null, _levelledStamp = "";
+function wearsWithLevels() {
+  const stamp = `${wears.length}|${items.length}|${outfitLinks.length}`;
+  if (_levelledWears && _levelledStamp === stamp) return _levelledWears;
+  const groups = new Map();
+  for (const w of wears) {
+    if (!w.item_id || !w.worn_on) continue;
+    const k = `${w.worn_on}|${w.outfit_id || "solo:" + w.item_id}`;
+    let g = groups.get(k);
+    if (!g) groups.set(k, g = { ids: [], rows: [], stored: null });
+    g.ids.push(w.item_id); g.rows.push(w);
+    if (w.formality_for) g.stored = w.formality_for;
+  }
+  const out = [];
+  for (const g of groups.values()) {
+    const lv = g.stored || deriveWearFormality(g.ids) || null;
+    for (const w of g.rows) out.push(lv && !w.formality_for ? Object.assign({}, w, { formality_for: lv }) : w);
+  }
+  _levelledWears = out; _levelledStamp = stamp;
+  return out;
+}
+function invalidateLevelledWears() { _levelledWears = null; _levelledStamp = ""; }
+
 function contextLevelDays(context, wearRows = null) {
   const seen = new Set();
   const byLevel = new Map();
-  for (const w of (wearRows || wears)) {
+  // Defaults to the levelled view, so a decade of history counts rather than the
+  // 3.7% of wear-days that happen to carry a stored level. An explicit wearRows
+  // (the injectable path the tests use) is passed through untouched.
+  for (const w of (wearRows || wearsWithLevels())) {
     if (!w.formality_for || !w.worn_on) continue;
     if (!ctxArr(w).includes(context)) continue;
     const k = w.formality_for + "|" + w.worn_on;

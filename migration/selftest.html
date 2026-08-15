@@ -2906,6 +2906,46 @@ async function run() {
     return true;
   }));
 
+  /* ---- retroactive formality (2026-08-14 r4) ----
+     Her question: "if a piece has a level it always had that level — am I
+     misunderstanding?" She wasn't. formality_for has only been written since
+     July, so on her closet it covered 3.7% of wear-days and the misfit detector
+     could see 18 of 273 pieces. Measured after: 151. */
+  t("a wear with no stored level gets one derived from what was worn that day", () => withPackCloset(() => {
+    W.wears = [
+      { id: "a1", item_id: "tee0", worn_on: D(-3), outfit_id: "o1" },      // no formality_for
+      { id: "a2", item_id: "jea0", worn_on: D(-3), outfit_id: "o1" },
+      { id: "a3", item_id: "blo0", worn_on: D(-2), outfit_id: "o2", formality_for: 7 },  // stored
+      { id: "a4", item_id: "pnt0", worn_on: D(-2), outfit_id: "o2" },
+    ];
+    W.buildOutfitIndexes();
+    const rows = W.wearsWithLevels();
+    const day3 = rows.filter(r => r.worn_on === D(-3));
+    if (day3.some(r => !r.formality_for)) return "an unstamped occasion was left without a level";
+    if (new Set(day3.map(r => r.formality_for)).size !== 1) return "two pieces of one outfit got different levels";
+    // ⚠️ A stored value must always win — it is either what the app derived at
+    // log time or her own correction, and recomputing over it would discard that.
+    const day2 = rows.filter(r => r.worn_on === D(-2));
+    if (!day2.every(r => r.formality_for === 7)) return `stored level was overwritten: ${day2.map(r => r.formality_for)}`;
+    return true;
+  }));
+
+  t("deriving levels backwards widens what the misfit check can see", () => withPackCloset(() => {
+    // tee0 tagged [2,3] but worn as part of dressier outfits, 6 separate days.
+    const it = W.items.find(i => i.id === "tee0"); it.formality = [2, 3];
+    W.wears = [];
+    for (let k = 0; k < 6; k++) {
+      W.wears.push({ id: "m" + k, item_id: "tee0", worn_on: W.shiftDate(today, -(k + 1)), outfit_id: "x" + k });
+      W.wears.push({ id: "n" + k, item_id: "pnt0", worn_on: W.shiftDate(today, -(k + 1)), outfit_id: "x" + k });
+      W.wears.push({ id: "p" + k, item_id: "hee0", worn_on: W.shiftDate(today, -(k + 1)), outfit_id: "x" + k });
+    }
+    W.buildOutfitIndexes();
+    const rawSeen = W.buildMisfits(null, W.wears).length;      // stored column only: nothing to read
+    const derivedSeen = W.buildMisfits().length;               // defaults to wearsWithLevels()
+    if (rawSeen !== 0) return `fixture already had stored levels (${rawSeen})`;
+    return derivedSeen > 0 ? true : "derivation added no visibility at all";
+  }));
+
   // A dated trip capsule, n days from tomorrow.
   const packTrip = (n, locs) => ({ id: "tripc", name: "Test trip", kind: "packing",
     start_date: D(1), end_date: D(n), locations: locs || [], plan: {} });

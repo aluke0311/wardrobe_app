@@ -1546,7 +1546,9 @@ function buildMileage(pool = null) {
 const MISFIT_MIN_DAYS = 5;    // below this it's an anecdote
 const MISFIT_SHARE = 0.7;     // it has to be the RULE, not a couple of odd days
 function buildMisfits(pool = null, wearRows = null) {
-  const rows = wearRows || wears;
+  // See wearsWithLevels: the stored column covers 3.7% of her wear-days, so
+  // reading `wears` directly meant this could inspect 18 of 273 pieces.
+  const rows = wearRows || wearsWithLevels();
   const list = pool || items.filter(i => itemStatus(i) === "Available");
   const byItem = new Map();   // item_id -> Map(level -> Set(dates))
   for (const w of rows) {

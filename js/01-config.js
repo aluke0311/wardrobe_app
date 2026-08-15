@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-14 r3";
+const APP_VERSION = "2026-08-14 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,10 @@ const APP_VERSION = "2026-08-14 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-14 r4", notes: [
+    "Your whole wear history now counts towards formality, not just the last few weeks. A wear only got a dressiness level if it was logged after that feature shipped in July — 3.7% of your wear-days — so the app was reading a sliver of a decade. It now works the level out from what you wore that day, backwards through everything. Nothing is rewritten: anything already recorded stays exactly as it was",
+    "What that changes: the \"things you might be wrong about\" check can now look at 151 of your pieces instead of 18, and 17 of your 26 contexts have a real dressiness level from your own history instead of a built-in guess (it was 9)",
+  ] },
   { v: "2026-08-14 r3", notes: [
     "⃠ is back: you can decline a piece again so it stops being offered for the rest of the sheet. Removing it was the wrong half of yesterday's fix — declining a piece and swapping one are different things, and ✨ stays a plain swap",
   ] },
