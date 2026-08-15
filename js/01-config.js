@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-14 r2";
+const APP_VERSION = "2026-08-14 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,9 @@ const APP_VERSION = "2026-08-14 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-14 r3", notes: [
+    "⃠ is back: you can decline a piece again so it stops being offered for the rest of the sheet. Removing it was the wrong half of yesterday's fix — declining a piece and swapping one are different things, and ✨ stays a plain swap",
+  ] },
   { v: "2026-08-14 r2", notes: [
     "✨ is a swap again, not a swap-and-hide. It no longer takes the piece out of the sheet — it just shows you a different one, and it walks through the options for that slot instead of picking at random, so tapping twice can't hand back what you just moved off",
     "Outfits are back to \"Look #1082\" rather than being named after their shape",

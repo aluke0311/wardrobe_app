@@ -2437,10 +2437,42 @@ function comboLayerPiece(combo) { return layerPieceOf(combo.pieces); }
 // V3 "+ Layer": add a compatible outerwear/layer piece to the current combo,
 // using the same filters as a slot swap (season, exclusions, target level,
 // pure-function isolation). Random among candidates, like the engine.
-/* "Not this" (⃠) was removed 2026-08-14 — see swapSuggestionPiece, which now
-   retires the piece it replaces. The chip and its handler went in the same
-   commit: leaving a live handler behind removed markup is how a switched-off
-   control comes back (2026-08-10 r7). */
+/* "Not this" (⃠, C1 2026-07-18): session-ban a piece — it leaves the pool for
+   every regenerate/swap/layer until the sheet closes, and the current combo
+   swaps it out immediately. Locked pieces unlock first; the seed can't be banned
+   (it's the whole point of a seeded shuffle).
+
+   ⚠️ REMOVED IN r1 AND RESTORED IN r3, so don't remove it again. r1 folded it
+   into ✨ on the grounds that six controls all meant "different outfit"; r2 then
+   split them back apart because a swap that also banned made one control do two
+   things. Cutting the ban outright was the wrong half of that correction — her
+   report: "I can no longer decline a piece to have it not be suggested."
+   Declining a piece and swapping a piece are DIFFERENT INTENTIONS: ✨ means "show
+   me another one of these", ⃠ means "stop offering me this today". The r1
+   diagnosis (too many doors) was right about the count and wrong about which
+   door to close — the redundancy was that ✨ ALSO banned, not that ⃠ existed. */
+function banSuggestionPiece(pieceId) {
+  if (pieceId === _sugg.seedItemId) return;
+  _sugg.locked.delete(pieceId);
+  _sugg.banned.add(pieceId);
+  const combo = _sugg.results[_sugg.idx];
+  const inCombo = combo && combo.pieces.some(p => p.id === pieceId);
+  if (!inCombo) return renderSuggestSheet();
+  // Try a targeted swap; if nothing else fits the slot, drop a layer or re-roll.
+  const before = combo.pieces.map(p => p.id).join(",");
+  swapSuggestionPiece(pieceId);
+  const after = _sugg.results[_sugg.idx]?.pieces.map(p => p.id).join(",");
+  if (before === after) {
+    const layerPc = comboLayerPiece(combo);
+    if (layerPc && layerPc.id === pieceId && combo.pieces.length > 2) {
+      combo.pieces = combo.pieces.filter(p => p.id !== pieceId);  // layer is optional — just drop it
+      return renderSuggestSheet();
+    }
+    _sugg.idx = 0;
+    _sugg.results = _suggApplyPrefs(suggestOutfits(_sugg.targetLevel, _sugg.seedItemId, _suggPool(), _sugg.season, _suggWx(), _sugg.locked, _suggCleanArg(), _sugg.lockedRoles, _sugg.shapeKey));
+    renderSuggestSheet();
+  }
+}
 
 /* ⚠️ REMOVE ≠ BAN (2026-08-05, her ask: "I want to be able to remove an item
    from a suggested outfit entirely — eg shoes from an outfit I'll wear at
@@ -2823,11 +2855,7 @@ function renderSuggestSheet() {
           return `<span class="sg-piece">
             <button class="cap-chip${lk ? " on" : ""}" data-slock="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px" title="${lk ? "Unlock" : "Keep this piece"}">${lk ? "🔒" : "🔓"}</button>
             <button class="cap-chip" data-sswap="${esc(p.id)}" style="font-size:12px"${lk ? " disabled" : ""} title="Show a different one">✨ ${esc(lbl)}</button>
-            ${/* ⚠️ The "⃠ not this" chip is GONE (2026-08-14). It and ✨ were two
-                  controls for one intention — ban literally called swap — and on a
-                  sheet already carrying six ways to change an outfit it was the
-                  one nobody could name. ✨ now retires the piece it replaces, so
-                  the behaviour survives with one less button. */""}
+            ${p.id === _sugg.seedItemId ? "" : `<button class="cap-chip" data-sban="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Don't offer this today">⃠</button>`}
             ${suggCanRemove(combo, p) ? `<button class="cap-chip" data-sdrop="${esc(p.id)}" style="font-size:12px;padding-left:8px;padding-right:8px;color:var(--muted)" title="Take it out of this outfit">✕</button>` : ""}
           </span>`;
         }).join("")}
@@ -2859,7 +2887,7 @@ function renderSuggestSheet() {
             wrong on the default screen. Built from the same conditions as the
             chips now, so it cannot drift from them again. */""}
       ${combo ? (() => {
-        const bits = ["🔒 keep", "✨ swap"];
+        const bits = ["🔒 keep", "✨ swap", "⃠ not today"];
         if (suggestionPieceOrder(combo.pieces).some(p => suggCanRemove(combo, p))) bits.push("✕ remove");
         bits.push("tap a piece to open it");
         return `<div class="center muted" style="font-size:12px;padding:6px 0 0">${bits.join(" · ")}</div>`;
@@ -3066,6 +3094,9 @@ function renderSuggestSheet() {
 
   $("#logInner").querySelectorAll("[data-sswap]").forEach(b => {
     b.onclick = (e) => { e.stopPropagation(); swapSuggestionPiece(b.dataset.sswap); };
+  });
+  $("#logInner").querySelectorAll("[data-sban]").forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); banSuggestionPiece(b.dataset.sban); };
   });
   const refBtn = $("#logInner").querySelector("[data-srefine]");
   // Fold only — it changes nothing about the search, so no regenerate.

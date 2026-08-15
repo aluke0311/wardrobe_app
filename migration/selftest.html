@@ -1969,8 +1969,9 @@ async function run() {
       .filter(e => /keep/i.test(e.textContent) && /swap/i.test(e.textContent) && e.children.length === 0).pop();
     if (!leg) return "no legend";
     const txt = leg.textContent;
-    // ⃠ was removed with the ban chip; claiming it is what made the old copy wrong.
-    if (/⃠/.test(txt)) return "legend still names the removed ⃠ control";
+    // The contract is unchanged: name a control only if it is on screen.
+    if (/⃠/.test(txt) && !doc.querySelector("[data-sban]")) return "legend claims ⃠ with no decline chip";
+    if (doc.querySelector("[data-sban]") && !/⃠/.test(txt)) return "⃠ is rendered but the legend never mentions it";
     if (/✨/.test(txt) && !doc.querySelector("[data-sswap]")) return "legend claims ✨ with no swap chip";
     if (/✕/.test(txt) && !doc.querySelector("[data-sdrop]")) return "legend promises ✕ but none is rendered";
     return /✨/.test(txt) ? true : `legend never mentions the swap: ${txt}`;
@@ -1987,13 +1988,23 @@ async function run() {
     return two < 0.75 ? true : `two-piece box ${two} saves nothing against 3/4`;
   });
 
-  /* Structural, like the ↻ case: the chip AND its handler went together, and a
-     later round re-adding the markup must not find live wiring waiting for it. */
-  t("the removed ⃠ ban control leaves nothing behind", () => {
-    const src = window.__src || {};
-    const hits = Object.keys(src).filter(p => p.endsWith(".js") && /data-sban|banSuggestionPiece\s*\(/.test(src[p]));
-    return hits.length === 0 ? true : `still referenced in ${hits.join(", ")}`;
-  });
+  /* ⚠️ REVERSED IN r3 (her report: "I can no longer decline a piece to have it
+     not be suggested"). r1 removed ⃠ and this case pinned that it left nothing
+     behind; declining and swapping turned out to be different intentions, so the
+     control is back and the case now pins that it is WIRED, not that it is gone.
+     A chip with no handler is the dead-⋯-menu failure, so both are asserted. */
+  t("the ⃠ decline control exists and is wired", () => withGearCloset(() => {
+    W.openSuggestSheet();
+    const doc = document.getElementById("app").contentDocument;
+    const chip = doc.querySelector("#logInner [data-sban]");
+    if (!chip) return "no ⃠ chip — she cannot decline a piece";
+    if (typeof chip.onclick !== "function") return "⃠ chip rendered with no handler";
+    const id = chip.dataset.sban;
+    chip.click();
+    if (!W._sugg.banned.has(id)) return "tapping ⃠ did not take the piece out of the pool";
+    return W._suggPool().some(i => i.id === id) ? "the declined piece is still in the pool" : true;
+  }));
+
 
   // ---- "Things you might be wrong about" (2026-07-26 r10) ----
   const withMisfitCloset = (fn) => {
