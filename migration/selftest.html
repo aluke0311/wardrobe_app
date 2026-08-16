@@ -597,6 +597,111 @@ async function run() {
     return eq([m1, m2 && m2.missing], [null, ["b"]]);
   });
 
+  /* ---- THE TRAVEL-DAY RULE (2026-08-16) ---------------------------------
+     Her rule: "if they weren't in the suitcase then I was home when I wore
+     them. If I wore them on the other days then they must have been in the
+     suitcase." The two edge days are the only ambiguous ones, and the packing
+     list is the evidence that settles them.
+     ⚠️ Every case below asserts in BOTH directions. A travel-day case that only
+     checked the excluded half would pass just as happily with the rule replaced
+     by "nothing on a trip counts", which is the opposite bug. */
+  /* A past trip, so the rack's recency window sees it: departure D(-10),
+     return D(-4). ⚠️ THIS ONE RESTORES. It has to carry `locations`, which is
+     what makes awayRanges() non-empty — and leaving that behind made two later
+     cases fail for reasons that had nothing to do with them (the rack refuses to
+     rotate mid-trip, so "only the weekly cadence rotates" went red against a
+     trip this fixture had invented). Same lesson as withRackCloset's finally. */
+  const withEdgeTrip = (fn, withMembers = true) => {
+    const saved = { items: W.items, itemById: W.itemById, wears: W.wears,
+                    capsules: W.capsules, capsuleById: W.capsuleById,
+                    capsuleLinks: W.capsuleLinks, capsuleLinkMap: W.capsuleLinkMap,
+                    mode: W.tripModeId };
+    const c = { id: "cE", name: "Edge", start_date: D(-10), end_date: D(-4), plan: {},
+                locations: [{ name: "Away", lat: 40, lon: -3, from: null, to: null }] };
+    W.capsules = [c];
+    W.capsuleById = new Map([["cE", c]]);
+    W.items = [{ id: "packed", name: "Packed" }, { id: "home", name: "Home" }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.capsuleLinks = withMembers ? [{ capsule_id: "cE", item_id: "packed" }] : [];
+    W.capsuleLinkMap = withMembers ? new Map([["cE", W.capsuleLinks]]) : new Map();
+    W.wears = [];
+    try { return fn(c); }
+    finally {
+      W.items = saved.items; W.itemById = saved.itemById; W.wears = saved.wears;
+      W.capsules = saved.capsules; W.capsuleById = saved.capsuleById;
+      W.capsuleLinks = saved.capsuleLinks; W.capsuleLinkMap = saved.capsuleLinkMap;
+      W.tripModeId = saved.mode;
+    }
+  };
+
+  t("the travel-day rule: the suitcase decides a wear on the first or last day", () => withEdgeTrip((c) => {
+    return eq([
+      W.wearWasOnTrip(c, c.start_date, "home"),      // left in her own clothes
+      W.wearWasOnTrip(c, c.start_date, "packed"),    // left in something she packed
+      W.wearWasOnTrip(c, c.end_date, "home"),        // home again by the evening
+      W.wearWasOnTrip(c, D(-7), "home"),             // mid-trip: must have been in the bag
+      W.wearWasOnTrip(c, D(-20), "packed"),          // nowhere near the trip
+    ], [false, true, false, true, false]);
+  }));
+
+  /* ⚠️ An empty packing list is not evidence of absence. Without this the rule
+     would re-file every travel day as "home" for anyone who never ticks a
+     packing list, silently deleting the Travel stamp from both ends of a trip. */
+  t("the travel-day rule needs something in the bag to be evidence", () => {
+    const a = withEdgeTrip((c) => W.wearWasOnTrip(c, c.start_date, "home"), true);
+    const b = withEdgeTrip((c) => W.wearWasOnTrip(c, c.start_date, "home"), false);
+    return eq([a, b], [false, true]);
+  });
+
+  /* ⚠️ The stamp is decided for the LOGGED SET, not per piece — one outing
+     carries one context. A mixed outfit came partly out of the suitcase, so she
+     was travelling in it. */
+  t("tripWearContext: home clothes on the day she leaves aren't stamped Travel", () => withEdgeTrip((c) => {
+    const r = [
+      W.tripWearContext(c.start_date, ["home"]),
+      W.tripWearContext(c.start_date, ["packed"]),
+      W.tripWearContext(c.start_date, ["home", "packed"]),   // mixed → travelling
+      W.tripWearContext(D(-7), ["home"]),                    // mid-trip → travelling
+      W.tripWearContext(c.end_date, ["home"]),
+      W.tripWearContext(c.start_date),                       // no ids → unchanged
+    ];
+    return eq(r, [null, ["Travel"], ["Travel"], ["Travel"], null, ["Travel"]]);
+  }));
+
+  t("tripRecapData: travel-day home clothes aren't 'wore it, didn't pack it'", () => withEdgeTrip((c) => {
+    const un = (rows) => (W.tripRecapData(c, { wearRows: rows }).unpacked || []).map(i => i.id);
+    return eq([
+      // worn only on the two travel days → she was home, it never went
+      un([{ item_id: "home", worn_on: c.start_date }, { item_id: "home", worn_on: c.end_date }]),
+      // the same piece also worn mid-trip → it really did travel, unpacked
+      un([{ item_id: "home", worn_on: c.start_date }, { item_id: "home", worn_on: D(-7) }]),
+    ], [[], ["home"]]);
+  }));
+
+  t("tripMissingPieces stays quiet when nothing she wore that day was packed", () => withEdgeTrip((c) => {
+    W.tripModeId = "cE";
+    const r = [
+      W.tripMissingPieces(["home"], c.start_date),                       // home clothes → silent
+      (W.tripMissingPieces(["home", "packed"], c.start_date) || {}).missing,  // mixed → still offer
+      (W.tripMissingPieces(["home"], D(-7)) || {}).missing,              // mid-trip → offer
+    ];
+    return eq(r, [null, ["home"], ["home"]]);
+  }));
+
+  /* The rack ranks on the most recent wear AT HOME and pushes an away-only wear
+     back RACK_AWAY_PENALTY_DAYS. A piece she wore the morning she flew and did
+     not pack was reached for at home, so it must rank ahead of one she packed
+     and wore the same day. */
+  t("rackWarmth: a travel-day wear of something unpacked ranks as a home wear", () => withEdgeTrip((c) => {
+    const rows = [{ item_id: "home", worn_on: c.start_date }, { item_id: "packed", worn_on: c.start_date }];
+    const wHome = W.rackWarmth("home", today, { wearRows: rows });
+    const wPacked = W.rackWarmth("packed", today, { wearRows: rows });
+    // mid-trip, the same piece is away for both — no membership escape hatch
+    const mid = [{ item_id: "home", worn_on: D(-7) }];
+    const wMid = W.rackWarmth("home", today, { wearRows: mid });
+    return wHome > wPacked && wPacked > 0 && wMid < wHome;
+  }));
+
   // ---- trip recap ----
   t("tripRecapData: worn/dead split, most-worn, repeated look", () => {
     const c = { id: "c1", name: "T", start_date: D(-8), end_date: D(-2) };

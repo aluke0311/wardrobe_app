@@ -1136,7 +1136,7 @@ async function logWearToday(id, { force = false } = {}) {
   }
   try {
     const fml = deriveWearFormality([id]);
-    const wctx = tripWearContext(today);  // trip mode: auto-stamp "Travel"
+    const wctx = tripWearContext(today, [id]);  // trip mode: auto-stamp "Travel"
     const rows = await rest("/wears", {
       method: "POST",
       headers: { "Content-Type": "application/json", Prefer: "return=representation" },
@@ -1150,7 +1150,7 @@ async function logWearToday(id, { force = false } = {}) {
       { label: "Undo", fn: () => undoLoggedWears([wear]) },
       { label: "Add context →", fn: () => openPostLogSheet([wear]) },
     ];
-    const miss = tripMissingPieces([id]);
+    const miss = tripMissingPieces([id], today);
     if (miss) chips.push({ label: `＋ ${miss.c.name}`, fn: async () => { await addItemsToCapsule(miss.c.id, miss.missing); toast(`Added to ${miss.c.name}`); } });
     // E4: the photo view's stat strip (wear count / last worn) must not go stale
     if (detailId && detailView !== "details") openItem(detailId);
@@ -1290,7 +1290,7 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
   _ctxSel = presetCtx && presetCtx.length ? [...presetCtx] : []; _ctxAddOpen = false;
   // Trip mode: "Travel" arrives pre-selected (the POST already stamped it) —
   // visible and un-tappable, composing with whatever else she picks.
-  const _twc = tripWearContext(wearRows[0]?.worn_on || todayStr());
+  const _twc = tripWearContext(wearRows[0]?.worn_on || todayStr(), wearRows.map(w => w.item_id));
   if (_twc && !_ctxSel.includes(TRIP_CONTEXT)) _ctxSel.push(TRIP_CONTEXT);
   _ctxSuggest = weekdayTopContext(wearRows[0]?.worn_on || todayStr());
   const oid = wearRows.length && wearRows.every(r => r.outfit_id && r.outfit_id === wearRows[0].outfit_id)
@@ -1317,7 +1317,7 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
       </div>` : ""}
       ${(() => {
         // Trip mode: worn pieces that aren't packed → one-tap add to the capsule.
-        const miss = tripMissingPieces(wearRows.map(r => r.item_id));
+        const miss = tripMissingPieces(wearRows.map(r => r.item_id), wearRows[0]?.worn_on);
         if (!miss) return "";
         return `<div id="postTripRow" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 12px;background:var(--accent-soft);border-radius:12px;font-size:13.5px">
           <span style="flex:1">✈️ ${miss.missing.length === 1 ? "1 piece isn't" : miss.missing.length + " pieces aren't"} in ${esc(miss.c.name)}</span>
@@ -1334,7 +1334,7 @@ function openPostLogSheet(wearRows, { presetCtx, undoable = false } = {}) {
   wireWearDetail($("#logInner"), { onLeave: () => hideSheet("logSheet") });
   const tripAdd = $("#postTripAdd");
   if (tripAdd) tripAdd.onclick = async () => {
-    const miss = tripMissingPieces(wearRows.map(r => r.item_id));
+    const miss = tripMissingPieces(wearRows.map(r => r.item_id), wearRows[0]?.worn_on);
     if (!miss) return;
     try {
       await addItemsToCapsule(miss.c.id, miss.missing);

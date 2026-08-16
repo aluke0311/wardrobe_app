@@ -1,0 +1,274 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- ⚠️ THE VIEWPORT META IS THE POINT. selftest.html has none, so under mobile
+     emulation the outer page lays out at 980px and scales the iframe to ~38% —
+     every screenshot unreadable and every measurement off. With this, a
+     375x812 iframe renders 1:1 and getBoundingClientRect() is honest. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wardrobe audit harness</title>
+<style>
+  html,body { margin:0; padding:0; background:#222; }
+  #app { width:375px; height:812px; border:0; display:block; }
+</style>
+</head>
+<body>
+<iframe id="app"></iframe>
+<script>
+/* Audit harness (2026-08-16). Same loading contract as selftest.html — rewrite
+   every js/css URL with a per-run token and hand it over via srcdoc, with a
+   <base href="/"> because relative URLs would otherwise resolve against
+   /migration/ and the app would load nothing.
+
+   What this adds over the selftest:
+   ① a real viewport, so layout numbers and screenshots are 1:1 at 375x812;
+   ② an addEventListener RECORDER injected BEFORE the app's own scripts, which
+      is the only way to know which elements are genuine delegation roots.
+      Static reading can't answer that — it's why the dead ⋯ menu survived a
+      full static sweep of all 293 data-* attributes. */
+const frameEl = document.getElementById("app");
+let _ready = false;
+frameEl.addEventListener("load", () => setTimeout(() => { _ready = true; }, 400));
+
+const RECORDER = `
+window.__listeners = [];
+(function(){
+  const orig = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function(type, fn, opts) {
+    try { if (this && this.nodeType === 1 || this === document || this === window)
+      window.__listeners.push({ el: this, type: type, capture: !!(opts === true || (opts && opts.capture)) });
+    } catch(e){}
+    return orig.apply(this, arguments);
+  };
+})();
+`;
+
+(async () => {
+  const token = Date.now();
+  const html = await (await fetch(`/index.html?_=${token}`, { cache: "reload" })).text();
+  const busted = html
+    .replace(/<head(\s[^>]*)?>/i, m => `${m}<base href="/"><script>${RECORDER}<\/script>`)
+    .replace(/((?:src|href)=")((?:js|css)\/[^"]+)(")/g,
+             (m, a, u, b) => `${a}${u}${u.includes("?") ? "&" : "?"}_=${token}${b}`);
+  if (!/<base href="\/">/.test(busted)) throw new Error("no <head> in index.html");
+  frameEl.srcdoc = busted;
+})();
+
+/* ---- the API the driving session calls ---------------------------------- */
+window.A = {
+  ready: () => _ready,
+  W: null,
+  boot() {
+    const doc = frameEl.contentDocument;
+    const bridge = doc.createElement("script");
+    bridge.textContent = `window.__app = new Proxy({}, {
+      get(_, k) { if (k === "__isBridge") return true; try { return eval(k); } catch { return undefined; } },
+      set(_, k, v) { window.__tmpv = v; try { eval(k + " = window.__tmpv"); } catch (e) { console.error(e); } return true; },
+    });`;
+    doc.body.appendChild(bridge);
+    this.W = frameEl.contentWindow.__app;
+    return typeof this.W.todayStr === "function";
+  },
+  doc: () => frameEl.contentDocument,
+  win: () => frameEl.contentWindow,
+
+  /* Show the app. The class alone is not enough — #app carries hidden and an
+     inline display from the login flow (CLAUDE.md, 2026-08-14 r2). */
+  show() {
+    const d = this.doc();
+    const login = d.getElementById("login"); if (login) login.classList.remove("active");
+    const app = d.getElementById("app");
+    if (app) { app.classList.add("active"); app.hidden = false; app.style.display = "block"; }
+  },
+
+  /* A realistic closet. Proportioned like hers (491 items / 4387 wears /
+     1122 looks / 9 capsules) but a third the size so renders stay fast. */
+  fixture(opts) {
+    const W = this.W, o = opts || {};
+    const today = W.todayStr(), D = n => W.shiftDate(today, n);
+    const slots = [
+      ["Tops","Tee shirts",34],["Tops","Blouses",18],["Tops","Sweaters",16],["Tops","Cardigans",10],
+      ["Bottoms","Jeans",14],["Bottoms","Pants",12],["Bottoms","Skirts",10],["Bottoms","Shorts",8],
+      ["Dresses","Short",14],["Dresses","Long",8],["Dresses","Cocktail",6],
+      ["Shoes","Sneakers",8],["Shoes","Boots",10],["Shoes","Flats",8],["Shoes","Sandals",8],["Shoes","Heels",9],
+      ["Outerwear","Jackets",8],["Outerwear","Coats",6],["Outerwear","Blazers",5],
+      ["Workout","Workout tops",6],["Workout","Active shorts",5],["Workout","Sports bras",4],
+    ];
+    const cols = ["Blue","Black","White","Gray","Green","Red","Beige","Brown","Pink","Maroon"];
+    const items = [];
+    let n = 0;
+    for (const [cat, sub, count] of slots) {
+      for (let k = 0; k < count; k++) {
+        n++;
+        const dressy = sub === "Heels" || sub === "Cocktail" || sub === "Blazers";
+        const gear = cat === "Workout";
+        items.push({
+          id: `i${n}`, name: `${sub} ${k + 1}`, category: cat, subcategory: sub,
+          status: k % 17 === 0 ? "Storage" : "Available",
+          image_path: k % 11 === 0 ? null : `p${n}.jpg`,
+          color_family: cols[n % cols.length],
+          brand: ["Everlane","Madewell","J.Crew","Uniqlo",null][n % 5],
+          retailer: ["Nordstrom","Amazon",null][n % 3],
+          price: (15 + (n * 7) % 180),
+          purchase_date: D(-(60 + (n * 13) % 1400)),
+          acquisition: n % 19 === 0 ? "Gift" : "New",
+          formality: gear ? [1] : dressy ? [6, 7] : (k % 5 === 0 ? [4, 5] : [2, 3]),
+          season: k % 4 === 0 ? ["Summer"] : k % 4 === 1 ? ["Winter"] : ["Spring","Summer","Fall","Winter"],
+          tags: [], last_washed: D(-(3 + (n % 20))),
+        });
+      }
+    }
+    // Wears: a long tail plus a hot core, ~1800 rows over two years.
+    const wears = []; let wid = 0;
+    for (let d = 1; d < 730; d++) {
+      const date = D(-d);
+      const pieces = 2 + (d % 3);
+      for (let p = 0; p < pieces; p++) {
+        const idx = (d * 7 + p * 31) % items.length;
+        const it = items[idx];
+        if (it.status !== "Available") continue;
+        wears.push({ id: `w${++wid}`, item_id: it.id, worn_on: date, outfit_id: null,
+                     context: [["Errands","Work","Friends","Church","Date night"][(d + p) % 5]],
+                     formality_for: 2 + ((d + p) % 4) });
+      }
+    }
+    // Looks: 120, most unnamed (98% of hers are).
+    const outfits = [], outfitLinks = [];
+    for (let k = 0; k < 120; k++) {
+      const id = `o${k}`;
+      outfits.push({ id, name: k % 50 === 0 ? `Favourite ${k}` : null, rating: k % 9 === 0 ? 1 : null,
+                     archived: false, layout: null, created_at: D(-(k * 5)) });
+      for (const off of [0, 40, 80]) outfitLinks.push({ outfit_id: id, item_id: items[(k * 3 + off) % items.length].id });
+    }
+    // Capsules: a finished trip, a trip that is on RIGHT NOW, an upcoming trip,
+    // and two undated capsules — every branch the trip screens can take.
+    const capsules = [
+      { id: "cPast", name: "Chicago", kind: "travel", start_date: D(-40), end_date: D(-34),
+        locations: [{ name: "Chicago", lat: 41.88, lon: -87.63, from: null, to: null }], plan: {} },
+      { id: "cNow", name: "Madrid", kind: "travel", start_date: D(-2), end_date: D(4),
+        locations: [{ name: "Madrid", lat: 40.4, lon: -3.7, from: null, to: null }], plan: {} },
+      { id: "cSoon", name: "Maine", kind: "travel", start_date: D(20), end_date: D(26),
+        locations: [{ name: "Portland", lat: 43.66, lon: -70.26, from: null, to: null }], plan: {} },
+      { id: "cCap", name: "Summer capsule", kind: "capsule", start_date: null, end_date: null, locations: [], plan: {} },
+      { id: "cCap2", name: "Work core", kind: "capsule", start_date: null, end_date: null, locations: [], plan: {} },
+    ];
+    const capsule_items = [];
+    for (let k = 0; k < 22; k++) capsule_items.push({ capsule_id: "cNow", item_id: items[k * 5 % items.length].id, packed: k % 3 === 0 });
+    for (let k = 0; k < 18; k++) capsule_items.push({ capsule_id: "cPast", item_id: items[k * 7 % items.length].id, packed: true });
+    for (let k = 0; k < 9; k++) capsule_items.push({ capsule_id: "cSoon", item_id: items[k * 11 % items.length].id, packed: false });
+    for (let k = 0; k < 14; k++) capsule_items.push({ capsule_id: "cCap", item_id: items[k * 9 % items.length].id, packed: false });
+
+    // Wears during the live trip, including the two travel days.
+    const now = capsules[1];
+    const packed = capsule_items.filter(c => c.capsule_id === "cNow").map(c => c.item_id);
+    for (let d = 0; d <= 2; d++) {
+      const date = W.shiftDate(now.start_date, d);
+      for (let p = 0; p < 3; p++)
+        wears.push({ id: `w${++wid}`, item_id: packed[(d * 3 + p) % packed.length], worn_on: date,
+                     outfit_id: null, context: ["Travel"], formality_for: 3 });
+    }
+
+    W.items = items; W.wears = wears; W.outfits = outfits; W.outfitLinks = outfitLinks;
+    // ⚠️ The global is `capsuleLinks`; `capsule_items` is only the TABLE name.
+    // Setting the table name populated nothing and every capsule read "0 items".
+    W.capsules = capsules; W.capsuleLinks = capsule_items; W.exclusions = [];
+    W.activeCapsuleId = null; W.dataReady = true;
+    // ⚠️ capsuleItems() reads capsuleLinkMap, a derived index — assigning the
+    // arrays is not enough, the indexes have to be rebuilt (this is what made
+    // every capsule read "0 items" on the first pass).
+    W.buildOutfitIndexes(); W.buildExcludeSet(); W.buildSuggestIndexes(); W.buildCapsuleIndexes();
+    if (o.tripMode) W.tripModeId = "cNow";
+    return { items: items.length, wears: wears.length, outfits: outfits.length, capsules: capsules.length };
+  },
+
+  /* ---- measurement -------------------------------------------------------
+     ⚠️ Every probe asserts a known element has non-zero width first. A layout
+     sweep over a display:none subtree returns 0 for everything and reports
+     "no overflow" on a broken screen — that happened on 2026-08-13. */
+  assertLive() {
+    const d = this.doc(), app = d.getElementById("app");
+    const w = app ? app.getBoundingClientRect().width : 0;
+    if (!w) throw new Error(`LAYOUT PROBE INVALID: #app width is ${w} — nothing is rendered`);
+    return w;
+  },
+  /* Vertical order of a screen's top-level blocks: what she sees first. */
+  blocks(sel) {
+    this.assertLive();
+    const host = this.doc().querySelector(sel);
+    if (!host) return null;
+    return [...host.children].map(el => {
+      const r = el.getBoundingClientRect();
+      return { cls: el.className || el.tagName.toLowerCase(), y: Math.round(r.top),
+               h: Math.round(r.height), text: (el.innerText || "").trim().replace(/\s+/g, " ").slice(0, 70) };
+    }).filter(b => b.h > 0);
+  },
+  overflow() {
+    this.assertLive();
+    const d = this.doc();
+    const out = [];
+    for (const el of d.querySelectorAll("#app *")) {
+      const r = el.getBoundingClientRect();
+      if (r.width && (r.right > 376 || r.left < -1)) out.push({
+        cls: (el.className || el.tagName).toString().slice(0, 50),
+        left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width),
+        text: (el.innerText || "").trim().slice(0, 40) });
+    }
+    return { bodyScrollWidth: d.body.scrollWidth, offenders: out.slice(0, 25) };
+  },
+  /* Buttons that are too small to hit, or absurdly narrow for their column. */
+  tinyTargets() {
+    this.assertLive();
+    const out = [];
+    for (const el of this.doc().querySelectorAll("#app button, #app [data-cap], #app .chip")) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      if (r.height < 32 || r.width < 30) out.push({
+        cls: (el.className || "").slice(0, 40), w: Math.round(r.width), h: Math.round(r.height),
+        text: (el.innerText || "").trim().slice(0, 30) });
+    }
+    return out;
+  },
+
+  /* ---- reachability ------------------------------------------------------
+     For every element carrying a data-* hook, does an ancestor actually listen?
+     Answers the question a static sweep cannot: the ⋯ menu's rows carried real
+     data-cap-* attributes and a real delegated handler existed — on a container
+     that did not contain them. */
+  listenerRoots() {
+    const L = this.win().__listeners || [];
+    return L.filter(r => r.type === "click" || r.type === "pointerdown");
+  },
+  unreachable(scopeSel, prefixes) {
+    this.assertLive();
+    const d = this.doc();
+    const roots = this.listenerRoots().map(r => r.el);
+    const scope = scopeSel ? d.querySelector(scopeSel) : d;
+    if (!scope) return { error: `no such scope: ${scopeSel}` };
+    const out = [];
+    const seen = new Set();
+    for (const el of scope.querySelectorAll("*")) {
+      const hooks = [...el.attributes].filter(a => a.name.startsWith("data-") &&
+        (!prefixes || prefixes.some(p => a.name.startsWith(p))));
+      if (!hooks.length) continue;
+      // reachable if the element or any ancestor has an onclick or a recorded listener
+      let node = el, ok = false;
+      while (node && node !== d) {
+        if (node.onclick || roots.includes(node)) { ok = true; break; }
+        node = node.parentNode;
+      }
+      if (!ok) {
+        const key = hooks.map(h => h.name).join(",");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ attrs: key, tag: el.tagName.toLowerCase(),
+                   cls: (el.className || "").toString().slice(0, 40),
+                   text: (el.innerText || "").trim().slice(0, 40) });
+      }
+    }
+    return out;
+  },
+};
+</script>
+</body>
+</html>

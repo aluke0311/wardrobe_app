@@ -237,6 +237,129 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-16 r1 — A CLOSET / RACK / TRIPS WORKFLOW AUDIT, AND THE TRAVEL-DAY
+RULE. Selftest 416 → **422**, run GREEN; all 6 new cases mutation-checked red in
+the same session (four separate mutations, one per guarded behaviour).**
+She asked for a workflow audit covering the closet, the rack and trips/capsules
+— the three areas 2026-08-14 r1 listed as NOT covered — plus one specific fix.
+
+⚠️ **THE TRAVEL-DAY RULE, her words:** *"I should have a way to wear things on
+the day I leave for a trip and the day I return and not have them considered as
+on the trip. If they weren't in the suitcase then I was home when I wore them.
+If I wore them on the other days then they must have been in the suitcase."*
+The two edge days of a trip are half at home — she dresses out of her own closet
+the morning she flies and again the evening she gets back — and both sit inside
+the trip's date range, so every trip-scoped derivation counted those clothes as
+travel. **The suitcase is the evidence that settles it, and the app already had
+it.** `tripEdgeDay` + **`wearWasOnTrip(c, date, itemId, memberIds?)`** is the one
+derivation; `wearWasAtHome` + `tripEdgeMemberMap` is the same question asked of a
+wear row by readers that walk `wears`.
+- ⚠️ **ONLY the two edge days are ambiguous.** A middle day needs no test:
+  whatever she wore, she wore it away from her closet. Testing membership there
+  would re-file every piece she forgot to pack as a home wear — the opposite of
+  the truth, and the mutation that removes the early return is what pins it.
+- ⚠️ **AN EMPTY PACKING LIST IS NOT EVIDENCE OF ABSENCE.** With no members the
+  app cannot tell "she didn't pack it" from "she never told me what she packed",
+  so it falls back to counting the day as travel — rescue-shaped, like
+  `inSeasonWx` and `packOccasionSlotFit`. Without this the rule would silently
+  strip the Travel stamp off both ends of every trip she never ticked a list for.
+- ⚠️ **THE STAMP IS DECIDED FOR THE LOGGED SET, NOT PER PIECE.** A context is a
+  fact about the outing and one outing carries one context (dayplan's "one outfit
+  across contexts = one entry"), so if any part of what she put on came out of
+  the suitcase she was travelling in it. `tripWearContext(date, itemIds)` — called
+  without ids it behaves exactly as before, and **all 7 wear-create call sites
+  now pass them**. The recap stays per-piece, because its question is per-piece.
+- **Four readers, one rule:** the Travel stamp; `tripMissingPieces` (silent when
+  nothing she wore that day was packed — accepting that offer makes the piece a
+  member, the one thing that turns a home wear into trip history permanently);
+  `tripRecapData`'s `unpacked` (travel-day home clothes are no longer "wore it,
+  didn't pack it"); and the rack's `rackWarmth`/`rackForcedIds`, where a piece she
+  wore at home the morning she flew was sitting 21 days behind everything else
+  under `RACK_AWAY_PENALTY_DAYS`.
+- ⚠️ **WEATHER IS DELIBERATELY UNTOUCHED.** `awayRanges` answers "where was she",
+  and on a travel day she was genuinely in two places — a day carries one weather
+  record and no garment can split it. Changing it would poison season bands for a
+  gain nobody asked for.
+- ⚠️ **The new fixture RESTORES, and that is not optional.** `withEdgeTrip` has to
+  carry `locations` (it is what makes `awayRanges()` non-empty), and leaving that
+  behind made two unrelated cases fail — the rack refuses to rotate mid-trip, so
+  "only the weekly cadence rotates the bands" went red against a trip the fixture
+  had invented. Same lesson as `withRackCloset`'s `finally`.
+
+**THE AUDIT — method, because it is the reusable part.** A harness at
+**`migration/audit.html`**, which differs from the selftest in two ways that
+matter: ① **it carries a viewport meta**, so a 375×812 iframe renders 1:1 and
+layout numbers and screenshots are honest (selftest.html has none, which is why
+CLAUDE.md tells you not to screenshot through it); ② **it injects an
+`addEventListener` recorder BEFORE the app's own scripts**, which is the only way
+to know which elements are real delegation roots. Every probe asserts `#app` has
+non-zero width first.
+
+⚠️ **HANDLER REACHABILITY IS GENUINELY SOUND — checked at runtime, which had
+never been done.** CLAUDE.md flagged "delegation-SCOPE mismatches like the dead ⋯
+menu need a per-sheet runtime check that was not run". It has been run now: 12
+sheets opened and every `data-*` hook walked to an ancestor with a real listener
+— **zero orphans**, the ⋯ menu included. A static sweep of all **381** emitted
+attributes found one true orphan, `data-grp` (an unused group-key identifier,
+harmless); `data-cap-pack`, `data-snapshot`, `data-v1` and `data-pack-dropOCC`
+are all false positives from comments and cache-name strings. **A later round
+needn't re-audit this.**
+
+**Also verified correct, so a later round needn't re-check:** no horizontal
+overflow on any of 11 closet/capsule/trip screens (`body.scrollWidth` 375
+everywhere — the capsule list's off-screen "Delete" is the swipe action); the
+laundry lens and the hamper shelf row agree on the count (17 = 17); the trip's
+empty-state names the missing slot rather than saying "tap All"; and
+`rackQuotaTotal2` is honest — a 59-piece rack under "about 58 pieces" is the
+formality top-up, which is exempt from slot quotas by design, and the word
+"about" is doing real work.
+
+**WHAT THE AUDIT FOUND (reported, NOT built — her call):**
+- ⚠️ **THE RACK SCREEN BURIES THE ONLY BAND THAT JUSTIFIES IT.** Order is
+  hardcoded rotation → steady → dormant, so it opens with the 32 pieces she
+  already reaches for and puts **"Haven't reached for these lately" at y=2,581 of
+  a 3,230px page**. `RACK_COLD_SHARE` is documented as "LOAD-BEARING, not a
+  nicety" and this file claims at line ~2281 that "the rack screen leads with 'N
+  you haven't reached for lately'". **It does not, and never has.** The bands are
+  a warm→cold gradient; reading it cold→warm keeps that logic and puts the payoff
+  first.
+- ⚠️ **TRIP MODE AND CAPSULE SCOPE CAN DISAGREE, AND BOTH BANNERS RENDER.**
+  `enterTripMode` sets `tripModeId` AND `activeCapsuleId`; `planFromCapsule` sets
+  only `activeCapsuleId`. So "Plan outfits from this" while on a trip leaves trip
+  mode on Madrid and the closet scoped to a different capsule — **measured: the
+  closet showed 14 Summer-capsule pieces while the suggester pooled from Madrid
+  (`_sugg.capsuleId = "cNow"`), with a "✈️ Madrid · Day 3 of 7" banner and a
+  "Planning · Summer capsule" banner stacked on one screen.** And the ✕ clears
+  only the capsule, leaving trip mode on with `activeCapsuleId` null — a state
+  `enterTripMode` can never produce, against this file's own rule that the
+  banner's ✕ exits the mode, "one mental model".
+- **The closet root spends 337px — 45% of the usable screen — before the first
+  garment**, on two lens bars and four full-width navigation rows. "Hamper"
+  appears twice 190px apart (a lens chip that filters, a shelf row that
+  navigates), and 👕 means both "the rack" and "Worn" on adjacent rows — the
+  2026-07-26 "one glyph, one meaning" rule, never applied to this pair.
+- **An undated capsule offers four stacked full-width buttons**, three meaning
+  "use this capsule to plan": Enter capsule mode · Planned outfits · Plan outfits
+  from this · Suggest an outfit. Same shape as the r6 "seven ways to change one
+  outfit" diagnosis, on the screen that round didn't look at.
+- **"wash before you pack" renders on an undated capsule**, which is not a trip
+  and is never packed. `js/06-home.js:803` gates the same phrase on the pack
+  phase; `js/16-capsules.js:541` does not — one fact, two surfaces, one gated.
+- **A finished trip opens on "Outfits"**, proposing new outfits for a trip that
+  ended weeks ago, with "Trip recap" 9th of 11 rows in the ⋯ menu.
+- ⚠️ **The switched-off pack still writes to the database, and the trace is
+  confirmed:** `addItemsToCapsule` → `savePackRecord` → a GET **and** a POST to
+  `/kv`. Correctly gated on a stored `rec.pieces`, so it only fires for trips
+  packed before the 2026-08-10 r6 strip — which is exactly her older trips.
+
+**2026-08-14 r3 and r4 shipped WITHOUT an entry here** (`6ad61d9` "Declining a
+piece comes back" — ⃠ restored as its own chip after r2 removed the wrong half of
+it; `fab356a` "A decade of wears finally counts towards formality" —
+`wearsWithLevels()` derives `formality_for` on READ for the 3,995-wear Airtable
+import, taking the pieces `buildMisfits` can see from 18 to 151). Their commit
+messages carry the reasoning. **Check `git log` against this file's newest entry
+before assuming it is current.**
+
 **2026-08-14 r2 — THREE CORRECTIONS FROM HER, TWO OF THEM UNDOING r1. Selftest
 412 → **414**, run GREEN; both new cases mutation-checked red, and one of them
 was VACUOUS TWICE before it bit.** Her words: *"the new wear builder is too
@@ -2278,9 +2401,13 @@ items: the fix was the POOL, not the algorithm.
   not a nicety.**
   Without it the rack calcifies — worn → on the rack → suggested → worn — and
   over five years shrinks her working wardrobe, i.e. the mirror would cause the
-  thing it measures. It's also the nicest part (the rack screen leads with "N you
-  haven't reached for lately"), and a selftest case goes red if it's relaxed —
-  verified by zeroing it. **Do not "optimise" it away.**
+  thing it measures. It's also the nicest part, and a selftest case goes red if
+  it's relaxed — verified by zeroing it. **Do not "optimise" it away.**
+  ⚠️ **This used to claim "the rack screen leads with 'N you haven't reached for
+  lately'". It does not and never did** — the order is hardcoded rotation →
+  steady → dormant, putting that band at y=2,581 of a 3,230px page (measured
+  2026-08-16). Corrected rather than deleted, because the claim was load-bearing
+  in the argument for keeping the band.
 - **`rackNeededLevels()` reads FORWARD `dayplan` contexts** (her ask: "can set
   events for future so the rack knows"), with her habitual levels as the floor.
   ⚠️ Load-bearing too: `targetLevel` is a HARD filter in `suggestOutfits`, so a
@@ -3470,7 +3597,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-14 r2`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-16 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3817,7 +3944,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **414/414** (2026-08-14 r2, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **422/422** (2026-08-16 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

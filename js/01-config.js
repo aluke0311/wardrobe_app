@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-14 r4";
+const APP_VERSION = "2026-08-16 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-14 r4";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-16 r1", notes: [
+    "The day you leave and the day you get back are half at home, and the app now knows it. If you wore something on either of those days that wasn't in your suitcase, it counts as a day at home — no Travel tag, and it won't turn up in the trip recap as something you wore but forgot to pack. Anything you wore on the days in between was in the suitcase by definition, so nothing changes there",
+    "Your rack notices those days too: a piece you wore at home the morning you flew now counts as one you reached for, instead of being pushed to the back with the rest of the trip",
+    "If you've never ticked a packing list for a trip, nothing changes — the app only applies this when it actually knows what went in the bag",
+  ] },
   { v: "2026-08-14 r4", notes: [
     "Your whole wear history now counts towards formality, not just the last few weeks. A wear only got a dressiness level if it was logged after that feature shipped in July — 3.7% of your wear-days — so the app was reading a sliver of a decade. It now works the level out from what you wore that day, backwards through everything. Nothing is rewritten: anything already recorded stays exactly as it was",
     "What that changes: the \"things you might be wrong about\" check can now look at 151 of your pieces instead of 18, and 17 of your 26 contexts have a real dressiness level from your own history instead of a built-in guess (it was 9)",

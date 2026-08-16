@@ -766,7 +766,7 @@ async function planWoreIt(date, outfitId) {
   if (!its.length) { toast("This look has no pieces"); return; }
   try {
     const fml = deriveWearFormality(its.map(it => it.id));
-    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const wctx = tripWearContext(date, its.map(it => it.id));  // trip mode: auto-stamp "Travel"
     const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: outfitId, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
     const rows = await rest("/wears", {
       method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },

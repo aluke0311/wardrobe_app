@@ -79,8 +79,83 @@ function tripCapsuleForDate(date) {
   }
   return capsules.find(inRange) || null;
 }
-function tripWearContext(date) {
-  return tripCapsuleForDate(date) ? [TRIP_CONTEXT] : null;
+/* ---- THE TRAVEL-DAY RULE (2026-08-16, her ask) ----------------------------
+   Her words: "if they weren't in the suitcase then I was home when I wore them.
+   If I wore them on the other days then they must have been in the suitcase."
+
+   The first and last day of a trip are half at home — she dresses out of her
+   own closet the morning she flies and again the evening she gets back, and
+   both of those days sit inside the trip's date range, so every trip-scoped
+   derivation counted those clothes as travel. The suitcase is what tells the
+   two apart, and it is evidence the app already has.
+
+   ⚠️ ONLY the two edge days are ambiguous. A middle day needs no test: whatever
+   she wore, she wore it away from her closet, so it was in the bag whether or
+   not she ever ticked it. Testing membership there would re-file every piece
+   she forgot to pack as a home wear — the opposite of the truth.
+   ⚠️ AN EMPTY PACKING LIST IS NOT EVIDENCE OF ABSENCE. With no members at all
+   the app cannot tell "she didn't pack it" from "she never told me what she
+   packed", so it falls back to counting the day as travel — rescue-shaped, the
+   same way inSeasonWx and packOccasionSlotFit widen rather than cost her an
+   answer when the history is silent. */
+const tripEdgeDay = (c, date) => !!c && !!date && (date === c.start_date || date === c.end_date);
+
+function tripMemberIdSet(cid) {
+  return new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
+}
+
+/* Did this piece, worn on this date, go on the trip? */
+function wearWasOnTrip(c, date, itemId, memberIds = null) {
+  if (!c || !isDatedTrip(c)) return false;
+  if (date < c.start_date || date > c.end_date) return false;
+  if (!tripEdgeDay(c, date)) return true;             // a middle day is unambiguous
+  const ids = memberIds || tripMemberIdSet(c.id);
+  if (!ids.size) return true;                          // no packing list = no evidence
+  return ids.has(itemId);
+}
+
+/* The same question asked of a whole day's away-ness, for readers that walk
+   `wears` and only care whether she was standing in her own closet (the rack).
+   Everything not inside an away range is home by definition; inside one, only
+   an edge-day wear of something she didn't pack is. */
+function wearWasAtHome(date, itemId, { ranges = null, edgeMap = null } = {}) {
+  const rs = ranges || ((typeof awayRanges === "function") ? awayRanges() : []);
+  if (!rs.length || !awayRangeFor(date, rs)) return true;
+  const ids = (edgeMap || tripEdgeMemberMap()).get(date);
+  return !!ids && ids.size > 0 && !ids.has(itemId);
+}
+
+/* date → member ids, for every dated trip's first and last day only. Two dates
+   per trip, so a reader walking thousands of wears can test membership without
+   re-deriving the capsule each time. */
+function tripEdgeMemberMap(caps = null) {
+  const out = new Map();
+  for (const c of (caps || capsules)) {
+    if (!isDatedTrip(c)) continue;
+    const ids = tripMemberIdSet(c.id);
+    if (!ids.size) continue;
+    for (const d of [c.start_date, c.end_date]) {
+      const prev = out.get(d);
+      // Overlapping trips: a piece packed for either one was packed.
+      if (prev) for (const id of ids) prev.add(id); else out.set(d, new Set(ids));
+    }
+  }
+  return out;
+}
+
+/* ⚠️ The stamp is decided for the LOGGED SET, not per piece. A context is a fact
+   about the outing and one outing carries one context ("one outfit across
+   contexts = one entry" is dayplan's rule) — so if any part of what she put on
+   came out of the suitcase, she was travelling in it. Called without ids it
+   behaves exactly as it did before, which is what keeps a caller that has no
+   pieces to hand (there are none today) honest rather than silently wrong. */
+function tripWearContext(date, itemIds = null) {
+  const c = tripCapsuleForDate(date);
+  if (!c) return null;
+  if (!tripEdgeDay(c, date) || !itemIds || !itemIds.length) return [TRIP_CONTEXT];
+  const ids = tripMemberIdSet(c.id);
+  if (!ids.size) return [TRIP_CONTEXT];
+  return itemIds.some(id => ids.has(id)) ? [TRIP_CONTEXT] : null;
 }
 // A look logged on a trip day IS that day's plan, fulfilled — record it there
 // so she never has to do both. Fire-and-forget from the wear paths.
@@ -93,10 +168,19 @@ async function tripPlanSync(outfitId, date) {
 }
 // Pieces just logged that aren't packed → offer to add them to the trip capsule
 // (keeps the capsule honest when she wears something she didn't pack).
-function tripMissingPieces(itemIds) {
+/* ⚠️ Silent on a travel day when nothing she wore was packed (2026-08-16): on
+   the two edge days an unpacked piece is one she wore at HOME, so offering to
+   file it as a trip piece is the app arguing with the rule above — and worse,
+   accepting the offer makes it a member, which is the one thing that can turn a
+   home wear into trip history permanently. A mixed outfit still offers, because
+   something in it did go in the bag. */
+function tripMissingPieces(itemIds, date = null) {
   const c = tripCapsule();
   if (!c) return null;
   const members = new Set((capsuleLinkMap.get(c.id) || []).map(l => l.item_id));
+  const d = date || todayStr();
+  if (isDatedTrip(c) && tripEdgeDay(c, d) && members.size
+      && ![...new Set(itemIds)].some(id => members.has(id))) return null;
   const missing = [...new Set(itemIds)].filter(id => id && !members.has(id) && itemById.get(id));
   return missing.length ? { c, missing } : null;
 }
@@ -122,6 +206,12 @@ function tripRecapData(c, opts = {}) {
   for (const w of rows) {
     if (w.worn_on < c.start_date || w.worn_on > through) continue;
     if (w.item_id) {
+      /* ⚠️ A piece she didn't pack, worn on the day she left or the day she got
+         back, was worn at HOME (2026-08-16) — it never went on the trip, so it
+         is not "wore it, didn't pack it". Without this the recap reported her
+         travel-day home clothes as trip pieces she'd forgotten to pack, and
+         offered to add them to the suitcase after the trip had ended. */
+      if (!memberIds.has(w.item_id) && memberIds.size && tripEdgeDay(c, w.worn_on)) continue;
       const m = memberIds.has(w.item_id) ? wearDays : outsideDays;
       let s = m.get(w.item_id); if (!s) m.set(w.item_id, s = new Set()); s.add(w.worn_on);
     }

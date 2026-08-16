@@ -845,7 +845,7 @@ async function saveCalClothingLog() {
   if (!ids.length) return renderCalendarDay(body);
   const date = calendarDay;
   try {
-    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const wctx = tripWearContext(date, ids);  // trip mode: auto-stamp "Travel"
     const payload = ids.map(item_id => ({ item_id, worn_on: date, formality_for: deriveWearFormality([item_id]), ...(wctx ? { context: wctx } : {}) }));  // solo wears, no outfit_id
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
@@ -874,7 +874,7 @@ async function saveCalClothingLogAsLook() {
   try {
     const { outfitId } = await createLookFromItems(ids);
     const fml = deriveWearFormality(ids);
-    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const wctx = tripWearContext(date, ids);  // trip mode: auto-stamp "Travel"
     const payload = ids.map(item_id => ({ item_id, worn_on: date, outfit_id: outfitId, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },
@@ -1053,7 +1053,7 @@ async function logLookOnDay(id, { force = false } = {}) {
   }
   try {
     const fml = deriveWearFormality(its.map(it => it.id));
-    const wctx = tripWearContext(date);  // trip mode: auto-stamp "Travel"
+    const wctx = tripWearContext(date, its.map(it => it.id));  // trip mode: auto-stamp "Travel"
     const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: id, formality_for: fml, ...(wctx ? { context: wctx } : {}) }));
     const rows = await rest('/wears', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Prefer: 'return=representation' },

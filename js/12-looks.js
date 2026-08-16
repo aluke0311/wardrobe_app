@@ -2722,7 +2722,7 @@ async function wearSuggestedCombo(combo, { force = false } = {}) {
       return;
     }
     const fml = deriveWearFormality(combo.pieces.map(p => p.id));
-    const wctx = tripWearContext(today);  // trip mode: auto-stamp "Travel"
+    const wctx = tripWearContext(today, combo.pieces.map(p => p.id));  // trip mode: auto-stamp "Travel"
     const rows = await rest("/wears", {
       method: "POST",
       headers: { "Content-Type": "application/json", Prefer: "return=representation" },

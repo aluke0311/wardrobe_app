@@ -457,7 +457,7 @@ async function wearPlannedEntry(date, entryIdx) {
   if (wears.some(w => w.outfit_id === o.id && w.worn_on === date)) { toast("Already logged that day"); return; }
   try {
     const fml = deriveWearFormality(its.map(it => it.id));
-    const twc = tripWearContext(date);
+    const twc = tripWearContext(date, its.map(it => it.id));
     const ctx = [...new Set([...(entry.contexts || []), ...(twc || [])])];
     const payload = its.map(it => ({ item_id: it.id, worn_on: date, outfit_id: o.id, formality_for: fml, ...(ctx.length ? { context: ctx } : {}) }));
     const rows = await rest("/wears", {

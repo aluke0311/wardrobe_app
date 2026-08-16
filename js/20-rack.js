@@ -536,6 +536,8 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
      already reads it. */
   const floor = shiftDate(today, -RACK_RECENT_DAYS);
   const awayR = (typeof awayRanges === "function") ? awayRanges() : [];
+  // Travel-day home wears count as reaching for it (2026-08-16) — see rackWarmth.
+  const awayEdge = (typeof tripEdgeMemberMap === "function") ? tripEdgeMemberMap() : new Map();
   /* ⚠️ WEARING IS NOT PLANNING (2026-08-05). Her rule for dress-only pieces is
      "unless I have planned something that requires that level", and forcing a
      piece in because she wore it last week is the one remaining door that let a
@@ -552,7 +554,7 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
   for (const w of rows) {
     if (!w || !w.item_id || !w.worn_on) continue;
     if (w.worn_on < floor || w.worn_on > today) continue;
-    if (awayR.length && awayRangeFor(w.worn_on, awayR)) continue;
+    if (awayR.length && !wearWasAtHome(w.worn_on, w.item_id, { ranges: awayR, edgeMap: awayEdge })) continue;
     if (!ok(w.item_id)) continue;
     if (dressOnlyLived(w.item_id)) continue;
     raw.add(w.item_id);
@@ -623,11 +625,16 @@ const RACK_AWAY_PENALTY_DAYS = 21;
 function rackWarmth(itemId, today = todayStr(), { wearRows = null, away = null } = {}) {
   const rows = wearRows || wears;
   const rs = away || ((typeof awayRanges === "function") ? awayRanges() : []);
+  /* ⚠️ The day she flew out and the day she flew back are half at home, and the
+     suitcase says which half (2026-08-16). Something she wore that morning and
+     did NOT pack is a home wear — it should rank as one, not sit 21 days behind
+     everything else under the away penalty. */
+  const edgeMap = (typeof tripEdgeMemberMap === "function") ? tripEdgeMemberMap() : new Map();
   let lastHome = null, lastAny = null;
   for (const w of rows) {
     if (w.item_id !== itemId || !w.worn_on) continue;
     if (!lastAny || w.worn_on > lastAny) lastAny = w.worn_on;
-    if (rs.length && awayRangeFor(w.worn_on, rs)) continue;
+    if (rs.length && !wearWasAtHome(w.worn_on, w.item_id, { ranges: rs, edgeMap })) continue;
     if (!lastHome || w.worn_on > lastHome) lastHome = w.worn_on;
   }
   if (!lastAny) return 0;
