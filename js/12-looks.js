@@ -2974,7 +2974,20 @@ function renderSuggestSheet() {
       ${capsules.length ? `<button class="btn btn-sec" data-scap>＋ Add to a trip or capsule</button>` : ""}
       <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>✨ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
-    </div>` : `
+    </div>
+    ${/* ⚠️ "You've dressed for this before" IS VISIBLE AGAIN (2026-08-17, her ask:
+          "for all outfit suggesters, that's where I want it — tappable from
+          within outfit suggester"). It was inside the Refine fold, which is
+          CLOSED by default since 2026-08-14 — so the app's memory of how she
+          dressed for weather like today's was in the suggester in name only.
+          It sits under the actions rather than above the outfit: the outfit is
+          the answer and leads, the way to act on it comes next, and this is the
+          evidence underneath. Each tile opens that day's look, or that day on the
+          calendar when the wear was never saved as one (wireWxMemory).
+          ⚠️ Rendered ONCE, here, and nowhere else in the app — that is what makes
+          "all outfit suggesters" true for every surface that opens this sheet,
+          without the row being repeated on any of them. */""}
+    ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}` : `
     <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>✨ Try again</button></div>`}
     ${/* ⚠️ REFINE COMES AFTER THE ANSWER (2026-08-14). These same chips used to
           open the sheet — 25 of them, 587px, 90% of the first screen — so asking
@@ -3001,7 +3014,6 @@ function renderSuggestSheet() {
           </div>
         </div>
         ${suggestRatherHtml()}
-        ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}
       </div>` : ""}
     </div>`;
 
@@ -4153,6 +4165,121 @@ function outfitIncomplete(o) {
 
 // Review sheet for incomplete looks: see them, open them, deconstruct the
 // junk ones one tap at a time (wears always survive).
+/* ---- looks created and never worn (2026-08-17, her ask) --------------------
+   "I want a way to delete all looks that have been created but never worn."
+   She has 1,100+ looks and most are unnamed, so the ones that never left the
+   wardrobe are pure clutter in every picker and list.
+
+   ⚠️ THIS IS CURATION, NOT AN INTEGRITY PROBLEM, so it deliberately does NOT go
+   in the Settings health check. That was decided once already: season/weather
+   disagreements were kept out of it because "routing them through a health-check
+   row built an audit queue she couldn't act on". It lives in Looks Stats beside
+   Liked Looks, which is the other list about what to do with outfits.
+
+   ⚠️ THREE THINGS ARE HELD BACK, and the sheet says how many and why — a sweep
+   that silently took them would be deleting decisions she made:
+   ① HEARTED looks. `likedNeglectedOutfits()` exists to RESURFACE liked-but-never-
+      worn looks; deleting them here would fight that feature directly.
+   ② PLANNED looks — assigned to a day or sitting in a capsule's outfit bucket.
+      Deleting one breaks a plan she is still holding.
+   ③ Looks made in the last NEVERWORN_GRACE_DAYS. A look built last night for
+      tomorrow has not had its chance yet, and is the single likeliest thing to
+      be lost to an impatient sweep. */
+const NEVERWORN_GRACE_DAYS = 14;
+
+function plannedLookIds() {
+  const out = new Set();
+  for (const c of capsules) {
+    const plan = c.plan || {};
+    for (const k of Object.keys(plan)) for (const id of (plan[k] || [])) out.add(id);
+  }
+  const dp = kvData.get("dayplan") || {};
+  for (const d of Object.keys(dp)) for (const e of (dp[d] || [])) if (e && e.outfit) out.add(e.outfit);
+  return out;
+}
+
+/* { list, heldLiked, heldPlanned, heldNew } — the list is what a sweep would
+   take; the three counts are what it would not, so the sheet can say so. */
+function neverWornLooks() {
+  const planned = plannedLookIds();
+  const cutoff = shiftDate(todayStr(), -NEVERWORN_GRACE_DAYS);
+  let heldLiked = 0, heldPlanned = 0, heldNew = 0;
+  const list = [];
+  for (const o of outfits) {
+    if (outfitWornCount(o) > 0) continue;
+    if (o.rating === 1) { heldLiked++; continue; }
+    if (planned.has(o.id)) { heldPlanned++; continue; }
+    const made = (o.created_at || "").slice(0, 10);
+    if (made && made > cutoff) { heldNew++; continue; }
+    list.push(o);
+  }
+  // Oldest first: the ones that have had the longest to be worn and weren't.
+  list.sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  return { list, heldLiked, heldPlanned, heldNew };
+}
+
+function openNeverWornLooksSheet() {
+  const { list, heldLiked, heldPlanned, heldNew } = neverWornLooks();
+  const held = [];
+  if (heldLiked) held.push(`${heldLiked} hearted`);
+  if (heldPlanned) held.push(`${heldPlanned} planned`);
+  if (heldNew) held.push(`${heldNew} made in the last ${NEVERWORN_GRACE_DAYS} days`);
+  const rows = list.slice(0, 200).map(o => {
+    const made = (o.created_at || "").slice(0, 10);
+    const cats = [...new Set(outfitItems(o).map(i => i.subcategory || i.category || "?"))].join(" + ");
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line)">
+      <button data-nw-open="${esc(o.id)}" style="width:56px;flex:none">${outfitCollageHtml(o, 4)}</button>
+      <button data-nw-open="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
+        <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</div>
+        <div style="font-size:12px;color:var(--muted)">${esc(cats)}${made ? ` · made ${fmtDate(made)}` : ""}</div>
+      </button>
+      <button class="cap-chip" data-nw-del="${esc(o.id)}" style="flex:none;color:var(--danger)">Delete</button>
+    </div>`;
+  }).join("");
+  $("#logInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="nwClose">Done</button>
+      <h2>Never worn</h2>
+      <span style="width:54px"></span>
+    </div>
+    <div class="muted" style="font-size:12.5px;padding:4px 18px 8px">Saved looks that have never been logged. Deleting one removes the outfit only — no wear history exists to lose.${
+      held.length ? ` Held back: ${esc(held.join(" · "))}.` : ""}</div>
+    ${list.length > 1 ? `<div style="padding:0 16px 8px"><button class="btn btn-sec" id="nwDelAll" style="width:100%;color:var(--danger)">Delete all ${list.length}</button></div>` : ""}
+    ${rows || `<div class="center muted" style="padding:28px 16px">🎉 Every look you've saved has been worn.</div>`}
+    ${list.length > 200 ? `<div class="muted" style="font-size:12px;padding:10px 18px">Showing the 200 oldest — "Delete all" takes every one.</div>` : ""}
+    <div style="height:max(env(safe-area-inset-bottom),20px)"></div>`;
+  showSheet("logSheet");
+  hydratePhotos($("#logInner"));
+  const back = () => { hideSheet("logSheet"); if ($(".screen.active")?.id === "tab-stats") renderStats(); };
+  $("#nwClose").onclick = back;
+  $("#logInner").querySelectorAll("[data-nw-open]").forEach(b => {
+    b.onclick = () => { hideSheet("logSheet"); openLookFrom(b.dataset.nwOpen); };
+  });
+  $("#logInner").querySelectorAll("[data-nw-del]").forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await deconstructLookCore(b.dataset.nwDel); openNeverWornLooksSheet(); }
+      catch (e) { toast(e.message); b.disabled = false; }
+    };
+  });
+  const all = $("#nwDelAll");
+  if (all) all.onclick = async () => {
+    if (!confirm(`Delete ${list.length} looks you've never worn? The pieces and all your wear history are untouched — only the saved outfits go.`)) return;
+    all.disabled = true; all.textContent = "Deleting…";
+    let done = 0;
+    try {
+      for (const o of list) { await deconstructLookCore(o.id); done++; }
+      toast(`${done} look${done === 1 ? "" : "s"} deleted`);
+      back();
+    } catch (e) {
+      // Partial progress is real progress — say where it stopped rather than
+      // leaving her guessing how many went.
+      toast(`Stopped after ${done} — ${e.message}`);
+      openNeverWornLooksSheet();
+    }
+  };
+}
+
 function openIncompleteLooksSheet() {
   const list = outfits.filter(outfitIncomplete);
   const rows = list.map(o => {

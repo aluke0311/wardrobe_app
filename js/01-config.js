@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-17 r1";
+const APP_VERSION = "2026-08-17 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,10 @@ const APP_VERSION = "2026-08-17 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-17 r2", notes: [
+    "Stats → Looks Stats → \"Never worn\" lists every saved look you've never logged, with a Delete all. It holds back three kinds and tells you how many: ones you've hearted, ones sitting in a plan, and anything made in the last two weeks that hasn't had its chance yet. Deleting a never-worn look removes the outfit only — there's no wear history to lose",
+    "\"You've dressed for this before\" is visible again in the outfit suggester. It had ended up inside the Refine fold, which is closed by default, so it was there in name only — it now sits under the buttons, and each past day is tappable. It's been removed from the Today card, so it lives in one place: any screen that opens the suggester gets it",
+  ] },
   { v: "2026-08-17 r1", notes: [
     "Photos with the background removed keep their transparency. They were being flattened onto white on upload, which is why cut-out pieces sat in a white box on the tile — and looked worst in dark mode. Photos that were already solid are unchanged; only ones that actually have transparency are kept that way",
     "Trip wears now count in proportion to how much of the trip you actually wore the piece. Before, anything worn away got pushed 21 days back whether you lived in it for eight days or wore it once — so the things you really reach for on a trip were invisible to the rack afterwards. Wear it most of the trip and it ranks like something you wore at home; wear it once and it still steps back",

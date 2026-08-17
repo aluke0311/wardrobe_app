@@ -237,6 +237,56 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-17 r2 — DELETING LOOKS SHE NEVER WORE, AND THE MEMORY ROW WAS HIDDEN
+INSIDE A CLOSED FOLD. Selftest 310 → **312**, run GREEN; both new cases
+mutation-checked red in the same session.**
+
+**"Delete all looks created but never worn"** (her ask; she has 1,100+ looks, 98%
+unnamed, so the ones that never left the wardrobe are clutter in every picker).
+`neverWornLooks()` + `openNeverWornLooksSheet()`, reached from a **Looks Stats**
+row beside Liked Looks.
+- ⚠️ **NOT in the Settings health check, deliberately.** That screen is for
+  integrity problems, and this is curation. The same call was made once before:
+  season/weather disagreements were kept out of it because "routing them through
+  a health-check row built an audit queue she couldn't act on".
+- ⚠️ **THREE SHIELDS, and the sheet states each count.** ① HEARTED —
+  `likedNeglectedOutfits()` exists to RESURFACE liked-but-never-worn looks, so
+  sweeping them would fight that feature directly. ② PLANNED — in a capsule's
+  plan or a `dayplan` entry; deleting one breaks a plan she is still holding.
+  ③ Made in the last `NEVERWORN_GRACE_DAYS`(14) — a look built last night for
+  tomorrow is the likeliest thing to lose to an impatient sweep.
+- Uses `deconstructLookCore`, the same primitive as `deleteLook`; for a
+  never-worn look there is no wear history to keep, which is why the copy can say
+  "no wear history exists to lose" honestly. A partial failure reports where it
+  stopped rather than leaving the count a mystery.
+
+⚠️ **"YOU'VE DRESSED FOR THIS BEFORE" WAS INSIDE THE REFINE FOLD, WHICH IS CLOSED
+BY DEFAULT.** Her ask was "for all outfit suggesters, that's where I want it —
+tappable from within outfit suggester but not elsewhere", and the reason it felt
+missing is that 2026-08-14 r1 folded the filter chips away and this row went with
+them: present in the sheet, invisible in practice. It now renders **below the
+action buttons** (measured y=1,136 with Refine closed) — the outfit is the answer
+and leads, the way to act on it comes next, and this is the evidence underneath.
+Putting it above the actions would undo r1's whole point.
+- **Removed from the Today card** (`{compact:true}`), along with its now-dead
+  `wireWxMemory($("#homeBody"))` call — a live handler for markup nobody renders
+  is how a removed thing creeps back (r7's rule).
+- ⚠️ **ONE call site, and a structural case pins it.** Rendering it only in the
+  suggester is what makes "all outfit suggesters" true for every surface that
+  OPENS the sheet, without repeating the row on any of them.
+- ⚠️ **The case's fold check had to be re-anchored twice.** `_sugg.refineOpen`
+  also matches its initialiser and the chevron, and `suggestRatherHtml()` matches
+  that function's DEFINITION earlier in the file — both made the first version
+  fire on correct code. It anchors on the block's own opening,
+  ``_sugg.refineOpen ? `<div``.
+
+**STILL OPEN — the planning suggester.** Her third ask, *"for planning, I want an
+outfit suggester for planning rather than the way it looks now"*, is NOT built:
+the planning surfaces already call `openSuggestSheet` with a `planCtx`, so what
+"the way it looks now" refers to is genuinely ambiguous (the Today card's thumb
+strip? the day-plan sheet's per-entry rows? the week planner?). Asked rather than
+guessed.
+
 **2026-08-17 r1 — PARTIAL CREDIT FOR AWAY WEARS, TRANSPARENT PHOTOS, AND THE
 RACK IN THE PLACES SHE ALREADY LOOKS. Selftest 307 → **310**, run GREEN; all 3
 new cases mutation-checked red (four mutations), and ONE OF THEM WAS VACUOUS ON
@@ -3741,7 +3791,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-17 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-17 r2`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -4088,7 +4138,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **310/310** (2026-08-17 r1, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **312/312** (2026-08-17 r2, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

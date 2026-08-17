@@ -1062,6 +1062,15 @@ function renderStatsMain() {
           </div>
           ${row("Most Worn Looks", topLookSub, "looks:most-worn")}
           ${row("Liked Looks", `${likedCount} look${likedCount === 1 ? "" : "s"}${neglectedCount ? ` · ${neglectedCount} neglected` : ""}`, "looks:liked-neglected")}
+          ${(() => {
+            /* Curation, not integrity — deliberately NOT a health-check row (see
+               neverWornLooks). Sits beside Liked Looks because both are about
+               what to DO with an outfit rather than how it performed. */
+            const nw = neverWornLooks();
+            return nw.list.length
+              ? row("Never worn", `${nw.list.length} saved look${nw.list.length === 1 ? "" : "s"} never logged`, "looks:never-worn")
+              : "";
+          })()}
           ${weekRhythmBlockHtml()}
           ${row("Contexts", contextsRowSub, "looks:contexts")}
           ${row("Closet vs Life", "Where the closet over- and under-serves your week", "gap")}
@@ -1152,6 +1161,7 @@ function renderStatsMain() {
       if (action === "looks:liked-neglected") {
         statsOutfitsMode = "liked-neglected"; statsView = "outfits"; renderStats(); return;
       }
+      if (action === "looks:never-worn") { openNeverWornLooksSheet(); return; }
       if (action === "looks:contexts") {
         statsView = "contexts"; renderStats(); return;
       }

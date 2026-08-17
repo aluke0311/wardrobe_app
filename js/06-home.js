@@ -1165,7 +1165,13 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
     }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
   }
   // Precedent (Round C): what she actually wore the last times it felt like this.
-  const mem = trip ? "" : wxMemoryRowHtml(wx, [...new Set(genEntries.flatMap(e => e.contexts || []))], { compact: true });
+  /* ⚠️ "You've dressed for this before" lives ONLY in the outfit suggester now
+     (2026-08-17, her ask: "for all outfit suggesters, that's where I want it —
+     tappable from within outfit suggester but not elsewhere"). It rendered here
+     too, in a compact variant, which put a second scrollable strip of past
+     outfits on the one card meant to answer today at a glance. Every surface
+     that opens the suggester still gets it, which is what makes "all outfit
+     suggesters" true without repeating the row on each of them. */
   // Plan-ahead lives INSIDE the card now — Home had too many stacked rows.
   const foot = (tripModeId || isToday) ? "" :
     `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
@@ -1180,7 +1186,7 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
           : `<button class="lnk" data-tm-alt style="font-size:12.5px;color:var(--muted)">Something else to wear? ›</button>`}
       </div>`
     : body;
-  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${wornHtml}${secondary}${mem}${foot}</div>`;
+  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${wornHtml}${secondary}${foot}</div>`;
 }
 /* ===================================================================
    PLAN THE WEEK  (2026-08-03)
@@ -1702,7 +1708,7 @@ function renderHome() {
   $("#homeBody").innerHTML =
     `${dash}${todayCardHtml()}${ask}${cta}<div class="hnav">${tiles}</div>${tomorrowCardHtml()}${attnHtml}${otd}`;
   hydratePhotos($("#homeBody"));
-  wireWxMemory($("#homeBody"));
+  // (wireWxMemory is not called here: the memory row is suggester-only now.)
   $("#homeBody").querySelectorAll("[data-otd]").forEach(b => {
     b.onclick = () => { switchTab("calendar"); calendarDay = b.dataset.otd; renderCalendarDay($("#calendarBody")); };
   });

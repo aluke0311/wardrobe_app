@@ -289,6 +289,83 @@ async function run() {
       ? true : `pool filter on image_path is back: ${JSON.stringify(guilty)}`;
   });
 
+  /* ================= 2026-08-17 r2 ======================================
+     ⚠️ "You've dressed for this before" belongs to the OUTFIT SUGGESTER and
+     nowhere else (her ask), and it has to be reachable without opening anything.
+     It had drifted into the Refine fold, which is CLOSED by default since
+     2026-08-14 — present in the sheet, invisible in practice.
+     Structural, because the failure is a call site appearing somewhere new, and
+     because "is it inside the fold" is a question about the source, not about
+     one render. */
+  t("the weather memory row renders in the suggester only, and outside the fold", () => {
+    const src = window.__src || {};
+    const files = Object.keys(src).filter(p => p.startsWith("js/"));
+    if (!files.length) return "no sources fetched";
+    const strip = (c) => c.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+    const callers = [];
+    for (const p of files) {
+      const code = strip(src[p] || "");
+      // the definition itself lives in 06-home.js; only CALLS count
+      for (const m of code.matchAll(/wxMemoryRowHtml\s*\(/g)) {
+        const before = code.slice(Math.max(0, m.index - 40), m.index);
+        if (/function\s+$/.test(before)) continue;
+        callers.push(p);
+      }
+    }
+    const uniq = [...new Set(callers)];
+    if (uniq.length !== 1 || uniq[0] !== "js/12-looks.js")
+      return `rendered from ${JSON.stringify(uniq)} — it must be the suggester alone`;
+    if (callers.length !== 1) return `${callers.length} call sites inside the suggester; expected 1`;
+    /* …and NOT inside the collapsed Refine block. Anchored on the block's own
+       opening — `_sugg.refineOpen ? \`<div` — because `_sugg.refineOpen` alone
+       also matches its initialiser and the chevron, and `suggestRatherHtml()`
+       matches that function's DEFINITION earlier in the file (both of which made
+       the first version of this assertion fire on correct code). */
+    const code = strip(src["js/12-looks.js"] || "");
+    const call = code.indexOf("wxMemoryRowHtml(");
+    const foldOpens = code.indexOf("_sugg.refineOpen ? `<div");
+    if (foldOpens < 0) return "could not find the Refine block — re-anchor this check";
+    if (call > foldOpens)
+      return "the memory row is back inside the Refine fold, which is closed by default";
+    return true;
+  });
+
+  /* ⚠️ A sweep that deletes looks has to hold back the ones she DECIDED about —
+     hearted, planned, or too new to have had a chance. Asserts both halves: the
+     shields hold, AND an ordinary never-worn look is still swept (a shield bug
+     that held back everything would otherwise pass). */
+  t("the never-worn sweep holds back hearted, planned and brand-new looks", () => {
+    const saved = { outfits: W.outfits, links: W.outfitLinks, wears: W.wears,
+                    caps: W.capsules, capById: W.capsuleById, plan: W.kvData.get("dayplan") };
+    try {
+      const mk = (id, extra) => ({ id, name: null, rating: null, archived: false,
+                                   created_at: D(-100), ...extra });
+      W.outfits = [mk("plain"), mk("heart", { rating: 1 }), mk("planned"),
+                   mk("fresh", { created_at: D(-1) }), mk("worn")];
+      W.outfitLinks = W.outfits.flatMap(o => [{ outfit_id: o.id, item_id: "tee0" },
+                                              { outfit_id: o.id, item_id: "jea0" }]);
+      W.wears = [{ item_id: "tee0", worn_on: D(-20), outfit_id: "worn" }];
+      W.capsules = [{ id: "cP", name: "C", start_date: null, end_date: null,
+                      plan: { bucket: ["planned"] } }];
+      W.capsuleById = new Map([["cP", W.capsules[0]]]);
+      W.kvData.delete("dayplan");
+      W.buildOutfitIndexes();
+      const r = W.neverWornLooks();
+      const ids = r.list.map(o => o.id);
+      if (!ids.includes("plain")) return "an ordinary never-worn look was not swept — the shields are too wide";
+      if (ids.includes("worn")) return "a look that HAS been worn was swept";
+      for (const [id, why] of [["heart", "hearted"], ["planned", "planned"], ["fresh", "brand new"]])
+        if (ids.includes(id)) return `a ${why} look would be deleted`;
+      return (r.heldLiked === 1 && r.heldPlanned === 1 && r.heldNew === 1)
+        ? true : `held counts wrong: ${r.heldLiked}/${r.heldPlanned}/${r.heldNew}`;
+    } finally {
+      W.outfits = saved.outfits; W.outfitLinks = saved.links; W.wears = saved.wears;
+      W.capsules = saved.caps; W.capsuleById = saved.capById;
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+      W.buildOutfitIndexes();
+    }
+  });
+
   /* ---- the Home weather offer fits the screen (2026-08-13 audit) ----
      `.btn-sec` sets width:100%, and `flex:none` (= flex 0 0 auto) takes its
      BASIS from that width — so "Not now" claimed the whole 332px row and ran
