@@ -366,6 +366,41 @@ async function run() {
     }
   });
 
+  /* ⚠️ Her report: "there's no way to have a suggester that doesn't say 'wear
+     this today'". The day being dressed used to be the CALLER's alone, so the
+     sheet opened from Home could only ever answer today. It has a day now, and
+     picking one synthesises the SAME planCtx the by-day planner passes — one
+     save path, not two. Asserts both directions: today still logs, another day
+     plans, and an explicit caller planCtx still wins. */
+  /* ⚠️ No closet fixture: withPackCloset is declared much further down this file
+     and would be in its temporal dead zone here. Nothing below needs a closet —
+     these assertions are about which DAY the sheet is dressing, not about what
+     it finds. */
+  t("the suggester has a day, and planning writes through the one plan path", () => {
+    const saved = { plan: W.kvData.get("dayplan") };
+    try {
+      W.kvData.delete("dayplan");
+      W.openSuggestSheet();
+      if (W._sugg.forDate !== today) return `opened on ${W._sugg.forDate}, expected today`;
+      if (W._suggPlanCtx()) return "today should log, not plan — a plan context was synthesised";
+      // pick a future day the way the chip does
+      W._sugg.forDate = D(3);
+      const pc = W._suggPlanCtx();
+      if (!pc) return "picking another day produced no plan context";
+      if (pc.date !== D(3)) return `plan context points at ${pc.date}`;
+      if (!pc.kv) return "the synthesised context must write the kv day plan, like the by-day planner";
+      // an explicit caller context still wins over the picked day
+      W.openSuggestSheet(null, null, { kv: true, date: D(5), entryIdx: 0 });
+      if (W._sugg.forDate !== D(5)) return "an explicit planCtx did not set the day";
+      W._sugg.forDate = D(2);
+      return W._suggPlanCtx().date === D(5)
+        ? true : "the picked day overrode the caller's explicit plan context";
+    } finally {
+      W.hideSheet("logSheet");
+      if (saved.plan === undefined) W.kvData.delete("dayplan"); else W.kvData.set("dayplan", saved.plan);
+    }
+  });
+
   /* ---- the Home weather offer fits the screen (2026-08-13 audit) ----
      `.btn-sec` sets width:100%, and `flex:none` (= flex 0 0 auto) takes its
      BASIS from that width — so "Not now" claimed the whole 332px row and ran

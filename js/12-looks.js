@@ -1885,6 +1885,16 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.seedItemId = seedItemId;
   _sugg.capsuleId = capsuleId;
   _sugg.planCtx = planCtx || null;
+  /* ⚠️ THE SHEET HAS A DAY NOW (2026-08-17, her report: "there's no way to have a
+     suggester that doesn't say 'wear this today'"). Until this, the day being
+     dressed was decided entirely by the CALLER — a planCtx or nothing — so the
+     suggester opened from Home could only ever answer today, and planning
+     Thursday meant finding a different door into the same sheet.
+     ⚠️ It does NOT add a second way to save. When forDate is not today the sheet
+     SYNTHESISES the same planCtx the by-day planner would have passed
+     (`_suggPlanCtx`), so there is still exactly one plan-writing path. */
+  _sugg.forDate = (planCtx && planCtx.date && planCtx.date !== PLAN_BUCKET)
+    ? planCtx.date : todayStr();
   // kv day-plan entries can pre-seed a level (from their contexts' usual
   // formality) or activity mode (a Workout-context entry).
   _sugg.targetLevel = (planCtx && planCtx.level) || null;
@@ -1930,7 +1940,7 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   showSheet("logSheet");
   if (!planCtx && !_sugg.wx) loadHomeWeather().then(wx => {
     // Only apply if the suggestion sheet is still the one showing (#sgClose is ours)
-    if (!wx || _sugg.planCtx || $("#logSheet").hidden || !$("#sgClose")) return;
+    if (!wx || _suggPlanCtx() || $("#logSheet").hidden || !$("#sgClose")) return;
     _sugg.wx = wx;
     // Untouched sheet → regenerate with weather; otherwise just show the chip
     if (_sugg.idx === 0 && !_sugg.locked.size) {
@@ -2006,10 +2016,22 @@ function _suggBasePool() {
   if (_sugg.unworn) return _sugg.unworn.pool;
   return planningPool({ capsuleId: _sugg.capsuleId, level: _sugg.targetLevel, wholeCloset: _sugg.wholeCloset });
 }
+/* The effective plan context: whatever the caller passed, or one synthesised
+   from the day she picked inside the sheet. ⚠️ ONE save path — the "Plan for X"
+   button and the by-day planner's ✨ Suggest write through the same branch. */
+function _suggPlanCtx() {
+  if (_sugg.planCtx) return _sugg.planCtx;
+  const d = _sugg.forDate;
+  if (!d || d === todayStr()) return null;
+  return (typeof _dpSuggestCtx === "function")
+    ? _dpSuggestCtx(d, null, (dayPlan(d)[0] || {}).contexts)
+    : { kv: true, date: d, entryIdx: null };
+}
 /* The date this sheet is dressing, when that isn't today. Null for "right now".
    Drives the date-aware laundry filter below. */
 function _suggPlanDate() {
-  const d = _sugg.planCtx && _sugg.planCtx.date;
+  const pc = _suggPlanCtx();
+  const d = pc && pc.date;
   if (!d || d === PLAN_BUCKET) return null;
   return d > todayStr() ? d : null;
 }
@@ -2860,7 +2882,30 @@ function renderSuggestSheet() {
     const lbl = pd ? `\u{1F9FA} Clean on ${esc(weekDayLabel(pd))} · ${hidden} out` : `\u{1F9FA} Clean only`;
     return `<button class="cap-chip${_suggClean() ? " on" : ""}" data-sclean style="font-size:13px" title="${pd ? "Skip what'll be in the hamper by then" : "Skip items in the hamper"}">${lbl}</button>`;
   })();
-  const poolRow = `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:14px 16px 18px">
+  /* ⚠️ WHAT DAY IS THIS FOR — one control, always visible (2026-08-17).
+     Her report: "there's no way to have a suggester that doesn't say 'wear this
+     today'", and "I want the planning feature to be more sophisticated and
+     simple". The sophistication is that there is now ONE suggester with a day on
+     it, rather than a separate planning route per surface: pick a day and the
+     season, the weather, the day's declared contexts and the laundry forecast
+     all follow it, and the primary button becomes "Plan for Thu".
+     ⚠️ It sits with the pool and laundry chips, which never fold. The day is not
+     a refinement — it changes what the answer MEANS, and a sheet that silently
+     assumed today is what she reported.
+     ⚠️ Hidden inside a capsule/trip-scoped sheet and on the bucket, where the day
+     is the caller's business and a second date control would fight it. */
+  const _isBucket = _sugg.planCtx && _sugg.planCtx.date === PLAN_BUCKET;
+  const dayRow = (_sugg.capsuleId || _isBucket) ? "" : (() => {
+    const t = todayStr();
+    const days = [0, 1, 2, 3, 4, 5, 6].map(n => shiftDate(t, n));
+    if (_sugg.forDate && !days.includes(_sugg.forDate)) days.push(_sugg.forDate);
+    return `<div class="cap-catbar" style="flex-wrap:nowrap;gap:6px;padding:10px 16px 2px;overflow-x:auto">
+      ${days.map(d => `<button class="cap-chip${_sugg.forDate === d ? " on" : ""}" data-sday="${esc(d)}" style="font-size:13px;flex:0 0 auto">${
+        d === t ? "Today" : esc(planDayLabel(d))}</button>`).join("")}
+    </div>`;
+  })();
+
+  const poolRow = dayRow + `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:14px 16px 18px">
     ${suggestPoolChipHtml()}${cleanChip}${wxChip}
   </div>`;
 
@@ -2960,8 +3005,9 @@ function renderSuggestSheet() {
             plan ("Wore it"), never here — a pack occasion is usually a FUTURE
             day, so "wear this today" is wrong about the date as well. */""}
       <button class="btn" data-swear>${
-        _sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date)))
-        : "Wear this today"}</button>
+        (() => { const pc = _suggPlanCtx();
+          return pc ? (pc.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(pc.date)))
+                    : "Wear this today"; })()}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
       ${/* ⚠️ Her ask (2026-08-16): "from the create/suggest an outfit mode, there
             should be the option to add that outfit to a trip/capsule." The
@@ -2988,6 +3034,10 @@ function renderSuggestSheet() {
           "all outfit suggesters" true for every surface that opens this sheet,
           without the row being repeated on any of them. */""}
     ${wxMemoryRowHtml(_suggWx(), _sugg.activeContext ? [_sugg.activeContext] : null)}` : `
+    ${/* ⚠️ The day row renders in the EMPTY state too. Finding nothing for
+          Thursday is exactly when she needs to be able to change the day —
+          without it the sheet is a dead end on whichever day it failed. */""}
+    ${dayRow}
     <div style="padding:0 16px 16px"><button class="btn btn-sec" data-snew>✨ Try again</button></div>`}
     ${/* ⚠️ REFINE COMES AFTER THE ANSWER (2026-08-14). These same chips used to
           open the sheet — 25 of them, 587px, 90% of the first screen — so asking
@@ -3074,6 +3124,26 @@ function renderSuggestSheet() {
   // is "the dressier kind of Work day", not "forget Work".
   $("#logInner").querySelectorAll("[data-sctxlvl]").forEach(b => {
     b.onclick = () => { _sugg.targetLevel = +b.dataset.sctxlvl; regen(); };
+  });
+
+  /* Changing the day re-derives everything that depends on it: the season it
+     falls in, that day's weather, and the level its declared contexts imply.
+     ⚠️ It clears a level she picked by hand ONLY when the new day declares one of
+     its own — otherwise switching days would silently drop a "6. Dressed Up" she
+     had just chosen. */
+  $("#logInner").querySelectorAll("[data-sday]").forEach(b => {
+    b.onclick = () => {
+      const d = b.dataset.sday;
+      if (d === _sugg.forDate) return;
+      _sugg.forDate = d;
+      _sugg.season = seasonOf(d);
+      const pc = _suggPlanCtx();
+      if (pc && pc.level) _sugg.targetLevel = pc.level;
+      _sugg.wx = (typeof _dpWx === "function" && d !== todayStr())
+        ? (_dpWx(d) || null)
+        : ((_homeWx && _homeWx.wx) || null);
+      regen();
+    };
   });
 
   $("#logInner").querySelectorAll("[data-sseason]").forEach(b => {
@@ -3278,8 +3348,9 @@ function renderSuggestSheet() {
   });
 
   const wearBtn = $("#logInner").querySelector("[data-swear]");
-  if (wearBtn && combo && _sugg.planCtx) wearBtn.onclick = async () => {
-    const pc = _sugg.planCtx;
+  const _pc = _suggPlanCtx();
+  if (wearBtn && combo && _pc) wearBtn.onclick = async () => {
+    const pc = _pc;
     try {
       const oid = await saveComboAsOutfit(combo.pieces);
       hideSheet("logSheet");
@@ -3305,7 +3376,7 @@ function renderSuggestSheet() {
   if (buildBtn && combo) buildBtn.onclick = () => {
     hideSheet("logSheet");
     // seed the builder with the first piece, then open (carry plan context if any)
-    openBuilder(null, combo.pieces[0].id, _sugg.planCtx);
+    openBuilder(null, combo.pieces[0].id, _suggPlanCtx());
     // after builder opens, drop all pieces
     setTimeout(() => {
       if (!builder) return;

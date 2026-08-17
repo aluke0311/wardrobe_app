@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-17 r2";
+const APP_VERSION = "2026-08-17 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,11 @@ const APP_VERSION = "2026-08-17 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-17 r3", notes: [
+    "The outfit suggester has a day now. A row of days sits with the pool and laundry chips — pick one and the season, that day's weather, its contexts and the laundry forecast all follow it, and the button changes from \"Wear this today\" to \"Plan for Thu, Aug 20\". Planning a day is the same sheet as asking what to wear, instead of a different route per screen",
+    "Tomorrow's card stops apologising. It used to say \"Work — no clean outfit found; tap ✨ to dig\", which is an error message about the app's own search in the one place you go to plan. Nothing had failed — you just hadn't planned that day — so it says that, and gives you a proper \"✨ Plan this day\" button that opens the suggester already set to that day",
+    "The day row also shows when nothing was found, so a day with no outfit isn't a dead end",
+  ] },
   { v: "2026-08-17 r2", notes: [
     "Stats → Looks Stats → \"Never worn\" lists every saved look you've never logged, with a Delete all. It holds back three kinds and tells you how many: ones you've hearted, ones sitting in a plan, and anything made in the last two weeks that hasn't had its chance yet. Deleting a never-worn look removes the outfit only — there's no wear history to lose",
     "\"You've dressed for this before\" is visible again in the outfit suggester. It had ended up inside the Refine fold, which is closed by default, so it was there in name only — it now sits under the buttons, and each past day is tappable. It's been removed from the Today card, so it lives in one place: any screen that opens the suggester gets it",

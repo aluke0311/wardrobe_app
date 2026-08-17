@@ -237,6 +237,39 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-17 r3 — THE SUGGESTER HAS A DAY. Selftest 312 → **313**, run GREEN;
+the new case mutation-checked red.** Her report, after being asked which part of
+planning was wrong: *"All of the above. it's ugly on the home page and doesn't
+actually open the suggester. then there's no way to have a suggester that doesn't
+say 'wear this today'. I want the planning feature to be more sophisticated and
+simple and less ugly and more intuitive."*
+
+⚠️ **THE DAY BEING DRESSED WAS THE CALLER'S ALONE.** `_sugg.planCtx` came from
+whoever opened the sheet, so the suggester opened from Home could only ever answer
+TODAY, and planning Thursday meant finding a different door into the same sheet —
+which is why planning felt like a separate, worse feature. `_sugg.forDate` is the
+fix: a day row beside the pool and laundry chips, and season, weather, the day's
+declared contexts and the laundry forecast all follow it.
+- ⚠️ **IT ADDS NO SECOND WAY TO SAVE.** `_suggPlanCtx()` returns the caller's
+  planCtx when there is one, otherwise SYNTHESISES the same `_dpSuggestCtx` the
+  by-day planner would have passed. One plan-writing branch, still.
+- ⚠️ **An explicit caller planCtx wins over the picked day** — pinned, because the
+  by-day planner and the trip bucket set a date the sheet must not quietly move.
+- ⚠️ **The day row sits with the pool/laundry chips, which never fold.** The day
+  is not a refinement: it changes what the answer MEANS, and a sheet that silently
+  assumed today is precisely what she reported.
+- ⚠️ **It renders in the EMPTY state too** — finding nothing for Thursday is
+  exactly when she needs to change the day; without it the sheet is a dead end on
+  whichever day failed.
+- Hidden inside a capsule/trip-scoped sheet and on the bucket, where the day is
+  the caller's business and a second date control would fight it.
+
+**AND THE PLANNING CARD STOPPED APOLOGISING.** Tomorrow's empty state read
+*"Work — no clean outfit found; tap ✨ to dig"* — an error message about the app's
+own search, in the one place she goes to plan, when nothing had failed: she simply
+hadn't planned that day. It now says so and offers a full-width **✨ Plan this
+day** (measured 317px) that opens the day-aware sheet already set to that date.
+
 **2026-08-17 r2 — DELETING LOOKS SHE NEVER WORE, AND THE MEMORY ROW WAS HIDDEN
 INSIDE A CLOSED FOLD. Selftest 310 → **312**, run GREEN; both new cases
 mutation-checked red in the same session.**
@@ -280,8 +313,8 @@ Putting it above the actions would undo r1's whole point.
   fire on correct code. It anchors on the block's own opening,
   ``_sugg.refineOpen ? `<div``.
 
-**STILL OPEN — the planning suggester.** Her third ask, *"for planning, I want an
-outfit suggester for planning rather than the way it looks now"*, is NOT built:
+**ANSWERED IN r3 (above).** Her third ask, *"for planning, I want an outfit
+suggester for planning rather than the way it looks now"*, was not built in r2:
 the planning surfaces already call `openSuggestSheet` with a `planCtx`, so what
 "the way it looks now" refers to is genuinely ambiguous (the Today card's thumb
 strip? the day-plan sheet's per-entry rows? the week planner?). Asked rather than
@@ -3791,7 +3824,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-17 r2`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-17 r3`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -4138,7 +4171,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **312/312** (2026-08-17 r2, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **313/313** (2026-08-17 r3, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

@@ -1137,8 +1137,19 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
         </div>`;
       }
       const pieces = tomorrowGenPieces(tm, e, pool, idx);
-      if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found${trip ? " in the suitcase" : ""}; tap ✨ to dig.</div>
-        <div style="display:flex;gap:6px;padding:2px 0;flex-wrap:wrap">${quickCtxChipHtml(tm, idx, e.contexts)}<button class="cap-chip" data-tm-refine="${idx}" data-tm-date="${esc(tm)}">✨ Suggest</button></div>`;
+      /* ⚠️ AN INVITATION, NOT AN APOLOGY (2026-08-17, her report: the planning
+         card is "ugly" and "doesn't actually open the suggester"). This used to
+         read "Work — no clean outfit found; tap ✨ to dig", which is an error
+         message about the app's own search, in the one place she comes to plan.
+         Nothing had failed: she simply hasn't planned that day yet. It says so,
+         and the way forward is a real button rather than a chip — and the sheet
+         it opens now carries the DAY, so its own primary action reads
+         "Plan for Tue, Aug 18" instead of "Wear this today". */
+      if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0 8px">${
+          esc(ctxs ? `Nothing planned for ${ctxs} yet` : "Nothing planned yet")}${
+          trip ? " — nothing in the suitcase fits it" : ""}.</div>
+        <button class="btn btn-sec" data-tm-refine="${idx}" data-tm-date="${esc(tm)}" style="width:100%">✨ Plan this day</button>
+        <div style="display:flex;gap:6px;padding:8px 0 2px;flex-wrap:wrap">${quickCtxChipHtml(tm, idx, e.contexts)}</div>`;
       /* Name the pool, always — same non-negotiable as the suggester's pool chip.
          ⚠️ WITH ITS COUNT (2026-08-16). The label was here from the start; the
          number wasn't, and "from the rack" without it is half the promise she
