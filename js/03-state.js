@@ -348,7 +348,6 @@ function openDayPlanSheet(date) {
          demand, the proposed counts and the coverage. Reload the state (which
          keeps her stored pieces) rather than leaving a screen built on the old
          occasions. */
-      if (capsuleView === "pack" && capsuleId) packLoadState(capsuleId);
       renderCapsules();
     }
   };

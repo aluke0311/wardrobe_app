@@ -130,7 +130,7 @@ async function buildTripWeather(capsule) {
   if (!locs.length) return [];
 
   // Legs (consecutive dates sharing one location) come from tripLegs in
-  // js/21-pack.js — the pack solver needs exactly this split to build one rack
+  // js/21-trip.js — tripLegs/tripLocForDate live there (they outlived the solver)
   // per climate, and two copies of it would drift. Defined in a later-loaded
   // file, which is fine: this runs long after load.
   const groups = tripLegs(capsule);

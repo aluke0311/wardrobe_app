@@ -1897,7 +1897,6 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
   _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
   _sugg.tmPick = null;                // set only by openTomorrowRevise
-  _sugg.packOcc = null;               // set only by packOpenSuggest
   _sugg.varyFrom = null;              // set only by openVaryLook
   _sugg.layerPick = null;             // the open layer/shirt picker, if any
   // Default pool is THE RACK (2026-07-26). Her four conditions when she approved
@@ -2039,9 +2038,8 @@ function _suggPrefs() {
    offering to contradict it can only produce an empty sheet. */
 function suggestRatherHtml() {
   if (_sugg.shapeKey) return "";
-  const scoped = !!(_sugg.packOcc);
   const ctx = _sugg.activeContext;
-  if (!scoped && !ctx) return "";          // nothing to attach a rule TO
+  if (!ctx) return "";                     // nothing to attach a rule TO
   const cur = _suggPrefs() || {};
   const chip = (key, val, label, title) => {
     const on = cur[key] === val || (key === "levelShift" && +cur.levelShift === val);
@@ -2962,8 +2960,7 @@ function renderSuggestSheet() {
             plan ("Wore it"), never here — a pack occasion is usually a FUTURE
             day, so "wear this today" is wrong about the date as well. */""}
       <button class="btn" data-swear>${
-        _sugg.packOcc ? "Use this outfit"
-        : _sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date)))
+        _sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date)))
         : "Wear this today"}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
       <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>✨ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
@@ -3010,11 +3007,6 @@ function renderSuggestSheet() {
        — a writeback nothing on screen named. With "Use this outfit" carrying
        that job explicitly, a close that also committed would mean the sheet had
        no way to back out at all. Save is the button; ✕ is "never mind". */
-    if (_sugg.packOcc) {
-      _sugg.packOcc = null;
-      hideSheet("logSheet");
-      return;
-    }
     // Opened from the Tomorrow card: whatever it ends as is what the card keeps.
     if (_sugg.tmPick) {
       const c = _sugg.results[_sugg.idx];
@@ -3099,12 +3091,7 @@ function renderSuggestSheet() {
      the two first, so one tap never wipes a general rule she set months ago. */
   const prefClear = $("#logInner").querySelector("[data-sprefclear]");
   if (prefClear) prefClear.onclick = async () => {
-    if (_sugg.occPrefs && _sugg.packOcc) {
-      _sugg.occPrefs = null;
-      await packClearOccPref(_sugg.packOcc.cid, _sugg.packOcc.occId);
-    } else if (_sugg.activeContext) {
-      await clearContextPref(_sugg.activeContext);
-    }
+    if (_sugg.activeContext) await clearContextPref(_sugg.activeContext);
     regen();
   };
 
@@ -3121,22 +3108,11 @@ function renderSuggestSheet() {
       const val = key === "levelShift" ? +raw : raw;
       const cur = _suggPrefs() || {};
       const isOn = key === "levelShift" ? (+cur.levelShift === val) : (cur[key] === val);
-      const po = _sugg.packOcc;
-      /* ⚠️ Turning a chip OFF inside a trip has to be able to overrule a
-         STANDING context rule, not just delete the occasion's own key — delete
-         it and the context rule underneath simply reasserts itself, so the chip
-         visibly does nothing. SIL_ANY is that "allow it, just here". */
-      let patch;
-      if (!isOn) patch = { [key]: val };
-      else if (po && key === "silhouette" && (contextPref(po.ctx) || {}).silhouette === val)
-        patch = { silhouette: SIL_ANY };
-      else patch = { [key]: null };
-      if (po) {
-        await packSetOccPref(po.cid, po.occId, patch);
-        _sugg.occPrefs = effectivePrefs(po.ctx, packOccPref(po.cid, po.occId));
-      } else if (_sugg.activeContext) {
-        await setContextPref(_sugg.activeContext, patch);
-      }
+      /* The trip-scoped override (and SIL_ANY, its "allow it just here" escape)
+         went with the pack solver — a rule is now always the CONTEXT's rule,
+         which is what the scope line above the chips has always promised. */
+      const patch = !isOn ? { [key]: val } : { [key]: null };
+      if (_sugg.activeContext) await setContextPref(_sugg.activeContext, patch);
       regen();
     };
   });
@@ -3281,16 +3257,7 @@ function renderSuggestSheet() {
   });
 
   const wearBtn = $("#logInner").querySelector("[data-swear]");
-  /* Pack occasion: the button IS the save. Ordered first so it wins over the
-     planCtx branch — packOpenSuggest deliberately passes no planCtx, but a
-     future caller passing both should still save to the occasion. */
-  if (wearBtn && combo && _sugg.packOcc) wearBtn.onclick = () => {
-    const { cid, occId } = _sugg.packOcc;
-    _sugg.packOcc = null;
-    hideSheet("logSheet");
-    packSetOccasionOutfit(cid, occId, combo.pieces.map(p => p.id));
-  };
-  else if (wearBtn && combo && _sugg.planCtx) wearBtn.onclick = async () => {
+  if (wearBtn && combo && _sugg.planCtx) wearBtn.onclick = async () => {
     const pc = _sugg.planCtx;
     try {
       const oid = await saveComboAsOutfit(combo.pieces);

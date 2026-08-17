@@ -569,13 +569,6 @@
   .lk-swipe-inner { position: relative; width: 100%; transition: transform .25s ease; background: var(--surface); }
 
   /* Pack: the outfit list, grouped by the buckets she declared. */
-  .pack-bucket-sum { margin: 10px 14px 4px; padding: 10px 12px; border-radius: 12px;
-    background: var(--panel); font-size: 13px; line-height: 1.5; color: var(--muted); }
-  .pack-bucket { margin: 12px 0 0; }
-  .pack-bucket-hd { padding: 6px 16px 4px; display: flex; flex-direction: column; gap: 2px; }
-  .pack-bucket-hd b { font-family: var(--serif); font-size: 17px; color: var(--ink); }
-  .pack-bucket-hd span { font-size: 12.5px; color: var(--muted); }
-  .pack-occ-when { display: block; padding: 0 12px 4px; font-size: 11.5px; color: var(--muted); }
 
   /* ---------- capsules ---------- */
   .cap-tabbar { display: flex; gap: 8px; padding: 10px 14px 0; }
@@ -1262,14 +1255,8 @@
     border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
   .pack-occ.locked { border-color: var(--accent); }
   .pack-occ.gap { background: var(--bg2); }
-  .pack-occ-hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; }
-  .pack-occ-hd b { font-size: var(--fs-base); }
-  .pack-occ-hd span { font-size: var(--fs-xs); color: var(--muted); text-align: right; }
-  .pack-occ-gap { font-size: 13px; color: var(--muted); }
   /* The laundry flag on a day's own outfit. Muted, not alarming — it is a fact
      about the schedule, not an error, and on a long trip it may be the plan. */
-  .pack-occ-laun { font-size: 12px; color: var(--muted); margin-top: 8px;
-    padding: 6px 8px; background: var(--panel); border-radius: 8px; line-height: 1.35; }
   .pack-occ-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 
   /* The review, inline on the occasion card. ⚠️ The options row SCROLLS
@@ -1277,47 +1264,22 @@
      2–4 thumbs each will not fit a 390px column, and letting it wrap turns one
      comparison into a stack you can't compare at a glance. Comparing is the
      whole interaction. */
-  .pack-review { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
-  .pack-review-q { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
-  .pack-review-opts { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
-    -webkit-overflow-scrolling: touch; }
-  .pack-review-opt { flex: 0 0 auto; background: var(--panel); border: 1.5px solid var(--line);
-    border-radius: 12px; padding: 8px; min-width: 112px; max-width: 132px; text-align: center; cursor: pointer; }
   .pack-review-opt.on { border-color: var(--accent); background: var(--surface); }
-  .pack-review-opt:active { transform: scale(.97); }
-  .pack-review-thumbs { display: flex; gap: 3px; justify-content: center; margin-bottom: 6px; }
   /* A garment name can be long; two lines then an ellipsis keeps every option
      the same height so the row still reads as a comparison. */
-  .pack-review-lbl { font-size: 11.5px; color: var(--muted); line-height: 1.3;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    overflow: hidden; }
   .pack-review-opt.on .pack-review-lbl { color: var(--accent); font-weight: 600; }
   /* Options that aren't in the bag yet. Dashed edge = "not packed", and the
      cost line states the weight so the trade is visible before she taps. */
   .pack-review-opt.beyond { border-style: dashed; }
-  .pack-review-cost { font-size: 10.5px; font-weight: 600; color: var(--accent); margin-top: 3px; }
-  .pack-review-more { display: flex; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
   /* Why this card has one option and not three. Stated, not hidden — the card
      used to render nothing at all here, which read as the question failing. */
-  .pack-review-none { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
 
   /* The full-screen options list. A ROW per outfit rather than a horizontal
      strip: this screen exists because three chips on a card weren't enough
      room, so it spends the width on legibility — thumbs big enough to judge,
      names underneath, and a vertical list that scrolls the way every other
      list in the app does. */
-  .pack-opt-list { padding: 0 14px; }
-  .pack-opt-tile { display: block; width: 100%; text-align: left; margin: 0 0 8px;
-    padding: 10px; border-radius: 12px; background: var(--surface);
-    border: 1.5px solid var(--line); box-shadow: var(--shadow-sm); cursor: pointer; }
   .pack-opt-tile.on { border-color: var(--accent); }
-  .pack-opt-tile:active { transform: scale(.99); }
-  .pack-opt-thumbs { display: flex; gap: 6px; flex-wrap: wrap; }
-  .pack-opt-th { width: 58px; height: 58px; border-radius: 9px; background-color: var(--panel);
-    background-size: contain; background-position: center; background-repeat: no-repeat; }
-  .pack-opt-meta { margin-top: 7px; }
-  .pack-opt-names { font-size: 12.5px; color: var(--ink); line-height: 1.35; }
-  .pack-opt-cost { font-size: 11.5px; font-weight: 600; color: var(--muted); margin-top: 2px; }
 
   .pack-pieces { display: flex; gap: 6px; flex-wrap: wrap; }
   .pack-piece { background: none; border: 0; padding: 0; width: 62px; text-align: center; }
@@ -1326,38 +1288,19 @@
   .pack-pname { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.25;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .pack-bag { padding: 0 14px; }
-  .pack-grp { margin-top: 14px; }
-  .pack-grp-hd { display: flex; justify-content: space-between; align-items: baseline;
-    padding: 6px 2px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
   .pack-grp-hd .t { font-family: var(--serif); font-size: var(--fs-md); }
   .pack-grp-hd .n { font-size: var(--fs-sm); color: var(--muted); font-weight: 700; }
   /* The app's reason for a slot's number — she revises against this, so it sits
      directly under the dial rather than behind a disclosure. */
-  .pack-grp-why { font-size: 12.5px; color: var(--muted); padding: 2px 2px 6px; line-height: 1.35; }
-  .pack-subs { margin: 6px 0 2px; padding: 6px 10px; border-radius: 12px; background: var(--panel); }
-  .pack-bagrow { display: flex; align-items: center; gap: 10px; padding: 7px 2px; }
   .pack-bagrow.on { opacity: .55; }
   .pack-bagrow.muted .pack-bagname { color: var(--muted); }
   .pack-tick { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 50%; border: 1.5px solid var(--line);
     background: var(--surface); color: var(--accent); font-size: 14px; font-weight: 700; line-height: 1; }
   .pack-bagrow.on .pack-tick { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
-  .pack-baginfo { flex: 1; min-width: 0; }
-  .pack-bagname { font-size: var(--fs-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pack-bagwhy { font-size: var(--fs-xs); color: var(--muted); margin-top: 1px; }
   .pack-drop { width: 28px; height: 28px; flex: 0 0 28px; border: 0; background: none;
     color: var(--muted); font-size: 19px; line-height: 1; }
 
-  .pack-footer { padding: 18px 0 0; }
   .pack-chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
-  .pack-mix { background: var(--bg2); border-radius: 12px; padding: 4px 10px; }
-  .pack-mixrow { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; }
-  .pack-mixrow + .pack-mixrow { border-top: 1px solid var(--line); }
   .pack-anchor { display: flex; justify-content: space-between; align-items: center;
     padding: 7px 10px; margin-bottom: 6px; background: var(--bg2); border-radius: 10px; font-size: 13px; }
-  .pack-optrow { display: block; width: 100%; text-align: left; padding: 8px 14px; background: none;
-    border: 0; border-bottom: 1px solid var(--line); }
   .pack-optrow.on { background: var(--accent-soft); }
-  .pack-grade { margin: 12px 14px; padding: 12px; border-radius: 12px; background: var(--surface2);
-    border: 1px solid var(--line); font-size: 13px; line-height: 1.6; }
-  .pack-grade-hd { font-family: var(--serif); font-size: var(--fs-md); margin-bottom: 4px; }

@@ -237,6 +237,57 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-16 r3 — THE PACK SOLVER IS GONE. Selftest 428 → **307**, run GREEN.**
+Her call, from the audit's findings. It was switched off in 2026-08-10 r6 and kept
+whole for one-commit reversibility; r7 removed the last five surfaces that could
+start it. It then sat dormant for six days, and the audit found it was still
+writing to the database.
+
+⚠️ **THE SUITE SHRANK BY 121 CASES AND THAT IS THE HONEST NUMBER.** Nothing was
+weakened — those cases drove functions that no longer exist. **Do not pad it back
+up.** One case was **removed with the decision it guarded** ("the pack's suggester
+offers to save the outfit, never to log it today" — the `_sugg.packOcc` writeback):
+a red case is not automatically a regression.
+
+**What went:** 222 of 239 definitions in the old `js/21-pack.js` (~5,950 lines),
+~40 wiring handlers, the `capsuleView` `"pack"`/`"packopts"` branches, the
+definites picker mode, the builder's pack-occasion save path and its "In the bag"
+pool chips, the suggester's trip-scoped preference override (and `SIL_ANY` with
+it), 45 dead `pack-*` CSS rules and 10 orphaned selftest helpers.
+- ⚠️ **`js/21-pack.js` → `js/21-trip.js`.** 17 definitions, 367 lines: the trip
+  screen (`renderCapsuleTrip`, `tripListSectionHtml`, `tripOutfitsHtml`, the ⋯
+  menu) plus `tripLegs`/`tripLocForDate`, which `js/18-weather.js` needs and which
+  outlived the solver. The file was named for something it no longer contained.
+- ⚠️ **THE LIVE SET WAS COMPUTED, NOT GUESSED.** Transitive closure from the
+  rendering roots, then every `data-*` the wiring reads was checked against
+  whether any *surviving* code EMITS it. That is what caught the one non-obvious
+  keeper: **`openCapAnchorSheet`**, whose markup (`data-capanchor-add`) is on the
+  live capsule CREATE form in `js/16-capsules.js`, not on any pack screen.
+- ⚠️ **`data-pack` and `data-pack-tick` are different hooks.** The first is the
+  packed tick on a trip's list and is very much alive; the second was the pack
+  screen's and rendered nowhere. Two handlers (`data-pack-addany`,
+  `data-pack-resolve`) already had no emitter anywhere in the app.
+- **The DB residue is fixed and measured:** `addItemsToCapsule` → `savePackRecord`
+  did a GET **and** a POST to `/kv` on every add to a trip packed before r6.
+  After: a single `POST /capsule_items`, with a stored `pack:<cid>` record present.
+- ⚠️ **`kv "pack:<cid>"` rows are now unread orphans on the live DB**, deliberately
+  not migrated — the same call as `"wxaudit_home"` and the `"mend"` tag.
+- **Verified after:** all 23 modules parse, zero dangling references to the 222
+  removed names, and all 13 screens render with no JS errors (the trip's Outfits
+  section still proposes outfits from the list — 4 from 11 pieces on a fixture).
+
+⚠️ **THE TEST-FILE SURGERY IS THE PART THAT NEARLY WENT WRONG, so read this before
+attempting anything similar.** Three attempts at deleting 100 cases by parsing
+failed: a hand-rolled paren scanner breaks on **regex literals** (`/(?:src|href)="/`
+looks like an unterminated string), and boundary heuristics fail in both
+directions — too long swallows a following helper's opening brace, too short
+leaves a dangling `});`. What worked: a conservative boundary, plus **removing
+trailing orphan closers**, plus **a JavaScriptCore parse check after every single
+removal**, bottom-up, reverting any cut that breaks the file. ⚠️ And the first
+labelling pass was WRONG because the over-long boundary made a case look like a
+pack case when the pack reference actually belonged to the next one — it flagged
+101 rather than 99. **Verify the boundary before trusting the label.**
+
 **2026-08-16 r1 — A CLOSET / RACK / TRIPS WORKFLOW AUDIT, AND THE TRAVEL-DAY
 RULE. Selftest 416 → **422**, run GREEN; all 6 new cases mutation-checked red in
 the same session (four separate mutations, one per guarded behaviour).**
@@ -627,6 +678,9 @@ everywhere — the r5 sideways-scroll bug has not regressed); all 13 stats views
 render without throwing and with no oversized thumbs; Closet vs Life still agrees
 with itself across both surfaces; Contexts counts DAYS not rows.
 
+⚠️ **SUPERSEDED 2026-08-16 r3 — THE PACK WAS REMOVED. The paragraph below is
+kept because its reasoning is the record of why it survived this long.**
+
 ⚠️ **THE PACK IS CONFIRMED UNREACHABLE, AND r6 AND r7 STATE OPPOSITE RULES ABOUT
 IT — left alone deliberately, because it is her call.** 6,238 lines / 173
 functions dormant, ~40 handlers still live in wiring, but the entry markup
@@ -886,6 +940,9 @@ the card ended with more doors than when she complained about the doors.
   nothing is ever removed.** Every individual round here was correct and
   well-tested; the sum was unusable. Compress-don't-delete (2026-07-26) applied
   to the one feature built after it was written.
+
+⚠️ **SUPERSEDED 2026-08-16 r3: the solver has since been REMOVED, which is the
+"own unhurried pass" this entry asked for. Read the r3 entry at the top.**
 
 ⚠️ **NOTHING WAS DELETED — the pack solver is INTACT AND UNREACHABLE.** Every
 `pack*` function still exists and still passes its cases; only the UI stopped
@@ -2788,7 +2845,7 @@ naming or ordering changed. ~19,900 lines of JS across 23 files:
 | `js/18-weather.js` | 311 | Open-Meteo, geocoding, `_wxCache` |
 | `js/19-wiring.js` | 798 | `switchTab`, `wireEvents`, delegation |
 | `js/20-rack.js` | 490 | **the rack** — three bands, rotation, second look, rack screen |
-| `js/21-pack.js` | 2742 | **the trip builder** — solver, pack screen, revision |
+| `js/21-trip.js` | 367 | **the trip screen** — your list + outfits from it (renamed from `21-pack.js` 2026-08-16, when the solver was removed) |
 | `js/22-wear-detail.js` | 190 | **the wear screen** — `buildWearDelta`, the block, both surfaces |
 | `js/23-boot.js` | 185 | snapshot, freshness, auth, `init()` |
 
@@ -3597,7 +3654,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-16 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-16 r3`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -3944,7 +4001,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **422/422** (2026-08-16 r1, RUN GREEN). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **307/307** (2026-08-16 r3, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

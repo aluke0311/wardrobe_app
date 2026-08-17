@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-16 r2";
+const APP_VERSION = "2026-08-16 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,10 @@ const APP_VERSION = "2026-08-16 r2";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-16 r3", notes: [
+    "The old pack solver is gone for good. It was switched off six days ago and left in place in case you wanted it back; you didn't, so it's been removed — about 5,950 lines of it. Nothing you use changed: a trip is still your list plus outfits proposed from that list, and the by-day planner, the recap, the \"still in the suitcase\" nudge and the hamper row were never part of the solver",
+    "One real effect you might notice: adding an item to an older trip no longer makes two pointless trips to the server to update a plan nothing could open",
+  ] },
   { v: "2026-08-16 r2", notes: [
     "The rack opens on the pieces you haven't reached for lately, instead of making you scroll past the 32 you already wear to get to them. Same three bands, read the other way round — that band is the whole reason the rack can't quietly shrink your wardrobe, and it was the last thing on its own screen",
     "The closet gets to the clothes faster: the rack, hamper, worn tray and capsule filter are one row of chips rather than four stacked buttons, so you see six categories before scrolling instead of three. The clean/hamper filter now lives on the screens that actually show items — on the folder list it was filtering the counts, so \"Tops · 15\" meant 15 dirty tops",

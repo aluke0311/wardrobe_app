@@ -115,14 +115,10 @@ function renderBuilderRail() {
      too: a capsule-scoped builder defaults to `pickAll`, i.e. this rail is the
      mode she actually lands in, and a widen that only exists on the screen she
      never opens is no widen at all. */
-  if (builder.planCtx && builder.planCtx.packOcc) {
-    const cid = builder.planCtx.packOcc.cid;
-    const n = (capsuleLinkMap.get(cid) || []).length;
-    const sc = (id, lbl, on) => `<button class="cap-chip${on ? " on" : ""}" data-bcap="${esc(id)}">${esc(lbl)}</button>`;
-    chips += `<div class="cap-catbar" style="padding:0 10px 6px">${
-      sc(cid, `\u{1F9F3} In the bag · ${n}`, builder.scopeCapsuleId === cid)}${
-      sc("", "Whole closet", !builder.scopeCapsuleId)}</div>`;
-  }
+  /* The pack's "In the bag · N / Whole closet" pool chips went with the solver
+     (2026-08-16) — nothing sets `planCtx.packOcc` now. A trip-scoped builder
+     still reaches the trip's own pieces: `builder.scopeCapsuleId`, set by the
+     trip screen's ✎ Change it / ✎ Build one yourself. */
   if (builder.pickAll) {
     const pool = builderPool();
     const counts = new Map();
@@ -268,13 +264,7 @@ function renderBuilderPicker() {
      outfit starts in the suitcase (that's the question she's answering), and
      "Whole closet" is the "or from outside the pack too" half of her ask. The
      full capsule list would be noise here: only one trip is in play. */
-  if (builder.planCtx && builder.planCtx.packOcc) {
-    const cid = builder.planCtx.packOcc.cid;
-    const n = (capsuleLinkMap.get(cid) || []).length;
-    capBar = `<div class="cap-catbar" style="padding-top:6px">${
-      chip(cid, `\u{1F9F3} In the bag · ${n}`, builder.scopeCapsuleId === cid)}${
-      chip("", "Whole closet", !builder.scopeCapsuleId)}</div>`;
-  } else if (!builder.planCtx && capsules.length) {
+  if (!builder.planCtx && capsules.length) {
     capBar = `<div class="cap-catbar" style="padding-top:6px">${chip("", "All", !builder.scopeCapsuleId)}${capsules.map(c => chip(c.id, c.name, builder.scopeCapsuleId === c.id)).join("")}</div>`;
   }
   body.innerHTML = `
@@ -394,11 +384,6 @@ function builderCancel() {
   const planCtx = builder ? builder.planCtx : null;
   builder = null;
   $("#app").classList.remove("builder-mode");
-  if (planCtx && planCtx.packOcc) {
-    switchTab("capsules");
-    capsuleId = planCtx.packOcc.cid; capsuleView = "pack"; renderCapsules();
-    return;
-  }
   if (planCtx && planCtx.kv) { switchTab("home"); openDayPlanSheet(planCtx.date); return; }
   if (planCtx) { switchTab("capsules"); capsuleId = planCtx.capsuleId; capsuleView = "plan"; renderCapsules(); return; }
   switchTab("looks");
@@ -663,21 +648,6 @@ function finishBuilder(id, msg) {
   const planCtx = builder && builder.planCtx;
   builder = null;
   $("#app").classList.remove("builder-mode");
-  /* ⚠️ A BUILDER SAVE CAN BE AN OCCASION'S OUTFIT (2026-08-09, her report: "if
-     an outfit is almost good, I'd like the option to open and revise it in the
-     builder myself"). The look is created as normal — that's what the builder
-     is for — and then assigned to the occasion, so the pack screen and the
-     Looks list agree about what it is rather than the pack holding a private
-     copy. */
-  if (planCtx && planCtx.packOcc) {
-    const { cid, occId } = planCtx.packOcc;
-    switchTab("capsules");
-    capsuleId = cid; capsuleView = "pack";
-    packSetOccasionOutfit(cid, occId, (outfitItemMap.get(id) || []).slice())
-      .then(() => renderCapsules());
-    toast("That's the outfit for this one");
-    return;
-  }
   if (planCtx && planCtx.kv) {
     // Round A day plan (kv): attach + land back on the day's plan editor.
     switchTab("home");
@@ -700,11 +670,8 @@ function finishBuilder(id, msg) {
 }
 
 function capsuleBack() {
-  /* ⚠️ The options page returns to whichever screen opened it — the unified
-     trip screen for a dated trip, the old pack screen otherwise. */
-  if (capsuleView === "packopts") { capsuleView = _packOptsFrom || "pack"; renderCapsules(); return navShallower("capsules"); }
-  if (capsuleView === "trip") { capsuleView = "list"; capsuleId = null; _packState = null; renderCapsules(); return navShallower("capsules"); }
-  if (capsuleView === "pack") { capsuleView = "detail"; _packState = null; renderCapsules(); return navShallower("capsules"); }
+  // "pack" / "packopts" went with the solver (2026-08-16); nothing can set them.
+  if (capsuleView === "trip") { capsuleView = "list"; capsuleId = null; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "plan") { capsuleView = "detail"; renderCapsules(); return navShallower("capsules"); }
   if (capsuleView === "pick") { capsuleView = "detail"; return renderCapsules(); }
   if (capsuleView === "form") { _capForm = null; _pendingAddIds = null; capsuleView = capsuleId ? "detail" : "list"; return renderCapsules(); }

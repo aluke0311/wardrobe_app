@@ -694,64 +694,15 @@ function wireEvents() {
        and its handler is gone with it. Leaving a live handler for a removed
        button is how a switched-off feature comes back: the next round adds the
        button again, finds it "already wired", and the solver is running. */
-    // ---- items-first pack screen (2026-07-30) ----
-    const packMode = e.target.closest("[data-packmode]");
-    if (packMode) { _packMode = packMode.dataset.packmode; return renderCapsules(); }
-    const packInc = e.target.closest("[data-pack-inc]");
-    if (packInc) { const s = packInc.dataset.packInc; return packSetTarget(s, (_packState.targets[s] || 0) + 1); }
-    const packDec = e.target.closest("[data-pack-dec]");
-    if (packDec) { const s = packDec.dataset.packDec; return packSetTarget(s, (_packState.targets[s] || 0) - 1); }
-    const packExpand = e.target.closest("[data-pack-expand]");
-    if (packExpand) {
-      const s = packExpand.dataset.packExpand;
-      if (_packOpen.has(s)) _packOpen.delete(s); else _packOpen.add(s);
-      return renderCapsules();
-    }
-    const subInc = e.target.closest("[data-pack-subinc]");
-    if (subInc) {
-      const s = subInc.dataset.packSubinc, sub = subInc.dataset.packSub;
-      const cur = (_packState.subTargets && _packState.subTargets[s] && _packState.subTargets[s][sub]) || 0;
-      return packSetSubTarget(s, sub, cur + 1);
-    }
-    const subDec = e.target.closest("[data-pack-subdec]");
-    if (subDec) {
-      const s = subDec.dataset.packSubdec, sub = subDec.dataset.packSub;
-      const shown = (_packState.subTargets && _packState.subTargets[s])
-        || packSubCounts(s, _packState.targets[s] || 0);
-      return packSetSubTarget(s, sub, Math.max(0, (shown[sub] || 0) - 1));
-    }
-    const packKeep = e.target.closest("[data-pack-keep]");
-    if (packKeep) { e.stopPropagation(); return packToggleKeep(packKeep.dataset.packKeep); }
-    const packSwap1 = e.target.closest("[data-pack-swap1]");
-    if (packSwap1) { e.stopPropagation(); return packSwapOne(packSwap1.dataset.packSwap1); }
-    const packRerollSlotBtn = e.target.closest("[data-pack-rerollslot]");
-    if (packRerollSlotBtn) return packRerollSlot(packRerollSlotBtn.dataset.packRerollslot);
-    const packSel = e.target.closest("[data-pack-sel]");
-    if (packSel) {
-      e.stopPropagation();
-      const id = packSel.dataset.packSel;
-      if (_packSel.has(id)) _packSel.delete(id); else _packSel.add(id);
-      return renderCapsules();
-    }
-    if (e.target.closest("[data-pack-swapsel]")) return packSwapSelected();
-    const noPlanSel = e.target.closest("[data-pack-noplansel]");
-    if (noPlanSel) return packNoPlanSelected(noPlanSel.dataset.packNoplansel === "on");
-    if (e.target.closest("[data-pack-selclear]")) { _packSel.clear(); return renderCapsules(); }
-    if (e.target.closest("[data-pack-occasions]")) return openPackContexts();
-    if (e.target.closest("[data-pack-rebuild]")) return packRebuildFromProposal();
-    if (e.target.closest("[data-pack-resolve]")) return packResolveUnlocked();
-    if (e.target.closest("[data-pack-byday]")) return openTripPlan(capsuleId);
-    if (e.target.closest("[data-pack-keepdays]")) return packKeepDays();
-    if (e.target.closest("[data-pack-tight]")) return openPackModeSheet();
-    if (e.target.closest("[data-pack-addany]")) return openPackAddSheet();
-    const packSwap = e.target.closest("[data-pack-swap]");
-    if (packSwap) return openPackSwapSheet(packSwap.dataset.packOcc, packSwap.dataset.packSwap);
-    const packRerollBtn = e.target.closest("[data-pack-reroll]");
-    if (packRerollBtn) return packReroll(packRerollBtn.dataset.packReroll);
-    const packOpts = e.target.closest("[data-pack-options]");
-    if (packOpts) return openPackOptionsSheet(packOpts.dataset.packOptions);
-    const packOptsPage = e.target.closest("[data-pack-optspage]");
-    if (packOptsPage) return openPackOptionsPage(packOptsPage.dataset.packOptspage);
+    /* ⚠️ THE PACK SOLVER'S HANDLERS ARE GONE (2026-08-16), all ~40 of them.
+       The solver was switched off in r6 and its last entry points removed in r7,
+       but the handlers stayed live for markup that no longer rendered — which is
+       precisely how a switched-off feature comes back: the next round re-adds a
+       button, finds it "already wired", and the solver is running. Two of them
+       (`data-pack-addany`, `data-pack-resolve`) had no emitter left ANYWHERE.
+       ⚠️ `data-pack` — the packed tick on a trip's list — is a different hook and
+       is very much alive; it is handled further down. The dead one was
+       `data-pack-tick`, whose markup never rendered. */
     /* ---- the trip screen: Your list · Outfits (2026-08-10 r4) ----
        ⚠️ Section switches reset the paging, or "Show more" on Outfits survives
        a trip to the list and she comes back to 60 cards. */
@@ -802,73 +753,10 @@ function wireEvents() {
       if (builder) builder.scopeCapsuleId = capsuleId;
       return;
     }
-    if (e.target.closest("[data-trip-tosetup]")) { _tripSection = "plan"; return renderCapsules(); }
-    if (e.target.closest("[data-trip-ctx]")) {
-      if (!_packState || _packState.cid !== capsuleId) packLoadState(capsuleId);
-      return openPackContexts();
-    }
-    if (e.target.closest("[data-trip-definites]"))
-      return openCapsulePicker(capsuleId, { mode: "definites",
-        back: () => { capsuleView = "trip"; _tripSection = "plan"; renderCapsules(); } });
-    if (e.target.closest("[data-trip-laundry]")) return openTripLaundrySheet();
-    const tripMode = e.target.closest("[data-trip-mode]");
-    if (tripMode) return (async () => {
-      await savePackRecord(capsuleId, { mode: tripMode.dataset.tripMode });
-      if (packRecord(capsuleId).built) {
-        const st2 = packLoadState(capsuleId, { resolve: true });
-        packEnsureSolve(st2, { force: true });
-        await packPersist(capsuleId);
-      }
-      renderCapsules();
-    })();
-    if (e.target.closest("[data-trip-build]")) return (async () => {
-      const cid = capsuleId;
-      /* ⚠️ Whatever the Plan section is showing becomes HERS on build, so the
-         pack isn't built on a guess that then re-guesses differently next time.
-         Same rule the build sheet already followed. */
-      if (!packTripContexts(cid))
-        await setPackTripContexts(cid, packSuggestTripContexts(capsuleById.get(cid)));
-      const st2 = packLoadState(cid, { resolve: true });
-      packEnsureSolve(st2, { force: true });
-      await packPersist(cid);
-      _tripSection = "outfits";
-      renderCapsules();
-      toast(`${st2.pack.length} pieces → ${st2.res ? st2.res.assign.size : 0} outfits`);
-    })();
-    const packMoveDay = e.target.closest("[data-pack-moveday]");
-    if (packMoveDay) return openPackMoveDaySheet(packMoveDay.dataset.packMoveday);
-    const packBuildOcc = e.target.closest("[data-pack-buildocc]");
-    if (packBuildOcc) return packBuildOccasion(packBuildOcc.dataset.packBuildocc);
-    const packRuleClear = e.target.closest("[data-pack-ruleclear]");
-    if (packRuleClear) return packClearOccRule(packRuleClear.dataset.packRuleclear);
-    if (e.target.closest("[data-pack-optbuild]") && _packOptsOcc) return packBuildOccasion(_packOptsOcc);
-    const packRather = e.target.closest("[data-pack-rather]");
-    if (packRather) return openPackRatherSheet(packRather.dataset.packRather);
-    const packChoose = e.target.closest("[data-pack-choose]");
-    if (packChoose) return packChooseOutfit(packChoose.dataset.packChoose,
-                                            packChoose.dataset.packIds.split(","));
-    if (e.target.closest("[data-pack-reviewskip]")) return packSkipReview();
-    const packLock = e.target.closest("[data-pack-lock]");
-    if (packLock) return packToggleLock(packLock.dataset.packLock);
-    const packSug = e.target.closest("[data-pack-suggest]");
-    if (packSug) return packOpenSuggest(packSug.dataset.packSuggest);
-    if (e.target.closest("[data-pack-ctx]")) return openPackContexts();
-    // ⚠️ dropocc = take an OCCASION out of the trip; data-pack-drop below is a PIECE.
-    const packDropOcc = e.target.closest("[data-pack-dropocc]");
-    if (packDropOcc) { e.stopPropagation(); return packDropOccasion(packDropOcc.dataset.packDropocc); }
-    const packDropBk = e.target.closest("[data-pack-dropbucket]");
-    if (packDropBk) { e.stopPropagation(); return packDropBucket(packDropBk.dataset.packDropbucket); }
-    if (e.target.closest("[data-pack-undrop]")) return packUndropAll();
-    if (e.target.closest("[data-pack-daysfold]")) { _packDaysOpen = !_packDaysOpen; return renderCapsules(); }
-    // The by-day planner shows the pack's outfits too, so this fires from there.
-    const packWore = e.target.closest("[data-pack-wore]");
-    if (packWore) { e.stopPropagation(); return packWoreOccasion(packWore.dataset.packWore, packWore.dataset.packDate); }
-    const packTick = e.target.closest("[data-pack-tick]");
-    if (packTick) { e.stopPropagation(); return togglePack(packTick.dataset.packTick).then(() => renderCapsules()); }
-    const packDrop = e.target.closest("[data-pack-drop]");
-    if (packDrop) { e.stopPropagation(); return packDropPiece(packDrop.dataset.packDrop); }
-    const packAdd = e.target.closest("[data-pack-add]");
-    if (packAdd) return packAddPiece(packAdd.dataset.packAdd);
+    /* The trip screen's own Plan section, its contexts/definites/laundry/mode
+       controls and the "build the pack" button were all part of the solver and
+       went with it (2026-08-16). `tripPlanSectionHtml` had had zero callers since
+       r6. What survives is above: Your list, Outfits, and the ⋯ menu. */
     // create-form capture (fixed events)
     if (e.target.closest("[data-capanchor-add]")) { syncCapForm(); return openCapAnchorSheet(); }
     const capAnchDel = e.target.closest("[data-capanchor-del]");

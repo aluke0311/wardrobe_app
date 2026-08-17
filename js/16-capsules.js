@@ -94,8 +94,9 @@ function renderCapsules() {
   clearInterval(_wxAutoTimer); _wxAutoTimer = null;  // any prior trip-detail auto-refresh
   if (capsuleView === "form")      body.innerHTML = renderCapsuleForm();
   else if (capsuleView === "pick") body.innerHTML = renderCapsulePicker();
-  else if (capsuleView === "pack" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePack();
-  else if (capsuleView === "packopts" && capsuleById.get(capsuleId)) body.innerHTML = renderPackOptionsPage();
+  /* ⚠️ `capsuleView` "pack" and "packopts" are gone with the solver (2026-08-16).
+     Since r7 nothing could set either one; the branches were the last thing
+     pretending the screens still existed. */
   else if (capsuleView === "trip" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleTrip();
   else if (capsuleView === "plan" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsulePlan();
   else if (capsuleView === "detail" && capsuleById.get(capsuleId)) body.innerHTML = renderCapsuleDetail();
@@ -1311,9 +1312,9 @@ function openCapsulePicker(id, { mode = "capsule", back = null } = {}) {
   capsuleId = id;
   _capPickMode = mode;
   _capPickBack = back;
-  _capPick = mode === "definites"
-    ? new Set(packRecord(id).pinned || [])
-    : new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
+  // The "definites" mode wrote the pack record's pinned ids rather than capsule
+  // membership; it went with the solver (2026-08-16). Only real membership now.
+  _capPick = new Set((capsuleLinkMap.get(id) || []).map(l => l.item_id));
   _capPickFilter = "";
   _capPickCat = null;
   _capPickSub = null;
@@ -1459,47 +1460,16 @@ function togglePick(id) {
 
 async function saveCapsulePicker() {
   const cid = capsuleId;
-  /* Definites write to the pack record, not to capsule membership — a piece
-     you've decided to bring is a constraint on the solve, which is a different
-     thing from the trip's item list. */
-  if (_capPickMode === "definites") {
-    try {
-      await savePackRecord(cid, { pinned: [...(_capPick || [])] });
-      const back = _capPickBack;
-      _capPickMode = "capsule"; _capPickBack = null;
-      if (back) { back(); return; }
-      capsuleView = "pack"; renderCapsules();
-      toast(`${_capPick.size} piece${_capPick.size === 1 ? "" : "s"} you're bringing`);
-    } catch (e) { toast(e.message); }
-    return;
-  }
   const current = new Set((capsuleLinkMap.get(cid) || []).map(l => l.item_id));
   const selected = _capPick;
   const toAdd = [...selected].filter(id => !current.has(id));
   const toRemove = [...current].filter(id => !selected.has(id));
   try {
     if (toAdd.length) await addItemsToCapsule(cid, toAdd, true);
-    /* ⚠️ ONE LIST OF WHAT'S COMING (2026-08-09, her ask: "if I change something
-       from the bag, it should change the build a pack part too").
-
-       There were TWO and they silently fought. This picker wrote only
-       `capsule_items`; the pack's own list is `rec.pieces`; and packSyncMembers
-       computes `drop = members − bag − packed`. So a piece added here vanished
-       from the trip at the next pack edit — an explicit decision destroyed by a
-       background sync, which is the exact failure this whole rework is about.
-       The bag is the source of truth now, and every "add to this trip" door
-       writes it. */
-    if (packRecord(cid).pieces) {
-      const bag = new Set(packRecord(cid).pieces || []);
-      toAdd.forEach(id => bag.add(id));
-      toRemove.forEach(id => bag.delete(id));
-      await savePackRecord(cid, { pieces: [...bag] });
-      if (_packState && _packState.cid === cid) {
-        _packState.pack = [...bag];
-        _packState.res = null;            // the outfits are re-derived on next open
-        packRegroup(_packState);
-      }
-    }
+    /* The pack kept a SECOND list of "what's coming" (`rec.pieces`) that this
+       picker had to mirror, or a piece added here was deleted at the next pack
+       edit. With the solver gone there is one list — `capsule_items` — which is
+       what the trip screen reads. (2026-08-16) */
     if (toRemove.length) {
       const inList = `(${toRemove.map(id => `"${id}"`).join(",")})`;
       await rest(`/capsule_items?capsule_id=eq.${cid}&item_id=in.${inList}`, { method: "DELETE" });
@@ -1520,44 +1490,17 @@ async function saveCapsulePicker() {
    pack's `rec.pieces` were two lists of "what's coming", and packSyncMembers
    computes `drop = members − bag − packed`, so anything added through a door
    that only wrote members was deleted at the next pack edit.
-   ⚠️ `syncPack:false` is for packSyncMembers itself, which is the projection —
-   without it this recurses. */
-async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild, { syncPack = true } = {}) {
+   ⚠️ The `syncPack` option is gone with the solver (2026-08-16); it existed only
+   so packSyncMembers could project the bag back without recursing. Callers that
+   still pass a fourth argument are harmless — it is ignored. */
+async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
   const fresh = itemIds.filter(id => !(capsuleLinkMap.get(cid) || []).some(l => l.item_id === id));
   if (!fresh.length) return;
-  /* ⚠️ WHAT SHE ADDS BY HAND IS A DEFINITE, AND THE OUTFITS RE-DERIVE AROUND IT
-     (2026-08-10 r3, her ask: "make sure adding items individually works as
-     expected, including incorporating into suggested outfits — I want the
-     packing algorithm to try to use the whole list").
-
-     Two things were wrong and they compounded. A hand-added piece went into the
-     bag but wasn't marked hers, so it was "optional" — in no outfit, so the
-     mode's spare trim could drop it, and packSyncMembers would then DELETE it
-     from the trip on the next persist. And `res = null` alone never produced a
-     new solve: the stored assignment still described the trip perfectly, so
-     packEnsureSolve's rehydrate guard passed and the piece sat in the suitcase
-     with no outfit knowing about it.
-     ⚠️ `syncPack` false means this is packSyncMembers projecting the bag BACK —
-     pinning there would turn every piece the solver happened to choose into a
-     definite she never picked. */
-  if (syncPack && packRecord(cid).pieces) {
-    const rec = packRecord(cid);
-    const bag = new Set(rec.pieces || []);
-    const before = bag.size;
-    fresh.forEach(id => bag.add(id));
-    if (bag.size !== before) {
-      const pinned = new Set(rec.pinned || []);
-      fresh.forEach(id => pinned.add(id));
-      await savePackRecord(cid, { pieces: [...bag], pinned: [...pinned], needsResolve: true });
-      if (typeof _packState !== "undefined" && _packState && _packState.cid === cid) {
-        _packState.pack = [...bag];
-        fresh.forEach(id => _packState.keeps.add(id));
-        _packState.res = null;
-        _packState.forceSolve = true;   // the outfits have to see it, not just the bag
-        packRegroup(_packState);
-      }
-    }
-  }
+  /* ⚠️ THIS USED TO WRITE TO THE DATABASE FOR A SWITCHED-OFF FEATURE (removed
+     2026-08-16). Adding an item to a trip called savePackRecord, which did a GET
+     and a POST to /kv to keep the solver's own item list in step — traced live
+     during the audit. It was gated on a stored `rec.pieces`, so it only fired for
+     trips packed before the r6 strip, i.e. exactly her older trips. */
   // `packed` is omitted so this works before the column migration; DB default fills it after.
   const payload = fresh.map(id => ({ capsule_id: cid, item_id: id }));
   const rows = await rest("/capsule_items?select=*", {
