@@ -634,6 +634,114 @@ async function run() {
     }
   };
 
+  /* ================= 2026-08-16 r4: partial credit for away wears ==========
+     ⚠️ HER CORRECTION: "why should an away only wear shift back 21 days and skip
+     away days? that's exactly the problem I want you to fix." A flat penalty is
+     binary and wrong at both ends — a piece worn EIGHT of ten trip days got the
+     same treatment as one worn ONCE. The penalty now scales with the share of the
+     trip she actually wore it.
+     ⚠️ Both directions, always: the case has to fail if the penalty stops scaling
+     AND if it stops existing, or "count trip wears fully" would pass it. */
+  const withTripWears = (fn) => {
+    const saved = { items: W.items, itemById: W.itemById, wears: W.wears, caps: W.capsules,
+                    capsuleById: W.capsuleById, links: W.capsuleLinks, linkMap: W.capsuleLinkMap };
+    const trip = { id: "cS", name: "Trip", kind: "travel", start_date: D(-13), end_date: D(-3),
+                   locations: [{ name: "Away", lat: 40, lon: -3, from: null, to: null }], plan: {} };
+    W.capsules = [trip]; W.capsuleById = new Map([["cS", trip]]);
+    W.items = [{ id: "lived", name: "Lived in" }, { id: "once", name: "Once" }, { id: "home30", name: "Home" }];
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.capsuleLinks = ["lived", "once"].map(id => ({ capsule_id: "cS", item_id: id }));
+    W.capsuleLinkMap = new Map([["cS", W.capsuleLinks]]);
+    /* ⚠️ THE TWO TRIP PIECES SHARE A LAST-WEAR DATE ON PURPOSE. The first version
+       of this fixture had "lived" ending three days later than "once", so plain
+       RECENCY explained the ordering and the case passed happily with the share
+       scaling deleted — vacuous, and its own mutation check is what caught it.
+       With the same last day, only the share can separate them. */
+    const rows = [];
+    for (let k = 0; k < 8; k++) rows.push({ item_id: "lived", worn_on: D(-12 + k) });
+    rows.push({ item_id: "once", worn_on: D(-5) });     // same last day as "lived"
+    rows.push({ item_id: "home30", worn_on: D(-30) });
+    W.wears = rows;
+    try { return fn(trip, rows); }
+    finally {
+      W.items = saved.items; W.itemById = saved.itemById; W.wears = saved.wears;
+      W.capsules = saved.caps; W.capsuleById = saved.capsuleById;
+      W.capsuleLinks = saved.links; W.capsuleLinkMap = saved.linkMap;
+    }
+  };
+
+  t("an away wear earns credit in proportion to how much of the trip she wore it", () => withTripWears((trip, rows) => {
+    const w = (id) => W.rackWarmth(id, today, { wearRows: rows });
+    const lived = w("lived"), once = w("once"), home30 = w("home30");
+    // it must still be a PENALTY: worn once on a trip can't beat a real home wear
+    // from a fortnight ago, or the suitcase owns rotation again (the 2026-08-05 bug)
+    const homeRecent = W.rackWarmth("lived", today,
+      { wearRows: [{ item_id: "lived", worn_on: D(-2) }] });
+    // Same last-wear day, so a difference here can ONLY come from the share.
+    if (!(lived > once + 0.05)) return `share is not being counted: lived-in ${lived.toFixed(3)} vs worn-once ${once.toFixed(3)} on the same last day`;
+    if (!(lived > home30)) return "a piece she wore most of a recent trip still loses to a 30-day-old home wear";
+    /* ⚠️ The other direction: removing the penalty ALTOGETHER is the
+       over-counting half of her complaint, and has to fail here too. A one-day
+       trip wear must score clearly BELOW what that same date would score with no
+       penalty at all.
+       ⚠️ Compared against the arithmetic, not against another piece: every date
+       inside the trip is an away date regardless of membership (only the two
+       EDGE days consult the suitcase), so there is no such thing as a home wear
+       on D(-5) to compare with — the first version of this assertion tried and
+       compared a trip wear with itself. */
+    const noPenalty = (W.RACK_WARM_DAYS - 5) / W.RACK_WARM_DAYS;
+    if (!(once < noPenalty - 0.1)) return `a one-day trip wear scores ${once.toFixed(3)} against ${noPenalty.toFixed(3)} unpenalised — the penalty is gone`;
+    if (!(once < homeRecent)) return "a single trip wear now outranks a recent home wear — the penalty is gone";
+    if (!(once > 0)) return "a single trip wear was erased entirely — that is the under-counting she reported";
+    return true;
+  }));
+
+  t("the share gate decides which trip pieces are forced back into rotation", () => withTripWears((trip, rows) => {
+    const shareOf = (id) => W.awayWearShare(id, W.awayRangeFor(D(-8), W.awayRanges()), rows, today);
+    const lived = shareOf("lived"), once = shareOf("once");
+    if (!(lived >= W.RACK_AWAY_FORCE_SHARE)) return `lived-in share ${lived.toFixed(2)} below the gate`;
+    if (!(once < W.RACK_AWAY_FORCE_SHARE)) return `worn-once share ${once.toFixed(2)} clears the gate — the whole suitcase would be forced in`;
+    // bounded at today, so a trip still running doesn't read as neglect
+    const live = { from: D(-2), to: D(5) };
+    const s = W.awayWearShare("lived", live, [{ item_id: "lived", worn_on: D(-1) }], today);
+    return s > 0.3 ? true : `a running trip divided by its whole length: ${s.toFixed(2)}`;
+  }));
+
+  /* ⚠️ Her report: "images with background removed get uploaded with white
+     background". compressImage used to fillRect white unconditionally. The
+     round-trip is the only honest test — encode, decode, and look at the alpha
+     channel; asserting the file EXTENSION would pass on a WebP that had already
+     been flattened. */
+  ta("a cut-out photo keeps its transparency, an opaque one still flattens", async () => {
+    const doc = document.getElementById("app").contentDocument;
+    const mk = (transparent) => new Promise(res => {
+      const c = doc.createElement("canvas"); c.width = c.height = 40;
+      const x = c.getContext("2d");
+      if (!transparent) { x.fillStyle = "#123456"; x.fillRect(0, 0, 40, 40); }
+      else { x.fillStyle = "#123456"; x.fillRect(10, 10, 20, 20); }   // corners stay clear
+      c.toBlob(b => res(new (document.getElementById("app").contentWindow.File)([b], "t.png", { type: "image/png" })), "image/png");
+    });
+    const alphaOf = (blob) => new Promise((res, rej) => {
+      const img = new (document.getElementById("app").contentWindow.Image)();
+      const u = URL.createObjectURL(blob);
+      img.onload = () => {
+        const c = doc.createElement("canvas"); c.width = img.width; c.height = img.height;
+        const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+        const d = x.getImageData(0, 0, 1, 1).data;      // top-left corner
+        URL.revokeObjectURL(u); res({ a: d[3], rgb: [d[0], d[1], d[2]] });
+      };
+      img.onerror = () => { URL.revokeObjectURL(u); rej(new Error("decode failed")); };
+      img.src = u;
+    });
+    const cut = await W.compressImage(await mk(true));
+    if (cut.ext === "jpg") return "a cut-out image was encoded as JPEG, which cannot carry alpha";
+    const ca = await alphaOf(cut.blob);
+    if (ca.a > 40) return `the transparent corner came back opaque (alpha ${ca.a}) — still flattened`;
+    const solid = await W.compressImage(await mk(false));
+    const sa = await alphaOf(solid.blob);
+    return sa.a > 200 ? true : `an opaque photo lost its opacity (alpha ${sa.a})`;
+  });
+
   t("the travel-day rule: the suitcase decides a wear on the first or last day", () => withEdgeTrip((c) => {
     return eq([
       W.wearWasOnTrip(c, c.start_date, "home"),      // left in her own clothes

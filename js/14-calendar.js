@@ -977,7 +977,27 @@ function wearAgainCandidates() {
   let negPool = likedNeglectedOutfits();
   if (activeCapsuleId) negPool = negPool.filter(o => outfitFullyInCapsule(o, activeCapsuleId));
   const inSeasonNeg = negPool.filter(o => { const s = outfitSeasons(o); return !s.length || s.includes(season); });
-  for (const o of [...inSeasonNeg, ...negPool]) {
+  /* ⚠️ THE RACK'S COLD BAND REACHES THE LOGGING FLOW (2026-08-16, her ask). The
+     dormant band is the rack's anti-calcification mechanism and it only ever
+     surfaced on a screen she had to go and open. Looks made entirely of pieces
+     she hasn't reached for now compete for the same two reserved slots that
+     liked-but-neglected looks already had — resurfacing belongs where she logs.
+     ⚠️ ALL pieces dormant, not ANY: one cold piece in an otherwise current outfit
+     is not a rediscovery, and an any-test would match most of the list (the same
+     all-vs-any reasoning as outfitMatchesFilter's status dim).
+     ⚠️ In-season first, from both sources, then whatever is left — the seasonal
+     preference the liked-neglected half already had. */
+  let coldPool = [];
+  if (typeof rackBandOf === "function") {
+    coldPool = all.filter(o => {
+      const its = outfitItems(o);
+      return its.length >= 2 && its.every(i => rackBandOf(i.id) === "dormant");
+    });
+    if (activeCapsuleId) coldPool = coldPool.filter(o => outfitFullyInCapsule(o, activeCapsuleId));
+  }
+  const seasonOk = (o) => { const s = outfitSeasons(o); return !s.length || s.includes(season); };
+  const inSeasonCold = coldPool.filter(seasonOk);
+  for (const o of [...inSeasonCold, ...inSeasonNeg, ...coldPool, ...negPool]) {
     if (neglected.length >= 2) break;
     if (!neglected.some(n => n.id === o.id)) neglected.push(o);
   }

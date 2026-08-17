@@ -225,10 +225,44 @@ function compressImage(file) {
       const c = document.createElement("canvas");
       c.width = w; c.height = h;
       const ctx = c.getContext("2d");
-      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); // flatten any transparency (true white — this is baked into the stored file, not themed)
+      /* ⚠️ TRANSPARENCY IS PRESERVED WHEN THE SOURCE HAS IT (2026-08-16, her
+         report: "images with background removed get uploaded with white
+         background"). This used to fillRect white unconditionally, to flatten
+         any alpha — right when every photo was a camera shot on a surface, and
+         wrong now she cuts backgrounds out. It also contradicted the display
+         layer: loadPhotoNode sets backgroundColor "transparent" precisely so a
+         cut-out garment sits cleanly on the tile, and every thumb is
+         background-size: contain. So upload was destroying exactly what display
+         was built to show — and a white rectangle looks worst in dark mode,
+         where the tile behind it is not white.
+         ⚠️ JPEG CANNOT CARRY ALPHA, so a transparent image must never reach the
+         JPEG fallback — PNG is the fallback there instead. Bigger, but a photo
+         silently flattened is the bug being fixed. */
+      const mayHaveAlpha = /png|webp|gif|avif/i.test(file.type || "");
       ctx.drawImage(img, 0, 0, w, h);
+      let keepAlpha = false;
+      if (mayHaveAlpha) {
+        try {
+          // Sample the alpha channel rather than trusting the MIME type — most
+          // PNGs are fully opaque, and those should still get the smaller
+          // white-flattened JPEG path.
+          const d = ctx.getImageData(0, 0, w, h).data;
+          for (let k = 3; k < d.length; k += 4) if (d[k] < 250) { keepAlpha = true; break; }
+        } catch { keepAlpha = true; }   // tainted canvas: assume alpha, never flatten
+      }
+      if (!keepAlpha) {
+        // Opaque source: flatten onto true white (baked into the stored file, so
+        // deliberately not a theme token) and take the smaller encodings.
+        ctx.globalCompositeOperation = "destination-over";
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = "source-over";
+      }
       c.toBlob((blob) => {
         if (blob && blob.type === "image/webp") return resolve({ blob, ext: "webp" });
+        if (keepAlpha) {
+          return c.toBlob((png) => png ? resolve({ blob: png, ext: "png" })
+                                       : reject(new Error("Could not process image")), "image/png");
+        }
         c.toBlob((jpg) => jpg ? resolve({ blob: jpg, ext: "jpg" }) : reject(new Error("Could not process image")),
                  "image/jpeg", ENCODE_Q);
       }, "image/webp", ENCODE_Q);

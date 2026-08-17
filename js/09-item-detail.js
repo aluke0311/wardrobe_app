@@ -269,6 +269,31 @@ function openItemDetails(id) {
               const p = itemWxProfile(i.id);
               return p ? `<div class="det-sub">Usually worn ${p.lo}°–${p.hi}°</div>` : "";
             })()}
+            ${(() => {
+              /* ⚠️ THE COMPOSITION OF THE WEAR COUNT, NOT A DISCOUNT ON IT
+                 (2026-08-16, her ask). A 7-day trip writes 7 wear-days for every
+                 piece in the suitcase, so on two trips a year a travelling piece
+                 can take a third of its record from days when the suitcase was
+                 the whole choice. Her decision was to SHOW that and weight
+                 nothing: "I specifically chose these pieces and that's real
+                 too." Every ranking still reads the full count.
+                 Silent when she never travels, or when it's all home — a line
+                 saying "0 travelling" is noise on most of the closet. */
+              if (typeof wearDaySplit !== "function") return "";
+              const s = wearDaySplit(i.id);
+              if (!s.travel) return "";
+              return `<div class="det-sub">${s.home} at home · ${s.travel} travelling</div>`;
+            })()}
+            ${(() => {
+              /* Packing is its own signal — "if I packed them that does seem to
+                 suggest I want to be wearing them". A fact and two numbers, never
+                 a verdict: packed 3× and worn 0× may be the just-in-case option
+                 doing exactly its job. */
+              if (typeof travelRecordFor !== "function") return "";
+              const t = travelRecordFor(i.id);
+              if (!t.packed) return "";
+              return `<div class="det-sub">Packed for ${t.packed} trip${t.packed === 1 ? "" : "s"} · worn on ${t.worn}</div>`;
+            })()}
           </div>
           ${n ? '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : ""}
         </button>

@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-16 r3";
+const APP_VERSION = "2026-08-17 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,16 @@ const APP_VERSION = "2026-08-16 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-17 r1", notes: [
+    "Photos with the background removed keep their transparency. They were being flattened onto white on upload, which is why cut-out pieces sat in a white box on the tile — and looked worst in dark mode. Photos that were already solid are unchanged; only ones that actually have transparency are kept that way",
+    "Trip wears now count in proportion to how much of the trip you actually wore the piece. Before, anything worn away got pushed 21 days back whether you lived in it for eight days or wore it once — so the things you really reach for on a trip were invisible to the rack afterwards. Wear it most of the trip and it ranks like something you wore at home; wear it once and it still steps back",
+    "The by-day plan is a third tab on a trip — Your list · Outfits · By day — instead of being behind the ⋯ menu",
+    "From \"What should I wear?\" you can now add the outfit to a trip or capsule. It adds the pieces to that list too, so the trip can actually rebuild the outfit, and it puts the trip you're on at the top",
+    "Your item pages show how a wear count breaks down — \"31 at home, 12 travelling\" — and how many trips a piece has been packed for. Nothing is weighted or re-ranked by it: it's there so you can see the shape of the number",
+    "Pieces you keep packing are no longer suggested as Declutter candidates, the same way anything in a look you've hearted is already protected",
+    "The rack shows up where you already are: Stats' \"Lately\" says how many of the pieces you hadn't reached for went out this week, the wear screen tells you when you've just rediscovered something, and outfits made entirely of forgotten pieces get a slot in the wear-again strip",
+    "Sort any grid by \"Most packed\" to see what you actually travel with",
+  ] },
   { v: "2026-08-16 r3", notes: [
     "The old pack solver is gone for good. It was switched off six days ago and left in place in case you wanted it back; you didn't, so it's been removed — about 5,950 lines of it. Nothing you use changed: a trip is still your list plus outfits proposed from that list, and the by-day planner, the recap, the \"still in the suitcase\" nudge and the hamper row were never part of the solver",
     "One real effect you might notice: adding an item to an older trip no longer makes two pointless trips to the server to update a plan nothing could open",

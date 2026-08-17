@@ -156,9 +156,18 @@ function wearDetailHtml(d, { live = false } = {}) {
     facts.push(fact(`${p.after} day${p.after === 1 ? "" : "s"} out`));
     if (p.thisYear && p.thisYear !== p.after) facts.push(fact(`${p.thisYear} this year`));
     // Time between wears — the thing she asked for by name.
+    /* ⚠️ A REDISCOVERY IS ONE FACT, NOT TWO (2026-08-16, her ask: "tell me when
+       I've rediscovered something"). This used to render the gap here and a
+       separate "✨ back off the rack" chip below — two chips for one event, and
+       "back off the rack" reads like the piece was REMOVED from the rack when it
+       means the opposite. When the piece came out of the dormant band, the gap
+       chip says so and the duplicate is suppressed. */
+    const rediscovered = p.band === "dormant" && p.gap != null && p.gap > 0;
     if (p.gap != null) {
-      facts.push(fact(p.gap === 0 ? "worn again same day"
-        : `${humanGap(p.gap)} since last time`, p.avgGap != null && p.gap > p.avgGap * 2));
+      facts.push(rediscovered
+        ? fact(`✨ first time in ${humanGap(p.gap)}`, true)
+        : fact(p.gap === 0 ? "worn again same day"
+            : `${humanGap(p.gap)} since last time`, p.avgGap != null && p.gap > p.avgGap * 2));
     }
     if (p.avgGap != null) facts.push(fact(`usually every ${humanGap(p.avgGap)}`));
     if (p.perMonth != null) facts.push(fact(`${p.perMonth.toFixed(1)}×/month`));
@@ -168,7 +177,8 @@ function wearDetailHtml(d, { live = false } = {}) {
         : fact(`${p.sinceWash} of ${p.tol} since a wash`));
     }
     if (p.paidOff) facts.push(fact("💸 under $1 a wear", true));
-    if (p.band === "dormant") facts.push(fact("✨ back off the rack", true));
+    // Only when the gap chip didn't already carry it (see above).
+    if (p.band === "dormant" && !rediscovered) facts.push(fact("✨ off the rediscovery list", true));
 
     return `<button data-wd-item="${esc(i.id)}" style="display:flex;align-items:flex-start;gap:12px;width:100%;text-align:left;padding:12px 0;border-bottom:1px solid var(--line)">
       ${thumbHtml(i.image_path, "sthumb")}

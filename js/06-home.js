@@ -1139,11 +1139,18 @@ function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
       const pieces = tomorrowGenPieces(tm, e, pool, idx);
       if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0">${esc(ctxs || "Planned")} — no clean outfit found${trip ? " in the suitcase" : ""}; tap ✨ to dig.</div>
         <div style="display:flex;gap:6px;padding:2px 0;flex-wrap:wrap">${quickCtxChipHtml(tm, idx, e.contexts)}<button class="cap-chip" data-tm-refine="${idx}" data-tm-date="${esc(tm)}">✨ Suggest</button></div>`;
-      // Name the pool, always — same non-negotiable as the suggester's pool chip.
+      /* Name the pool, always — same non-negotiable as the suggester's pool chip.
+         ⚠️ WITH ITS COUNT (2026-08-16). The label was here from the start; the
+         number wasn't, and "from the rack" without it is half the promise she
+         approved the rack on ("always names its pool with a count and a one-tap
+         widen"). The widen is the card itself: tapping the outfit opens the
+         suggester, which carries the full pool chip and its one-tap "whole
+         closet". */
       const lvl = e.level || entrySuggestLevel(e.contexts);
-      const from = trip ? "from the suitcase"
+      const rackN = (typeof rackItems === "function") ? rackItems().length : 0;
+      const from = trip ? `from the suitcase · ${capsuleItems(tripModeId || activeCapsuleId).length}`
         : lvl === 1 ? "whole closet · clean"
-        : `from the rack · clean`;
+        : `from the rack · ${rackN} · clean`;
       const why = [ctxs || (lvl ? occLabel(lvl) : ""), from].filter(Boolean).join(" · ");
       return `<div style="padding:4px 0">
         <button data-tm-open="${idx}" data-tm-date="${esc(tm)}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>

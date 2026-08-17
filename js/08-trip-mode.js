@@ -345,6 +345,70 @@ function travelUnused(stats) {
     .sort((a, b) => b.packed - a.packed);
 }
 
+/* ---- the per-piece travel record, memoised (2026-08-16) --------------------
+   ⚠️ `buildTravelStats` walks every completed trip against every wear. Asking it
+   per ITEM is the items × wears trap that got context scoring thrown out of
+   packFill — and Declutter iterates the whole Available closet, so a bare call
+   there would be ~490 full walks per render. One walk, cached on a length stamp,
+   the same idiom as `_wxAudit`.
+   ⚠️ The stamp cannot see an in-place EDIT (a capsule's dates moving, say), which
+   is the documented limit of length stamps; `invalidateTravelRecord()` is called
+   by the two paths that change a trip's shape without changing any length. */
+let _travelRec = null, _travelRecStamp = null;
+function invalidateTravelRecord() { _travelRec = null; _travelRecStamp = null; }
+function travelRecordMap() {
+  const stamp = `${wears.length}|${capsules.length}|${capsuleLinks.length}`;
+  if (_travelRec && _travelRecStamp === stamp) return _travelRec;
+  _travelRecStamp = stamp;
+  _travelRec = buildTravelStats().rec;
+  return _travelRec;
+}
+/* What a piece's travel history says: how many completed trips it was packed
+   for, and on how many of those she actually wore it. ⚠️ A FACT, NEVER A VERDICT
+   — "packed 3×, worn 0×" may be the just-in-case option doing exactly its job,
+   and that rule is why this returns two numbers rather than a score. */
+function travelRecordFor(itemId) {
+  const e = travelRecordMap().get(itemId);
+  return e ? { packed: e.packed, worn: e.worn } : { packed: 0, worn: 0 };
+}
+/* Pieces she keeps choosing to take. Used as a Declutter SHIELD, exactly the way
+   `likedLookItemIds()` already shields anything in a look she hearted: packing a
+   piece two trips running is a decision about it, and a piece she keeps packing
+   is not dead weight even if its wear count is thin (her call, 2026-08-16). */
+const TRAVEL_SHIELD_TRIPS = TRIP_MEMORY_MIN;
+function travelShieldIds() {
+  const out = new Set();
+  for (const [id, e] of travelRecordMap()) if (e.packed >= TRAVEL_SHIELD_TRIPS) out.add(id);
+  return out;
+}
+
+/* ---- home vs travel wear-days (2026-08-16, her ask) -----------------------
+   "I want pieces packed and worn on a trip to count, but appropriately — I don't
+   want them to be over-counted, given that they were my only options."
+
+   ⚠️ THIS IS INFORMATIONAL ONLY, AND THAT IS HER EXPLICIT DECISION. Nothing here
+   weights or re-ranks anything: "workhorses/declutter should rank on everything,
+   not just home wear. even though I have less choice on a trip, I specifically
+   chose these pieces and that's real too." So `wearCount`, `costPerWear` and
+   `buildItemPerf` are all untouched — this makes the COMPOSITION of a wear count
+   visible so she can see the travel share, rather than quietly discounting it.
+   ⚠️ The only place travel is genuinely down-weighted is the RACK, which already
+   did it before this round (`rackWarmth` ranks on the most recent HOME wear and
+   pushes an away-only wear back RACK_AWAY_PENALTY_DAYS).
+   ⚠️ Counts DAYS, not rows, and reads `wearWasAtHome` — so a piece she wore at
+   home the morning she flew counts as home, per the travel-day rule. */
+function wearDaySplit(itemId, { wearRows = null, ranges = null, edgeMap = null } = {}) {
+  const rows = wearRows || wears;
+  const rs = ranges || ((typeof awayRanges === "function") ? awayRanges() : []);
+  const em = edgeMap || tripEdgeMemberMap();
+  const home = new Set(), travel = new Set();
+  for (const w of rows) {
+    if (w.item_id !== itemId || !w.worn_on) continue;
+    (wearWasAtHome(w.worn_on, w.item_id, { ranges: rs, edgeMap: em }) ? home : travel).add(w.worn_on);
+  }
+  return { total: home.size + travel.size, home: home.size, travel: travel.size };
+}
+
 // Unpack sheet: recap + (when unpacking a live trip) send worn pieces to the
 // hamper and end the mode. `unpack: false` = recap-only (past trips).
 function openTripRecap(cid, { unpack = false } = {}) {

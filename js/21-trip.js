@@ -52,7 +52,13 @@ function tripLegs(c) {
 // Every trip has at least one leg for solving purposes, even with no locations
 // set (no weather, season only — labelled in the UI, never silently absorbed).
 
-const TRIP_SECTIONS = ["list", "outfits"];
+const TRIP_SECTIONS = ["list", "outfits", "plan"];
+/* ⚠️ The by-day planner is a section only on a DATED trip — an undated capsule has
+   no days to plan across, and it keeps its own standalone "Planned outfits" page
+   reached from its detail view (2026-08-16, her ask: "travel capsule should have
+   the day plan as a third tab, not hidden behind options"). */
+const tripSectionsFor = (c) => isDatedTrip(c) ? TRIP_SECTIONS : ["list", "outfits"];
+const TRIP_SECTION_LABEL = { list: "Your list", outfits: "Outfits", plan: "By day" };
 
 let _tripSection = null;     // null = pick from what the trip has in it
 /* ⚠️ Declared HERE, above their first use: `_tripSuggShow` is initialised from
@@ -82,20 +88,23 @@ function tripDefaultSection(c) {
 function renderCapsuleTrip() {
   const c = capsuleById.get(capsuleId);
   if (!c) { capsuleView = "list"; return renderCapsuleList(); }
-  const sec = TRIP_SECTIONS.includes(_tripSection) ? _tripSection : tripDefaultSection(c);
+  const secs = tripSectionsFor(c);
+  const sec = secs.includes(_tripSection) ? _tripSection : tripDefaultSection(c);
   const ph = tripPhase(c);
   const phaseLbl = ph === "pack" ? "Packing" : ph === "trip" ? "On the trip"
                  : ph === "unpack" ? "Just back" : capDateLabel(c);
 
   const seg = `<div class="cap-orgbar">
     <div class="cap-seg">
-      ${TRIP_SECTIONS.map(k => `<button data-tripsec="${k}" class="${sec === k ? "on" : ""}">${
-        k === "list" ? "Your list" : "Outfits"}</button>`).join("")}
+      ${secs.map(k => `<button data-tripsec="${k}" class="${sec === k ? "on" : ""}">${
+        TRIP_SECTION_LABEL[k]}</button>`).join("")}
     </div>
     <button class="cap-chip" data-trip-more>⋯</button>
   </div>`;
 
-  const body = sec === "list" ? tripListSectionHtml(c) : tripOutfitsHtml(c);
+  const body = sec === "list" ? tripListSectionHtml(c)
+             : sec === "plan" ? capsulePlanBodyHtml(c)
+             : tripOutfitsHtml(c);
   /* The payoff for a trip that has ENDED. Reuses `data-cap-recap`, already wired
      through CAPSULE_ACTIONS on the capsules delegation root — one implementation,
      not a second copy of the same action (the ⋯ menu row stays too). */

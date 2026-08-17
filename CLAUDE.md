@@ -237,6 +237,93 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-17 r1 — PARTIAL CREDIT FOR AWAY WEARS, TRANSPARENT PHOTOS, AND THE
+RACK IN THE PLACES SHE ALREADY LOOKS. Selftest 307 → **310**, run GREEN; all 3
+new cases mutation-checked red (four mutations), and ONE OF THEM WAS VACUOUS ON
+FIRST WRITE.**
+
+⚠️ **THE FLAT AWAY PENALTY WAS THE BUG, NOT THE FIX — her correction:** *"why
+should an away only wear shift back 21 days and skip away days? that's exactly
+the problem I want you to fix."* 2026-08-05 r2 fixed "the rack becomes the
+suitcase" with a BINARY rule: rank on the most recent HOME wear, push an
+away-only wear back a flat 21 days, and skip away days entirely in
+`rackForcedIds`. That is wrong at both ends — a piece she wore EIGHT of ten trip
+days got exactly the same treatment as one she wore ONCE, and skipping away days
+is under-counting to zero, which is the same failure as over-counting from the
+other side.
+- **The penalty is now proportional to how much of the trip she actually chose
+  it.** `awayWearShare` = wear-days on that trip ÷ its elapsed days;
+  `penalty = RACK_AWAY_PENALTY_DAYS × (1 − share)`. The constant stops being a
+  flat charge and becomes the MAXIMUM one. Measured: worn 8 of 11 days → warmth
+  0.82 (ahead of a 30-day-old home wear at 0.50); worn once → 0.55, behind but
+  not erased. The gap between those two went from 0.05 to 0.27.
+- ⚠️ **The better of the two wins now.** Taking `lastHome` unconditionally is
+  what made a heavy trip wear invisible behind its own stale home wear.
+- **`rackForcedIds` uses a share GATE (`RACK_AWAY_FORCE_SHARE` 0.4)** instead of
+  skipping away days. The original bug it must not undo is the whole suitcase
+  flooding rotation on the way home; a 20-piece bag has only a handful above 0.4.
+- ⚠️ **`RACK_ALGO` 9 → 10.** Selection changed, and a stored rack cannot otherwise
+  see that the code did.
+- ⚠️ **THE GUARD CASE WAS VACUOUS AND ITS OWN MUTATION CHECK CAUGHT IT.** The
+  first fixture gave "lived-in" a LATER last-wear day than "worn-once", so plain
+  RECENCY explained the ordering and it passed with the scaling deleted. Both
+  trip pieces now share a last-wear date, so only the share can separate them.
+  ⚠️ And the second assertion was wrong about the app, not the app about itself:
+  it compared against a "home wear on the same day", but EVERY date inside a trip
+  is an away date (only the two EDGE days consult the suitcase), so it was
+  comparing a trip wear with itself. It asserts against the unpenalised
+  arithmetic instead, which is what makes "no penalty at all" go red too.
+
+⚠️ **CUT-OUT PHOTOS WERE BEING FLATTENED ONTO WHITE ON UPLOAD** (her report).
+`compressImage` called `fillRect` white unconditionally to "flatten any
+transparency" — right when every photo was a camera shot, wrong now she removes
+backgrounds, and it **contradicted the display layer**: `loadPhotoNode` sets
+`backgroundColor = "transparent"` precisely so a cut-out garment sits cleanly on
+the tile. Upload was destroying what display was built to show, and a white box
+looks worst in dark mode. Now: sample the alpha channel (not the MIME type —
+most PNGs are opaque and should still take the smaller flattened path), and keep
+alpha when there is any. ⚠️ **JPEG cannot carry alpha, so a transparent image
+falls back to PNG, never JPEG.** ⚠️ The case does a real ROUND TRIP — encode,
+decode, read the corner pixel — because asserting the file EXTENSION would pass
+on a WebP that had already been flattened.
+
+**HER OTHER TWO ASKS.** The by-day planner is a third trip tab (`TRIP_SECTIONS`
+gained `"plan"`, dated trips only — `tripSectionsFor`), not a ⋯ row;
+`capsulePlanBodyHtml` is split out so the tab and the standalone page render the
+SAME cards. And the suggester gained **＋ Add to a trip or capsule**
+(`openComboToCapsuleSheet`): ⚠️ **it adds the PIECES, not just the look** — a
+trip proposes outfits from `capsuleItems(cid)` and nothing else, so filing the
+look alone would leave a trip that cannot rebuild the outfit she just put in it.
+⚠️ The trip she is ON sorts first; ranking by `start_date` alone filed a current
+trip under "past" (caught by rendering the sheet).
+
+**TRIP WEARS COUNT FULLY EVERYWHERE ELSE — HER EXPLICIT DECISION.** Offered a
+home-only ranking she said: *"workhorses/declutter should rank on everything, not
+just home wear. even though I have less choice on a trip, I specifically chose
+these pieces and that's real too. No weighting for anything unless we decide to
+weight for the rack specifically, and in that case only the rack."* So
+`wearDaySplit` is **informational only** — the item page states "31 at home · 12
+travelling" and `wearCount`/`costPerWear`/`buildItemPerf` are untouched. The rack
+is the only weighted surface, which is exactly what she scoped it to.
+- **Packing is its own signal:** `travelRecordFor` on the item page ("Packed for
+  4 trips · worn on 3"), a **Declutter shield** (`travelShieldIds`, the same
+  pattern as `likedLookItemIds()`), and a **"Most packed" sort key**.
+- ⚠️ **`travelRecordMap` is memoised on a length stamp** and invalidated from
+  `buildCapsuleIndexes`. A bare `buildTravelStats()` in Declutter would be one
+  full walk over every completed trip PER ITEM — the items × wears trap.
+
+**THE RACK, IN THE PLACES SHE ALREADY LOOKS** (her ask, all four built):
+Stats' "Lately" says "3 of the 11 you hadn't reached for" (⚠️ reads the STORED
+rack — rebuilding there would spend a rotation tick on a stats render); the wear
+screen says "✨ first time in 4 months" and **suppresses the duplicate gap chip**
+(it used to render the gap AND "✨ back off the rack", which reads like removal);
+looks made ENTIRELY of dormant pieces compete for the wear-again strip's two
+reserved slots (⚠️ all, not any — an any-test matches most of the list); and the
+Today card's pool label gained its COUNT.
+⚠️ **A CORRECTION TO THE r1 AUDIT: the Today card was NOT narrowing silently.**
+It has named its pool since 2026-08-03 ("from the rack · clean"); only the count
+was missing. The audit overstated it.
+
 **2026-08-16 r3 — THE PACK SOLVER IS GONE. Selftest 428 → **307**, run GREEN.**
 Her call, from the audit's findings. It was switched off in 2026-08-10 r6 and kept
 whole for one-commit reversibility; r7 removed the last five surfaces that could
@@ -3654,7 +3741,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-16 r3`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-17 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -4001,7 +4088,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **307/307** (2026-08-16 r3, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **310/310** (2026-08-17 r1, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

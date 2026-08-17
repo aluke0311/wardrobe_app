@@ -475,6 +475,10 @@ async function wearPlannedEntry(date, entryIdx) {
 
 // Rebuild capsule lookup maps. Called after each load + after any mutation.
 function buildCapsuleIndexes() {
+  // The per-piece travel record is memoised on a LENGTH stamp, which cannot see a
+  // trip's dates moving in place. Every capsule mutation lands here, so this is
+  // the one place that can't be forgotten (2026-08-16).
+  if (typeof invalidateTravelRecord === "function") invalidateTravelRecord();
   capsuleById = new Map(capsules.map(c => [c.id, c]));
   capsuleLinkMap = new Map();
   for (const l of capsuleLinks) {

@@ -2963,6 +2963,15 @@ function renderSuggestSheet() {
         _sugg.planCtx ? (_sugg.planCtx.date === PLAN_BUCKET ? "Add to bucket" : "Plan for " + esc(planDayLabel(_sugg.planCtx.date)))
         : "Wear this today"}</button>
       <button class="btn btn-sec" data-sbuild>Open in builder</button>
+      ${/* ⚠️ Her ask (2026-08-16): "from the create/suggest an outfit mode, there
+            should be the option to add that outfit to a trip/capsule." The
+            suggester could dress her for a trip and then had no way to put the
+            result INTO one — the outfit died with the sheet unless she logged it.
+            Saves the look AND adds its pieces to the capsule's list, because the
+            trip screen builds its proposals from that list and nothing else:
+            adding the look alone would leave a trip that can't rebuild it.
+            Hidden when there is nowhere to add it to. */""}
+      ${capsules.length ? `<button class="btn btn-sec" data-scap>＋ Add to a trip or capsule</button>` : ""}
       <button class="lnk" style="font-size:14px;font-weight:600;color:var(--accent);padding:4px 0" data-snew>✨ Reshuffle outfit${_sugg.locked.size ? " (keeps 🔒)" : ""}</button>
       <button class="lnk" style="font-size:14px;color:var(--muted);padding:4px 0" data-sfeedback>Give feedback…</button>
     </div>` : `
@@ -3276,6 +3285,9 @@ function renderSuggestSheet() {
     } catch (e) { toast(e.message); }
   };
   else if (wearBtn && combo) wearBtn.onclick = () => wearSuggestedCombo(combo);
+
+  const capBtn = $("#logInner").querySelector("[data-scap]");
+  if (capBtn && combo) capBtn.onclick = () => openComboToCapsuleSheet(combo);
 
   const buildBtn = $("#logInner").querySelector("[data-sbuild]");
   if (buildBtn && combo) buildBtn.onclick = () => {

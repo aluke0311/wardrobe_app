@@ -71,6 +71,8 @@ const SORT_OPTS = [
   { key: "most-worn", label: "Most worn" },
   { key: "least-worn",label: "Least worn" },
   { key: "formality", label: "Formality" },
+  // "What do I actually travel with" — packing is its own signal (2026-08-16).
+  { key: "packed",    label: "Most packed" },
   { key: "price",     label: "Price" },
 ];
 const SORT_LABELS = Object.fromEntries(SORT_OPTS.map(o => [o.key, o.label]));
@@ -93,6 +95,15 @@ function sortItems(list, key) {
     case "most-worn": return [...list].sort((a, b) => wearCount(b.id) - wearCount(a.id));
     case "least-worn":return [...list].sort((a, b) => wearCount(a.id) - wearCount(b.id));
     case "formality": return [...list].sort((a, b) => itemFormality(a) - itemFormality(b));
+    case "packed": {
+      /* ⚠️ The map is built ONCE, outside the comparator. travelRecordFor reads a
+         memo, but rebuilding the stamp string per comparison is still items ×
+         log(items) string builds — and this is the exact shape of the
+         wearCountInRange-in-a-comparator trap that froze the UI for a second. */
+      const rec = (typeof travelRecordMap === "function") ? travelRecordMap() : new Map();
+      const pk = (i) => (rec.get(i.id) || { packed: 0 }).packed;
+      return [...list].sort((a, b) => pk(b) - pk(a) || (a.name || "").localeCompare(b.name || ""));
+    }
     case "price":     return [...list].sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
     case "colorfam":  return [...list].sort((a, b) => {
       // True color sort: family spectrum order first, category grouping within.

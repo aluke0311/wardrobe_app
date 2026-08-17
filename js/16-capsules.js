@@ -830,7 +830,16 @@ function openTripPlan(id) {
    handler and the sheet both call these, so a row can't be wired to nothing. */
 const CAPSULE_ACTIONS = {
   add: (cid) => openCapsulePicker(cid),
-  byday: (cid) => openTripPlan(cid),
+  /* A dated trip shows the planner as its third tab, so this switches sections
+     rather than opening a second screen that says the same thing (2026-08-16). */
+  byday: (cid) => {
+    const c = capsuleById.get(cid);
+    if (c && isDatedTrip(c)) {
+      capsuleId = cid; capsuleView = "trip"; _tripSection = "plan";
+      return renderCapsules();
+    }
+    return openTripPlan(cid);
+  },
   recap: (cid) => openTripRecap(cid),
   rename: (cid) => renameCapsule(cid),
   dates: (cid) => editCapsuleDates(cid),
@@ -859,10 +868,12 @@ function planDayWxHtml(date) {
   return `<span class="plan-wx"><span class="e">${wmoEmoji(w.code)}</span>${w.maxT}° / ${w.minT}°${w.hist ? " <span style='opacity:.7'>avg</span>" : ""}</span>`;
 }
 
-function renderCapsulePlan() {
-  const c = capsuleById.get(capsuleId);
+/* The bucket card + one card per trip day. Split out of renderCapsulePlan so the
+   trip screen's Plan tab and the standalone planner page render the SAME cards
+   (2026-08-16) — two planners that could drift is exactly what this app keeps
+   having to undo. */
+function _planCards(c) {
   const dates = tripDates(c);
-  const memberCount = capsuleItems(capsuleId).length;
   const bucketIds = planActiveLooks(c, PLAN_BUCKET);
 
   // Bucket looks already assigned to some day get a "✓ planned" mark (they stay
@@ -926,12 +937,33 @@ function renderCapsulePlan() {
     </div>`;
   }).join("");
 
+  return { bucketCard, dayCards };
+}
+
+function renderCapsulePlan() {
+  const c = capsuleById.get(capsuleId);
+  const dates = tripDates(c);
+  const memberCount = capsuleItems(capsuleId).length;
   const kind = capModeLabel(c).toLowerCase();
+  /* ⚠️ ONE PLANNER, TWO SURFACES (2026-08-16, her ask: "travel capsule should have
+     the day plan as a third tab, not hidden behind options"). A dated trip renders
+     this INSIDE its own screen as the third section; an undated capsule still gets
+     it as a standalone page from its detail view. Splitting the body out is what
+     stops the tab and the page drifting into two planners — the same reason
+     tripListSectionHtml reuses capGroupsHtml. */
   return capToolbar(c.name + (dates.length ? " · By day" : " · Planned outfits"), true) + `
     <div class="cap-hdr">
       <div class="ch-name">${dates.length ? "Plan by day" : "Planned outfits"}</div>
       <div class="ch-sub">${dates.length ? `${dates.length} day${dates.length === 1 ? "" : "s"} · ` : ""}${memberCount} piece${memberCount === 1 ? "" : "s"} in this ${esc(kind)}</div>
-    </div>
+    </div>` + capsulePlanBodyHtml(c);
+}
+
+function capsulePlanBodyHtml(c) {
+  const dates = tripDates(c);
+  const memberCount = capsuleItems(c.id).length;
+  const kind = capModeLabel(c).toLowerCase();
+  const { bucketCard, dayCards } = _planCards(c);
+  return `
     ${memberCount ? "" : `<div class="placeholder" style="padding:24px 32px"><b>No pieces yet</b><div>Add items to the ${esc(kind)} first — planning is scoped to its pieces.</div></div>`}
     ${/* The "the app placed N of these days · Keep these days" row went with the
           solver (r6): nothing auto-assigns a day any more, so a control that
@@ -1513,6 +1545,72 @@ async function addItemsToCapsule(cid, itemIds, alreadyHandledRebuild) {
 // ---- assign a single item to capsules (multi-select toggle sheet, reuses #moveSheet) ----
 // currentIds: array of capsule ids the item is in. onSave(newIds[]) is called with the
 // chosen set when the user taps Save. Used by item detail and the Add form.
+/* "＋ Add to a trip or capsule" from the suggester (2026-08-16, her ask).
+   ⚠️ IT ADDS THE PIECES, NOT JUST THE LOOK. A trip's screen proposes outfits from
+   `capsuleItems(cid)` and nothing else, so filing the look alone would leave a
+   trip that cannot rebuild the very outfit she just put in it. The look is saved
+   too — `saveComboAsOutfit` is create-or-merge, so an outfit she already owns
+   isn't duplicated — and the capsule's Looks section is derived from membership,
+   which means it appears there on its own once the pieces are in.
+   ⚠️ Trips first and nearest-first: when she reaches for this she is almost
+   always packing for the next one. Archived capsules stay out. */
+function openComboToCapsuleSheet(combo) {
+  const ids = combo.pieces.map(p => p.id);
+  const arch = archivedCapsuleIds();
+  const open = capsules.filter(c => !arch.has(c.id));
+  /* ⚠️ The trip she is ON comes first — it is far and away the likeliest target,
+     and ranking by start_date alone filed it under "past" (caught by rendering
+     the sheet: a current Madrid sat third, below a trip from last month).
+     Then soonest upcoming, then most recent past, then capsules by name. */
+  const t = todayStr();
+  const rank = (c) => !isDatedTrip(c) ? 3
+    : (c.start_date <= t && c.end_date >= t) ? 0
+    : c.start_date > t ? 1 : 2;
+  open.sort((a, b) => {
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 1) return String(a.start_date).localeCompare(String(b.start_date));   // soonest first
+    if (ra === 2) return String(b.start_date).localeCompare(String(a.start_date));   // most recent first
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  });
+  const rows = open.map(c => {
+    const members = new Set((capsuleLinkMap.get(c.id) || []).map(l => l.item_id));
+    const missing = ids.filter(id => !members.has(id)).length;
+    return `<button class="sheet-row" data-combocap="${esc(c.id)}">
+      <span>${isDatedTrip(c) ? "✈️ " : ""}${esc(c.name)}${isDatedTrip(c) ? `<span class="muted" style="font-size:12.5px"> · ${esc(capDateLabel(c))}</span>` : ""}</span>
+      <span class="rt" style="color:var(--muted)">${missing ? `add ${missing}` : "all in"}</span>
+    </button>`;
+  }).join("");
+  $("#moveInner").innerHTML = `
+    <div class="sheet-hdr">
+      <button class="lnk" id="comboCapCancel">Cancel</button>
+      <h2>Add to…</h2>
+      <span style="width:52px"></span>
+    </div>
+    <div class="sheet-note">The pieces join that list, so the trip can build this outfit again.</div>
+    ${rows || `<div class="sheet-note">No capsules yet. Create one from the Capsules screen.</div>`}
+    <div style="height:max(env(safe-area-inset-bottom),18px)"></div>`;
+  showSheet("moveSheet");
+  $("#comboCapCancel").onclick = () => hideSheet("moveSheet");
+  $("#moveInner").querySelectorAll("[data-combocap]").forEach(b => {
+    b.onclick = async () => {
+      const cid = b.dataset.combocap, c = capsuleById.get(cid);
+      b.disabled = true;
+      try {
+        await addItemsToCapsule(cid, ids);
+        await saveComboAsOutfit(combo.pieces);
+        hideSheet("moveSheet");
+        toast(`Added to ${c ? c.name : "the list"}`, [{ label: "Open it", fn: () => {
+          switchTab("capsules"); capsuleId = cid;
+          capsuleView = isDatedTrip(c) ? "trip" : "detail";
+          if (isDatedTrip(c)) _tripSection = "list";
+          renderCapsules();
+        } }]);
+      } catch (e) { b.disabled = false; toast(e.message); }
+    };
+  });
+}
+
 function openCapsuleAssign(currentIds, onSave) {
   const sel = new Set(currentIds);
   const render = () => {

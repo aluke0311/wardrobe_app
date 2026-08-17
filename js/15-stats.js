@@ -430,10 +430,17 @@ function buildSmartList(key) {
     // sort, no composite score — she can see exactly why each item is here.
     const per = buildItemPerf(reportPool());
     const liked = likedLookItemIds();
+    /* ⚠️ A SECOND SHIELD: pieces she keeps packing (2026-08-16, her call). Packing
+       something two trips running is a decision about it, the same kind of
+       decision hearting a look is — and this list is the one place the app comes
+       closest to advice, so the things she has actively chosen stay out of it.
+       Memoised; a bare buildTravelStats() call here would be one full walk over
+       every completed trip PER ITEM. */
+    const travelled = (typeof travelShieldIds === "function") ? travelShieldIds() : new Set();
     const pool = reportPool().filter(i => {
       if (itemStatus(i) === "Archive") return false;
       const p = per.get(i.id);
-      if (!p || p.months < 6 || liked.has(i.id)) return false;
+      if (!p || p.months < 6 || liked.has(i.id) || travelled.has(i.id)) return false;
       if (p.count === 0) return true;
       const lw = lastWorn(i.id);
       return p.idx != null && p.idx < 0.5 && (!lw || daysSince(lw) >= 90);
@@ -799,10 +806,29 @@ function buildRecentPulse(days = PULSE_DAYS, wearRows, today) {
     const l = lastBefore.get(x.item.id);
     return l && l <= cut;
   });
+  /* ⚠️ THE RACK'S ONE DAILY SURFACE (2026-08-16, her ask: better incorporate the
+     rack into the workflow). Stats is the screen she opens daily to LOOK, and the
+     rack was absent from it entirely — its dormant band, the whole reason the
+     rack can't quietly shrink her wardrobe, lived only on a screen she has to go
+     find. "3 of the 11 you hadn't reached for" is the mirror doing its job: it
+     reports, it doesn't nag, and it needs no new screen.
+     ⚠️ Reads the STORED rack, never rebuilds one — rackEffective() checks nothing
+     and a rebuild here would spend a rotation tick on a stats render (the r7
+     measure-vs-mechanism lesson). */
+  let rackDormant = 0, rackWoken = 0;
+  if (typeof rackEffective === "function") {
+    const eff = rackEffective();
+    const dorm = eff && eff.dormant ? new Set(eff.dormant) : null;
+    if (dorm && dorm.size) {
+      rackDormant = dorm.size;
+      rackWoken = worn.filter(x => dorm.has(x.item.id)).length;
+    }
+  }
   return {
     days, from, to: t,
     daysLogged: days_.size,
     pieces: worn.length,
+    rackDormant, rackWoken,
     top: worn[0] || null,
     firstOutings,
     rediscovered,
@@ -817,6 +843,8 @@ function recentPulseHtml() {
   if (p.top) facts.push(`<b>${esc(p.top.item.name)}</b> went out ${p.top.n} day${p.top.n === 1 ? "" : "s"}`);
   if (p.firstOutings.length) facts.push(`${p.firstOutings.length} first outing${p.firstOutings.length === 1 ? "" : "s"}`);
   if (p.rediscovered.length) facts.push(`${p.rediscovered.length} back out after ${PULSE_REDISCOVER_DAYS}+ days`);
+  // The rack's cold band, on the screen she actually opens every day.
+  if (p.rackDormant) facts.push(`${p.rackWoken} of ${p.rackDormant} you hadn't reached for`);
   return `<div class="stats-sec">
     <div class="stats-sec-hdr">
       <div class="t">Lately</div>

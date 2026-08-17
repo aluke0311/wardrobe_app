@@ -104,7 +104,7 @@ const RACK_KEY = "rack";
    rotation tick or move the `built` anchor, exactly like a season flip — the
    r7 churn lesson. She should get the corrected rack on the next load, not a
    reshuffled one. */
-const RACK_ALGO = 9;   // 9 = photoless pieces are eligible (2026-08-13)
+const RACK_ALGO = 10;  // 10 = away wears earn PARTIAL credit by trip share (2026-08-16)
 /* Per-slot quotas, not a flat top-N: a 58-piece rack that happens to be 45 tops
    cannot build an outfit. Grown from 46 → 58 on 2026-08-03 at her request —
    "some weeks will have more contexts and formality levels" — with the extra 12
@@ -176,6 +176,11 @@ const RACK_PUSH_DAYS = 42;      // a push-out expires, so a summer no doesn't ha
 const RACK_PUSH_LONG_DAYS = 120;// "not right now" from a reassessment — a season, not a month
 const RACK_LOOKAHEAD_DAYS = 14; // how far ahead declared plans stock the rack
 const RACK_RECENT_DAYS = 14;    // …and how far BACK a real wear keeps a piece in play
+/* How much of a trip she has to have worn a piece for that trip to force it back
+   into rotation (2026-08-16). Below this it still earns a reduced warmth penalty
+   in rackWarmth — it just doesn't jump the queue. 0.4 keeps a 10-day trip to the
+   handful of pieces she wore 4+ days, not the whole suitcase. */
+const RACK_AWAY_FORCE_SHARE = 0.4;
 const RACK_LEVEL_MIN = 2;       // per core slot, per level she'll actually need
 const RACK_SEEN_LIMIT = 3;      // offered this many rebuilds unworn → worth a second look
 const RACK_SECOND_LOOK_DAYS = 14; // …AND in front of her this long. See rackPassedOver.
@@ -550,11 +555,25 @@ function rackForcedIds({ today = todayStr(), plans = null, wearRows = null,
     if (!set.length || !set.every(l => l >= RACK_DRESSY_FLOOR)) return false;
     return !set.some(l => declared0.has(l));
   };
+  /* ⚠️ AN AWAY WEAR IS NOT WORTH NOTHING (2026-08-16, her correction: "why should
+     an away only wear... skip away days? that's exactly the problem I want you to
+     fix"). This used to skip every away wear outright, so a piece she wore most
+     of a trip was never forced back into rotation — under-counting to zero.
+     It now forces in the ones she genuinely lived in: an away wear counts when
+     she wore the piece on at least RACK_AWAY_FORCE_SHARE of that trip's elapsed
+     days. The original bug this must not undo is the whole suitcase flooding
+     rotation on the way home; a share gate is what separates the four pieces she
+     actually wore from the sixteen that just rode along. */
+  const awayShareOk = (id, date) => {
+    const share = awayWearShare(id, awayRangeFor(date, awayR), rows, today);
+    return share >= RACK_AWAY_FORCE_SHARE;
+  };
   const recentAt = new Map();
   for (const w of rows) {
     if (!w || !w.item_id || !w.worn_on) continue;
     if (w.worn_on < floor || w.worn_on > today) continue;
-    if (awayR.length && !wearWasAtHome(w.worn_on, w.item_id, { ranges: awayR, edgeMap: awayEdge })) continue;
+    if (awayR.length && !wearWasAtHome(w.worn_on, w.item_id, { ranges: awayR, edgeMap: awayEdge })
+        && !awayShareOk(w.item_id, w.worn_on)) continue;
     if (!ok(w.item_id)) continue;
     if (dressOnlyLived(w.item_id)) continue;
     raw.add(w.item_id);
@@ -613,34 +632,77 @@ function rackHomeDaysSince(from, today = todayStr(), ranges = null) {
    she left is ranked behind it. Two trips a year and the rack is a suitcase
    most of the time.
 
-   The fix is to rank on the most recent wear AT HOME, and fall back to the trip
-   wear plus a penalty when a piece has only ever been worn away. Not zero: a
-   piece she wore every day of a trip is genuinely in play, and erasing it would
-   just invert the bug. The penalty puts it behind anything she's reached for at
-   home inside the window and ahead of everything she hasn't.
+   The first fix (2026-08-05) ranked on the most recent wear AT HOME and pushed a
+   piece with only away wears back a flat RACK_AWAY_PENALTY_DAYS.
+
+   ⚠️ THAT WAS TOO BLUNT AND SHE SAID SO (2026-08-16): *"why should an away only
+   wear shift back 21 days and skip away days? that's exactly the problem I want
+   you to fix."* She is right. A flat penalty is binary, and it is wrong at both
+   ends: a piece she wore EIGHT of ten trip days is obviously one she reaches for
+   and got shoved 21 days back, while a piece she wore ONCE on the same trip got
+   the identical treatment. Under-counting to zero is the same failure as
+   over-counting, just from the other side — her original ask was for "some sort
+   of partial consideration", and this is it.
+
+   THE PENALTY IS NOW PROPORTIONAL TO HOW MUCH OF THE TRIP SHE ACTUALLY CHOSE IT.
+   share = wear-days on that trip ÷ the trip's elapsed days, and the penalty is
+   RACK_AWAY_PENALTY_DAYS × (1 − share). Worn every day → no penalty at all, it
+   ranks like a home wear. Worn one day in ten → nearly the full 21. The constant
+   stops being a flat charge and becomes the MAXIMUM one.
+   ⚠️ And the better of the two now wins: a piece worn daily on a trip three days
+   ago should outrank its own home wear from seven weeks back. Taking `lastHome`
+   unconditionally is what made a heavy trip wear invisible.
+   ⚠️ The original bug it must not reintroduce: the whole suitcase owning
+   rotation for 60 days after a trip. It can't — a 20-piece bag on a 10-day trip
+   has only a handful of pieces above a high share; the rest keep most of the
+   penalty and stay behind everything she reached for at home.
 
    ⚠️ It reads its OWN wearRows (the r3 lesson — a ranking that quietly closes
    over the global makes the fixture and the phone disagree). */
-const RACK_AWAY_PENALTY_DAYS = 21;
+const RACK_AWAY_PENALTY_DAYS = 21;   // the MAXIMUM away penalty, scaled by share
+
+/* Share of an away range's elapsed days that this piece was actually worn.
+   ⚠️ Bounded at `today`: a trip still running has not had its later days yet, and
+   dividing by the whole range would make every current-trip piece look neglected.
+   ⚠️ Uses the RANGE rather than the capsule because awayRanges() also carries the
+   hand-entered wherelog, where "away 5 days, wore this 3" is just as meaningful. */
+function awayWearShare(itemId, range, rows, today) {
+  if (!range) return 0;
+  const to = range.to < today ? range.to : today;
+  if (to < range.from) return 0;
+  const elapsed = daysBetween(range.from, to) + 1;
+  const worn = new Set();
+  for (const w of rows) {
+    if (w.item_id !== itemId || !w.worn_on) continue;
+    if (w.worn_on >= range.from && w.worn_on <= to) worn.add(w.worn_on);
+  }
+  return elapsed > 0 ? Math.min(1, worn.size / elapsed) : 0;
+}
+
 function rackWarmth(itemId, today = todayStr(), { wearRows = null, away = null } = {}) {
   const rows = wearRows || wears;
   const rs = away || ((typeof awayRanges === "function") ? awayRanges() : []);
   /* ⚠️ The day she flew out and the day she flew back are half at home, and the
      suitcase says which half (2026-08-16). Something she wore that morning and
-     did NOT pack is a home wear — it should rank as one, not sit 21 days behind
-     everything else under the away penalty. */
+     did NOT pack is a home wear, and ranks as one. */
   const edgeMap = (typeof tripEdgeMemberMap === "function") ? tripEdgeMemberMap() : new Map();
-  let lastHome = null, lastAny = null;
+  let lastHome = null, lastAway = null;
   for (const w of rows) {
     if (w.item_id !== itemId || !w.worn_on) continue;
-    if (!lastAny || w.worn_on > lastAny) lastAny = w.worn_on;
-    if (rs.length && !wearWasAtHome(w.worn_on, w.item_id, { ranges: rs, edgeMap })) continue;
+    if (rs.length && !wearWasAtHome(w.worn_on, w.item_id, { ranges: rs, edgeMap })) {
+      if (!lastAway || w.worn_on > lastAway) lastAway = w.worn_on;
+      continue;
+    }
     if (!lastHome || w.worn_on > lastHome) lastHome = w.worn_on;
   }
-  if (!lastAny) return 0;
-  let d;
-  if (lastHome) d = daysBetween(lastHome, today);
-  else d = daysBetween(lastAny, today) + RACK_AWAY_PENALTY_DAYS;
+  if (!lastHome && !lastAway) return 0;
+  const homeD = lastHome != null ? daysBetween(lastHome, today) : Infinity;
+  let awayD = Infinity;
+  if (lastAway != null) {
+    const share = awayWearShare(itemId, awayRangeFor(lastAway, rs), rows, today);
+    awayD = daysBetween(lastAway, today) + RACK_AWAY_PENALTY_DAYS * (1 - share);
+  }
+  const d = Math.min(homeD, awayD);
   if (d < 0 || d > RACK_WARM_DAYS) return 0;
   return (RACK_WARM_DAYS - d) / RACK_WARM_DAYS;
 }
