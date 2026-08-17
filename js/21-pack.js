@@ -3420,9 +3420,17 @@ let _tripSection = null;     // null = pick from what the trip has in it
 const TRIP_SUGG_PAGE = 12;   // outfits added per "Show more"
 const TRIP_SUGG_MAX = 120;   // hard cap on what we enumerate at once
 
+// A trip whose last day has passed. Its outfits are history, not a proposal.
+const tripIsOver = (c) => !!c && isDatedTrip(c) && c.end_date < todayStr();
+
 function tripDefaultSection(c) {
   // Nothing in the list yet means there is nothing to propose from, so start
   // where the work is. Otherwise lead with the payoff.
+  /* ⚠️ A FINISHED trip opens on the list, not on Outfits (2026-08-16). It used to
+     open on "Outfits", proposing fresh outfits for a trip that ended weeks ago,
+     while the recap — the one thing a past trip is actually for — sat 9th of 11
+     rows in the ⋯ menu. The recap gets a real button below. */
+  if (tripIsOver(c)) return "list";
   return capsuleItems(c.id).length ? "outfits" : "list";
 }
 function renderCapsuleTrip() {
@@ -3442,7 +3450,13 @@ function renderCapsuleTrip() {
   </div>`;
 
   const body = sec === "list" ? tripListSectionHtml(c) : tripOutfitsHtml(c);
-  return capToolbar(`${c.name}${phaseLbl ? " · " + phaseLbl : ""}`, true) + seg + body +
+  /* The payoff for a trip that has ENDED. Reuses `data-cap-recap`, already wired
+     through CAPSULE_ACTIONS on the capsules delegation root — one implementation,
+     not a second copy of the same action (the ⋯ menu row stays too). */
+  const recap = tripIsOver(c)
+    ? `<div style="padding:0 14px 12px"><button class="btn" data-cap-recap style="width:100%">📊 Trip recap</button></div>`
+    : "";
+  return capToolbar(`${c.name}${phaseLbl ? " · " + phaseLbl : ""}`, true) + seg + recap + body +
          `<div style="height:26px"></div>`;
 }
 
@@ -3464,7 +3478,10 @@ function tripListSectionHtml(c) {
     : 0;
   return `<div class="pack-tip">${list.length} piece${list.length === 1 ? "" : "s"}${
       packed ? ` · ${packed} packed` : ""} · tap the circle on a piece to check it off</div>
-    ${dirty ? `<div class="cap-launwarn">🧺 ${dirty} piece${dirty === 1 ? " is" : "s are"} in the hamper — wash before you pack</div>` : ""}
+    ${dirty ? `<div class="cap-launwarn">🧺 ${dirty} piece${dirty === 1 ? " is" : "s are"} in the hamper${
+      /* Only before departure is it "wash before you pack" — mid-trip she is
+         living out of the bag, and after it the trip is over (2026-08-16). */
+      tripPhase(c) === "pack" ? " — wash before you pack" : ""}</div>` : ""}
     <div style="padding:0 14px 10px">${addBtn("btn btn-sec", "width:100%")}</div>
     ${capGroupsHtml(list, true, packedSet)}`;
 }

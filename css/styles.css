@@ -411,6 +411,27 @@
     width: calc(100% - 28px); border: 1px solid var(--line); border-radius: 11px; background: var(--surface);
     color: var(--accent); font-size: 13.5px; font-weight: 600; }
   .cl-capbtn svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.9; fill: none; }
+  /* Closet-root shelf nav — the rack / hamper / worn tray / capsule scope as one
+     scrollable row instead of four stacked full-width buttons (2026-08-16). Same
+     shape and the same edge mask as .hnav, which replaced Home's launcher grid
+     for exactly the same reason: four destinations do not need four rows.
+     ⚠️ .cl-capbtn is deliberately KEPT — the capsule-scoped closet and the
+     laundry sheet still use it, and it makes this a one-line revert. */
+  .clnav {
+    display: flex; gap: 8px; padding: 10px 16px 4px;
+    overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .clnav::-webkit-scrollbar { display: none; }
+  .clnav-chip {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    padding: 8px 13px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--line);
+    font-size: 13.5px; font-weight: 600; color: var(--accent); white-space: nowrap;
+    transition: transform .08s ease, background .12s ease;
+  }
+  .clnav-chip:active { transform: scale(.97); background: var(--accent-soft); }
 
   /* ---------- folder rows ---------- */
   .frows { padding: 0 14px 16px; }

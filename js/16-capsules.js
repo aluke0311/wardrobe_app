@@ -538,7 +538,14 @@ function renderCapsuleDetail() {
       if (!LAUNDRY_READY()) return "";
       const _ls = laundryState();
       const dirty = list.filter(i => itemStatus(i) === "Available" && isDirty(i, _ls));
-      return dirty.length ? `<div class="cap-launwarn">🧺 ${dirty.length} piece${dirty.length === 1 ? " is" : "s are"} in the hamper — wash before you pack</div>` : "";
+      if (!dirty.length) return "";
+      /* ⚠️ "wash before you pack" only where there IS packing (2026-08-16). An
+         undated capsule is a way of grouping clothes, not a trip, and is never
+         packed — so this told her to pack her Summer capsule. js/06-home.js:803
+         already gates the same phrase on the pack phase; this surface didn't.
+         One fact, two surfaces, one of them gated. */
+      const packing = isDatedTrip(c) && tripPhase(c) === "pack";
+      return `<div class="cap-launwarn">🧺 ${dirty.length} piece${dirty.length === 1 ? " is" : "s are"} in the hamper${packing ? " — wash before you pack" : ""}</div>`;
     })()}
     ${packHtml}
     ${wxHtml}
@@ -560,10 +567,19 @@ function renderCapsuleDetail() {
       <svg viewBox="0 0 24 24"><path d="M4 8h16l-1.5 12h-13z"/><path d="M8 8a4 4 0 0 1 8 0"/></svg>
       Planned outfits
     </button>`}
-    <button class="cap-plan sec" data-cap-plan style="margin-top:8px">
+    ${/* ⚠️ ONE DOOR ON AN UNDATED CAPSULE (2026-08-16). This and the button above
+          both scope the app to this capsule; on an undated capsule the only
+          difference was where you land, and the labels ("Enter capsule mode" vs
+          "Plan outfits from this") gave her no way to tell them apart — three of
+          four stacked full-width buttons here meant "use this capsule to plan".
+          Capsule mode now lands on the CLOSET, which is what this one was for, so
+          the weaker duplicate goes. A dated TRIP keeps both: trip mode opens the
+          day's dash on Home, planning from it opens the closet, and those are
+          genuinely different destinations. */""}
+    ${isDatedTrip(c) ? `<button class="cap-plan sec" data-cap-plan style="margin-top:8px">
       <svg viewBox="0 0 24 24"><path d="M12 3l-1.5 3L4 9v11h16V9l-6.5-3z"/><path d="M12 6v14"/></svg>
       Plan outfits from this
-    </button>
+    </button>` : ""}
     ${trip && c.start_date && c.end_date && c.end_date < todayStr() ? `<button class="cap-plan sec" data-cap-recap style="margin-top:8px">
       <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-6 3 3 5-8"/></svg>
       Trip recap
@@ -1186,12 +1202,26 @@ async function duplicateCapsule(id) {
   } catch (e) { toast(e.message); }
 }
 
+/* ⚠️ ONE SCOPE AT A TIME (2026-08-16). `enterTripMode` sets tripModeId AND
+   activeCapsuleId; this used to set only the second, so scoping to a different
+   capsule while on a trip left the two disagreeing — measured: the closet showed
+   14 Summer-capsule pieces while the suggester still pooled from Madrid, with an
+   "✈️ Madrid · Day 3 of 7" banner and a "Planning · Summer capsule" banner
+   stacked on one screen. And the ✕ on the second one cleared only the capsule,
+   leaving trip mode on with activeCapsuleId null — a state enterTripMode can
+   never produce, against this app's own rule that the banner IS the mode.
+   Scoping elsewhere ends the trip, and SAYS so: silently leaving trip mode on
+   under a different capsule's banner is what caused the split in the first
+   place, and silently ending it without a word would be its own surprise. */
 function planFromCapsule(id) {
+  const c = capsuleById.get(id);
+  const left = (tripModeId && tripModeId !== id) ? capsuleById.get(tripModeId) : null;
+  if (left) { tripModeId = null; store.removeItem(TRIP_MODE_KEY); }
   activeCapsuleId = id;
   closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
   switchTab("closet");
-  const c = capsuleById.get(id);
-  toast(c ? `Planning from ${c.name}` : "Capsule active");
+  toast(c ? `Planning from ${c.name}${left ? ` · ${isDatedTrip(left) ? "trip" : "capsule"} mode off` : ""}`
+          : "Capsule active");
 }
 
 async function deleteCapsule(id) {
@@ -1201,7 +1231,12 @@ async function deleteCapsule(id) {
     await rest(`/capsules?id=eq.${id}`, { method: "DELETE" });
     capsules = capsules.filter(x => x.id !== id);
     capsuleLinks = capsuleLinks.filter(l => l.capsule_id !== id);
+    // Deleting the trip you're ON has to end the mode too, or tripModeId is left
+    // pointing at a capsule that no longer exists (the archive path above already
+    // did this; this one didn't). loadData validates it away on the next boot,
+    // which is exactly the kind of silent inconsistency that survives a session.
     if (activeCapsuleId === id) activeCapsuleId = null;
+    if (tripModeId === id) { tripModeId = null; store.removeItem(TRIP_MODE_KEY); }
     buildCapsuleIndexes();
     capsuleView = "list"; capsuleId = null;
     renderCapsules();

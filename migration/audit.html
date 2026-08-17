@@ -83,7 +83,15 @@ window.A = {
   },
 
   /* A realistic closet. Proportioned like hers (491 items / 4387 wears /
-     1122 looks / 9 capsules) but a third the size so renders stay fast. */
+     1122 looks / 9 capsules) but a third the size so renders stay fast.
+
+     ⚠️ RE-APPLY BEFORE EACH MEASUREMENT, or check `W.dataReady` first. `init()`
+     fires its own `loadData()`, which resolves a second or two later, fails
+     against no auth, and leaves `items` EMPTY — clobbering whatever the fixture
+     installed. A probe running after that measures a closet of zero pieces and
+     reports it as a finding (it did, once, on the rack screen: "Rack not built
+     yet" against 227 items). `assertLive()` does NOT catch this — the app still
+     renders at full width, it just has nothing in it. */
   fixture(opts) {
     const W = this.W, o = opts || {};
     const today = W.todayStr(), D = n => W.shiftDate(today, n);

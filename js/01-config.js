@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-16 r1";
+const APP_VERSION = "2026-08-16 r2";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,13 @@ const APP_VERSION = "2026-08-16 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-16 r2", notes: [
+    "The rack opens on the pieces you haven't reached for lately, instead of making you scroll past the 32 you already wear to get to them. Same three bands, read the other way round — that band is the whole reason the rack can't quietly shrink your wardrobe, and it was the last thing on its own screen",
+    "The closet gets to the clothes faster: the rack, hamper, worn tray and capsule filter are one row of chips rather than four stacked buttons, so you see six categories before scrolling instead of three. The clean/hamper filter now lives on the screens that actually show items — on the folder list it was filtering the counts, so \"Tops · 15\" meant 15 dirty tops",
+    "Trip mode and capsule planning can't disagree any more. Planning from a capsule while you were on a trip left the closet showing one and the suggester using the other, with both banners on screen; there's one scope at a time now, and it tells you when the trip mode ends",
+    "A finished trip opens on what you took, with the recap one tap away instead of ninth in the ⋯ menu — it used to open by proposing new outfits for a trip that had already ended",
+    "\"Wash before you pack\" no longer shows up on a capsule that's never packed, or on a trip you've already come home from",
+  ] },
   { v: "2026-08-16 r1", notes: [
     "The day you leave and the day you get back are half at home, and the app now knows it. If you wore something on either of those days that wasn't in your suitcase, it counts as a day at home — no Travel tag, and it won't turn up in the trip recap as something you wore but forgot to pack. Anything you wore on the days in between was in the suitcase by definition, so nothing changes there",
     "Your rack notices those days too: a piece you wore at home the morning you flew now counts as one you reached for, instead of being pushed to the back with the rest of the trip",

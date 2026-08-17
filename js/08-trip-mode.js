@@ -40,7 +40,12 @@ function enterTripMode(cid) {
   store.setItem(TRIP_MODE_KEY, cid);
   activeCapsuleId = cid;
   closetCat = null; closetSub = null; searchResults = null; closetSearchQ = null;
-  switchTab("home");
+  /* ⚠️ A DATED trip lands on Home, because that is where its dash lives — the day
+     counter, today's plan, the suitcase hamper. An UNDATED capsule has no dash, so
+     Home was a dead end: a "Planning · X" banner and nothing else. It lands on the
+     scoped closet instead, which is what the separate "Plan outfits from this"
+     button existed to do (removed as a duplicate, 2026-08-16). */
+  switchTab(isDatedTrip(c) ? "home" : "closet");
   toast(isDatedTrip(c) ? `✈️ Trip mode · ${c.name}` : `Capsule mode · ${c.name}`);
 }
 function exitTripMode() {
@@ -598,9 +603,7 @@ function renderClosetRoot() {
   }
   const top = activeCapsuleId ? "" : lensHtml();
   const capFilter = (!activeCapsuleId && capsules.length)
-    ? `<button class="cl-capbtn" data-cap-filter>
-        <svg viewBox="0 0 24 24"><path d="M3 5h18M6 12h12M10 19h4"/></svg>
-        Filter by capsule or trip</button>`
+    ? `<button class="clnav-chip" data-cap-filter>Capsule or trip</button>`
     : "";
   // Hamper row stays visible while capsule/trip-scoped (user-reported bug
   // 2026-07-19: trip mode hid the hamper) — scoped to the capsule's members,
@@ -608,15 +611,32 @@ function renderClosetRoot() {
   const launRow = LAUNDRY_READY() ? (() => {
     const ls = laundryState();
     const n = _scopedHamper(ls).length, w = _scopedWorn(ls).length;
-    return `<button class="cl-capbtn" data-laundry>🧺 Hamper · ${n ? `${n} item${n === 1 ? "" : "s"}` : "empty"}</button>`
-      + (w ? `<button class="cl-capbtn" data-worn>👕 Worn · ${w} item${w === 1 ? "" : "s"}</button>` : "");
+    return `<button class="clnav-chip" data-laundry>🧺 Hamper · ${n || 0}</button>`
+      /* ⚠️ 🪑 not 👕 (2026-08-16): 👕 already means "the rack", and the two sat on
+         adjacent rows meaning different things — the 2026-07-26 "one glyph, one
+         meaning" rule, never applied to this pair. The worn tray is her own
+         description, "the pile on the chair". */
+      + (w ? `<button class="clnav-chip" data-worn>🪑 Worn · ${w}</button>` : "");
   })() : "";
-  // The rack is ALWAYS a visible row (her condition when approving it): a pool
-  // that quietly narrows the suggester has to be somewhere she can go and look.
+  // The rack is ALWAYS visible (her condition when approving it): a pool that
+  // quietly narrows the suggester has to be somewhere she can go and look.
   const rackRow = activeCapsuleId ? ""
-    : `<button class="cl-capbtn" data-rack>\u{1F455} The rack \u00b7 ${rackItems().length} in play</button>`;
-  return clToolbar("Closet", false, true) + laundryLensHtml("closet", closetFilter)
-    + top + capFilter + rackRow + launRow + `<div class="frows">${rows}</div>`;
+    : `<button class="clnav-chip" data-rack>\u{1F455} The rack \u00b7 ${rackItems().length}</button>`;
+  /* \u26a0\ufe0f ONE SCROLLABLE ROW, NOT FOUR STACKED BUTTONS (2026-08-16). These four cost
+     200px of a 745px usable screen, and with the two lens bars above them the
+     closet spent 337px \u2014 45% \u2014 before the first garment. Exactly the shape r1
+     found in Home's launcher grid, and the same fix: compress to .hnav-style
+     chips, every destination still one tap, nothing removed.
+     \u26a0\ufe0f The laundry LENS is gone from the ROOT only, and stays on every grid and
+     picker. On a folder list it filtered the folder COUNTS, so "Tops \u00b7 15" meant
+     15 dirty tops \u2014 and it put a "\ud83e\uddfa Hamper" chip 190px above a "\ud83e\uddfa Hamper" row
+     that did something else entirely. The two agreed on the number (17 = 17,
+     measured); they disagreed about what tapping meant. Filtering belongs where
+     the items are. */
+  const nav = (capFilter || rackRow || launRow)
+    ? `<div class="clnav">${rackRow}${launRow}${capFilter}</div>` : "";
+  return clToolbar("Closet", false, true)
+    + top + nav + `<div class="frows">${rows}</div>`;
 }
 
 // ---- laundry sheet ----

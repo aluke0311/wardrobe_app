@@ -2921,6 +2921,156 @@ async function run() {
     return sheetOpen ? true : "the wear-again sheet did not open";
   }));
 
+  /* ================= 2026-08-16 r1: the workflow audit's fixes ============
+     Each of these guards an ORDER or a DUPLICATE, so each asserts in both
+     directions — that the right thing leads AND that nothing was deleted to get
+     it there. An order case that only checked "X is present" would pass against
+     the exact layout it was written to change. */
+  const parse = (html) => {
+    const h = W.document.createElement("div");
+    h.innerHTML = html;
+    return h;
+  };
+  const before = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & 4));  // FOLLOWING
+
+  /* ⚠️ Measured 2026-08-16: the rack opened with the 32 pieces she already
+     reaches for and put "Haven't reached for these lately" at y=2,581 of a
+     3,230px page. That band is the whole reason the rack can't quietly shrink
+     her wardrobe, and CLAUDE.md had been claiming for weeks that the screen led
+     with it. Same gradient, read cold→warm. */
+  t("the rack screen opens on what she's forgotten, not on what she already wears", () => withPackCloset(() => {
+    const r = W.buildRack({});
+    W.kvData.set("rack", { ids: r.ids, rotation: r.rotation, steady: r.steady, dormant: r.dormant,
+      cold: r.cold, offered: r.offered, slots: r.slots, levels: r.levels,
+      built: today, algo: 9, size: W.rackTargetSize(), seen: {}, seenAt: {}, pinned: [], pushed: {} });
+    const h = parse(W.renderClosetRack());
+    const heads = [...h.querySelectorAll(".snote b")].map(e => e.textContent);
+    const find = (s) => [...h.querySelectorAll(".snote b")].find(e => e.textContent.startsWith(s));
+    const dorm = find("Haven't reached"), rot = find("In rotation"), steady = find("Steady");
+    // all three bands must still be there — the fix is a reorder, not a removal
+    if (!dorm || !rot || !steady) return `a band went missing: ${heads.join(" | ")}`;
+    if (!before(dorm, rot)) return "the rediscovery band still renders below In rotation";
+    if (!before(steady, rot)) return "Steady still renders below In rotation";
+    return true;
+  }));
+
+  /* ⚠️ Measured: with trip mode on Madrid, "Plan outfits from this" left the
+     closet showing another capsule's pieces while the suggester still pooled
+     from Madrid, and BOTH banners rendered. The ✕ then cleared only the capsule,
+     leaving trip mode on with activeCapsuleId null — a state enterTripMode
+     cannot produce. One scope at a time. */
+  t("scoping to another capsule while on a trip leaves exactly one scope", () => withPackCloset(() => {
+    const trip = { id: "cT", name: "Madrid", kind: "travel", start_date: D(-2), end_date: D(4), plan: {} };
+    const cap = { id: "cC", name: "Summer", kind: "capsule", start_date: null, end_date: null, plan: {} };
+    W.capsules = [trip, cap]; W.capsuleLinks = [{ capsule_id: "cC", item_id: "tee0" }];
+    W.buildCapsuleIndexes();
+    W.enterTripMode("cT");
+    if (W.tripModeId !== "cT" || W.activeCapsuleId !== "cT") return "trip mode did not take";
+    W.planFromCapsule("cC");
+    if (W.activeCapsuleId !== "cC") return "the capsule scope did not take";
+    if (W.tripModeId) return `trip mode survived alongside capsule scope (${W.tripModeId} vs cC)`;
+    // and only one banner can render for one scope
+    const banners = parse(W.capsuleBanner()).querySelectorAll(".cap-banner").length;
+    if (banners !== 1) return `${banners} banners for one scope`;
+    // the other direction: scoping to the trip you're ALREADY on must not end it
+    W.enterTripMode("cT");
+    W.planFromCapsule("cT");
+    return W.tripModeId === "cT" ? true : "planning from the trip you're on ended trip mode";
+  }));
+
+  /* ⚠️ The closet root spent 337px — 45% of a 745px usable screen — on two lens
+     bars and four full-width nav rows before the first garment, with "Hamper"
+     appearing twice 190px apart meaning two different things. The lens moved to
+     where the ITEMS are; the destinations all survived as chips. */
+  t("the closet root spends its space on clothes, and keeps every shelf reachable", () => withPackCloset(() => {
+    W.closetCat = null; W.closetSub = null; W.closetHamper = false; W.closetWorn = false; W.closetRack = false;
+    W.activeCapsuleId = null;
+    // the capsule chip is gated on owning at least one capsule — that gate is
+    // correct, so the fixture has to satisfy it or the assertion below is unfair
+    W.capsules = [{ id: "cC", name: "Summer", kind: "capsule", start_date: null, end_date: null, plan: {} }];
+    W.buildCapsuleIndexes();
+    const root = parse(W.renderClosetRoot());
+    if (!root.querySelector(".clnav")) return "no shelf nav row on the closet root";
+    // the folder root filtered folder COUNTS by laundry state — "Tops · 15" meaning 15 dirty tops
+    if (root.querySelector(".laundry-lens")) return "the laundry lens is back on the folder root";
+    // compress, don't delete: every destination still one tap
+    for (const hook of ["data-rack", "data-laundry", "data-cap-filter"]) {
+      if (!root.querySelector(`[${hook}]`)) return `${hook} is no longer reachable from the closet root`;
+    }
+    // one glyph, one meaning: 👕 is the rack, so the worn tray can't also be 👕
+    const worn = root.querySelector("[data-worn]");
+    if (worn && worn.textContent.includes("\u{1F455}")) return "👕 still means both the rack and the worn tray";
+    // ...and the lens must still be on a screen that shows ITEMS
+    W.closetCat = "Tops";
+    const cat = parse(W.renderClosetCategory("Tops"));
+    W.closetCat = null;
+    return cat.querySelector(".laundry-lens") ? true : "the laundry lens was removed from item screens too";
+  }));
+
+  /* ⚠️ One fact, two surfaces, one of them gated. js/06-home.js already gated
+     this on the pack phase; the capsule and trip screens did not, so an undated
+     capsule — which is never packed — told her to wash before packing. */
+  t("'wash before you pack' only appears where there is packing", () => withPackCloset(() => {
+    const dirty = W.items.find(i => i.subcategory === "Tee shirts");
+    dirty.last_washed = D(-40);
+    const links = (cid) => [{ capsule_id: cid, item_id: dirty.id }, { capsule_id: cid, item_id: "jea0" }];
+    // an undated capsule states the fact and stops
+    const cap = { id: "cC", name: "Summer", kind: "capsule", start_date: null, end_date: null, plan: {} };
+    W.capsules = [cap]; W.capsuleLinks = links("cC"); W.buildCapsuleIndexes();
+    W.capsuleId = "cC";
+    const capHtml = W.renderCapsuleDetail();
+    if (/wash before you pack/.test(capHtml)) return "an undated capsule still says 'wash before you pack'";
+    if (!/in the hamper/.test(capHtml)) return "the capsule stopped mentioning the hamper at all";
+    // a trip in its PACK phase is exactly where the advice belongs
+    const trip = { id: "cP", name: "Soon", kind: "travel", start_date: D(2), end_date: D(6), plan: {} };
+    W.capsules = [trip]; W.capsuleLinks = links("cP"); W.buildCapsuleIndexes();
+    W.capsuleId = "cP"; W._tripSection = "list";
+    const tripHtml = W.renderCapsuleTrip();
+    W._tripSection = null;
+    if (W.tripPhase(trip) !== "pack") return "fixture drifted: that trip is not in its pack phase";
+    return /wash before you pack/.test(tripHtml) ? true : "a trip being packed no longer says it";
+  }));
+
+  /* ⚠️ A finished trip opened on "Outfits", proposing fresh outfits for a trip
+     that ended weeks ago, while the recap sat 9th of 11 rows in the ⋯ menu. */
+  t("a finished trip opens on what happened, not on new proposals", () => withPackCloset(() => {
+    const over = { id: "cO", name: "Chicago", kind: "travel", start_date: D(-20), end_date: D(-14), plan: {} };
+    const live = { id: "cL", name: "Madrid", kind: "travel", start_date: D(-2), end_date: D(4), plan: {} };
+    W.capsules = [over, live];
+    W.capsuleLinks = [over, live].flatMap(c => ["tee0", "jea0", "snk0"].map(id => ({ capsule_id: c.id, item_id: id })));
+    W.buildCapsuleIndexes();
+    W._tripSection = null;
+    if (W.tripDefaultSection(over) !== "list") return "a finished trip still opens on Outfits";
+    W.capsuleId = "cO";
+    if (!parse(W.renderCapsuleTrip()).querySelector("[data-cap-recap]")) return "no recap button on a finished trip";
+    // the other direction: a live trip with a list still leads with the outfits
+    if (W.tripDefaultSection(live) !== "outfits") return "a live trip stopped leading with its outfits";
+    W.capsuleId = "cL";
+    if (parse(W.renderCapsuleTrip()).querySelector("[data-cap-recap]")) return "a live trip is offering a recap";
+    W._tripSection = null;
+    return true;
+  }));
+
+  /* ⚠️ Four stacked full-width buttons, three of which meant "use this capsule
+     to plan". On an undated capsule two of them differed only in where you land,
+     and capsule mode landed on Home, which has no capsule dash. */
+  t("an undated capsule has one door into planning from it", () => withPackCloset(() => {
+    const cap = { id: "cC", name: "Summer", kind: "capsule", start_date: null, end_date: null, plan: {} };
+    const trip = { id: "cT", name: "Madrid", kind: "travel", start_date: D(-2), end_date: D(4), plan: {} };
+    W.capsules = [cap, trip];
+    W.capsuleLinks = [cap, trip].flatMap(c => ["tee0", "jea0"].map(id => ({ capsule_id: c.id, item_id: id })));
+    W.buildCapsuleIndexes();
+    W.capsuleId = "cC";
+    const c1 = parse(W.renderCapsuleDetail());
+    if (!c1.querySelector("[data-trip-toggle]")) return "an undated capsule can't be entered at all now";
+    if (c1.querySelector("[data-cap-plan]")) return "the duplicate 'Plan outfits from this' is back on an undated capsule";
+    // a DATED trip keeps both — the dash and the scoped closet are different places
+    W.capsuleId = "cT";
+    const c2 = parse(W.renderCapsuleDetail());
+    if (!c2.querySelector("[data-cap-plan]")) return "a dated trip lost 'Plan outfits from this'";
+    return true;
+  }));
+
   /* ⚠️ She rejected shape-based names (2026-08-14 r2): a shape is what a look is
      made OF, not what it is, and the same three words land on dozens of outfits.
      outfitName is the serial again, and this pins that it stays that way. */

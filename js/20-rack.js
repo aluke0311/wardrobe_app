@@ -1650,10 +1650,19 @@ function renderClosetRack() {
       + (_rackExtrasOpen ? extras : "")
     : "";
 
+  /* ⚠️ COLD FIRST (2026-08-16). The bands are a gradient and this screen used to
+     read it warm→cold, which opened on the ~32 pieces she already reaches for
+     and put "Haven't reached for these lately" at y=2,581 of a 3,230px page —
+     measured. That band is the whole reason the rack can't quietly shrink her
+     wardrobe (RACK_COLD_SHARE is documented as load-bearing, not a nicety), and
+     it was the least reachable thing on its own screen; "In rotation" is by
+     definition what she already knows. Reading the same gradient cold→warm keeps
+     the logic and puts the payoff first. Pinned by a case, because the previous
+     order survived long enough for this file to start claiming the opposite. */
   const body = list.length
-    ? sec("In rotation", "What you've actually been reaching for.", inRot)
+    ? sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, and they lean toward the kinds of days you actually have — clothes for rarer occasions take a slot or two at most.", inDorm)
       + sec("Steady", "You wear these — just not this week. This band exists so the middle of your wardrobe doesn't go invisible.", inSteady)
-      + sec("Haven't reached for these lately", "Deliberately kept in, so the rack can't quietly shrink your wardrobe. These rotate, and they lean toward the kinds of days you actually have — clothes for rarer occasions take a slot or two at most.", inDorm)
+      + sec("In rotation", "What you've actually been reaching for.", inRot)
       + extrasBlock
     : `<div class="placeholder" style="padding:40px 32px"><b>Rack not built yet</b>
         <div>It fills itself from what's in season and what you've been wearing.</div></div>`
