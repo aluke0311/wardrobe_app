@@ -180,7 +180,14 @@ function _taxCounts() {
    way SUBCAT_FORMALITY / WEAR_TOLERANCE do, so a rename here needs a warning.
    NOTE: LAUNDRY_LOADS is NOT in this set — it's keyed on color_family, which
    the taxonomy editor never touches. (The old CLAUDE.md gotcha was wrong.) */
-const TAXONOMY_LOCKED_SUBCATS = new Set([...Object.keys(WORKOUT_SLOTS), ...GEAR_CAND_SUBCATS]);
+/* ⚠️ Renaming one of these silently breaks something keyed on the shipped name.
+   `BOTTOM_SHAPE_SUBCATS` joined the set 2026-08-21 r3: the suggester's Pants /
+   Shorts / Skirt filter maps subcategories to bottom-half shapes, and a rename
+   would quietly drop those pieces out of the shape she asked for. */
+const TAXONOMY_LOCKED_SUBCATS = new Set([
+  ...Object.keys(WORKOUT_SLOTS), ...GEAR_CAND_SUBCATS,
+  ...SIL_BOTTOM_SHAPES.flatMap(k => BOTTOM_SHAPE_SUBCATS[k]),
+]);
 
 function openTaxonomySheet() {
   const { cat: catN, sub: subN } = _taxCounts();
@@ -237,7 +244,7 @@ function openTaxonomySheet() {
     // would silently break it. `meta` carries formality/tolerance across a
     // rename; these two maps can't be, so warn instead of failing quietly.
     if (TAXONOMY_LOCKED_SUBCATS.has(old) &&
-        !confirm(`“${old}” is one of the names workout and gear suggestions are keyed on.\n\nRenaming it will stop run/hike outfits from finding these pieces until you re-tag them.\n\nRename anyway?`)) return;
+        !confirm(`“${old}” is one of the names outfit suggestions are keyed on — workout and gear picks, and the Pants / Shorts / Skirt filter.\n\nRenaming it will stop those from finding these pieces until you re-tag them.\n\nRename anyway?`)) return;
     const t = cats();
     if ((t[c] || []).includes(next)) return toast("That type already exists here");
     t[c] = (t[c] || []).map(x => (x === old ? next : x));

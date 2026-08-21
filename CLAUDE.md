@@ -237,6 +237,86 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-21 r2+r3 — THE OVERLAP r1 SHIPPED, AND THE BOTTOM-HALF SWITCH.
+Selftest 313 → **315**, run GREEN; every new case mutation-checked red, ONE WAS
+VACUOUS ON FIRST WRITE AND ITS OWN MUTATION CHECK CAUGHT IT, and 1 existing case
+REVERSED with the decision it guarded.**
+
+⚠️ **r1 OVERLAPPED A FOUR-PIECE OUTFIT BY 49px IN THE SUGGESTER, AND THE r1 CASE
+WAS GREEN THE WHOLE TIME.** Her report: *"the layout in the outfit suggester is
+making things cut each other off — eg the bottom is rendering on top of the
+bottom half of the top in a four-item outfit."*
+- **The cause is that a layout is only valid for ONE canvas ratio.** A piece is
+  `s` of the WIDTH and square, so its height is only a fraction of the canvas
+  after dividing by the ratio. r1's `suggestionLayout` positioned rows against a
+  hard-coded `LOOK_CANVAS_RATIO` (4/3) — correct for grid tiles and the look page
+  — while the SUGGESTER sizes its own canvas from the combo and rendered them at
+  **1/0.726**. The rows got 54% of the height they were laid out for.
+- ⚠️ **`ratio` IS AN ARGUMENT NOW** (`suggestionLayout(pieces, ratio)`, default
+  4/3) and **`suggestionCanvasAspect` takes the PIECES**, not a layout — the two
+  are twins and the call site must use one number for both. `lookNaturalRatio`
+  is that number. **Rendering a layout in a canvas TALLER than planned is safe**
+  (more room); shorter is what collides — but both callers now pass what they
+  actually render at, so neither relies on that.
+- **Geometry is in canvas-WIDTH units throughout** (`LOOK_ROW_GAP`, `LOOK_OUTER`),
+  converted to height fractions by one division at the end. Mixing the two unit
+  systems is what made the first version subtly wrong.
+- **Measured after, 1–12 pieces, both ratios, real DOM: 0px overlap, 0px off
+  edge.** The suggester's box is also honest now — 2 pieces gives 320×150 rather
+  than 320×427.
+
+⚠️ **THE r1 CASE COULD NOT HAVE CAUGHT IT, AND NEITHER COULD MY FIRST REPLACEMENT.**
+The r1 case checked the geometry at one hard-coded ratio, so it verified the
+box nobody was complaining about. Worse: the first replacement compared
+`suggestionCanvasAspect` against `lookNaturalRatio` and passed **under the exact
+mutation that reproduces her bug**, because both functions were always correct in
+isolation — the defect lived in the CALL SITE combining them. The keeper renders
+the sheet and measures `.ocpiece` rectangles in the DOM. **When the bug is two
+correct functions wired together wrongly, only driving the real path can see it**
+— the same lesson as the Tomorrow-card pool case (2026-08-03).
+
+**THE "BOTTOM HALF" ROW IS A SESSION SWITCH** (her asks, in two goes: *"in the
+outfit suggester (NOT attached to any sort of learning) switch between only
+separates / only dresses, with default being anything can be suggested"*, then
+*"I also want to be able to say pants or shorts or skirt or dress… as pants and
+jeans etc are all pants"*).
+- ⚠️ **THE SECOND ASK IS A LEVEL THE TAXONOMY DIDN'T HAVE.** `separates` vs
+  `dress` is too coarse and SUBCATEGORY is too fine — Jeans, Pants,
+  Leggings/Joggers and Tights are four taxonomy entries and one decision.
+  `BOTTOM_SHAPE_SUBCATS` sits between them; `bottomShapeOf` / `bottomShapeOfIds`
+  answer it. Row: Anything · No dress · Pants · Shorts · Skirt · A dress.
+- ⚠️ **"No dress" AND the three shapes share one row on purpose** — it is their
+  union, "not a dress, don't mind which", and that relationship is only legible
+  if they sit together. Two rows would read as two unrelated filters.
+- ⚠️ **KEYED ON SHIPPED SUBCATEGORY NAMES, so they joined
+  `TAXONOMY_LOCKED_SUBCATS`** — renaming "Jeans" would otherwise drop every pair
+  out of a "Pants" search silently, which is the documented rename trap. The
+  existing lock case REVERSED with it (it asserted "Jeans" was unlocked); it now
+  guards the RULE — keyed names locked, unkeyed names not — in both directions.
+- ⚠️ **An unrecognised Bottoms subcategory matches NO shape** and is filtered out
+  by a shape rule. A stated rule is obeyed, not weighed; quietly including an
+  unknown would put jeans in a "Skirt" search.
+- ⚠️ **IT REUSES THE MECHANISM AND DELIBERATELY NOT THE STORAGE.** `prefs.silhouette`,
+  `prefsPoolFilter` and `comboMeetsPrefs` already existed and are untouched;
+  `_sugg.silhouette` is merged into `_suggPrefs()` last so it wins. Nothing is
+  written to `kv "ctxprefs"` — the obvious build would have reused that writer,
+  and a tap meaning "no dresses right now" would have become "never a dress for
+  Church". A case asserts `ctxprefs` is still untouched afterwards.
+- ⚠️ **TWO ENFORCEMENT POINTS, and a case must assert both directions.**
+  "No dresses" is a POOL narrowing (drop the Dresses slot); **"a dress" cannot be
+  expressed by removing pieces at all** and is enforced on the RESULTS. One
+  direction passing tells you nothing about the other.
+- **Session-only, reset on every open** (same rule as `wholeCloset`), and
+  **"Anything" is a real chip** — a control that can only be turned on is a trap.
+  Hidden while a FORMULA is pinned: a shape already states the silhouette.
+- ⚠️ **The empty state names it.** A stated rule is obeyed, not weighed, so
+  "a dress" against a closet with no dresses correctly returns nothing —
+  `suggestStarvationNote` says which rule did it, or that reads as a broken app.
+- ⚠️ **`.cap-catbar` CARRIES ITS OWN 14px SIDE PADDING.** The three chips came to
+  296px in 283px of usable room and wrapped one onto a second line; the row sets
+  `padding:0` because the wrapper already supplies the gutter. Found by measuring
+  the rendered chips, not by reading.
+
 **2026-08-21 r1 — SEVEN ASKS: THE CANVAS, THE STATS POOL, AND PLANNING AHEAD.
 Selftest 313 → **313** (5 removed with their decisions, 5 added), run GREEN; all
 5 new cases mutation-checked red in the same session, and 2 existing cases
@@ -3973,7 +4053,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-21 r1`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-21 r3`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -4320,7 +4400,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **313/313** (2026-08-21 r1, RUN GREEN — 5 cases went with the decisions they guarded and 5 replaced them — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **315/315** (2026-08-21 r3, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

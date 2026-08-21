@@ -1683,11 +1683,25 @@ async function run() {
   });
 
   // ---- Round C: taxonomy rename guard ----
+  /* ⚠️ REVERSED IN PART 2026-08-21 r3 with the decision it guards. "Jeans" was
+     asserted UNLOCKED because nothing was keyed on it; the suggester's
+     Pants / Shorts / Skirt filter now maps subcategories to bottom-half shapes,
+     so renaming it would silently drop every pair of jeans out of a "Pants"
+     search. The guard is not the list, it is the RULE — a name the code keys on
+     must be locked, and one it doesn't must not be, or the warning starts crying
+     wolf on every rename. Both directions are still asserted. */
   t("TAXONOMY_LOCKED_SUBCATS covers exactly the hard-keyed names", () => {
     const S = W.TAXONOMY_LOCKED_SUBCATS;
-    return eq([S.has("Workout tops"), S.has("Sports bras"), S.has("Sneakers"), S.has("Coats"),
-               S.has("Tee shirts"), S.has("Jeans")],
-              [true, true, true, true, false, false]);
+    const locked = ["Workout tops", "Sports bras", "Sneakers", "Coats",   // workout + gear
+                    "Jeans", "Leggings/Joggers", "Tights", "Shorts", "Skirts"];  // bottom shapes
+    const free = ["Tee shirts", "Blouses", "Cocktail"];   // nothing is keyed on these
+    const wrong = locked.filter(x => !S.has(x)).map(x => `${x} should be locked`)
+      .concat(free.filter(x => S.has(x)).map(x => `${x} should not be locked`));
+    if (wrong.length) return wrong.join("; ");
+    // ...and every name the shape filter keys on is in there, by construction.
+    const keyed = W.SIL_BOTTOM_SHAPES.flatMap(k => W.BOTTOM_SHAPE_SUBCATS[k]);
+    const missing = keyed.filter(x => !S.has(x));
+    return missing.length ? `shape subcats not locked: ${missing.join(", ")}` : true;
   });
   t("LAUNDRY_LOADS is keyed on colour, so renames can't reach it", () => {
     const fams = Object.values(W.LAUNDRY_LOADS).flat();
@@ -2898,6 +2912,95 @@ async function run() {
     // top + bottom held; the shoe is a DIFFERENT shoe, not just absent
     return after.includes("t1") && after.includes("b1") && after.includes("s2") && after.length === 3
       ? true : JSON.stringify(after);
+  }));
+
+  /* ⚠️ "ONLY SEPARATES / ONLY DRESSES" IS A SESSION SWITCH, NOT A LEARNED RULE
+     (2026-08-21, her ask: "in the outfit suggester — NOT attached to any sort of
+     learning — switch between only separates / only dresses, with default being
+     anything can be suggested").
+
+     The "not learning" half is load-bearing and is the third assertion here: the
+     app already has a per-CONTEXT silhouette rule stored in `kv "ctxprefs"`, and
+     the obvious way to build this would have been to reuse that writer. It must
+     not — a tap that says "no dresses right now" would have become "never a
+     dress for Church". The mechanism underneath IS shared (`prefs.silhouette`,
+     the pool filter and `comboMeetsPrefs`); only the storage is not.
+     ⚠️ Two different enforcement points, which is why both directions are
+     asserted: "no dresses" can be done by removing pieces from the POOL, and
+     "a dress" cannot be expressed that way at all — it has to be enforced on the
+     results. A case that only checked one would pass with the other broken. */
+  t("the suggester's bottom-half filter covers dress, separates and each shape, and learns nothing", () => withMockCloset(() => {
+    // withMockCloset has no dresses; add two so both directions are reachable.
+    const piece = (id, cat, sub) => ({ id, name: cat + " " + id, category: cat, subcategory: sub,
+      status: "Available", image_path: "p/" + id + ".jpg", color_family: "Blue", formality: [2, 3],
+      season: ["Summer", "Fall", "Winter", "Spring"] });
+    // ⚠️ The skirts matter: withMockCloset's only bottoms are Jeans, so without a
+    // DIFFERENT bottom shape "Pants" would have nothing to exclude and the
+    // assertion below would hold no matter what the filter did.
+    W.items = W.items.concat([piece("dz1", "Dresses", "Short"), piece("dz2", "Dresses", "Long"),
+                              piece("sk1", "Bottoms", "Skirts"), piece("sk2", "Bottoms", "Skirts")]);
+    W.itemById = new Map(W.items.map(i => [i.id, i]));
+    W.buildSuggestIndexes();
+    const savedPrefs = W.kvData.get("ctxprefs");
+    W.kvData.delete("ctxprefs");
+    try {
+      W.openSuggestSheet();
+      W._sugg.wholeCloset = true;
+      const shapes = () => W._sugg.results.map(c => c.pieces.some(p => p.category === "Dresses") ? "D" : "S");
+      const tap = (v) => {
+        const doc = document.getElementById("app").contentDocument;
+        const b = [...doc.querySelectorAll("[data-ssil]")].find(x => (x.dataset.ssil || null) === v);
+        if (!b) return "no chip for " + v;
+        b.click();
+        return null;
+      };
+      if (W._sugg.silhouette !== null) return "the sheet did not open on 'anything'";
+      const mixed = shapes();
+      if (!mixed.length) return "the fixture suggested nothing at all";
+
+      let err = tap("separates"); if (err) return err;
+      const sep = shapes();
+      if (!sep.length) return "separates-only emptied the sheet";
+      if (sep.includes("D")) return `separates-only still offered a dress: ${sep.join("")}`;
+
+      err = tap("dress"); if (err) return err;
+      const dr = shapes();
+      if (!dr.length) return "dress-only emptied the sheet";
+      if (dr.includes("S")) return `dress-only still offered separates: ${dr.join("")}`;
+
+      /* ⚠️ A BOTTOM SHAPE IS A GROUP OF SUBCATEGORIES, NOT ONE (2026-08-21 r3,
+         her ask: "pants or shorts or skirt or dress… as pants and jeans etc are
+         all pants"). The fixture's bottoms are Jeans and Skirts, which are two
+         different shapes — so "Pants" has to keep the jeans and drop the skirt,
+         and asserting only "it returned something" would pass either way. */
+      err = tap("pants"); if (err) return err;
+      const bottomSubs = () => W._sugg.results.map(c =>
+        (c.pieces.find(p => p.category === "Bottoms" || p.category === "Dresses") || {}).subcategory);
+      const pants = bottomSubs();
+      if (!pants.length) return "pants-only emptied the sheet";
+      if (pants.some(x => x !== "Jeans")) return `pants-only offered a non-pant: ${JSON.stringify(pants)}`;
+
+      err = tap("skirt"); if (err) return err;
+      const skirts = bottomSubs();
+      if (!skirts.length) return "skirt-only emptied the sheet";
+      if (skirts.some(x => x !== "Skirts")) return `skirt-only offered a non-skirt: ${JSON.stringify(skirts)}`;
+      err = tap("skirt"); if (err) return err;   // back off, so the clear check below is about `dress`
+      err = tap("dress"); if (err) return err;
+
+      // Tapping the active chip clears it — a control that can only turn on is a trap.
+      err = tap("dress"); if (err) return err;
+      if (W._sugg.silhouette !== null) return "re-tapping the active chip did not clear it";
+
+      // ...and none of that was written down anywhere.
+      if (W.kvData.get("ctxprefs") !== undefined) return "the toggle wrote a learned rule to ctxprefs";
+      // ...nor does it survive a fresh open.
+      W._sugg.silhouette = "dress";
+      W.openSuggestSheet();
+      return W._sugg.silhouette === null ? true : "the narrowing survived a reopen";
+    } finally {
+      W.hideSheet("logSheet");
+      if (savedPrefs === undefined) W.kvData.delete("ctxprefs"); else W.kvData.set("ctxprefs", savedPrefs);
+    }
   }));
 
   /* ⚠️ "＋ Add a piece" IS THE ORDINARY CLOTHING PICKER (2026-08-21, her report:
@@ -4697,30 +4800,86 @@ async function run() {
      pieces up. Stopping this loop at 12 would have walked straight past that —
      and past the whole vertical half of the check, since below 13 it is always
      the column count that binds. */
-  t("every piece of a look fits inside the canvas, at any piece count", () => {
-    const RATIO = 4 / 3;                       // .ocanvas height ÷ width
+  /* ⚠️ THE RATIO IS AN INPUT, AND THE FIRST VERSION OF THIS CASE ONLY EVER
+     CHECKED ONE OF THEM — which is how the overlap she reported the same day
+     shipped past a green suite ("the bottom is rendering on top of the bottom
+     half of the top in a four-item outfit").
+
+     `suggestionLayout` positions rows against a canvas ratio. Grids and the look
+     page use the fixed 3/4 box (4/3); the SUGGESTER sizes its own canvas from
+     the combo, and at four pieces that was 1/0.726 — so rows laid out for 4/3
+     were squashed to 54% of the height they needed and overlapped by 49px.
+     Checking only the default ratio passes happily while the screen she actually
+     looks at is broken. Every count is now checked at BOTH. */
+  t("every piece of a look fits inside the canvas, at any piece count and either ratio", () => {
     for (let n = 1; n <= 16; n++) {
       const its = Array.from({ length: n }, (_, k) =>
         ({ id: "fit" + k, category: ["Tops","Bottoms","Shoes","Outerwear"][k % 4], subcategory: "x", name: "p" + k }));
-      const lay = W.suggestionLayout(its);
-      if (lay.length !== n) return `${n} pieces → ${lay.length} placed`;
-      for (const p of lay) {
-        const halfW = p.s / 2, halfH = (p.s / 2) / RATIO;
-        if (p.x - halfW < -1e-6 || p.x + halfW > 1 + 1e-6)
-          return `n=${n}: ${p.item_id} runs off the side (x=${p.x}, s=${p.s})`;
-        if (p.y - halfH < -1e-6 || p.y + halfH > 1 + 1e-6)
-          return `n=${n}: ${p.item_id} runs off the top/bottom (y=${p.y}, s=${p.s})`;
-      }
-      for (let a = 0; a < lay.length; a++) for (let b = a + 1; b < lay.length; b++) {
-        // Convert both gaps to WIDTH units so one comparison covers both axes.
-        const dx = Math.abs(lay[a].x - lay[b].x), dy = Math.abs(lay[a].y - lay[b].y) * RATIO;
-        const s = Math.max(lay[a].s, lay[b].s);
-        if (dx < s - 1e-6 && dy < s - 1e-6)
-          return `n=${n}: ${lay[a].item_id} and ${lay[b].item_id} overlap (dx=${dx.toFixed(3)} dy=${dy.toFixed(3)} s=${s})`;
+      // the fixed 3/4 box every grid tile and the look page render in, AND the
+      // content-sized one the suggester picks for this exact combo
+      for (const ratio of [W.LOOK_CANVAS_RATIO, W.lookNaturalRatio(its)]) {
+        const lay = W.suggestionLayout(its, ratio);
+        const tag = `n=${n} ratio=${ratio.toFixed(3)}`;
+        if (lay.length !== n) return `${tag}: ${lay.length} placed`;
+        for (const p of lay) {
+          const halfW = p.s / 2, halfH = (p.s / 2) / ratio;
+          if (p.x - halfW < -1e-6 || p.x + halfW > 1 + 1e-6)
+            return `${tag}: ${p.item_id} runs off the side (x=${p.x}, s=${p.s})`;
+          if (p.y - halfH < -1e-6 || p.y + halfH > 1 + 1e-6)
+            return `${tag}: ${p.item_id} runs off the top/bottom (y=${p.y}, s=${p.s})`;
+        }
+        for (let a = 0; a < lay.length; a++) for (let b = a + 1; b < lay.length; b++) {
+          // Both gaps in WIDTH units, so one comparison covers both axes.
+          const dx = Math.abs(lay[a].x - lay[b].x), dy = Math.abs(lay[a].y - lay[b].y) * ratio;
+          const sz = Math.max(lay[a].s, lay[b].s);
+          if (dx < sz - 1e-6 && dy < sz - 1e-6)
+            return `${tag}: ${lay[a].item_id} and ${lay[b].item_id} overlap (dx=${dx.toFixed(3)} dy=${dy.toFixed(3)} s=${sz})`;
+        }
       }
     }
     return true;
   });
+
+  /* ⚠️ THIS ONE MUST DRIVE THE REAL SHEET, AND THE FIRST VERSION DID NOT — its
+     own mutation check caught that.
+
+     The bug was never inside `suggestionLayout` or `suggestionCanvasAspect`;
+     both were correct in isolation. It was the CALL SITE combining them wrong —
+     sizing the canvas from the combo and then laying out against the default
+     ratio. A case comparing the two functions to each other passed happily while
+     the sheet she actually looks at overlapped by 49px. So this renders the
+     suggester and measures the DOM, which is the only thing that can see it.
+     (Same lesson as the Tomorrow-card pool case: asserting on the helper passed
+     while the card still handed the engine a null pool.) */
+  t("the rendered suggestion canvas never overlaps its own pieces", () => withMockCloset(() => {
+    W.openSuggestSheet();
+    W._sugg.wholeCloset = true;
+    W.renderSuggestSheet();
+    try {
+      const doc = document.getElementById("app").contentDocument;
+      const canvas = doc.querySelector("#sgPreview .ocanvas");
+      if (!canvas) return "no suggestion canvas rendered";
+      const cr = canvas.getBoundingClientRect();
+      // The harness parks the iframe off-screen rather than display:none exactly
+      // so this is measurable; a zero box means that changed, not that it passed.
+      if (!cr.width || !cr.height) return "canvas has no layout — cannot judge overlap";
+      const boxes = [...canvas.querySelectorAll(".ocpiece")].map(p => p.getBoundingClientRect());
+      if (boxes.length < 3) return `only ${boxes.length} pieces on the canvas`;
+      for (let a = 0; a < boxes.length; a++) {
+        const A = boxes[a];
+        if (A.left - cr.left < -0.5 || A.top - cr.top < -0.5
+            || A.right > cr.right + 0.5 || A.bottom > cr.bottom + 0.5) return "a piece renders outside the canvas";
+        for (let b = a + 1; b < boxes.length; b++) {
+          const B = boxes[b];
+          const ox = Math.min(A.right, B.right) - Math.max(A.left, B.left);
+          const oy = Math.min(A.bottom, B.bottom) - Math.max(A.top, B.top);
+          if (ox > 0.5 && oy > 0.5)
+            return `pieces overlap by ${Math.min(ox, oy).toFixed(1)}px in a ${cr.width.toFixed(0)}×${cr.height.toFixed(0)} canvas`;
+        }
+      }
+      return true;
+    } finally { W.hideSheet("logSheet"); }
+  }));
 
   /* ⚠️ A STORED `outfits.layout` IS NEVER READ AGAIN (2026-08-21). Her looks
      carry years of hand-dragged arrangements, and those are exactly the ones

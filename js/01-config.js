@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-21 r1";
+const APP_VERSION = "2026-08-21 r3";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,13 @@ const APP_VERSION = "2026-08-21 r1";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-21 r3", notes: [
+    "The outfit suggester's \u201cBottom half\u201d row now goes past dress-or-not: Anything \u00b7 No dress \u00b7 Pants \u00b7 Shorts \u00b7 Skirt \u00b7 A dress. \u201cPants\u201d means jeans, trousers, leggings and tights together \u2014 the level you actually think in, rather than one subcategory at a time. Still session-only: nothing is remembered or learned",
+  ] },
+  { v: "2026-08-21 r2", notes: [
+    "Fixed outfits overlapping in the suggester \u2014 on a four-piece outfit the bottom was drawn over the bottom half of the top. The suggester sizes its own canvas to the outfit, and the pieces were being positioned for a taller box than the one they ended up in, so the rows were squashed into each other. Everything is laid out for the box it actually lands in now",
+    "The outfit suggester can be told \u201cno dresses\u201d or \u201ca dress\u201d, with \u201canything\u201d as the default \u2014 a row under Formality. It applies to this sheet only: nothing is remembered, nothing is learned, and it resets every time you open the suggester",
+  ] },
   { v: "2026-08-21 r1", notes: [
     "Looks are always arranged for you now, and every piece is always in frame. Moving and resizing pieces on the canvas is gone \u2014 a hand-arranged look could push a piece half off the edge, and it rendered clipped in every grid it appeared in. A six-piece look shows all six, on the tile, on the look page and in the builder. Build a Look is now: pick the pieces, see exactly how it will look, save",
     "\u201c\uFF0B Add a piece\u201d opens the normal clothing picker \u2014 folders, filter funnel, status and laundry lenses, and you can pick several at once. It used to be a search box that quietly showed only the first 60 things in your closet",

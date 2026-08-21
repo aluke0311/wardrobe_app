@@ -1573,9 +1573,11 @@ function suggestionPieceOrder(pieces) {
    position is then a row/column centre, nothing can overlap and nothing can
    cross an edge, for any number of pieces. That is the guarantee a hand-dragged
    `outfits.layout` could never make, which is why the drag is gone. */
-const LOOK_CANVAS_RATIO = 4 / 3;   // .ocanvas is aspect-ratio 3/4 → height = 4/3 × width
+const LOOK_CANVAS_RATIO = 4 / 3;   // .ocanvas / .lk-canvas are 3/4 → height = 4/3 × width
+const LOOK_MIN_RATIO = 0.4;        // never a slot so short the look reads as clipped
 const LOOK_GRID_FILL = 0.82;       // leaves a gutter between neighbours and the edge
-const LOOK_ROW_GAP = 0.045;        // gap between rows, in canvas-height units
+const LOOK_ROW_GAP = 0.06;         // gap between rows, in canvas-WIDTH units
+const LOOK_OUTER = 0.03;           // clear space above the first row and below the last
 // How many across, by piece count: pairs sit side by side, then 2×2, then thirds.
 function lookGridCols(n) { return n <= 2 ? Math.max(1, n) : n <= 4 ? 2 : n <= 9 ? 3 : 4; }
 // Pieces per row, top row first. 3 is the one shape worth stating by hand: a
@@ -1586,31 +1588,60 @@ function lookGridRows(n) {
   const base = Math.floor(n / rows), extra = n % rows;
   return Array.from({ length: rows }, (_, r) => base + (r < extra ? 1 : 0));
 }
-function suggestionLayout(pieces) {
+
+/* ⚠️⚠️ EVERY DISTANCE HERE IS IN CANVAS-WIDTH UNITS, AND THE CANVAS RATIO IS AN
+   INPUT — NOT A CONSTANT. Getting this wrong is what shipped the overlap she
+   reported ("the bottom is rendering on top of the bottom half of the top in a
+   four-item outfit").
+
+   The first version computed row positions against a hard-coded 4/3 and the
+   SUGGESTER then rendered them in a canvas it had sized itself, 1/0.726 — so the
+   rows were squashed to 54% of the height they were laid out for and a 4-piece
+   look overlapped by 49px. Measured. A piece is `s` of the WIDTH and square, so
+   its height only becomes a fraction of the canvas once you divide by the
+   ratio; a layout is therefore only valid for ONE ratio, and the caller has to
+   say which.
+
+   Rendering a layout in a canvas TALLER than it was planned for is safe (more
+   room between rows); shorter is what collides. Both callers now pass the ratio
+   they will actually render at, so neither relies on that. */
+function lookRowSize(rows, widest, ratio) {
+  // Horizontal fit first — that is what usually binds.
+  const wide = LOOK_GRID_FILL / widest;
+  // ...then check the rows actually fit the height available, and shrink if not.
+  const room = (ratio - 2 * LOOK_OUTER - (rows - 1) * LOOK_ROW_GAP) / rows;
+  return Math.max(0.04, Math.min(wide, room));
+}
+/* The height this many pieces NATURALLY want, as a multiple of the width —
+   what the suggester sizes its canvas to. Capped at the fixed 3/4 box so a
+   many-piece look never grows taller than a grid tile would be. */
+function lookNaturalRatio(pieces) {
+  const n = (pieces || []).length;
+  if (!n) return LOOK_CANVAS_RATIO;
+  const rowSizes = lookGridRows(n);
+  const rows = rowSizes.length, widest = Math.max(...rowSizes);
+  const s = LOOK_GRID_FILL / widest;
+  const need = rows * s + (rows - 1) * LOOK_ROW_GAP + 2 * LOOK_OUTER;
+  return Math.min(LOOK_CANVAS_RATIO, Math.max(LOOK_MIN_RATIO, need));
+}
+function suggestionLayout(pieces, ratio = LOOK_CANVAS_RATIO) {
   const sorted = suggestionPieceOrder(pieces);
   const n = sorted.length;
   if (!n) return [];
   const rowSizes = lookGridRows(n);
   const rows = rowSizes.length, widest = Math.max(...rowSizes);
-  // Horizontal room is 1/widest; vertical room is (1/rows) of the HEIGHT, which
-  // is LOOK_CANVAS_RATIO widths tall. The binding one sets the size.
-  const s = +(Math.min(1 / widest, LOOK_CANVAS_RATIO / rows) * LOOK_GRID_FILL).toFixed(4);
+  const s = +(lookRowSize(rows, widest, ratio).toFixed(4));
   /* ⚠️ ROWS ARE PACKED AND CENTRED, NOT SPREAD OVER THE FULL HEIGHT. Dividing
      the height evenly put a 6-piece look's two rows 141px apart in a 480px box
-     (measured) — every piece visible, which is what she asked for, but reading as
-     two unrelated bands rather than one outfit. The canvas is taller than it is
-     wide and the size is usually capped by the COLUMN count, so that slack is
-     structural, not a one-off.
-     The gap shrinks when there isn't room for the full one, which is what keeps
-     the top and bottom rows on the canvas at high piece counts. */
-  const pieceH = s / LOOK_CANVAS_RATIO;                 // piece height, in canvas-HEIGHT units
-  const slack = Math.max(0, 1 - rows * pieceH);
-  const gap = Math.min(LOOK_ROW_GAP, slack / (rows + 1));
-  const outer = (slack - gap * (rows - 1)) / 2;
+     (measured) — every piece visible, which is what she asked for, but reading
+     as two unrelated bands rather than one outfit. */
+  const blockW = rows * s + (rows - 1) * LOOK_ROW_GAP;   // in width units
+  const top = (ratio - blockW) / 2;                      // centre the block vertically
   const out = [];
   let k = 0;
   rowSizes.forEach((count, r) => {
-    const y = +((outer + (r + 0.5) * pieceH + r * gap).toFixed(4));
+    // Width units → height fractions is one division by the ratio, done once.
+    const y = +(((top + (r + 0.5) * s + r * LOOK_ROW_GAP) / ratio).toFixed(4));
     for (let j = 0; j < count; j++) {
       // Centre a short row rather than left-aligning it against the widest one.
       const x = +((0.5 + (j - (count - 1) / 2) / widest).toFixed(4));
@@ -1620,40 +1651,25 @@ function suggestionLayout(pieces) {
   return out;
 }
 
-/* How tall the suggester's canvas needs to be, derived from the arrangement
-   rather than fixed (2026-08-14).
+/* The `aspect-ratio` the suggester's canvas should take, for THIS combo.
 
-   `.ocanvas` is `aspect-ratio: 3/4` everywhere, which is right for a saved look
-   in a grid and wrong for the one place the canvas IS the answer. Pieces are
-   square (`.ocpiece` is `aspect-ratio: 1/1`) and sized as a fraction `s` of the
-   canvas WIDTH, centred on `y` as a fraction of its HEIGHT — so the height a
-   layout actually needs is a function of the grid, and 3/4 overshoots all four
-   of them. Measured on her closet at 320px wide: a dress-and-shoes look put
-   143px of garment in a 427px box, 67% of it empty, which is what pushed
-   "Wear this today" 1,300px down the sheet.
+   `.ocanvas` is a fixed 3/4 everywhere else, which is right for a grid tile (the
+   tiles must share a height or the grid goes ragged) and wrong for the one place
+   the canvas IS the answer: a dress-and-shoes look put 143px of garment in a
+   427px box, 67% of it empty, which is what pushed "Wear this today" 1,300px
+   down the sheet (measured 2026-08-14).
 
-   For each piece, the canvas must be tall enough that `y*H` clears half the
-   piece plus padding at both ends. Take the binding one.
-   ⚠️ Returns a WIDTH/HEIGHT ratio for `aspect-ratio`, so it is the RECIPROCAL
-   of the height factor — getting that backwards yields a plausible-looking box
-   that is wrong in the one direction nobody checks. */
-const SUGG_CANVAS_PAD = 0.03;   // fraction of width kept clear at top and bottom
-function suggestionCanvasAspect(layout) {
-  const lay = (Array.isArray(layout) ? layout : []).filter(p => p && p.y > 0 && p.y < 1);
-  if (!lay.length) return "3 / 4";
-  let factor = 0;                                  // needed height, as a multiple of width
-  for (const p of lay) {
-    const half = (p.s || 0) / 2 + SUGG_CANVAS_PAD;
-    factor = Math.max(factor, half / p.y, half / (1 - p.y));
-  }
-  // Never taller than the old fixed box, never a slot so short it looks clipped.
-  factor = Math.min(4 / 3, Math.max(0.4, factor));
-  return `1 / ${factor.toFixed(3)}`;
+   ⚠️ It takes the PIECES, not a layout, and is the twin of the `ratio` argument
+   passed to `suggestionLayout` — the caller must use the same number for both or
+   it lays out for one box and draws in another, which is exactly the overlap bug
+   above. Returns WIDTH / HEIGHT, the reciprocal of the ratio. */
+function suggestionCanvasAspect(pieces) {
+  return `1 / ${lookNaturalRatio(pieces).toFixed(3)}`;
 }
 
 // Suggestion sheet state. wx = today's (or the plan day's) weather; useWx toggles
 // the weather chip; locked = item ids pinned across "New suggestions" (V3).
-let _sugg = { results: [], idx: 0, occPrefs: null, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false };
+let _sugg = { results: [], idx: 0, occPrefs: null, targetLevel: null, seedItemId: null, capsuleId: null, season: currentSeason(), planCtx: null, activeContext: null, wx: null, useWx: true, useClean: true, locked: new Set(), lockedRoles: new Map(), shapeKey: null, wholeCloset: false, silhouette: null };
 const _suggWx = () => (_sugg.useWx ? _sugg.wx : null);
 const _suggClean = () => _sugg.useClean !== false;
 let _suggSwapSeen = new Map();  // slot → ids ✨ has already offered this session (see swapSuggestionPiece)
@@ -1807,6 +1823,50 @@ const SIL_SEPARATES = "separates";   // a top and a bottom, never a dress
 const SIL_DRESS     = "dress";       // a dress, never separates
 const SIL_ANY       = "any";         // explicitly no silhouette rule — lets one
                                      // occasion overrule its context's standing rule
+/* ⚠️ THE BOTTOM HALF IS A SHAPE, NOT A SUBCATEGORY (2026-08-21 r3, her ask:
+   "I also want to be able to say pants or shorts or skirt or dress… as pants and
+   jeans etc are all pants").
+
+   `separates` vs `dress` was too coarse and subcategory is too fine: Jeans,
+   Pants, Leggings/Joggers and Tights are four taxonomy entries and one decision.
+   These sit BETWEEN the two — the level she actually thinks in.
+
+   ⚠️ Keyed on the SHIPPED subcategory names, which the taxonomy editor can
+   rename, so they join TAXONOMY_LOCKED_SUBCATS and a rename now warns. A Bottoms
+   piece whose subcategory isn't listed matches NO shape and is filtered out by a
+   shape rule — deliberate: a stated rule is obeyed, not weighed, and quietly
+   including an unknown would put jeans in a "Skirt" search. */
+const SIL_PANTS  = "pants";
+const SIL_SHORTS = "shorts";
+const SIL_SKIRT  = "skirt";
+const BOTTOM_SHAPE_SUBCATS = {
+  [SIL_PANTS]:  ["Jeans", "Pants", "Leggings/Joggers", "Tights"],
+  [SIL_SHORTS]: ["Shorts", "Active shorts"],
+  [SIL_SKIRT]:  ["Skirts"],
+};
+const SIL_BOTTOM_SHAPES = Object.keys(BOTTOM_SHAPE_SUBCATS);
+// One label per value, so the chips, the "rule in force" line and the empty
+// state cannot drift into calling the same thing three different things.
+const SIL_LABELS = {
+  [SIL_SEPARATES]: "No dress", [SIL_DRESS]: "A dress",
+  [SIL_PANTS]: "Pants", [SIL_SHORTS]: "Shorts", [SIL_SKIRT]: "Skirt",
+};
+const _bottomShapeBySubcat = new Map(
+  SIL_BOTTOM_SHAPES.flatMap(k => BOTTOM_SHAPE_SUBCATS[k].map(sub => [sub, k])));
+// The bottom-half shape of ONE piece: a dress, one of the bottom shapes, or null
+// for anything that isn't a bottom half at all (tops, shoes, outerwear).
+function bottomShapeOf(i) {
+  if (!i) return null;
+  const slot = suggestSlot(i);
+  if (slot === "Dresses") return SIL_DRESS;
+  if (slot !== "Bottoms") return null;
+  return _bottomShapeBySubcat.get(i.subcategory) || null;
+}
+// ...and of a whole combo. A dress wins: it IS the bottom half.
+function bottomShapeOfIds(ids) {
+  const shapes = (ids || []).map(id => bottomShapeOf(itemById.get(id))).filter(Boolean);
+  return shapes.includes(SIL_DRESS) ? SIL_DRESS : (shapes[0] || null);
+}
 const PREF_LEVEL_MIN = 1, PREF_LEVEL_MAX = 8;
 
 function contextPrefsAll() {
@@ -1847,8 +1907,13 @@ function formulaSilhouette(key) {
 // Does this combo satisfy her stated rules? A HARD test — never rescued away.
 function comboMeetsPrefs(ids, prefs) {
   if (!prefs) return true;
-  if (prefs.silhouette && prefs.silhouette !== SIL_ANY
-      && silhouetteOfIds(ids) !== prefs.silhouette) return false;
+  const want = prefs.silhouette;
+  if (want && want !== SIL_ANY) {
+    if (SIL_BOTTOM_SHAPES.includes(want)) {
+      // A specific bottom shape: never a dress, and the bottom must BE that shape.
+      if (bottomShapeOfIds(ids) !== want) return false;
+    } else if (silhouetteOfIds(ids) !== want) return false;
+  }
   if (prefs.avoid && prefs.avoid.length) {
     const no = new Set(prefs.avoid);
     if (ids.some(id => no.has(id))) return false;
@@ -1878,6 +1943,7 @@ function prefsLabel(prefs) {
   if (prefs.silhouette === SIL_SEPARATES) bits.push("no dresses");
   if (prefs.silhouette === SIL_DRESS) bits.push("a dress");
   if (prefs.silhouette === SIL_ANY) bits.push("dresses allowed");
+  if (SIL_BOTTOM_SHAPES.includes(prefs.silhouette)) bits.push(SIL_LABELS[prefs.silhouette].toLowerCase());
   if (+prefs.levelShift < 0) bits.push("more casual");
   if (+prefs.levelShift > 0) bits.push("dressier");
   const n = (prefs.avoid || []).length;
@@ -1898,7 +1964,13 @@ function prefsPoolFilter(pool, prefs) {
   const no = new Set(prefs.avoid || []);
   return pool.filter(i => {
     if (no.has(i.id)) return false;
-    if (prefs.silhouette === SIL_SEPARATES && suggestSlot(i) === "Dresses") return false;
+    const want = prefs.silhouette;
+    // "No dresses" and every specific bottom shape both rule the Dresses slot out.
+    if ((want === SIL_SEPARATES || SIL_BOTTOM_SHAPES.includes(want)) && suggestSlot(i) === "Dresses") return false;
+    // A specific shape also rules out the bottoms that aren't it. ⚠️ Only for
+    // BOTTOMS — tops and shoes have no bottom-half shape and must pass through.
+    if (SIL_BOTTOM_SHAPES.includes(want) && suggestSlot(i) === "Bottoms"
+        && bottomShapeOf(i) !== want) return false;
     return true;
   });
 }
@@ -1945,6 +2017,13 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   // it is session-only and resets every open, so the app never quietly stays
   // narrowed OR quietly stays wide.
   _sugg.wholeCloset = false;
+  /* ⚠️ SESSION-ONLY, AND DELIBERATELY NOT LEARNED (2026-08-21, her ask: "in the
+     outfit suggester (NOT attached to any sort of learning) switch between only
+     separates / only dresses, with default being anything can be suggested").
+     Same rule as `wholeCloset`: reset on every open, so the app never quietly
+     stays narrowed AND never quietly stays wide. Nothing is written to
+     `kv "ctxprefs"` — this is a decision about right now, not about a context. */
+  _sugg.silhouette = null;
   /* The refine fold, session-only like wholeCloset — the sheet never remembers a
      narrowing OR a widening across opens. It starts OPEN when the CALLER pre-set
      one (a formula from its folder, a planned day's level), because then the
@@ -2071,8 +2150,17 @@ const _suggCleanArg = () => (_suggPlanDate() ? false : _suggClean());
 /* The rules in force for the sheet as it currently stands. In a trip the pack
    screen sets `_sugg.occPrefs` for the occasion being dressed; otherwise it's
    whatever standing rule the active context carries. */
+/* The rules in force for the sheet as it stands. The session silhouette toggle
+   is merged in LAST so it always wins — it is the one she just tapped.
+   ⚠️ It rides the SAME `prefs.silhouette` the pool filter and `comboMeetsPrefs`
+   already understand, rather than a second mechanism: "no dresses" is a pool
+   narrowing (drop the Dresses slot) and "only a dress" cannot be expressed by
+   removing pieces at all, so it has to be enforced on the RESULTS. Both of those
+   were already built and tested; this just gives them a writer again. */
 function _suggPrefs() {
-  return effectivePrefs(_sugg.activeContext, _sugg.occPrefs || null);
+  const base = effectivePrefs(_sugg.activeContext, _sugg.occPrefs || null);
+  if (!_sugg.silhouette) return base;
+  return { ...(base || {}), silhouette: _sugg.silhouette };
 }
 
 /* ---- "I'd rather…" -------------------------------------------------------
@@ -2268,6 +2356,13 @@ function suggestStarvationNote() {
     if (off) bits.push(`${off} don't cover ${occLabel(_sugg.targetLevel)}`);
   }
   if (_sugg.banned && _sugg.banned.size) bits.push(`${_sugg.banned.size} set aside`);
+  /* ⚠️ A STATED RULE IS OBEYED, NOT WEIGHED — if "only a dress" leaves nothing
+     buildable the sheet stays empty, which is correct and would otherwise read
+     as the app being broken. So it has to say so. */
+  if (_sugg.silhouette === SIL_DRESS) bits.push("you asked for a dress");
+  else if (_sugg.silhouette === SIL_SEPARATES) bits.push("dresses are ruled out");
+  else if (SIL_BOTTOM_SHAPES.includes(_sugg.silhouette))
+    bits.push(`you asked for ${SIL_LABELS[_sugg.silhouette].toLowerCase()}`);
   if (_sugg.unworn) bits.push(`only ${eligible.length} unworn pieces — tap the chip above for the whole suitcase`);
   else if (_sugg.capsuleId) bits.push(`pool is ${eligible.length} pieces`);
   // A thin RACK must say so and point at the way out, or an empty sheet reads as
@@ -2823,9 +2918,13 @@ function renderSuggestSheet() {
 
   let preview = "";
   if (combo) {
-    const layout = suggestionLayout(combo.pieces);
+    /* ⚠️ ONE ratio, used for BOTH the box and the positions inside it. Sizing
+       the canvas from the combo and then laying out against the default 4/3 is
+       what overlapped a four-piece outfit by 49px (2026-08-21, her report). */
+    const ratio = lookNaturalRatio(combo.pieces);
+    const layout = suggestionLayout(combo.pieces, ratio);
     const fakeOutfit = { layout, formality_override: null, _bucket: null };
-    const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas", suggestionCanvasAspect(layout));
+    const canvas = layoutCanvasHtml(fakeOutfit, "ocanvas sg-canvas", suggestionCanvasAspect(combo.pieces));
     preview = canvas || combo.pieces.map(p =>
       `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer" data-canvas-item="${esc(p.id)}">
         ${thumbHtml(p.image_path)}
@@ -2933,9 +3032,34 @@ function renderSuggestSheet() {
     <div style="font-size:12px;color:var(--muted);margin-bottom:6px;text-align:center">Formality</div>
     <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center">${levelChips}</div>
   </div>`;
+  /* ⚠️ A NARROWING, SO IT IS VISIBLE AND ONE TAP FROM OFF — the same contract as
+     the pool and laundry chips. "Anything" is the default and is a real chip,
+     not just the absence of the other two: a control that can only be turned on
+     is a trap (the formula chip and the fixed-event sheet already follow this).
+     ⚠️ Hidden while a FORMULA is pinned: a shape already names the silhouette
+     outright, and two silhouette rules fighting can only produce an empty
+     sheet — the same guard `_suggPool` and `_suggApplyPrefs` apply downstream. */
+  /* ⚠️ ONE ROW, TWO GRANULARITIES, AND THAT IS DELIBERATE (2026-08-21 r3).
+     "No dress" is the union of the three shapes beside it — "not a dress, don't
+     mind which" is a real thing to want and is what she asked for first. Putting
+     the loose option and the specific ones in one row is what makes the
+     relationship legible; two rows would read as two unrelated filters.
+     ⚠️ padding:0 — .cap-catbar carries its own 14px sides, and with them three
+     chips already came to 296px in 283px of room and wrapped (measured); the
+     wrapper above supplies the gutter. Six chips wrap on purpose. */
+  const silRow = _sugg.shapeKey ? "" : (() => {
+    const chip = (val, lbl) => `<button class="cap-chip${(_sugg.silhouette || null) === val ? " on" : ""}" data-ssil="${val === null ? "" : val}" style="font-size:13px">${lbl}</button>`;
+    return `<div style="padding:10px 16px 0">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px;text-align:center">Bottom half</div>
+      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:0">
+        ${chip(null, "Anything")}${chip(SIL_SEPARATES, SIL_LABELS[SIL_SEPARATES])}${
+          SIL_BOTTOM_SHAPES.map(k => chip(k, SIL_LABELS[k])).join("")}${chip(SIL_DRESS, SIL_LABELS[SIL_DRESS])}
+      </div>
+    </div>`;
+  })();
   const poolRow = dayRow + `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:14px 16px 10px">
     ${suggestPoolChipHtml()}${cleanChip}${wxChip}
-  </div>` + levelRow;
+  </div>` + levelRow + silRow;
 
   /* Refine: everything that changes WHAT is searched, folded away by default.
      Opening on the answer is the whole point of the reorder — 25 chips ahead of
@@ -3118,6 +3242,16 @@ function renderSuggestSheet() {
     b.onclick = () => {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
+      regen();
+    };
+  });
+
+  // Dresses / separates / anything. Tapping the active chip clears it, so the
+  // row behaves like every other chip group in the sheet.
+  $("#logInner").querySelectorAll("[data-ssil]").forEach(b => {
+    b.onclick = () => {
+      const val = b.dataset.ssil || null;
+      _sugg.silhouette = (_sugg.silhouette === val) ? null : val;
       regen();
     };
   });
