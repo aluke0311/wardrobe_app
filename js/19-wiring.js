@@ -51,7 +51,6 @@ function switchTab(name) {
   // entry-scroll captured before she left the tab.
   else if (name === "stats")    { statsView = "main"; statsDateRange = "all"; _statsLastView = null; _statsEntryScroll = 0; renderStats(); }
   else if (name === "settings") renderSettings();
-  else if (name === "week")     renderWeekPlan();
 
   scrollToTop();
 }
@@ -72,12 +71,6 @@ function renderSettings() {
             <span class="theme-sw" style="background:#768c66"></span>
             <span class="theme-nm">Sage</span>
           </button>
-        </div>
-        <div><div class="fld" style="margin-top:4px">Looks without an arrangement</div>
-          <div class="muted" style="font-size:13px;line-height:1.5">Looks you've arranged in the builder always show the way you arranged them. This is for the rest.</div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          ${[["collage", "Collage"], ["layout", "Default layout"]].map(([k, lbl]) =>
-            `<button class="cap-chip${lookFallbackMode() === k ? " on" : ""}" data-lookfb="${k}" style="font-size:13px">${lbl}</button>`).join("")}
         </div>
       </div>
       <div class="card stack">
@@ -140,7 +133,6 @@ function renderSettings() {
     </div>`;
   $("#signOutBtn").onclick = () => handleSignedOut();
   $("#settingsBody").querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => { applyTheme(b.dataset.themeSet); renderSettings(); });
-  $("#settingsBody").querySelectorAll("[data-lookfb]").forEach(b => b.onclick = () => { setLookFallbackMode(b.dataset.lookfb); renderSettings(); });
   const rs = $("#setRackSize");
   if (rs) {
     // Live label while dragging; commit (and let the rack go stale) on release,
@@ -495,7 +487,7 @@ function wireEvents() {
   function haptic(ms = 8) { try { navigator.vibrate && navigator.vibrate(ms); } catch (_) {} }
   // subtle tap feedback on primary actions
   document.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".btn, .cap-plan, .cap-newbtn, .rv-confirm, .review-cta, .log-cta, .sheet-action-btn, .cal-make-look-btn, .lk-act, .tile")) haptic(6);
+    if (e.target.closest(".btn, .cap-plan, .cap-newbtn, .rv-confirm, .review-cta, .log-cta, .sheet-action-btn, .cal-make-look-btn, .lk-act")) haptic(6);
   }, { passive: true });
   $("#tabbar").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-tab]");
@@ -504,12 +496,6 @@ function wireEvents() {
     // Re-tapping the current tab scrolls its content back to the top (iOS pattern)
     if (b.classList.contains("on")) { smoothScrollTop(); return; }
     resetTabRoot(b.dataset.tab); switchTab(b.dataset.tab);
-  });
-
-  // home launcher tiles
-  $("#homeBody").addEventListener("click", (e) => {
-    const t = e.target.closest("[data-go]");
-    if (t) { resetTabRoot(t.dataset.go); switchTab(t.dataset.go); }
   });
 
   // closet: lens / folders / subcategories / items / back / search
@@ -607,10 +593,8 @@ function wireEvents() {
       return;
     }
     if (e.target.closest("[data-look-formality]")) { if (lookId) openLookFormalityEdit(lookId); return; }
-    if (e.target.closest("#lookEditPieces")) { if (lookId) openBuilder(lookId); return; }
     if (e.target.closest("#lookDecon")) { if (lookId) deconstructLook(lookId); return; }
     if (e.target.closest("#lookAddLevel")) { if (lookId) showNudgePiecesSheet(lookId, outfitBucket(outfitById.get(lookId))); return; }
-    if (e.target.closest("#lookDefLayout")) { if (lookId) applyDefaultLayout(lookId); return; }
     const pieceOpen = e.target.closest("[data-piece-open]");
     if (pieceOpen) {
       // Thumbnail tap opens the item; must run BEFORE the [data-occ-item] row check.
@@ -660,13 +644,14 @@ function wireEvents() {
     if (e.target.closest("[data-railclose]")) { builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = ""; return renderBuilder(); }
     const badd = e.target.closest("[data-badd]");
     if (badd) return addPieceToBuilder(badd.dataset.badd);
-    const layer = e.target.closest("[data-blayer]");
-    if (layer) return layerPiece(layer.dataset.blayer);
-    if (e.target.closest("[data-bdelete]")) return deleteBuilderPiece();
-    if (e.target.closest("[data-bview]")) {
-      const i = builder.selIdx;
-      if (i < 0) { toast("Tap a piece first"); return; }
-      const it = itemById.get(builder.pieces[i].item_id);
+    /* The old selection bar (Send back / Bring front / Remove / View item) went
+       with the drag: two of its four buttons were z-order, which no longer
+       exists. Remove and open-the-item live on each piece row now. */
+    const bdrop = e.target.closest("[data-bdrop]");
+    if (bdrop) return deleteBuilderPiece(bdrop.dataset.bdrop);
+    const bopen = e.target.closest("[data-bopen]");
+    if (bopen) {
+      const it = itemById.get(bopen.dataset.bopen);
       if (!it) return;
       _fromBuilder = JSON.parse(JSON.stringify(builder));  // stash to restore on back
       closetCat = it.category || null; closetSub = it.subcategory || null; searchResults = null;

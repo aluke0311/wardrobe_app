@@ -531,47 +531,15 @@ function wireWxMemory(root) {
   });
 }
 
-/* ⚠️ THE TILE GRID IS A NAV STRIP NOW (2026-08-14), and the reason is that it
-   had stopped carrying anything the tab bar didn't.
+/* ⚠️ THE NAV STRIP IS GONE (2026-08-21, her ask: "on the home screen I don't
+   know why I have a row that just says closet # looks # etc. drop it — I have
+   those tabs on the bottom").
 
-   HOME_TILES is closet · looks · calendar · capsules · stats. The tab bar, which
-   is on screen permanently, is home · closet · looks · calendar · capsules ·
-   stats. Every tile was a tab. It cost 533px — 71% of the usable screen on a
-   375×812 phone — to duplicate navigation one tap away either way, which pushed
-   "What should I wear?" to y=674 and left the log row 39px behind the tab bar.
-   It had a real justification once, and CLAUDE.md still recorded it ("Capsules
-   is a Home-tile screen (not in bottom nav)"); that stopped being true and
-   nothing re-read the grid afterwards.
-
-   Compress, don't delete (2026-07-26): the one thing the tiles carried that the
-   tab bar doesn't is the COUNTS, so those survive as a single scrollable row and
-   every destination keeps its tap target. `short()` is that number alone —
-   `sub()` is still the sentence, kept for the label under a full tile if this is
-   ever reverted. */
-const HOME_TILES = [
-  { tab: "closet",   label: "Closet",     sub: () => `${availableCount()} items`,
-    short: () => `${availableCount()}`,
-    icon: `<path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/>` },
-  { tab: "looks",    label: "Looks",      sub: () => `${activeOutfits().length} looks`,
-    short: () => `${activeOutfits().length}`,
-    icon: `<path d="M7 4l5 3 5-3 2 5-3 1v10H8V10L5 9z"/>` },
-  { tab: "calendar", label: "Calendar",   sub: () => {
-      const today = localISO(new Date());
-      const n = dayGroups(today).length;
-      // ⚠️ "yet" reads as "you have never logged anything" — on a closet with a
-      // year of history behind it that's simply false. The tile is TODAY-scoped;
-      // the words have to say so.
-      return n ? `${n} logged today` : "Nothing logged today";
-    },
-    short: () => { const n = dayGroups(localISO(new Date())).length; return n ? `${n}` : ""; },
-    icon: `<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>` },
-  { tab: "capsules", label: "Capsules",   sub: () => capsules.length ? `${capsules.length} set${capsules.length === 1 ? "" : "s"}` : "Sets & packing",
-    short: () => capsules.length ? `${capsules.length}` : "",
-    icon: `<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V5h6v3"/>` },
-  { tab: "stats",    label: "Stats", sub: () => "Insights", wide: true,
-    short: () => "",
-    icon: `<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>` },
-];
+   It is the last of the launcher grid. 2026-08-14 compressed five full-width
+   tiles into one scrollable count row on the grounds that the tab bar already
+   carried every destination and the COUNTS were the one thing it didn't. She
+   has now answered that: the counts weren't worth a row either. Same
+   destinations, same one tap, from the bar that is on screen permanently. */
 
 function availableCount() {
   return items.filter(i => itemStatus(i) === "Available").length;
@@ -889,316 +857,62 @@ function tripOfferHtml() {
   </div>`;
 }
 
-/* ---- Round A: Tomorrow card + today's planned rows + plan-ahead ----
-   All suppressed in trip mode (the trip dashboard owns those days). The
-   Tomorrow card is visible ALL DAY (user decision 2026-07-20). */
+/* ---- TODAY, ON HOME -------------------------------------------------------
+   ⚠️ THE PLANNING-AHEAD MACHINERY THAT USED TO LIVE HERE IS GONE (2026-08-21,
+   her ask: "remove the planning ahead features entirely except for I want to be
+   able to set an outfit for the future from the outfit suggester").
 
-// One generated outfit per context-only entry, cached per render-day so
-// re-renders never re-roll it out from under her (predictability).
-// A generated pick is STICKY: once she's seen it, it survives refreshes,
-// re-renders and weather updates until she re-rolls it (2026-07-21 — "I saw
-// one I liked and now it's gone"). Stored in kv, today-and-future only.
-const TM_PICK_KEY = "tmpick";
-function tmPickAll() { const v = kvData.get(TM_PICK_KEY); return v && typeof v === "object" ? v : {}; }
-function tmPickGet(date, idx) {
-  const ids = (tmPickAll()[date] || {})[String(idx)];
-  if (!Array.isArray(ids)) return null;
-  const pieces = ids.map(id => itemById.get(id)).filter(Boolean);
-  return pieces.length >= 2 ? pieces : null;   // a deleted piece invalidates it
-}
-function tmPickSet(date, idx, pieces) {
-  const today = todayStr();
-  kvUpdate(TM_PICK_KEY, prev => {   // fire-and-forget; kvData updates synchronously
-    const all = JSON.parse(JSON.stringify(prev && typeof prev === "object" ? prev : {}));
-    for (const d of Object.keys(all)) if (d < today) delete all[d];
-    (all[date] = all[date] || {})[String(idx)] = pieces.map(p => p.id);
-    return all;
-  });
-}
-// Drop a sticky generated pick — used when the day's context changes, since the
-// pick was generated for a level that is no longer the one being asked for.
-function tmPickClear(date, idx) {
-  kvUpdate(TM_PICK_KEY, prev => {
-    const all = JSON.parse(JSON.stringify(prev && typeof prev === "object" ? prev : {}));
-    if (all[date]) { delete all[date][String(idx)]; if (!Object.keys(all[date]).length) delete all[date]; }
-    return all;
-  });
-}
-/* ⚠️ `pool` is the TRIP suitcase or null. A null pool used to fall through to
-   suggestOutfits' own default — the whole Available closet — so the Tomorrow
-   card was the one outfit surface that never used the rack (fixed 2026-08-03,
-   her ask: "I want the tomorrow planner to be from the rack"). It now goes
-   through planningPool, the same precedence the suggester uses, so the two can
-   never drift. An explicit entry level beats the contexts' usual one, exactly
-   as in entrySuggestLevel.
-   ⚠️ Picks already saved in kv "tmpick" were generated from the whole closet
-   and are deliberately NOT invalidated — a sticky pick she liked survives; the
-   ✨ re-roll is what moves it onto the rack. */
-function tomorrowGenPieces(date, entry, pool = null, idx = 0, force = false) {
-  if (!force) { const saved = tmPickGet(date, idx); if (saved) return saved; }
-  const level = entry.level || entrySuggestLevel(entry.contexts);
-  let from = pool || planningPool({ level });
-  /* Tomorrow is a FUTURE day, so "clean" means clean by then — anything today's
-     plan is about to put in the hamper is out (the tank-top report). */
-  if (LAUNDRY_READY()) {
-    const dirty = plannedDirtyBy(date);
-    if (dirty.size) from = from.filter(i => !dirty.has(i.id));
-  }
-  const res = suggestOutfits(level, null, from, seasonOf(date), _dpWx(date), null, true);
-  const pieces = res.length ? res[0].pieces : null;
-  if (pieces) tmPickSet(date, idx, pieces);
-  return pieces;
-}
-// Tap the pick to open it in the suggester with that exact combo in front —
-// swap/lock/ban it, and whatever it ends as is what the card keeps.
-function openTomorrowRevise(date, idx) {
-  const trip = _tmTripCtx(date);
-  const pieces = tmPickGet(date, idx);
-  if (trip) openSuggestSheet(null, trip.id, { capsuleId: trip.id, date });
-  else openSuggestSheet(null, null, _dpSuggestCtx(date, idx, (dayPlan(date)[idx] || {}).contexts));
-  _sugg.tmPick = { date, idx };
-  if (pieces) {
-    const k = comboKey(pieces);
-    _sugg.results = [{ pieces, score: 0 }, ..._sugg.results.filter(c => comboKey(c.pieces) !== k)];
-    _sugg.idx = 0;
-  }
-  renderSuggestSheet();
-}
-function _planThumbStrip(pieces) {
-  // .cthumb is a fixed 64px — wrapping it in a smaller box made the thumbs
-  // overlap each other and the caption below (2026-07-21). Own class instead.
-  return `<div class="tm-strip">${pieces.map(p => thumbHtml(p.image_path, "tm-thumb")).join("")}</div>`;
-}
-// Trip mode (2026-07-21, user request): the Tomorrow card works during a trip
-// too, but for dates INSIDE the trip it reads/writes the TRIP's own day plan
-// (capsules.plan) — never a second source of truth. Returns null when the kv
-// day plan is the right backing store.
-function _tmTripCtx(date) {
-  if (!tripModeId) return null;
-  const c = capsuleById.get(tripModeId);
-  if (!c || !isDatedTrip(c)) return null;
-  if (date < c.start_date || date > c.end_date) return null;
-  return c;
-}
-/* ---- the day card, for TODAY and for TOMORROW (2026-08-05) ----------------
-   Her ask: "I want to see my planned outfit for today in the app page. Could be
-   just like the tomorrow plan, including you've dressed for this before, but for
-   today. It should have the planned outfit or if no planned outfit, then a
-   suggested outfit with dropdown context button next to it."
+   What went: the Tomorrow card and the shared two-date `dayCardHtml`; the sticky
+   generated pick (`kv "tmpick"`, `tomorrowGenPieces`, `openTomorrowRevise`) and
+   its 📌 Keep / ✨ re-roll chips; the dropdown context chip
+   (`quickCtxChipHtml` / `openQuickContextSheet`); the "📅 Plan the week ›"
+   footer; and the "Something else to wear?" fold, whose whole job was to demote
+   a generated suggestion once the day was logged.
 
-   ⚠️ ONE function, two dates. Today's card used to be a single `logged-row`
-   ("Planned: <name> ✓") with no picture, no weather, no precedent and no way to
-   revise — while tomorrow got the full card. Building a second card would have
-   meant two things to keep in step; this is the same card with the date passed
-   in, so anything added to one is in both by construction.
-   The `data-tm-date` attribute is what makes that safe: every handler used to
-   recompute `shiftDate(todayStr(), 1)` for itself, which is precisely the
-   assumption that stops a shared card from working. */
-/* The dropdown context button (2026-08-05, her words: "a suggested outfit with
-   dropdown context button next to it").
+   What survives is the part that was never planning: TODAY, and what she
+   actually put on. If she planned today's outfit from the suggester, it shows up
+   on that day in the CALENDAR — that is the one read surface she chose for
+   future plans, and duplicating it here would put a second, competing answer to
+   "what am I wearing" on the screen that already answers it from `wears`.
 
-   ⚠️ It writes the day plan, so setting a context here is the same act as
-   setting it in the planner — one source of truth, and the suggestion re-levels
-   itself because entrySuggestLevel reads those contexts. It is NOT a filter on
-   the card, which would have been a second, invisible notion of "today's
-   context" living beside the real one.
-   ⚠️ Creating an entry for a day that had none is deliberate and is the whole
-   feature: "I want to be able to set context always". */
-function quickCtxChipHtml(date, idx, contexts) {
-  const cs = (contexts || []).filter(Boolean);
-  const lbl = cs.length ? cs.join(", ") : "Set context";
-  return `<button class="cap-chip${cs.length ? " on" : ""}" data-qctx="${esc(date)}|${idx}" style="font-size:12px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(lbl)} ▾</button>`;
-}
-function openQuickContextSheet(date, idx, { onDone = null } = {}) {
-  const render = () => {
-    const plan = dayPlan(date);
-    const cur = new Set(((plan[idx] || {}).contexts) || []);
-    const opts = contextOptions();
-    $("#logInner").innerHTML = `
-      <div class="sheet-hdr">
-        <button class="lnk" id="qcDone" style="font-weight:700">Done</button>
-        <h2>${esc(planDayLabel(date))}</h2>
-        <div style="width:48px"></div>
-      </div>
-      <div class="sheet-note">What's happening. The outfit re-levels itself to match.</div>
-      <div class="sheet-chips" style="padding:0 16px 16px">
-        ${opts.map(c => `<button class="cap-chip${cur.has(c) ? " on" : ""}" data-qc="${esc(c)}">${esc(c)}</button>`).join("")}
-      </div>
-      ${cur.size ? `<div style="padding:0 16px 18px"><button class="lnk" id="qcClear" style="font-size:13px;color:var(--muted);font-weight:600">Clear the context for this day</button></div>` : ""}
-      <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
-    $("#qcDone").onclick = () => { hideSheet("logSheet"); (onDone || renderHome)(); };
-    const write = async (next) => {
-      const plan2 = dayPlan(date).map(e => ({ ...e }));
-      while (plan2.length <= idx) plan2.push({ contexts: [], outfit: null });
-      plan2[idx].contexts = next;
-      // A cleared entry with no outfit is nothing at all — drop it rather than
-      // leave an empty row the planner then has to render.
-      const cleaned = plan2.filter(e => (e.contexts || []).length || e.outfit);
-      await saveDayPlan(date, cleaned);
-      // The level changed, so the sticky generated pick is now the wrong answer.
-      tmPickClear(date, idx);
-      render();
-    };
-    $("#logInner").querySelectorAll("[data-qc]").forEach(b => b.onclick = () => {
-      const c = b.dataset.qc, next = new Set(cur);
-      if (next.has(c)) next.delete(c); else next.add(c);
-      write([...next]);
-    });
-    const clr = $("#qcClear");
-    if (clr) clr.onclick = () => write([]);
-  };
-  render();
-  showSheet("logSheet");
-}
-
-let _todayAltOpen = false;   // session-only: the "something else?" fold on today's card
-function tomorrowCardHtml() { return dayCardHtml(shiftDate(todayStr(), 1), { label: "Tomorrow" }); }
-/* ⚠️ Suppressed in trip mode: the trip dash already IS today, with today's
-   planned looks and a one-tap "Wore it". Two cards for one day is the
-   duplication todayPlanRowsHtml avoided the same way. */
+   ⚠️ The card renders only once something IS logged. Empty, it would say
+   "nothing yet" directly above the "What should I wear?" and "Log today's wear"
+   buttons that already say exactly that, twice.
+   ⚠️ Still "" in trip mode: `tripDashHtml` IS today's card there.
+   ⚠️ `kv "tmpick"` rows are now unread orphans on the live DB, deliberately not
+   migrated — same call as `"wxaudit_home"` and the `"mend"` tag. */
 function todayCardHtml() {
-  if (tripModeId) return "";
-  return dayCardHtml(todayStr(), { label: "Today", isToday: true });
-}
-function dayCardHtml(tm, { label = "Tomorrow", isToday = false } = {}) {
-  if (!dataReady) return "";
-  const trip = _tmTripCtx(tm);
-  // Trip days synthesize entries from the trip plan; ordinary days use kv.
-  const entries = trip
-    ? planActiveLooks(trip, tm).map(oid => ({ contexts: [], outfit: oid }))
-    : dayPlan(tm);
-  // A trip day with nothing planned still gets one generated suggestion —
-  // scoped to the suitcase, like every other trip-mode suggestion.
-  /* ⚠️ WHAT SHE WORE OUTRANKS WHAT THE APP WOULD SUGGEST (2026-08-05, her
-     report: "today should show my outfits actually worn today once I've logged
-     one — it's showing me a new outfit instead. There can be a row for that but
-     I need to see the current outfit(s) too").
-
-     The card only ever read the PLAN. Log an outfit from the calendar, from a
-     look, from the suggester — none of that is a day plan — and Home carried on
-     proposing something else, which reads as the app not knowing what you just
-     told it. `wears` is the record of what happened and it wins. The suggestion
-     survives underneath as a secondary row, because "what else could I wear"
-     is still a real question at 6pm; it's just not the headline any more. */
-  const wornGroups = isToday ? dayGroups(tm) : [];
-  /* ⚠️ Today ALWAYS generates when nothing is planned — "the planned outfit or
-     if no planned outfit, then a suggested outfit". Tomorrow deliberately keeps
-     its empty state: an unasked-for suggestion for tomorrow is noise, whereas
-     today is the question she opens the app to answer. Once something IS logged
-     the generated row stops being automatic — see wornHtml's footer. */
-  const genEntries = entries.length ? entries
-    : ((trip || (isToday && !wornGroups.length)) ? [{ contexts: [], outfit: null }] : []);
-  const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
+  if (!dataReady || tripModeId) return "";
+  const tm = todayStr();
+  const groups = dayGroups(tm);
+  if (!groups.length) return "";
   const wx = _dpWx(tm);
-  const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
+  const wxBit = wx && wx.maxT != null ? ` \u00b7 ${wmoEmoji(wx.code)} ${wx.maxT}\u00b0/${wx.minT}\u00b0` : "";
   const hdr = `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 2px 8px">
-    <div style="font-size:13px;font-weight:600;color:var(--muted)">${esc(label)} · ${esc(planDayLabel(tm))}${wxBit}${trip ? " · ✈️" : ""}</div>
-    <button class="lnk" data-tm-edit data-tm-date="${esc(tm)}" style="font-size:12.5px">${entries.length ? "✎ Edit" : "＋ Plan"}</button>
+    <div style="font-size:13px;font-weight:600;color:var(--muted)">Today \u00b7 ${esc(planDayLabel(tm))}${wxBit}</div>
   </div>`;
-  // The worn block, rendered above everything else on today's card.
-  const wornHtml = wornGroups.map(g => {
+  const body = groups.map(g => {
     const o = g.outfitId ? outfitById.get(g.outfitId) : null;
     const pieces = g.itemIds.map(id => itemById.get(id)).filter(Boolean);
     const name = o ? outfitName(o) : `${pieces.length} piece${pieces.length === 1 ? "" : "s"}`;
     const ctxs = (g.context || []).join(", ");
     return `<button data-tm-worn="${esc(g.outfitId || "")}" data-tm-date="${esc(tm)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:4px 0">
-      <span style="width:48px;flex:none">${o ? outfitCollageHtml(o, 4) : _planThumbStrip(pieces.slice(0, 4))}</span>
+      <span style="width:48px;flex:none">${o ? outfitCollageHtml(o, 4) : _planThumbStrip(pieces)}</span>
       <span style="flex:1;min-width:0">
-        <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">✓ ${esc(name)}</span>
+        <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">\u2713 ${esc(name)}</span>
         <span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs || "Worn today")}</span>
       </span>
       <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:var(--muted);stroke-width:2;fill:none;flex:none"><path d="M9 6l6 6-6 6"/></svg>
     </button>`;
   }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
-
-  let body = "";
-  if (!genEntries.length) {
-    body = `<button data-tm-edit data-tm-date="${esc(tm)}" style="width:100%;text-align:left;font-size:13.5px;color:var(--muted);padding:2px">Nothing planned — tap to set ${isToday ? "today" : "tomorrow"}'s context or outfit.</button>`;
-  } else {
-    body = genEntries.map((e, idx) => {
-      const ctxs = (e.contexts || []).join(", ");
-      const o = e.outfit ? outfitById.get(e.outfit) : null;
-      if (o) {
-        const worn = isToday && planWorn(tm, o.id);
-        return `<div style="padding:4px 0">
-          <button data-tm-look="${esc(o.id)}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left">
-            <span style="width:48px;flex:none">${outfitCollageHtml(o, 4)}</span>
-            <span style="flex:1;min-width:0">
-              <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
-              ${ctxs ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(ctxs)}</span>` : ""}
-            </span>
-          </button>
-          <div style="display:flex;align-items:center;gap:6px;padding-top:6px;flex-wrap:wrap">
-            ${quickCtxChipHtml(tm, idx, e.contexts)}
-            ${isToday && !trip ? (worn
-              ? `<span class="muted" style="font-size:12px">✓ Logged</span>`
-              : `<button class="cap-chip" data-tp-wear="${idx}" style="font-size:12px">✓ Wore it</button>`) : ""}
-          </div>
-        </div>`;
-      }
-      const pieces = tomorrowGenPieces(tm, e, pool, idx);
-      /* ⚠️ AN INVITATION, NOT AN APOLOGY (2026-08-17, her report: the planning
-         card is "ugly" and "doesn't actually open the suggester"). This used to
-         read "Work — no clean outfit found; tap ✨ to dig", which is an error
-         message about the app's own search, in the one place she comes to plan.
-         Nothing had failed: she simply hasn't planned that day yet. It says so,
-         and the way forward is a real button rather than a chip — and the sheet
-         it opens now carries the DAY, so its own primary action reads
-         "Plan for Tue, Aug 18" instead of "Wear this today". */
-      if (!pieces) return `<div class="muted" style="font-size:12.5px;padding:4px 0 8px">${
-          esc(ctxs ? `Nothing planned for ${ctxs} yet` : "Nothing planned yet")}${
-          trip ? " — nothing in the suitcase fits it" : ""}.</div>
-        <button class="btn btn-sec" data-tm-refine="${idx}" data-tm-date="${esc(tm)}" style="width:100%">✨ Plan this day</button>
-        <div style="display:flex;gap:6px;padding:8px 0 2px;flex-wrap:wrap">${quickCtxChipHtml(tm, idx, e.contexts)}</div>`;
-      /* Name the pool, always — same non-negotiable as the suggester's pool chip.
-         ⚠️ WITH ITS COUNT (2026-08-16). The label was here from the start; the
-         number wasn't, and "from the rack" without it is half the promise she
-         approved the rack on ("always names its pool with a count and a one-tap
-         widen"). The widen is the card itself: tapping the outfit opens the
-         suggester, which carries the full pool chip and its one-tap "whole
-         closet". */
-      const lvl = e.level || entrySuggestLevel(e.contexts);
-      const rackN = (typeof rackItems === "function") ? rackItems().length : 0;
-      const from = trip ? `from the suitcase · ${capsuleItems(tripModeId || activeCapsuleId).length}`
-        : lvl === 1 ? "whole closet · clean"
-        : `from the rack · ${rackN} · clean`;
-      const why = [ctxs || (lvl ? occLabel(lvl) : ""), from].filter(Boolean).join(" · ");
-      return `<div style="padding:4px 0">
-        <button data-tm-open="${idx}" data-tm-date="${esc(tm)}" style="display:block;width:100%;text-align:left" title="Open and revise">${_planThumbStrip(pieces)}</button>
-        <div class="muted" style="font-size:12px;padding-top:6px;line-height:1.35">${esc(why)}</div>
-        <div style="display:flex;align-items:center;gap:6px;padding-top:6px;flex-wrap:wrap">
-          ${quickCtxChipHtml(tm, idx, e.contexts)}
-          <button class="cap-chip" data-tm-keep="${idx}" data-tm-date="${esc(tm)}" style="font-size:12px" title="Save as a real look on the plan">📌 Keep</button>
-          <button class="cap-chip" data-tm-reroll="${idx}" data-tm-date="${esc(tm)}" style="font-size:12px" title="Try a different one">✨</button>
-          ${isToday && !trip ? `<button class="cap-chip" data-tm-wearnow="${idx}" data-tm-date="${esc(tm)}" style="font-size:12px">✓ Wore it</button>` : ""}
-        </div>
-      </div>`;
-    }).join(`<div class="det-divider" style="margin:4px 0"></div>`);
-  }
-  // Precedent (Round C): what she actually wore the last times it felt like this.
-  /* ⚠️ "You've dressed for this before" lives ONLY in the outfit suggester now
-     (2026-08-17, her ask: "for all outfit suggesters, that's where I want it —
-     tappable from within outfit suggester but not elsewhere"). It rendered here
-     too, in a compact variant, which put a second scrollable strip of past
-     outfits on the one card meant to answer today at a glance. Every surface
-     that opens the suggester still gets it, which is what makes "all outfit
-     suggesters" true without repeating the row on each of them. */
-  // Plan-ahead lives INSIDE the card now — Home had too many stacked rows.
-  const foot = (tripModeId || isToday) ? "" :
-    `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
-      <button class="lnk" data-plan-ahead style="font-size:12.5px;color:var(--muted)">📅 Plan the week ›</button>
-    </div>`;
-  /* Once something is logged, the plan/suggestion block is demoted behind a
-     link rather than deleted — "there can be a row for that". */
-  const secondary = (wornGroups.length && body)
-    ? `<div style="border-top:1px solid var(--line);margin-top:8px;padding-top:7px">
-        ${_todayAltOpen
-          ? body + `<div class="center" style="padding:4px 0 0"><button class="lnk" data-tm-alt style="font-size:12px;color:var(--muted)">Hide</button></div>`
-          : `<button class="lnk" data-tm-alt style="font-size:12.5px;color:var(--muted)">Something else to wear? ›</button>`}
-      </div>`
-    : body;
-  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${wornHtml}${secondary}${foot}</div>`;
+  return `<div class="det-card" style="margin:10px 16px 0;padding:10px 12px">${hdr}${body}</div>`;
 }
+function _planThumbStrip(pieces) {
+  // .cthumb is a fixed 64px — wrapping it in a smaller box made the thumbs
+  // overlap each other and the caption below (2026-07-21). Own class instead.
+  return `<div class="tm-strip">${pieces.slice(0, 4).map(p => thumbHtml(p.image_path, "tm-thumb")).join("")}</div>`;
+}
+
 /* ===================================================================
    PLAN THE WEEK  (2026-08-03)
 
@@ -1231,16 +945,6 @@ const WASHDAY_KEY = "washdays";
 const WEEK_PLAN_DAYS = 7;
 function washDayAll() { const v = kvData.get(WASHDAY_KEY); return v && typeof v === "object" ? v : {}; }
 const isWashDay = (d, all = null) => !!(all || washDayAll())[d];
-async function toggleWashDay(d) {
-  await kvUpdate(WASHDAY_KEY, prev => {
-    const m = { ...(prev && typeof prev === "object" ? prev : {}) };
-    if (m[d]) delete m[d]; else m[d] = 1;
-    // Same window discipline as the day plans — a wash day from March is noise.
-    const cut = shiftDate(todayStr(), -30);
-    for (const k of Object.keys(m)) if (k < cut) delete m[k];
-    return m;
-  });
-}
 
 /* Pure (given its injectables) so the selftest can drive it.
    Returns { byDate: Map(date → [{item, n, tol}]), firstOverflow, suggestWash }. */
@@ -1369,232 +1073,21 @@ function plannedDirtyBy(date, { plans = null, wearRows = null, today = null, was
   return out;
 }
 
-/* ---- PLAN THE WEEK, now a view inside the Calendar tab (2026-08-05) --------
-   Her words: "I feel like the week plan just needs to be overall more
-   integrated. Maybe a whole second tab within the calendar tab?"
+/* ⚠️ "PLAN THE WEEK" IS GONE (2026-08-21) — the screen, its Month/Week mode bar,
+   the per-day context and outfit slots, the 🧺 wash-day toggle and the kv
+   entry point. Her ask was to remove the planning-ahead features entirely.
 
-   It was its own top-level screen reachable only from a link at the bottom of
-   the Tomorrow card — so the week you planned and the days you lived were in
-   two different places, and nothing about the calendar told you a plan existed.
-   Month / Week is now a segmented control at the top of the Calendar tab, and
-   the day view is shared: tapping a day from either lands in the same place.
-   ⚠️ #tab-week still exists and still renders this, because switchTab("week")
-   is a real path; it just isn't the way in any more. */
-function weekModeBarHtml() {
-  return `<div class="cap-tabbar" style="padding:8px 14px 2px">
-    <button data-calmode="month" class="${calendarMode === "month" ? "on" : ""}">Month</button>
-    <button data-calmode="week" class="${calendarMode === "week" ? "on" : ""}">Plan the week</button>
-  </div>`;
-}
-function renderWeekPlan(target = null, { embedded = false } = {}) {
-  const today = todayStr();
-  const dates = [...Array(WEEK_PLAN_DAYS)].map((_, n) => shiftDate(today, n));
-  const rhythm = weeklyRhythm();
-  const fc = weekLaundryForecast(dates);
-  const washAll = washDayAll();
-  const planned = dates.reduce((a, d) => a + dayPlan(d).filter(e => e.outfit).length, 0);
-
-  const card = (d, n) => {
-    const entries = dayPlan(d);
-    const rh = entries.length ? null : rhythmFor(d, rhythm);
-    const wx = _dpWx(d);
-    const wxBit = wx && wx.maxT != null ? ` · ${wmoEmoji(wx.code)} ${wx.maxT}°/${wx.minT}°` : "";
-    const label = n === 0 ? "Today" : n === 1 ? "Tomorrow" : planDayLabel(d);
-    const hits = fc.byDate.get(d) || [];
-    const washOn = isWashDay(d, washAll);
-
-    const bodyRows = entries.length ? entries.map((e, idx) => {
-      const o = e.outfit ? outfitById.get(e.outfit) : null;
-      const ctxs = (e.contexts || []).join(", ");
-      const lvl = e.level || entrySuggestLevel(e.contexts);
-      const sub = [ctxs, lvl ? occLabel(lvl) : ""].filter(Boolean).join(" · ");
-      /* ⚠️ THE CONTEXT CHIP IS ON EVERY ROW, planned outfit or not (2026-08-05,
-         her report: "I also want to be able to set context always — I set the
-         context at the beginning of this week, things changed, and now they're
-         wrong"). A row with an outfit used to offer only ✎, which opens the
-         whole day sheet; changing one context was four taps and a screen. */
-      const ctxChip = quickCtxChipHtml(d, idx, e.contexts);
-      if (o) return `<div style="padding-top:8px">
-        <div style="display:flex;align-items:center;gap:10px">
-          <button data-wk-look="${esc(o.id)}" style="width:52px;flex:none">${outfitCollageHtml(o, 4)}</button>
-          <button data-wk-look="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
-            <span style="display:block;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</span>
-            ${sub ? `<span style="display:block;font-size:12px;color:var(--muted)">${esc(sub)}</span>` : ""}
-          </button>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:6px">
-          ${ctxChip}
-          <button class="cap-chip" data-wk-edit="${esc(d)}" style="font-size:12px">✎ Day</button>
-          <button class="cap-chip" data-wk-delentry="${esc(d)}|${idx}" style="font-size:12px;color:var(--danger)">✕</button>
-        </div>
-      </div>`;
-      /* ⚠️ "outfit still to pick" was a LIE on any day she'd logged from
-         somewhere else (her report). The plan is an intention and `wears` is
-         what happened; the screen only ever read the first. It now reads both,
-         and a logged day says so. */
-      const logged = loggedOnDay(d);
-      return `<div style="padding-top:8px">
-        ${sub ? `<div style="font-size:12.5px;color:var(--muted);padding-bottom:5px">${esc(sub)}${logged ? "" : " — outfit still to pick"}</div>` : ""}
-        ${logged ? `<button class="logged-row" data-wk-day="${esc(d)}" style="margin:0 0 6px;width:100%">
-            <span class="lr-check">✓</span>
-            <span class="lr-text">Wore ${esc(logged)}</span>
-            <span class="lr-plus">›</span>
-          </button>` : ""}
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          ${ctxChip}
-          <button class="cap-chip" data-wk-sugg="${esc(d)}|${idx}" style="font-size:12.5px">✨ Suggest</button>
-          <button class="cap-chip" data-wk-pick="${esc(d)}|${idx}" style="font-size:12.5px">＋ Look</button>
-          <button class="cap-chip" data-wk-build="${esc(d)}|${idx}" style="font-size:12.5px">✎ Build</button>
-          <button class="cap-chip" data-wk-delentry="${esc(d)}|${idx}" style="font-size:12.5px;color:var(--danger)">✕</button>
-        </div>
-      </div>`;
-    }).join("") : (() => {
-      const logged = loggedOnDay(d);
-      return `<div style="padding-top:8px">
-      ${logged ? `<button class="logged-row" data-wk-day="${esc(d)}" style="margin:0 0 6px;width:100%">
-          <span class="lr-check">✓</span><span class="lr-text">Wore ${esc(logged)}</span><span class="lr-plus">›</span>
-        </button>` : ""}
-      <div style="font-size:12.5px;color:var(--muted);padding-bottom:6px">${rh
-        ? `Usually <b style="color:var(--text)">${esc(rh.contexts.join(" · "))}</b> — tap to start there.`
-        : logged ? "" : "Nothing planned."}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${quickCtxChipHtml(d, 0, [])}
-        <button class="cap-chip" data-wk-edit="${esc(d)}" style="font-size:12.5px">＋ Plan this day</button>
-      </div>
-    </div>`; })();
-
-    /* The laundry line is the point of the whole screen: it names the pieces and
-       the day, because "6 things are dirty" is not actionable and "the black
-       jeans run out Thursday" is. */
-    const launRow = hits.length ? `<div class="snote" style="margin-top:9px;padding:7px 9px;background:var(--panel);border-radius:9px;font-size:12.5px;line-height:1.4">
-        🧺 ${hits.map(h => `<b>${esc(h.item.name || "A piece")}</b> reaches ${h.n} of ${h.tol} wears`).join(" · ")}.
-      </div>` : "";
-
-    return `<div class="det-card" style="margin:0 16px 10px;padding:11px 13px${washOn ? ";border-color:var(--accent)" : ""}">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <div style="font-size:13.5px;font-weight:600">${esc(label)}<span style="font-weight:400;color:var(--muted)">${esc(wxBit)}</span></div>
-        <div style="display:flex;gap:5px;flex:none">
-          <button class="cap-chip${washOn ? " on" : ""}" data-wk-wash="${esc(d)}" style="font-size:12px" title="Mark a wash day">🧺 ${washOn ? "Wash day" : "Wash?"}</button>
-          ${entries.length ? `<button class="cap-chip" data-wk-delday="${esc(d)}" style="font-size:12px;color:var(--muted)" title="Clear this day">✕</button>` : ""}
-        </div>
-      </div>
-      ${bodyRows}${launRow}
-    </div>`;
-  };
-
-  const head = `<div style="padding:14px 16px 4px">
-      <div style="font-size:13px;color:var(--muted);line-height:1.5">${planned
-        ? `${planned} outfit${planned === 1 ? "" : "s"} planned this week.`
-        : `Set each day's context, then pick the outfit whenever.`}
-      ${fc.suggestWash && !isWashDay(fc.suggestWash, washAll)
-        ? ` As it stands, things run past their wears from ${esc(weekDayLabel(fc.firstOverflow, today))}.`
-        : fc.firstOverflow ? "" : ` Nothing runs out of clean this week.`}</div>
-      ${dates.some(d => dayPlan(d).length) ? `<button class="lnk" id="wkClearAll" style="font-size:12.5px;color:var(--muted);font-weight:600;padding:6px 0 0">Clear the whole week's plan</button>` : ""}
-    </div>`;
-
-  const root = target || $("#weekBody");
-  const inner = `${embedded ? weekModeBarHtml() : ""}${head}${dates.map(card).join("")}<div style="height:40px"></div>`;
-  // ⚠️ .tabbody carries the bottom padding that keeps content clear of the tab
-  // bar — the embedded view needs it just as much as the standalone screen.
-  root.innerHTML = embedded ? `<div class="tabbody">${inner}</div>` : `<div class="tabbody">
-    <div class="cltoolbar"><button class="lnk" id="wkBack" style="font-size:15px">Back</button>
-      <div style="flex:1;text-align:center;font-size:16px;font-weight:600">Plan the week</div>
-      <div style="width:48px"></div></div>
-    ${inner}
-  </div>`;
-  hydratePhotos(root);
-
-  const back = $("#wkBack");
-  if (back) back.onclick = () => switchTab("home");
-  /* ⚠️ The month view installs `body.onclick` and this view replaces its
-     innerHTML, so the mode bar must carry its own handler here — the calendar's
-     delegation is per-render and does not survive into this one. */
-  root.querySelectorAll("[data-calmode]").forEach(b => b.onclick = () => {
-    calendarMode = b.dataset.calmode;
-    renderCalendar();
-  });
-  const re = () => (embedded ? renderCalendar() : renderWeekPlan());
-  root.querySelectorAll("[data-wk-wash]").forEach(b =>
-    b.onclick = async () => { await toggleWashDay(b.dataset.wkWash); re(); });
-  root.querySelectorAll("[data-wk-edit]").forEach(b =>
-    b.onclick = () => openDayPlanSheet(b.dataset.wkEdit));
-  root.querySelectorAll("[data-wk-look]").forEach(b =>
-    b.onclick = () => openLookFrom(b.dataset.wkLook));
-  const split = (v) => { const [d, i] = v.split("|"); return [d, +i]; };
-  root.querySelectorAll("[data-wk-sugg]").forEach(b => b.onclick = () => {
-    const [d, idx] = split(b.dataset.wkSugg);
-    openSuggestSheet(null, null, _dpSuggestCtx(d, idx, (dayPlan(d)[idx] || {}).contexts));
-  });
-  root.querySelectorAll("[data-wk-pick]").forEach(b => b.onclick = () => {
-    const [d, idx] = split(b.dataset.wkPick);
-    openPlanLookPickerKv(d, idx);
-    showSheet("logSheet");
-  });
-  root.querySelectorAll("[data-wk-build]").forEach(b => b.onclick = () => {
-    const [d, idx] = split(b.dataset.wkBuild);
-    openBuilder(null, null, { kv: true, date: d, entryIdx: idx });
-  });
-  root.querySelectorAll("[data-qctx]").forEach(b => b.onclick = () => {
-    const [dd, ii] = b.dataset.qctx.split("|");
-    openQuickContextSheet(dd, +ii, { onDone: re });
-  });
-  root.querySelectorAll("[data-wk-day]").forEach(b => b.onclick = () => {
-    switchTab("calendar"); calendarDay = b.dataset.wkDay; renderCalendar();
-  });
-  // Drop ONE entry from a day; drop the whole day; drop the week.
-  root.querySelectorAll("[data-wk-delentry]").forEach(b => b.onclick = async () => {
-    const [d, idx] = split(b.dataset.wkDelentry);
-    const next = dayPlan(d).filter((_, k) => k !== idx);
-    await saveDayPlan(d, next);
-    tmPickClear(d, idx);
-    re();
-  });
-  root.querySelectorAll("[data-wk-delday]").forEach(b => b.onclick = async () => {
-    const d = b.dataset.wkDelday;
-    await saveDayPlan(d, []);
-    for (let k = 0; k < 4; k++) tmPickClear(d, k);
-    re();
-    toast("Day cleared");
-  });
-  const clearAll = $("#wkClearAll");
-  if (clearAll) clearAll.onclick = async () => {
-    if (!confirm("Clear every planned context and outfit for the next 7 days? Anything you've already logged is kept.")) return;
-    for (const d of dates) { if (dayPlan(d).length) { await saveDayPlan(d, []); for (let k = 0; k < 4; k++) tmPickClear(d, k); } }
-    re();
-    toast("Week cleared");
-  };
-}
-
-/* What she actually wore on a date, for the planner's "still to pick" line.
-   Names the look when there is one, otherwise counts pieces. Returns "" for an
-   unlogged day so callers can just test it. */
-function loggedOnDay(d) {
-  const rows = wears.filter(w => w.worn_on === d);
-  if (!rows.length) return "";
-  const oid = (rows.find(w => w.outfit_id) || {}).outfit_id;
-  const o = oid ? outfitById.get(oid) : null;
-  if (o) return outfitName(o);
-  const n = new Set(rows.map(w => w.item_id)).size;
-  return `${n} piece${n === 1 ? "" : "s"}`;
-}
-
-/* The old sheet is gone — "Plan the week" is a real screen now (see above).
-   Kept as the one named entry point so every caller still says what it means. */
-function openWeekPlanSheet() {
-  calendarMode = "week"; calendarDay = null;
-  switchTab("calendar");
-}
+   The laundry FORECAST above survives on purpose and is not part of that: the
+   suggester's "🧺 Clean on Thu · N out" chip is what asks it, so that a look
+   planned for Thursday from the suggester isn't built out of things that will be
+   in the hamper by Thursday. It is a derivation, not a screen.
+   ⚠️ `washDayAll` therefore stays too, with no writer left — `weekLaundryForecast`
+   reads it, and the stored `kv "washdays"` rows are unread orphans, deliberately
+   not migrated. */
 
 // Session-only: whether the folded Home attention rows are expanded. Not
 // persisted — a fresh open should be calm again.
 function renderHome() {
-  // See HOME_TILES: one scrollable row of counts, not 533px of second navigation.
-  const tiles = HOME_TILES.map(t => {
-    const n = dataReady ? t.short() : "";
-    return `<button class="hnav-chip" data-go="${t.tab}">
-      <span>${esc(t.label)}</span>${n ? `<b>${esc(n)}</b>` : ""}
-    </button>`;
-  }).join("");
   const today = todayStr();
   const hasWearToday = dataReady && wearDayMap().has(today);
   // The morning question owns the primary button, permanently (2026-07-26 audit
@@ -1640,8 +1133,7 @@ function renderHome() {
       </button>`;
     }
   }
-  // Trip mode: the dashboard takes over the top of Home; the tile grid stays
-  // below it (every screen still works, scoped to the capsule).
+  // Trip mode: the dashboard takes over the top of Home.
   const tc = dataReady ? tripCapsule() : null;
   const dash = tc ? tripDashHtml(tc) : (dataReady ? tripOfferHtml() : "");
   const catchup = dataReady ? catchupHtml() : "";
@@ -1717,7 +1209,7 @@ function renderHome() {
      todayCardHtml() returns "" in trip mode (the dash already IS today), so the
      dash keeps the top for itself and this ordering costs it nothing. */
   $("#homeBody").innerHTML =
-    `${dash}${todayCardHtml()}${ask}${cta}<div class="hnav">${tiles}</div>${tomorrowCardHtml()}${attnHtml}${otd}`;
+    `${dash}${todayCardHtml()}${ask}${cta}${attnHtml}${otd}`;
   hydratePhotos($("#homeBody"));
   // (wireWxMemory is not called here: the memory row is suggester-only now.)
   $("#homeBody").querySelectorAll("[data-otd]").forEach(b => {
@@ -1734,21 +1226,9 @@ function renderHome() {
   };
   const wxNo = $("#homeWxNo");
   if (wxNo) wxNo.onclick = () => { store.setItem(WX_SNOOZE_KEY, shiftDate(todayStr(), 14)); renderHome(); };
-  // Round A planning wiring
-  $("#homeBody").querySelectorAll("[data-tp-wear]").forEach(b => {
-    b.onclick = () => wearPlannedEntry(todayStr(), +b.dataset.tpWear);
-  });
-  // ⚠️ Every one of these used to recompute tomorrow's date for itself. The card
-  // is shared by Today and Tomorrow now, so the DATE comes off the button.
-  const tmDate = (b) => b.dataset.tmDate || shiftDate(todayStr(), 1);
-  $("#homeBody").querySelectorAll("[data-tm-edit]").forEach(b => {
-    b.onclick = () => {
-      const tm = tmDate(b), trip = _tmTripCtx(tm);
-      // Trip days are planned in the trip's own by-day planner.
-      if (trip) { switchTab("capsules"); return openTripPlan(trip.id); }
-      openDayPlanSheet(tm);
-    };
-  });
+  /* The only handler left from the day card: tapping something she wore opens
+     it. Every other `data-tm-*` went with the planning block above — r7's rule,
+     the handler goes in the same commit as the markup. */
   $("#homeBody").querySelectorAll("[data-tm-worn]").forEach(b => {
     // A logged look opens the look; a bare item-log opens that day.
     b.onclick = () => {
@@ -1757,67 +1237,6 @@ function renderHome() {
       switchTab("calendar"); calendarDay = b.dataset.tmDate; renderCalendar();
     };
   });
-  $("#homeBody").querySelectorAll("[data-tm-alt]").forEach(b => {
-    b.onclick = () => { _todayAltOpen = !_todayAltOpen; renderHome(); };
-  });
-  $("#homeBody").querySelectorAll("[data-qctx]").forEach(b => {
-    b.onclick = () => {
-      const [d, i] = b.dataset.qctx.split("|");
-      openQuickContextSheet(d, +i);
-    };
-  });
-  // "Wore it" on a generated (not yet saved) outfit: save it, then log it.
-  $("#homeBody").querySelectorAll("[data-tm-wearnow]").forEach(b => {
-    b.onclick = async () => {
-      const tm = tmDate(b), idx = +b.dataset.tmWearnow;
-      const pieces = tomorrowGenPieces(tm, dayPlan(tm)[idx] || {}, null, idx);
-      if (!pieces) return;
-      b.disabled = true;
-      // wearSuggestedCombo takes a combo and always logs TODAY — which is
-      // exactly right here, since this button only renders on the Today card.
-      try { await wearSuggestedCombo({ pieces }); }
-      catch (e) { toast(e.message); b.disabled = false; }
-    };
-  });
-  $("#homeBody").querySelectorAll("[data-tm-look]").forEach(b => {
-    b.onclick = () => openLookFrom(b.dataset.tmLook);
-  });
-  $("#homeBody").querySelectorAll("[data-tm-refine]").forEach(b => {
-    b.onclick = () => {
-      const tm = tmDate(b), idx = +b.dataset.tmRefine, trip = _tmTripCtx(tm);
-      if (trip) return openSuggestSheet(null, trip.id, { capsuleId: trip.id, date: tm });
-      openSuggestSheet(null, null, _dpSuggestCtx(tm, idx, (dayPlan(tm)[idx] || {}).contexts));
-    };
-  });
-  $("#homeBody").querySelectorAll("[data-tm-open]").forEach(b => {
-    b.onclick = () => openTomorrowRevise(tmDate(b), +b.dataset.tmOpen);
-  });
-  $("#homeBody").querySelectorAll("[data-tm-reroll]").forEach(b => {
-    b.onclick = () => {
-      const tm = tmDate(b), idx = +b.dataset.tmReroll, trip = _tmTripCtx(tm);
-      const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
-      tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool, idx, true);  // force
-      renderHome();
-    };
-  });
-  $("#homeBody").querySelectorAll("[data-tm-keep]").forEach(b => {
-    b.onclick = async () => {
-      const tm = tmDate(b), idx = +b.dataset.tmKeep, trip = _tmTripCtx(tm);
-      const pool = trip ? capsuleItems(trip.id).filter(i => itemStatus(i) === "Available") : null;
-      const pieces = tomorrowGenPieces(tm, (trip ? {} : dayPlan(tm)[idx]) || {}, pool, idx);
-      if (!pieces) return;
-      b.disabled = true;
-      try {
-        const oid = await saveComboAsOutfit(pieces);
-        if (trip) await addPlanLook(trip.id, tm, oid);
-        else await addKvPlanLook(tm, oid, idx);
-        toast(tm === todayStr() ? "Planned for today" : "Planned for tomorrow");
-        renderHome();
-      } catch (e) { toast(e.message); b.disabled = false; }
-    };
-  });
-  const planAhead = $("#homeBody").querySelector("[data-plan-ahead]");
-  if (planAhead) planAhead.onclick = () => openWeekPlanSheet();
   // Tomorrow card wants tomorrow's forecast; one lazy fetch/day (no-op after).
   if (dataReady && !tripModeId && _homeWx.date !== todayStr() && !_homeWx.loading) {
     loadHomeWeather().then(() => { if (activeTabName() === "home") renderHome(); });

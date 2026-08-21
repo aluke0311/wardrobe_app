@@ -1,18 +1,26 @@
 /* ===================================================================
-   BUILD A LOOK — free-form canvas (Stylebook-style)
-   builder = { outfitId, name, pieces:[{item_id,x,y,s}], selIdx,
-               picking, pickCat, pickQ }.  x/y = piece CENTER as a fraction
-   (0..1) of the canvas; s = piece width as a fraction of canvas width;
-   array order = z-order (later = on top).
+   BUILD A LOOK — pick the pieces; the arrangement is derived
+   builder = { outfitId, name, pieces:[{item_id}], picking, pickCat, pickQ }.
+
+   ⚠️ THE FREE-FORM CANVAS IS GONE (2026-08-21), and with it x / y / s and the
+   z-order that array position used to carry. Her ask: "remove the feature that
+   allows you to move clothes around — there should just be a default layout
+   always. Clothes should ALWAYS fit within the screen on every view of the look,
+   so if there are 6 items, they still need to always be visible."
+
+   A dragged layout cannot make that promise: nothing stopped a piece being
+   pushed half off the canvas, or two pieces landing on top of each other, and
+   `.ocanvas` is a fixed 3/4 box in every grid so a look arranged tall rendered
+   clipped in the list it was browsed from. `suggestionLayout` derives the
+   arrangement from the piece COUNT, so it fits by construction — see its header.
+
+   What this screen is now: a name, the pieces (tap one to take it out), a live
+   preview of exactly how the look will be drawn, and ＋ Clothing. The pieces are
+   still an ordered array purely so the preview is stable while she edits; the
+   arrangement re-sorts them into dressing order anyway (suggestionPieceOrder).
    =================================================================== */
 let builder = null;
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
-
-// staggered default spot for the k-th piece dropped on the canvas
-function defaultPlacement(k) {
-  const cols = [0.34, 0.5, 0.66];
-  return { x: cols[k % 3], y: clamp01(0.3 + Math.floor(k / 3) * 0.2 + (k % 3) * 0.05), s: 0.4 };
-}
 
 /* ⚠️ `seedIds` opens the canvas ON an outfit without CREATING one (2026-08-09,
    her report: "'change it myself' opens a blank outfit canvas"). The first
@@ -23,28 +31,20 @@ function defaultPlacement(k) {
    removed in the first place. The look is created at SAVE, when it's real. */
 function openBuilder(outfitId = null, seedItemId = null, planCtx = null, seedIds = null) {
   let pieces = [], name = "";
+  const asPieces = (ids) => ids.filter(id => itemById.has(id)).map(id => ({ item_id: id }));
   if (!outfitId && Array.isArray(seedIds) && seedIds.length) {
-    pieces = seedIds.filter(id => itemById.has(id))
-                    .map((id, k) => ({ item_id: id, ...defaultPlacement(k) }));
+    pieces = asPieces(seedIds);
   } else if (outfitId) {
     const o = outfitById.get(outfitId);
     if (o) {
       name = o.name || "";
-      const lay = Array.isArray(o.layout) ? o.layout : [];
-      const ids = (outfitItemMap.get(outfitId) || []).filter(id => itemById.has(id));
-      if (lay.length) {
-        pieces = lay.filter(p => itemById.has(p.item_id)).map(p => ({
-          item_id: p.item_id, x: clamp01(p.x), y: clamp01(p.y),
-          s: Math.max(0.12, Math.min(0.92, p.s || 0.4)),
-        }));
-        const have = new Set(pieces.map(p => p.item_id));
-        ids.filter(id => !have.has(id)).forEach(id => pieces.push({ item_id: id, ...defaultPlacement(pieces.length) }));
-      } else {
-        pieces = ids.map((id, k) => ({ item_id: id, ...defaultPlacement(k) }));
-      }
+      // ⚠️ The MEMBERSHIP join is the only source of pieces now. It used to read
+      // `o.layout` first and top up from the join, which meant a stale layout
+      // entry decided the order; the join is what the look actually IS.
+      pieces = asPieces(outfitItemMap.get(outfitId) || []);
     }
   } else if (seedItemId && itemById.has(seedItemId)) {
-    pieces = [{ item_id: seedItemId, ...defaultPlacement(0) }];
+    pieces = asPieces([seedItemId]);
   }
   // Picker mode (B, 2026-07-18): "all" = flat rail over the whole pool with
   // category chips (no folder depth — back always means the same thing);
@@ -53,7 +53,7 @@ function openBuilder(outfitId = null, seedItemId = null, planCtx = null, seedIds
   const scoped = (planCtx && planCtx.capsuleId) || tripModeId;
   const storedMode = store.getItem("wardrobe.pickmode.builder");
   const pickAll = storedMode ? storedMode === "all" : !!scoped;
-  builder = { outfitId, name, pieces, selIdx: pieces.length ? pieces.length - 1 : -1, picking: false, pickCat: null, pickSub: null, pickQ: "",
+  builder = { outfitId, name, pieces, picking: false, pickCat: null, pickSub: null, pickQ: "",
               pickAll, planCtx: planCtx || null, scopeCapsuleId: planCtx ? planCtx.capsuleId : null };
   $("#app").classList.add("builder-mode");
   switchTab("builder");
@@ -149,27 +149,35 @@ function renderBuilderRail() {
   hydratePhotos(ov);
 }
 
+/* The preview is the REAL arrangement, not an approximation of it — it calls the
+   same `suggestionLayout` every grid tile and the look page call, so what she
+   sees here is exactly what the look will look like everywhere else. That is
+   what makes removing the drag safe: there is nothing left to adjust, so there
+   must be nothing left to be surprised by. */
 function renderBuilderCanvas() {
   const body = $("#builderBody");
-  const p = builder.pieces, sel = builder.selIdx;
-  const pieceEls = p.map((pc, i) => {
-    const it = itemById.get(pc.item_id);
-    if (!it) return "";
-    return `<div class="bpiece${i === sel ? " sel" : ""}" data-bidx="${i}" data-photo="${esc(it.image_path || "")}"
-      style="left:${pc.x * 100}%;top:${pc.y * 100}%;width:${pc.s * 100}%;z-index:${i + 1}">
-      <div class="bp-handle" data-bresize="1"><svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 21h5v-5M21 3l-7 7M3 21l7-7"/></svg></div>
-    </div>`;
+  const its = builder.pieces.map(pc => itemById.get(pc.item_id)).filter(Boolean);
+  const lay = suggestionLayout(its);
+  const pieceEls = lay.map((p, i) => {
+    const it = itemById.get(p.item_id);
+    return `<div class="bpiece" data-bitem="${esc(p.item_id)}" data-photo="${esc(it.image_path || "")}"
+      style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${i + 1}"></div>`;
   }).join("");
-  const empty = p.length ? "" : `<div class="bld-empty">
+  const empty = its.length ? "" : `<div class="bld-empty">
     <svg viewBox="0 0 24 24"><path d="M5 9l7-5 7 5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/></svg>
     <div>Tap “+ Clothing” to start</div></div>`;
-  const selBar = p.length ? `
-    <div class="bld-sel-bar">
-      <button data-bview="1"><svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>View item</button>
-      <button data-blayer="back"><svg viewBox="0 0 24 24"><path d="M4 8l8-4 8 4-8 4z"/></svg>Send back</button>
-      <button data-blayer="front"><svg viewBox="0 0 24 24"><path d="M4 16l8 4 8-4M4 8l8-4 8 4-8 4z"/></svg>Bring front</button>
-      <button class="danger" data-bdelete="1"><svg viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>Remove</button>
-    </div>` : "";
+  /* One row per piece, in the order the look is drawn in. ✕ takes it out, the
+     name opens the item — the two things the old selection bar did that were
+     about the LOOK rather than about pixels. */
+  const list = its.length ? `<div class="bld-pieces">${
+    suggestionPieceOrder(its).map(it => `<div class="bld-prow">
+      <button class="bld-pmain" data-bopen="${esc(it.id)}">
+        <span class="bld-pthumb" data-photo="${esc(it.image_path || "")}"></span>
+        <span class="bld-pname">${esc(it.name || "Untitled")}</span>
+        <span class="bld-pslot">${esc(it.subcategory || it.category || "")}</span>
+      </button>
+      <button class="bld-pdrop" data-bdrop="${esc(it.id)}" title="Take it out">✕</button>
+    </div>`).join("")}</div>` : "";
   body.innerHTML = `
     <div class="bld-top">
       <button class="lnk" id="bldCancel">Cancel</button>
@@ -181,73 +189,19 @@ function renderBuilderCanvas() {
       <div class="bld-actions">
         <button class="btn-ghost" id="bldAdd"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Clothing</button>
       </div>
-      ${selBar}
-      <div class="bld-hint">Drag to move · drag the blue handle to resize · tap a piece to select</div>
+      ${list}
+      <div class="bld-hint">Every piece is always in frame — the arrangement is set for you.</div>
     </div>`;
   hydratePhotos(body);
   scrollToTop();
   const nameInp = $("#bldName");
   if (nameInp) nameInp.oninput = () => { builder.name = nameInp.value; };
-  wireBuilderCanvas();
 }
 
-// pointer-driven move + corner-handle resize (touch + mouse)
-function wireBuilderCanvas() {
-  const canvas = $("#bCanvas");
-  if (!canvas) return;
-  let drag = null;
-  canvas.addEventListener("pointerdown", (e) => {
-    const pieceEl = e.target.closest(".bpiece");
-    if (!pieceEl) return;
-    const idx = +pieceEl.dataset.bidx;
-    selectPiece(idx);
-    const resizing = !!e.target.closest("[data-bresize]");
-    const rect = canvas.getBoundingClientRect();
-    const pc = builder.pieces[idx];
-    drag = { idx, el: pieceEl, mode: resizing ? "resize" : "move", rect,
-      sx: e.clientX, sy: e.clientY, ox: pc.x, oy: pc.y, os: pc.s };
-    pieceEl.setPointerCapture(e.pointerId);
-    pieceEl.style.cursor = "grabbing";
-    e.preventDefault();
-  });
-  canvas.addEventListener("pointermove", (e) => {
-    if (!drag) return;
-    const pc = builder.pieces[drag.idx];
-    if (drag.mode === "move") {
-      pc.x = clamp01(drag.ox + (e.clientX - drag.sx) / drag.rect.width);
-      pc.y = clamp01(drag.oy + (e.clientY - drag.sy) / drag.rect.height);
-      drag.el.style.left = pc.x * 100 + "%";
-      drag.el.style.top = pc.y * 100 + "%";
-    } else {
-      const d = (e.clientX - drag.sx) / drag.rect.width;
-      pc.s = Math.max(0.12, Math.min(0.92, drag.os + d * 2));
-      drag.el.style.width = pc.s * 100 + "%";
-    }
-    e.preventDefault();
-  });
-  const end = () => { if (drag) { drag.el.style.cursor = "grab"; drag = null; } };
-  canvas.addEventListener("pointerup", end);
-  canvas.addEventListener("pointercancel", end);
-}
-
-function selectPiece(idx) {
-  builder.selIdx = idx;
-  $$("#bCanvas .bpiece").forEach(el => el.classList.toggle("sel", +el.dataset.bidx === idx));
-}
-
-function layerPiece(dir) {
-  const i = builder.selIdx, p = builder.pieces;
-  if (i < 0) return;
-  if (dir === "front" && i < p.length - 1) { [p[i], p[i + 1]] = [p[i + 1], p[i]]; builder.selIdx = i + 1; }
-  else if (dir === "back" && i > 0) { [p[i], p[i - 1]] = [p[i - 1], p[i]]; builder.selIdx = i - 1; }
-  renderBuilderCanvas();
-}
-
-function deleteBuilderPiece() {
-  const i = builder.selIdx;
+function deleteBuilderPiece(itemId) {
+  const i = builder.pieces.findIndex(p => p.item_id === itemId);
   if (i < 0) return;
   builder.pieces.splice(i, 1);
-  builder.selIdx = builder.pieces.length ? Math.min(i, builder.pieces.length - 1) : -1;
   renderBuilderCanvas();
 }
 
@@ -362,9 +316,7 @@ function builderItemGrid(list) {
 
 function addPieceToBuilder(id, keepPicking) {
   if (!itemById.has(id)) return;
-  const at = builder.pieces.findIndex(p => p.item_id === id);
-  if (at >= 0) builder.selIdx = at;
-  else { builder.pieces.push({ item_id: id, ...defaultPlacement(builder.pieces.length) }); builder.selIdx = builder.pieces.length - 1; }
+  if (!builder.pieces.some(p => p.item_id === id)) builder.pieces.push({ item_id: id });
   // From the bottom rail we keep picking so several pieces can be added in a row.
   if (!keepPicking) { builder.picking = false; builder.pickCat = null; builder.pickSub = null; builder.pickQ = ""; }
   renderBuilder();
@@ -384,7 +336,9 @@ function builderCancel() {
   const planCtx = builder ? builder.planCtx : null;
   builder = null;
   $("#app").classList.remove("builder-mode");
-  if (planCtx && planCtx.kv) { switchTab("home"); openDayPlanSheet(planCtx.date); return; }
+  // ⚠️ A cancelled kv-plan build lands on that DAY in the calendar — the one
+  // surface a future plan is visible on now that the day-plan editor is gone.
+  if (planCtx && planCtx.kv) { switchTab("calendar"); calendarDay = planCtx.date; renderCalendar(); return; }
   if (planCtx) { switchTab("capsules"); capsuleId = planCtx.capsuleId; capsuleView = "plan"; renderCapsules(); return; }
   switchTab("looks");
   if (oid) openLook(oid);
@@ -535,7 +489,10 @@ async function saveBuilder() {
   if (!builder) return;
   const p = builder.pieces;
   if (p.length < 2) { toast("A look needs at least 2 pieces"); return; }
-  const layout = p.map(pc => ({ item_id: pc.item_id, x: +pc.x.toFixed(4), y: +pc.y.toFixed(4), s: +pc.s.toFixed(4) }));
+  /* ⚠️ NO `layout` IS WRITTEN ANY MORE (2026-08-21). The arrangement is derived
+     from the piece set at render time, so storing one would be a second, stale
+     answer to a question the renderer already answers. Existing rows keep
+     whatever they hold — unread, deliberately not migrated. */
   const itemIds = p.map(pc => pc.item_id);
   const name = builder.name.trim() || null;
   const wasNew = !builder.outfitId;
@@ -547,9 +504,10 @@ async function saveBuilder() {
     if (dup) {
       await rest(`/outfits?id=eq.${dup.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify(name ? { name, layout } : { layout }),
+        body: JSON.stringify(name ? { name } : {}),
       });
-      dup.layout = layout; if (name) dup.name = name; dup._bucket = null;
+      if (name) dup.name = name;
+      dup._bucket = null;
       buildOutfitIndexes();
       // Edited-look merge: the edit landed on dup, but oldId's recent wear (if
       // any) still points at oldId with the old pieces. Same-day wear moves
@@ -579,11 +537,11 @@ async function saveBuilder() {
     if (!id) {
       const rows = await rest("/outfits?select=*", {
         method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-        body: JSON.stringify({ name, layout }),
+        body: JSON.stringify({ name }),
       });
       const o = Array.isArray(rows) ? rows[0] : rows;
       if (!o || !o.id) throw new Error("Could not create look");
-      id = o.id; o.layout = layout;
+      id = o.id;
       outfits.push(o);
       const links = itemIds.map(item_id => ({ outfit_id: id, item_id }));
       await rest("/outfit_items", {
@@ -594,9 +552,9 @@ async function saveBuilder() {
     } else {
       await rest(`/outfits?id=eq.${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-        body: JSON.stringify({ name, layout }),
+        body: JSON.stringify({ name }),
       });
-      const o = outfitById.get(id); if (o) { o.name = name; o.layout = layout; }
+      const o = outfitById.get(id); if (o) o.name = name;
       const current = new Set(outfitItemMap.get(id) || []);
       const toAdd = itemIds.filter(x => !current.has(x));
       const toRemove = [...current].filter(x => !itemIds.includes(x));
@@ -649,9 +607,11 @@ function finishBuilder(id, msg) {
   builder = null;
   $("#app").classList.remove("builder-mode");
   if (planCtx && planCtx.kv) {
-    // Round A day plan (kv): attach + land back on the day's plan editor.
-    switchTab("home");
-    addKvPlanLook(planCtx.date, id, planCtx.entryIdx ?? null).then(() => openDayPlanSheet(planCtx.date));
+    // Attach to the day plan, then land on that day in the calendar — where a
+    // future plan is now read (the day-plan editor is gone, 2026-08-21).
+    switchTab("calendar");
+    calendarDay = planCtx.date;
+    addKvPlanLook(planCtx.date, id, planCtx.entryIdx ?? null).then(() => renderCalendar());
     toast("Planned for " + planDayLabel(planCtx.date));
     return;
   }

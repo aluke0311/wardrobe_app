@@ -108,13 +108,12 @@ function calStreak() {
   return streak;
 }
 
-/* Month · Plan the week, in one tab (2026-08-05 — see renderWeekPlan's header).
-   The day view is shared by both, so a day tapped from either lands here. */
-let calendarMode = "month";   // "month" | "week" — session-only
+/* ⚠️ The Month / "Plan the week" mode bar is gone (2026-08-21) along with the
+   week planner itself — the Calendar tab is the month and the day, nothing
+   else. `calendarMode` went with it. */
 function renderCalendar() {
   const body = $('#calendarBody');
   if (calendarDay) renderCalendarDay(body);
-  else if (calendarMode === "week") renderWeekPlan(body, { embedded: true });
   else renderCalendarMonth(body);
 }
 
@@ -177,7 +176,6 @@ function renderCalendarMonth(body) {
     </div>`;
 
   body.innerHTML = `<div class="tabbody">
-    ${weekModeBarHtml()}
     <div class="cal-nav">
       <button class="cal-nav-btn" id="calPrev"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
       <div class="cal-month-lbl"><strong>${CAL_MONTHS[month]}</strong> <em>${year}</em></div>
@@ -189,8 +187,6 @@ function renderCalendarMonth(body) {
   </div>`;
 
   body.onclick = e => {
-    const modeBtn = e.target.closest('[data-calmode]');
-    if (modeBtn) { calendarMode = modeBtn.dataset.calmode; return renderCalendar(); }
     if (e.target.closest('#calPrev')) {
       calendarMonth--; if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
       renderCalendarMonth(body); return;
@@ -324,44 +320,48 @@ function renderCalendarDay(body) {
           rendered nothing anywhere. It could only be found by opening that one
           day and pressing 📅 Plan.
 
-          Now: any date from today on shows its plan, outfit or not. An entry
-          with an outfit keeps its one-tap "Wear it ✓"; a context-only entry is
-          stated and opens the day's plan sheet, where it can be removed. */ ""}
+          ⚠️ THIS IS NOW THE ONLY PLACE A FUTURE PLAN IS VISIBLE (2026-08-21).
+          Everything that used to SET one — the day-plan sheet, the week planner,
+          the Tomorrow card — went with the planning-ahead removal; the suggester's
+          "Plan for Thu" is the single writer left, and this row is what makes it
+          worth writing. So the row also owns REMOVING a plan, which the day-plan
+          sheet used to: without that, setting a wrong day would be permanent.
+          A plan she has already worn stops rendering — the wear card above says
+          it better. */ ""}
     ${dateStr >= todayStr() ? dayPlan(dateStr).map((e, idx) => {
       const o = e.outfit ? outfitById.get(e.outfit) : null;
       if (o && planWorn(dateStr, o.id)) return "";
       const ctxs = (e.contexts || []).filter(Boolean).join(", ");
       const lvl = e.level ? occLabel(e.level) : null;
-      if (!o) {
-        // Context-only: say what's declared, and make it reachable to change.
-        const title = ctxs || (lvl ? `Dressing for ${lvl}` : "Planned");
-        return `<button class="otd-row" data-cal-plan-edit="${idx}">
-          <div class="otd-text" style="flex:1">
-            <div class="otd-title">📅 Planned: ${esc(title)}</div>
-            <div class="otd-sub">${esc(ctxs && lvl ? lvl : "no outfit picked yet")}</div>
-          </div>
-          <span class="cap-chip" style="flex:none">Change</span>
-        </button>`;
-      }
+      // ⚠️ Nothing writes a context-only entry any more, but old ones exist in
+      // her kv — they still render, and can still be cleared.
+      const title = o ? outfitName(o) : (ctxs || (lvl ? `Dressing for ${lvl}` : "Planned"));
+      const sub = o ? ctxs : (ctxs && lvl ? lvl : "no outfit picked yet");
       // ⚠️ "Wear it" is a today action — you can't log a day you haven't lived.
-      const canWear = dateStr === todayStr() && !tripModeId;
-      return `<button class="otd-row" data-cal-plan-${canWear ? "wear" : "edit"}="${idx}">
-        <div class="otd-text" style="flex:1">
-          <div class="otd-title">📅 Planned: ${esc(outfitName(o))}</div>
-          ${ctxs ? `<div class="otd-sub">${esc(ctxs)}</div>` : ""}
-        </div>
-        <span class="cap-chip" style="flex:none">${canWear ? "Wear it ✓" : "Change"}</span>
-      </button>`;
+      const canWear = !!o && dateStr === todayStr() && !tripModeId;
+      return `<div class="otd-row" style="gap:6px">
+        ${o ? `<button class="otd-text" data-cal-plan-look="${esc(o.id)}" style="flex:1;text-align:left">
+                 <div class="otd-title">\u{1F4C5} Planned: ${esc(title)}</div>
+                 ${sub ? `<div class="otd-sub">${esc(sub)}</div>` : ""}
+               </button>`
+             : `<div class="otd-text" style="flex:1">
+                 <div class="otd-title">\u{1F4C5} Planned: ${esc(title)}</div>
+                 ${sub ? `<div class="otd-sub">${esc(sub)}</div>` : ""}
+               </div>`}
+        ${canWear ? `<button class="cap-chip" data-cal-plan-wear="${idx}" style="flex:none">Wear it \u2713</button>` : ""}
+        <button class="cap-chip" data-cal-plan-drop="${idx}" style="flex:none;color:var(--muted)" title="Remove this plan">\u2715</button>
+      </div>`;
     }).join("") : ""}
     <div class="cal-day-foot">
       <div class="cal-day-foot-ico"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>
+      ${/* ⚠️ No "📅 Plan" button — planning a day happens in the outfit suggester
+            now, and a future day has nothing else to add to it. */""}
       <div class="cal-day-foot-add">
-        <span>${isFuture ? "plan ahead:" : "add more items:"}</span>
-        ${isFuture ? "" : `
+        ${isFuture ? `<span>plan it from \u2728 What should I wear?</span>` : `
+        <span>add more items:</span>
         <button id="calWearAgain">Wear again</button>
         <button id="calAddClothing">+ Clothing</button>
         <button id="calAddLook">+ Look</button>`}
-        ${dateStr >= todayStr() && !tripModeId ? `<button id="calPlanDay">📅 Plan</button>` : ""}
       </div>
     </div>
     ${onThisDay}
@@ -381,13 +381,19 @@ function renderCalendarDay(body) {
   }
   const makeLookBtn = $('#calMakeLook');
   if (makeLookBtn) makeLookBtn.onclick = () => makeLookFromDay(dateStr, body);
-  const planDayBtn = $('#calPlanDay');
-  if (planDayBtn) planDayBtn.onclick = () => openDayPlanSheet(dateStr);
   body.querySelectorAll('[data-cal-plan-wear]').forEach(b => {
     b.onclick = () => wearPlannedEntry(dateStr, +b.dataset.calPlanWear);
   });
-  body.querySelectorAll('[data-cal-plan-edit]').forEach(b => {
-    b.onclick = () => openDayPlanSheet(dateStr);
+  body.querySelectorAll('[data-cal-plan-look]').forEach(b => {
+    b.onclick = () => openLookFrom(b.dataset.calPlanLook);
+  });
+  body.querySelectorAll('[data-cal-plan-drop]').forEach(b => {
+    b.onclick = async () => {
+      const idx = +b.dataset.calPlanDrop;
+      await saveDayPlan(dateStr, dayPlan(dateStr).filter((_, k) => k !== idx));
+      renderCalendarDay(body);
+      toast("Plan removed");
+    };
   });
 
   // Horizontal swipe to navigate days; skip if touch starts on a swipeable card

@@ -1400,6 +1400,45 @@ async function run() {
     W.wears = savedWears; W.statsDateRange = savedRange;
     return eq(out, [1, 1]);
   });
+  /* ⚠️ NOTHING ARCHIVED, ANYWHERE IN STATS (2026-08-21, her report: Style Stats →
+     Contexts "is showing archived items in the contexts. I want only available
+     and storage items").
+
+     The pages built from a POOL were never the problem — `itemMatchesFilter`
+     defaults them to Available. These are the ones built from WEAR HISTORY:
+     they walk `wears`, map ids through `itemById` and rendered whatever came
+     back, so a piece archived last winter kept turning up as a top piece for a
+     context it hasn't been worn for since. Storage stays IN — it is still in the
+     wardrobe — which is exactly the line she drew. */
+  t("stats built from wear history drop archived pieces but keep Storage", () => {
+    const saved = { items: W.items, byId: W.itemById, wears: W.wears, range: W.statsDateRange };
+    try {
+      W.statsDateRange = "all";
+      const mk = (id, status) => ({ id, name: id, category: "Tops", subcategory: "Tee shirts", status });
+      const its = [mk("av", "Available"), mk("st", "Storage"), mk("ar", "Archive")];
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      // The archived piece is the MOST worn, so it cannot be missing by accident.
+      W.wears = [
+        { item_id: "ar", worn_on: D(-3), context: ["Church"] },
+        { item_id: "ar", worn_on: D(-10), context: ["Church"] },
+        { item_id: "ar", worn_on: D(-17), context: ["Church"] },
+        { item_id: "st", worn_on: D(-4), context: ["Church"] },
+        { item_id: "av", worn_on: D(-5), context: ["Church"] },
+      ];
+      const ids = W.contextTopItems("Church", 12).map(x => x.item.id);
+      if (ids.includes("ar")) return `archived piece still listed: ${JSON.stringify(ids)}`;
+      if (!ids.includes("av") || !ids.includes("st"))
+        return `Available/Storage dropped too: ${JSON.stringify(ids)}`;
+      // The same floor applies to "Lately", which is the other wear-walking page.
+      const pulse = W.buildRecentPulse ? W.buildRecentPulse() : null;
+      if (pulse && pulse.worn && pulse.worn.some(x => x.item.id === "ar"))
+        return "the Lately block still shows the archived piece";
+      return true;
+    } finally {
+      W.items = saved.items; W.itemById = saved.byId;
+      W.wears = saved.wears; W.statsDateRange = saved.range;
+    }
+  });
   t("buildRotationStats: per-item wear DAYS ride along for the drill-in", () => {
     const pool = [{ id: "a", status: "Available" }, { id: "b", status: "Available" }];
     const ws = [{ item_id: "a", worn_on: D(-5) }, { item_id: "a", worn_on: D(-5) },  // same day twice
@@ -1549,6 +1588,28 @@ async function run() {
     { worn_on: "2026-06-02", context: ["Chorus"] },   // Tuesdays — only 2, under the floor
     { worn_on: "2026-06-09", context: ["Chorus"] },
   ];
+  /* ⚠️ TRAVEL IS NEVER "USUAL" (2026-08-21, her ask: "remove travel from the
+     'usual' contexts — it's not a routine or usual thing").
+
+     It is the one context she never types: `tripWearContext` stamps it on every
+     wear inside a trip's dates, so a fortnight away writes fourteen consecutive
+     days of it and it outranks whatever she actually does on that weekday. The
+     fixture gives Travel MORE days than the real habit on the same weekday, so
+     a rhythm that merely ranked it lower would still fail here. */
+  t("weeklyRhythm ignores Travel, however many trip days pile up", () => {
+    const ws = [];
+    // Four Sundays of Church — the real habit.
+    for (const d of ["2026-06-07", "2026-06-14", "2026-06-21", "2026-06-28"])
+      ws.push({ worn_on: d, context: ["Church"] });
+    // Six Sundays of Travel from two holidays — more days, auto-stamped.
+    for (const d of ["2026-01-04", "2026-01-11", "2026-01-18", "2026-03-01", "2026-03-08", "2026-03-15"])
+      ws.push({ worn_on: d, context: ["Travel"] });
+    const sun = W.weeklyRhythm(ws).get(0);
+    if (!sun) return "Sunday lost its rhythm entirely";
+    if (sun.contexts.includes("Travel")) return `Travel is still usual: ${JSON.stringify(sun.contexts)}`;
+    return sun.contexts[0] === "Church" ? true : JSON.stringify(sun.contexts);
+  });
+
   t("weeklyRhythm: a weekly habit surfaces, a twice-only one doesn't", () => {
     const r = W.weeklyRhythm(rhythmWears);
     return eq([r.get(0).contexts, r.get(0).n, r.has(2)], [["Church"], 4, false]);
@@ -2240,26 +2301,19 @@ async function run() {
       ? true : `level=${level} lit=${lit} after=${W._sugg.targetLevel}`;
   }));
 
-  t("the suggester offers every context EXCEPT Workout", () => withGearCloset(() => {
-    W.wears = W.wears.concat(
-      ["Workout", "Errands", "Church"].flatMap((c, k) =>
-        [0, 1, 2].map(d => ({ id: `cx${k}${d}`, item_id: "tp0", worn_on: W.shiftDate(today, -(20 + k * 3 + d)),
-                              outfit_id: null, context: [c], formality_for: 3 }))));
-    W.openSuggestSheet();
-    const doc = document.getElementById("app").contentDocument;
-    doc.querySelector("[data-srefine]").click();   // context chips fold under Refine
-    const html = doc.getElementById("logInner").innerHTML;
-    const chips = [...html.matchAll(/data-sctx="([^"]+)"/g)].map(m => m[1]);
-    // Workout is still a real context for logging and planning — just not a
-    // second way to ask the suggester for what level 1 already says.
-    return chips.length > 0 && !chips.includes("Workout") ? true : JSON.stringify(chips);
-  }));
-
   /* ---- the sheet answers before it asks (2026-08-14) ----
      Measured on her live closet before the change: 25 chips and 587px of filters
      ahead of the outfit, which began at y=765 with "Wear this today" 1,300px
      down. These pin the reorder, not the styling. */
-  t("the suggestion sheet opens on the outfit, not on the filters", () => withGearCloset(() => {
+  /* ⚠️ REVERSED IN PART, 2026-08-21, with the decision it guards: "remove context
+     from the outfit suggester and move formality up; I always use it."
+     The 2026-08-14 contract this was written for — the sheet answers before it
+     asks — still holds and is still the first two assertions. What changed is
+     that formality is no longer one of the things behind the fold: it is the one
+     refinement she uses every time, so it renders unfolded. Asserting
+     `levels === 0` now guards the opposite of what she asked for.
+     The load-bearing half is that it is still BELOW the outfit. */
+  t("the sheet leads with the outfit, and formality is reachable without unfolding", () => withGearCloset(() => {
     W.openSuggestSheet();
     const doc = document.getElementById("app").contentDocument;
     const prev = doc.getElementById("sgPreview");
@@ -2268,8 +2322,14 @@ async function run() {
     if (!ref) return "no Refine control";
     // 4 = DOCUMENT_POSITION_FOLLOWING: refine must come AFTER the outfit.
     if (!(prev.compareDocumentPosition(ref) & 4)) return "Refine renders before the outfit";
-    const levels = doc.querySelectorAll("[data-slvl]").length;
-    return levels === 0 ? true : `${levels} formality chips rendered before she asked for them`;
+    if (W._sugg.refineOpen) return "plain open should start folded";
+    const chips = [...doc.querySelectorAll("[data-slvl]")];
+    if (!chips.length) return "formality is folded away again";
+    const canvas = doc.getElementById("sgPreviewInner");
+    if (canvas && !(canvas.compareDocumentPosition(chips[0]) & 4))
+      return "the formality chips render above the outfit";
+    // ...and the context chips they replaced are gone for good.
+    return doc.querySelector("[data-sctx]") ? "the context chips are back" : true;
   }));
 
   /* ⚠️ Her explicit condition when she approved the rack narrowing the pool:
@@ -2760,32 +2820,6 @@ async function run() {
     return eq([ids.has("no1"), ids.has("arch1"), ids.has("wk1")], [false, false, false]);
   }));
 
-  /* ⚠️ The Tomorrow card passed `pool = null`, and suggestOutfits reads null as
-     the whole Available closet — so the one surface that shows an outfit without
-     being asked was the one place that had never used the rack (2026-08-03, her
-     ask: "I want the tomorrow planner to be from the rack"). Both now go through
-     planningPool, so they cannot drift apart again. */
-  t("the tomorrow planner draws from the same pool the suggester does", () => withRackCloset(() => {
-    const rackIds = new Set(W.rackItems().map(i => i.id));
-    // the helper and the suggester agree...
-    const plan = W.planningPool({});
-    W.openSuggestSheet();
-    const sugg = W._suggBasePool();
-    if (!(plan.length === rackIds.size && plan.every(i => rackIds.has(i.id)) && sugg.length === plan.length))
-      return `plan=${plan.length} rack=${rackIds.size} sugg=${sugg.length}`;
-    // ...and the card actually GOES THROUGH it. Driving the real function is the
-    // point: asserting on planningPool alone passed happily while the card was
-    // still handing suggestOutfits a null pool.
-    const savedPick = W.kvData.get("tmpick");
-    W.kvData.delete("tmpick");
-    const tm = W.shiftDate(today, 1);
-    const pieces = W.tomorrowGenPieces(tm, { contexts: [] }, null, 0, true);
-    if (savedPick === undefined) W.kvData.delete("tmpick"); else W.kvData.set("tmpick", savedPick);
-    if (!pieces || !pieces.length) return "tomorrow generated nothing";
-    const offRack = pieces.filter(p => !rackIds.has(p.id)).map(p => p.id);
-    return offRack.length === 0 ? true : `tomorrow picked off-rack pieces: ${JSON.stringify(offRack)}`;
-  }));
-
   t("Utility and trips still bypass the rack, from either surface", () => withRackCloset(() => {
     const all = W.items.filter(i => W.itemStatus(i) === "Available").length;
     const utility = W.planningPool({ level: 1 }).length;
@@ -2819,24 +2853,6 @@ async function run() {
     // 3 rows but ONE occasion → the seed (6) still wins
     return eq([W.contextLevelSpread("Wedding", rows), W.contextFormalityLevel("Wedding", rows)],
               [null, W.CONTEXT_FORMALITY_SEED["Wedding"]]);
-  });
-
-  /* Her question: "if I say I need an outfit for x context, in which I have worn
-     different formality levels, what happens?" It took the mode, hard-filtered
-     on it, and showed nothing about the rest. */
-  t("a context worn at several levels offers all of them", () => {
-    const rows = [];
-    for (const [d, lv] of [["01", 5], ["02", 5], ["03", 5], ["04", 3], ["05", 6]])
-      rows.push({ item_id: "a", worn_on: `2026-06-${d}`, context: ["Work"], formality_for: lv });
-    const saved = W.wears; W.wears = rows;
-    W.openSuggestSheet();
-    W._sugg.activeContext = "Work"; W._sugg.targetLevel = 5;
-    const html = W.suggestContextSpreadHtml();
-    W._sugg.activeContext = "Errands";
-    const single = W.suggestContextSpreadHtml();
-    W.wears = saved;
-    return /data-sctxlvl="3"/.test(html) && /data-sctxlvl="6"/.test(html) && /data-sctxlvl="5"/.test(html) && single === ""
-      ? true : `html=${html.slice(0, 160)} single=${JSON.stringify(single)}`;
   });
 
   // ---- "Vary this" (2026-07-26, her own request) ----
@@ -2882,6 +2898,33 @@ async function run() {
     // top + bottom held; the shoe is a DIFFERENT shoe, not just absent
     return after.includes("t1") && after.includes("b1") && after.includes("s2") && after.length === 3
       ? true : JSON.stringify(after);
+  }));
+
+  /* ⚠️ "＋ Add a piece" IS THE ORDINARY CLOTHING PICKER (2026-08-21, her report:
+     "add a piece for some reason doesn't open the default clothing item adder").
+
+     It was a bespoke search box over `items` with a hard `.slice(0, 60)` — no
+     folders, no funnel, no status lens, and silently truncated on a 491-piece
+     closet. This asserts it is built from the SHARED picker machinery every
+     other add-clothing surface uses, which is the only thing that stops it
+     drifting away from them again. */
+  t("adding a piece to a look opens the shared clothing picker", () => withMockCloset(() => {
+    W.openLookAddPieceSheet("o1");
+    const doc = document.getElementById("app").contentDocument;
+    const inner = doc.getElementById("logInner");
+    const html = inner.innerHTML;
+    try {
+      if (!inner.querySelector("[data-pickcat]")) return "no category bar — still the flat one-off list";
+      if (!inner.querySelector("#lapFilter")) return "no filter funnel";
+      if (!inner.querySelector("[data-lap-status]")) return "no status lens";
+      if (!inner.querySelector("[data-pick]")) return "the grid is not the shared selectable one";
+      // Pieces already in the look are excluded rather than shown ticked.
+      const offered = [...inner.querySelectorAll("[data-pick]")].map(b => b.dataset.pick);
+      const inLook = W.outfitItemMap.get("o1") || [];
+      const leaked = offered.filter(id => inLook.includes(id));
+      if (leaked.length) return `already-in-look pieces offered: ${JSON.stringify(leaked)}`;
+      return offered.length ? true : "the picker offered nothing at all";
+    } finally { W.hideSheet("logSheet"); }
   }));
 
   t("openVaryLook refuses a look with fewer than 2 wearable pieces", () => withMockCloset(() => {
@@ -3107,23 +3150,22 @@ async function run() {
     finally { W.tripModeId = savedTrip; }
   });
 
-  t("Home leads with the day and the daily actions, not with navigation", () => withHome((body) => {
+  /* ⚠️ REVERSED 2026-08-21 with the decision it guards. This asserted that the
+     nav strip renders BELOW the morning question; her answer was that it should
+     not render at all ("I don't know why I have a row that just says closet #
+     looks # etc. drop it — I have those tabs on the bottom"). Home now carries
+     no second copy of the tab bar in either form, and the morning question is
+     still the thing that leads. */
+  t("Home leads with the morning question and carries no second tab bar", () => withHome((body) => {
     const ask = body.querySelector("#homeAsk");
-    const nav = body.querySelector(".hnav");
     if (!ask) return "no 'What should I wear?' button on Home";
-    if (!nav) return "no nav strip";
-    // 4 = DOCUMENT_POSITION_FOLLOWING
-    if (!(ask.compareDocumentPosition(nav) & 4)) return "navigation still renders above the morning question";
+    if (body.querySelector(".hnav")) return "the nav strip is back";
     if (body.querySelector(".launch")) return "the launcher grid is back above the fold";
-    return true;
-  }));
-
-  /* Compress, don't delete: the grid went, every destination stayed. */
-  t("the Home nav strip still reaches every launcher destination", () => withHome((body) => {
-    const got = [...body.querySelectorAll(".hnav [data-go]")].map(b => b.dataset.go);
-    const want = W.HOME_TILES.map(t => t.tab);
-    const missing = want.filter(x => !got.includes(x));
-    return missing.length === 0 ? true : `unreachable from Home: ${missing.join(", ")}`;
+    if (body.querySelector("[data-go]")) return "a launcher destination chip is still rendered";
+    // ...and the morning question still leads the daily actions.
+    const log = body.querySelector("#homeLogCta, #homeLoggedRow");
+    if (!log) return "no log row";
+    return (ask.compareDocumentPosition(log) & 4) ? true : "the log row renders above the morning question";
   }));
 
   /* ⚠️ The twin of the suggester's own fix. Logging used to switchTab("calendar")
@@ -3503,7 +3545,11 @@ async function run() {
     const el = W.document.querySelector("#tab-calendar");
     const txt = el ? el.innerText : "";
     const hasRow = /Wedding/.test(txt);
-    const reachable = !!el.querySelector("[data-cal-plan-edit]");
+    /* ⚠️ 2026-08-21: the day-plan editor is gone, so "reachable" means REMOVABLE
+       here rather than editable. The calendar is the only surface a future plan
+       is visible on now, which makes it the only place one can be undone — a
+       plan set on the wrong day would otherwise be permanent. */
+    const reachable = !!el.querySelector("[data-cal-plan-drop]");
     W.calendarDay = null;
     return (hasRow && reachable)
       ? true : `named=${hasRow} reachable=${reachable} — "${txt.split("\n").map(s=>s.trim()).filter(Boolean).slice(0,6).join(" / ")}"`;
@@ -4634,6 +4680,80 @@ async function run() {
   // ---- the default look arrangement ----
   // A saved look can hold more pieces than a suggested combo ever will; the old
   // four-entry grid was indexed straight off the piece count and threw past it.
+
+  /* ⚠️ THE PROMISE THE WHOLE 2026-08-21 REWORK RESTS ON, in her words: "clothes
+     should ALWAYS fit within the screen on every view of the look — so if there
+     are 6 items, they still need to always be visible."
+
+     Free-form dragging was removed precisely because it could not guarantee
+     this, so the derived arrangement has to. `.ocanvas` is `aspect-ratio: 3/4`,
+     `.ocpiece` is square with `translate(-50%,-50%)`, and `s` is a fraction of
+     canvas WIDTH — so a piece is `s` wide and `s / (4/3)` tall in canvas-HEIGHT
+     units. Both edges are checked, and so is overlap: two pieces that fit the
+     box but sit on top of each other hide one of them just as effectively.
+     ⚠️ Checked across every count from 1 to 16, not just the interesting one.
+     The old code was correct for 1–4 and hand-tuned, then fell off a cliff: 5+
+     went to a fixed s=0.30 in rows of three, which crosses the top edge from 13
+     pieces up. Stopping this loop at 12 would have walked straight past that —
+     and past the whole vertical half of the check, since below 13 it is always
+     the column count that binds. */
+  t("every piece of a look fits inside the canvas, at any piece count", () => {
+    const RATIO = 4 / 3;                       // .ocanvas height ÷ width
+    for (let n = 1; n <= 16; n++) {
+      const its = Array.from({ length: n }, (_, k) =>
+        ({ id: "fit" + k, category: ["Tops","Bottoms","Shoes","Outerwear"][k % 4], subcategory: "x", name: "p" + k }));
+      const lay = W.suggestionLayout(its);
+      if (lay.length !== n) return `${n} pieces → ${lay.length} placed`;
+      for (const p of lay) {
+        const halfW = p.s / 2, halfH = (p.s / 2) / RATIO;
+        if (p.x - halfW < -1e-6 || p.x + halfW > 1 + 1e-6)
+          return `n=${n}: ${p.item_id} runs off the side (x=${p.x}, s=${p.s})`;
+        if (p.y - halfH < -1e-6 || p.y + halfH > 1 + 1e-6)
+          return `n=${n}: ${p.item_id} runs off the top/bottom (y=${p.y}, s=${p.s})`;
+      }
+      for (let a = 0; a < lay.length; a++) for (let b = a + 1; b < lay.length; b++) {
+        // Convert both gaps to WIDTH units so one comparison covers both axes.
+        const dx = Math.abs(lay[a].x - lay[b].x), dy = Math.abs(lay[a].y - lay[b].y) * RATIO;
+        const s = Math.max(lay[a].s, lay[b].s);
+        if (dx < s - 1e-6 && dy < s - 1e-6)
+          return `n=${n}: ${lay[a].item_id} and ${lay[b].item_id} overlap (dx=${dx.toFixed(3)} dy=${dy.toFixed(3)} s=${s})`;
+      }
+    }
+    return true;
+  });
+
+  /* ⚠️ A STORED `outfits.layout` IS NEVER READ AGAIN (2026-08-21). Her looks
+     carry years of hand-dragged arrangements, and those are exactly the ones
+     that can put a piece half off the canvas — the thing she asked to end. The
+     rows are deliberately left in place (unread orphans, like the "mend" tag),
+     so the ONLY thing standing between them and the screen is that no renderer
+     asks. This fixture's saved layout is deliberately absurd: if any renderer
+     goes back to reading it, the coordinates show up in the markup. */
+  t("a look's stored arrangement is ignored in favour of the derived one", () => {
+    const saved = { items: W.items, byId: W.itemById, outfits: W.outfits, links: W.outfitLinks };
+    try {
+      const its = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"]].map(([c, sub], n) =>
+        ({ id: "sl" + n, name: c, category: c, subcategory: sub, status: "Available", image_path: "sl" + n + ".jpg" }));
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      const o = { id: "of_stored", name: "stored",
+                  layout: its.map((i, n) => ({ item_id: i.id, x: 0.97, y: 0.02 + n * 0.01, s: 0.9 })) };
+      W.outfits = [o];
+      W.outfitLinks = its.map(i => ({ outfit_id: "of_stored", item_id: i.id }));
+      W.buildOutfitIndexes();
+      const html = W.outfitCollageHtml(o, 4);
+      if (/left:97%/.test(html) || /width:90%/.test(html)) return "the stored layout is being rendered";
+      const want = W.suggestionLayout(its);
+      const bad = want.filter(p => !html.includes(`left:${p.x * 100}%`));
+      if (bad.length) return `derived positions missing from the markup: ${bad.length}`;
+      // ...and the big view agrees with the thumbnail.
+      const hero = W.lookHeroBlock(o);
+      return /left:97%/.test(hero) ? "the look page still reads the stored layout" : true;
+    } finally {
+      W.items = saved.items; W.itemById = saved.byId;
+      W.outfits = saved.outfits; W.outfitLinks = saved.links; W.buildOutfitIndexes();
+    }
+  });
+
   t("the default arrangement handles a look with more than four pieces", () => {
     const its = ["Tops","Bottoms","Shoes","Outerwear","Dresses","Tops"].map((c, n) =>
       ({ id: "big" + n, category: c, subcategory: "x", name: "p" + n }));
@@ -4641,38 +4761,6 @@ async function run() {
     const bad = lay.filter(p => !p.item_id || typeof p.x !== "number" || typeof p.y !== "number" ||
       typeof p.s !== "number" || p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1);
     return lay.length === its.length && !bad.length ? true : `${lay.length} entries, ${bad.length} malformed`;
-  });
-
-  t("looks without an arrangement follow the Settings choice", () => {
-    const saved = { items: W.items, outfits: W.outfits, links: W.outfitLinks,
-                    mode: W.store.getItem(W.LOOK_FALLBACK_KEY) };
-    try {
-      const its = [["Tops","Tee shirts"],["Bottoms","Jeans"],["Shoes","Sneakers"]].map(([c, s], n) =>
-        ({ id: "lf" + n, name: c, category: c, subcategory: s, status: "Available", image_path: "lf" + n + ".jpg" }));
-      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
-      const plain = { id: "of_plain", layout: null, name: "plain" };
-      const arranged = { id: "of_lay", name: "arranged",
-                         layout: its.map((i, n) => ({ item_id: i.id, x: 0.5, y: 0.1 * n, s: 0.4 })) };
-      W.outfits = [plain, arranged];
-      W.outfitLinks = its.flatMap(i => [{ outfit_id: "of_plain", item_id: i.id },
-                                        { outfit_id: "of_lay", item_id: i.id }]);
-      W.buildOutfitIndexes();
-      W.setLookFallbackMode("collage");
-      const asCollage = W.outfitCollageHtml(plain, 4);
-      W.setLookFallbackMode("layout");
-      const asLayout = W.outfitCollageHtml(plain, 4);
-      const savedStays = W.outfitCollageHtml(arranged, 4);
-      return (asCollage.includes("ocollage") && !asCollage.includes("ocanvas")
-        && asLayout.includes("ocanvas") && (asLayout.match(/ocpiece/g) || []).length === its.length
-        && savedStays.includes("ocanvas"))
-        ? true
-        : `collage=${asCollage.slice(0, 40)} layout=${asLayout.slice(0, 40)}`;
-    } finally {
-      W.items = saved.items; W.itemById = new Map(saved.items.map(i => [i.id, i]));
-      W.outfits = saved.outfits; W.outfitLinks = saved.links; W.buildOutfitIndexes();
-      if (saved.mode == null) W.store.removeItem(W.LOOK_FALLBACK_KEY);
-      else W.store.setItem(W.LOOK_FALLBACK_KEY, saved.mode);
-    }
   });
 
   // ---- the hamper's load filter ----

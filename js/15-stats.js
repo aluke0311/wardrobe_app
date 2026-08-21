@@ -48,6 +48,27 @@ const STATS_FIELD_LABELS = {
   price: "Price", size: "Size", season: "Season", fabric: "Fabric", acquisition: "Acquisition",
 };
 
+/* ⚠️ THE FLOOR UNDER EVERY STATS PAGE: NOTHING ARCHIVED (2026-08-21, her report:
+   Style Stats → Contexts "is showing archived items in the contexts. I want only
+   available and storage items. Check the whole stats section — it should by
+   default only show available.")
+
+   The two halves of that are not in tension, they describe two different kinds
+   of page. Pages built from a POOL already default to Available only, because
+   `itemMatchesFilter` reads an empty status filter that way — they were never
+   the problem, and they keep that stricter default so the funnel is still what
+   widens them. The pages built from WEAR HISTORY had no pool at all: they walk
+   `wears`, map ids through `itemById` and render whatever comes back, so a
+   jumper archived last winter kept turning up as a top piece for a context. This
+   is the floor those pages were missing — Available + Storage, exactly what she
+   asked for, with Archive out.
+
+   ⚠️ It deliberately does NOT read `statsFilter`. These are whole-wardrobe
+   derivations that state their own scope (the funnel-vs-pool rule in Known
+   gotchas), and quietly wiring the funnel into them would be the decorative-
+   funnel bug from the other direction. */
+const statsItemVisible = (i) => !!i && itemStatus(i) !== "Archive";
+
 function statsPool() {
   const acqCutoff = acqRangeStart();
   return items.filter(i => {
@@ -685,11 +706,15 @@ function closetVsLifeHtml() {
   for (const i of avail) { for (const l of (itemFormalitySet(i) || [])) supply[l - 1]++; }
   const supplyTotal = supply.reduce((a, b) => a + b, 0) || 1;
 
-  // Demand: count wears by the formality set of each worn item
+  // Demand: count wears by the formality set of each worn item.
+  // ⚠️ Same status test as `avail` above (2026-08-21). Supply counted Available
+  // pieces while demand counted every wear ever logged, archived pieces
+  // included — so a level she used to dress at and has since given away read as
+  // demand the closet couldn't meet, and the page invented a gap.
   const demand = new Array(8).fill(0);
   for (const w of wears) {
     const it = itemById.get(w.item_id);
-    if (!it) continue;
+    if (!it || itemStatus(it) !== "Available") continue;
     for (const l of (itemFormalitySet(it) || [])) demand[l - 1]++;
   }
   const demandTotal = demand.reduce((a, b) => a + b, 0) || 1;
@@ -798,7 +823,7 @@ function buildRecentPulse(days = PULSE_DAYS, wearRows, today) {
   const cut = shiftDate(t, -PULSE_REDISCOVER_DAYS);
   const worn = [...dayCounts.entries()]
     .map(([id, n]) => ({ item: itemById.get(id), n }))
-    .filter(x => x.item)
+    .filter(x => statsItemVisible(x.item))
     .sort((a, b) => b.n - a.n);
   // "First outing" = nothing before the window at all. "Back out" = a real gap.
   const firstOutings = worn.filter(x => (firstEver.get(x.item.id) || "") >= from);
@@ -1425,7 +1450,7 @@ function contextTopItems(context, limit = 12) {
   const counts = countByDay(wears, w =>
     (!cutoff || w.worn_on >= cutoff) && w.item_id && ctxArr(w).includes(context) ? [w.item_id] : []);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit)
-    .map(([id, n]) => ({ item: itemById.get(id), n })).filter(x => x.item);
+    .map(([id, n]) => ({ item: itemById.get(id), n })).filter(x => statsItemVisible(x.item));
 }
 function contextTopLooks(context, limit = 12) {
   const cutoff = rangeStart();
@@ -2058,6 +2083,7 @@ function buildWrappedStats(year) {
     }
   }
   const topItems = [...itemDays.entries()].map(([id, s]) => ({ item: itemById.get(id), n: s.size }))
+    .filter(x => statsItemVisible(x.item))
     .sort((a, b) => b.n - a.n).slice(0, 5);
   const topLooks = [...lookDays.entries()].map(([id, s]) => ({ o: outfitById.get(id), n: s.size }))
     .sort((a, b) => b.n - a.n).slice(0, 3);
@@ -2070,7 +2096,7 @@ function buildWrappedStats(year) {
   const cpw = [...itemDays.entries()]
     .filter(([id, s]) => s.size >= 3)
     .map(([id]) => itemById.get(id))
-    .filter(i => i && i.acquisition !== "Gift" && parseFloat(i.price) > 0 && wearCount(i.id) > 0)
+    .filter(i => statsItemVisible(i) && i.acquisition !== "Gift" && parseFloat(i.price) > 0 && wearCount(i.id) > 0)
     .map(i => ({ item: i, cpw: parseFloat(i.price) / wearCount(i.id) }))
     .sort((a, b) => a.cpw - b.cpw).slice(0, 3);
 
@@ -2243,7 +2269,7 @@ function buildMonthReview(ym, { pool = null, wearRows = null, log = null } = {})
   const worn = [];
   for (const [id, s] of dayMap) {
     const i = itemById.get(id);
-    if (!i) continue;
+    if (!statsItemVisible(i)) continue;
     const days = [...s].sort();
     const mine = days.filter(inMonth);
     if (!mine.length) continue;

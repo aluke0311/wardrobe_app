@@ -237,6 +237,155 @@ weight as "Packing list". ⚠️ **The chip is REPLACED, not joined** — same h
 same data attribute, same suitcase pool, so there is still exactly one door to
 the suggester. `.td-ask` measured 326px in a 390px column.
 
+**2026-08-21 r1 — SEVEN ASKS: THE CANVAS, THE STATS POOL, AND PLANNING AHEAD.
+Selftest 313 → **313** (5 removed with their decisions, 5 added), run GREEN; all
+5 new cases mutation-checked red in the same session, and 2 existing cases
+REVERSED with the decisions they guarded.** Her list, verbatim in the commit.
+
+⚠️ **THE FREE-FORM CANVAS IS GONE, AND THE REASON IS A PROMISE IT COULD NOT
+MAKE.** Her ask: *"remove the feature that allows you to move clothes around —
+there should just be a default layout always. Clothes should ALWAYS fit within
+the screen on every view of the look, so if there are 6 items, they still need to
+always be visible."* A dragged `outfits.layout` can put a piece half off the
+canvas or two pieces on top of each other, and `.ocanvas` is a fixed 3/4 box in
+every grid, so a look arranged tall rendered clipped in the list it was browsed
+from. `suggestionLayout` derives the arrangement from the piece COUNT, so it fits
+by construction.
+- **THREE renderings collapsed into one.** There used to be a hand-dragged
+  layout, a store-backed "default arrangement" LENS over layout-less looks
+  (`lookFallbackMode`, 2026-08-04) and a collage grid under both. Now:
+  `outfitCollageHtml`, `lookHeroBlock` and the builder preview all call
+  `suggestionLayout(outfitPieces(o))`. `.lk-hero`, `.launch`/`.tile`,
+  `applyDefaultLayout` and the Settings Appearance toggle went with it.
+- ⚠️ **THE SIZE IS BOUNDED ON BOTH AXES AND THE ROWS ARE PACKED, NOT SPREAD.**
+  Pieces are square and sized as a fraction of canvas WIDTH, so the column count
+  bounds them horizontally and the row count bounds them vertically *in height
+  units*, which converts through `LOOK_CANVAS_RATIO`. Taking only the first is
+  the old bug: rows-of-three at a fixed `s=0.30` crosses the top edge from 13
+  pieces up. ⚠️ Then rows are CENTRED with a fixed `LOOK_ROW_GAP` rather than
+  spread over the full height — even spreading put a 6-piece look's two rows
+  **141px apart in a 480px box** (measured), every piece visible and reading as
+  two unrelated bands. The gap shrinks when there is no room for the full one,
+  which is what keeps the outer rows on the canvas at high counts.
+- ⚠️ **`outfits.layout` IS NEVER READ AGAIN and is deliberately NOT migrated** —
+  unread orphans, same call as the `"mend"` tag. Nothing writes it either
+  (`saveBuilder`, `saveComboAsOutfit`, `duplicateLook` all stopped). A case
+  renders a look whose stored layout is deliberately absurd and fails if any
+  renderer starts reading it again.
+- ⚠️ **`max` in `outfitCollageHtml(o, max, mini)` is now IGNORED** — that is the
+  ask ("if there are 6 items, they still need to always be visible"), not an
+  oversight. The parameter survives because ~20 call sites pass it.
+- **The builder is a piece picker now:** name, preview, ＋ Clothing, one row per
+  piece with ✕. `defaultPlacement`, `wireBuilderCanvas`, `selectPiece`,
+  `layerPiece`, `builder.selIdx`, `.bp-handle` and `.bld-sel-bar` are gone — two
+  of that bar's four buttons were z-order, which no longer exists.
+
+⚠️ **"＋ Add a piece" WAS NOT THE CLOTHING PICKER** (her report: *"add a piece for
+some reason doesn't open the default clothing item adder"*). It was a bespoke
+search box over `items` with **a hard `.slice(0, 60)`** — no folders, no funnel,
+no status or laundry lens, and silently truncated on a 491-piece closet. It is
+built from `pickerPoolBase`/`pickerCatBar`/`pickerSubBar`/`pickerGridHtml` and the
+shared `pickerFilter` now, like every other add-clothing surface.
+⚠️ **Multi-select, because the shared grid IS** — `itemGridView(..., select:true)`
+draws selection dots, so one-tap-adds-and-closes would contradict what the tiles
+look like. **`addLookPieces` batches**: one POST and ONE `afterLookPieceEdit`,
+because that call can offer to rewrite a wear and the edit is one edit.
+⚠️ Pieces already in the look are EXCLUDED, not shown ticked — ticking implies
+un-ticking removes, and removal is the swipe on the row behind the sheet.
+
+⚠️ **STATS: NOTHING ARCHIVED, ANYWHERE.** Her report: Contexts *"is showing
+archived items… I want only available and storage items. Check the whole stats
+section — it should by default only show available."* The two halves are not in
+tension, they describe two kinds of page. Pool-driven pages already default to
+Available (`itemMatchesFilter` reads an empty status filter that way) and keep
+that stricter default. The pages built from WEAR HISTORY had no pool at all —
+they walk `wears`, map ids through `itemById` and rendered whatever came back.
+**`statsItemVisible`** is the floor they were missing: `contextTopItems`,
+`buildRecentPulse`, `buildWrappedStats` (top items + CPW champions) and
+`buildMonthReview`.
+⚠️ It deliberately does NOT read `statsFilter` — these state their own scope, and
+wiring the funnel in would be the decorative-funnel bug from the other direction.
+⚠️ **`closetVsLifeHtml` was ALSO inconsistent with itself** and is fixed here:
+supply counted Available pieces while demand counted every wear ever logged,
+archived included, so a level she used to dress at and has since given away read
+as demand the closet couldn't meet — the page invented a gap.
+
+⚠️ **TRAVEL IS NOT A "USUAL" CONTEXT** (her ask). It is the one context nothing
+routine produces: `tripWearContext` auto-stamps it on every wear inside a trip's
+dates, so a fortnight away writes ~14 days in one block and outranks what she
+actually does on a Tuesday. Filtered out in **`weeklyRhythm`** only — it stays a
+real context for the stamp, the calendar and the Contexts stats page.
+
+**THE SUGGESTER DROPPED CONTEXT AND LIFTED FORMALITY OUT OF THE FOLD** (*"remove
+context from the outfit suggester and move formality up; I always use it"*).
+- A context chip only ever translated a context into a level via
+  `contextFormalityLevel` and set that as the target — **a second, lossier
+  control for the thing directly below it**. Two controls writing one piece of
+  state, one of them guessing.
+- ⚠️ **Formality moved UP, NOT ABOVE THE OUTFIT.** It renders with the pool and
+  laundry chips, which never fold — measured at y=770 with "Wear this today" at
+  y=980 and Refine at y=1,191. Putting it above the preview would re-create the
+  exact shape 2026-08-14 fixed, where the sheet answered "what should I wear"
+  with 587px of query form.
+- Gone with it: `topContextsByWearCount`, `suggestContextSpreadHtml` and the
+  `data-sctx`/`data-sctxlvl` handlers.
+- ⚠️ **CASUALTY, REPORTED TO HER: "I'd rather…" IS DORMANT.** A standing rule is
+  a rule about a CONTEXT, and nothing sets `_sugg.activeContext` any more — so
+  `suggestRatherHtml` returns "" on every open and **rules already stored in
+  `kv "ctxprefs"` are no longer applied**. Kept rather than deleted (the model
+  underneath is still wired into the pool and the results, so it is one line from
+  working again); if a later round decides against it, this and the ctxprefs
+  model go together.
+
+**HOME LOST THE COUNT ROW** (*"I don't know why I have a row that just says
+closet # looks # etc. drop it — I have those tabs on the bottom"*). It was the
+last of the launcher grid: 2026-08-14 compressed five tiles into one scrollable
+count row on the grounds that the tab bar carried every destination and the
+COUNTS were the one thing it didn't. She has answered that. `HOME_TILES`,
+`.hnav`, `.launch`/`.tile` and the `#homeBody [data-go]` handler are all gone.
+
+⚠️ **PLANNING AHEAD IS REMOVED, EXCEPT ONE PATH** (*"remove the planning ahead
+features entirely except for I want to be able to set an outfit for the future
+from the outfit suggester"*). **Asked before building** where a future plan
+should then be READABLE — her answer: **on that day in the calendar**, and
+**trip/capsule planning STAYS** (packing is a different job).
+- **Removed:** `renderWeekPlan` + the Month/"Plan the week" mode bar +
+  `calendarMode` + `#tab-week` + `openWeekPlanSheet` + `toggleWashDay`;
+  `openDayPlanSheet` and its editor; `tomorrowCardHtml`/`dayCardHtml`; the sticky
+  pick (`kv "tmpick"`, `tomorrowGenPieces`, `openTomorrowRevise`);
+  `quickCtxChipHtml`/`openQuickContextSheet`; `loggedOnDay`; the
+  "Something else to wear?" fold and the "📅 Plan the week ›" footer.
+- **`todayCardHtml` survives as TODAY ONLY** — what she actually wore, from
+  `wears`. ⚠️ It renders **only once something is logged**: empty, it would say
+  "nothing yet" directly above the two buttons that already say that.
+- ⚠️ **THE ONE WRITER IS `_suggPlanCtx()`**, unchanged from 2026-08-17 r3: the
+  day chips set `_sugg.forDate`, "Plan for Mon, Aug 24" calls `addKvPlanLook`.
+  Verified end to end.
+- ⚠️ **THE CALENDAR ROW OWNS REMOVAL NOW** (`data-cal-plan-drop`). It is the only
+  surface a plan is visible on, which makes it the only place one can be undone —
+  without it, planning the wrong day would be permanent. The old row's "Change"
+  opened the day-plan sheet, which no longer exists.
+- ⚠️ **WHAT WENT WITH IT: declaring a CONTEXT for a future day.** Nothing writes
+  `entry.contexts` any more, so `rackNeededLevels`/`rackDeclaredLevels` see only
+  what a trip's fixed events write (`saveCapsuleForm`, still live) plus her
+  habitual levels. A real narrowing of the rack's forward look, and deliberate —
+  the control that fed it was a planning screen.
+- ⚠️ **`weekLaundryForecast`/`plannedDirtyBy`/`washDayAll` SURVIVE and are not
+  part of the removal.** The suggester's "🧺 Clean on Thu · N out" chip asks
+  them, so a look planned for Thursday isn't built out of what will be dirty by
+  Thursday. `washDayAll` now has **no writer**; `kv "washdays"` and `kv "tmpick"`
+  are unread orphans, deliberately not migrated.
+
+⚠️ **A PROCESS NOTE, AND IT IS THE ONE CLAUDE.md ALREADY WARNS ABOUT.** The first
+parse check this session was `jsc -c $f`, which is not a flag `jsc` has — it
+printed "Could not open file: -c" for all 23 modules and I nearly read 23
+identical lines as 23 passes. The working recipe is
+`jsc -e "new Function(readFile('<file>'))"`. **Check the tool runs before
+believing the tool.**
+⚠️ **And two layout probes returned all-zeros** because `#app` was `display:none`
+behind the login screen — the documented trap, arriving twice in one session.
+Every probe here asserts `#app` has non-zero width before a number is trusted.
+
 **2026-08-17 r3 — THE SUGGESTER HAS A DAY. Selftest 312 → **313**, run GREEN;
 the new case mutation-checked red.** Her report, after being asked which part of
 planning was wrong: *"All of the above. it's ugly on the home page and doesn't
@@ -2997,10 +3146,10 @@ naming or ordering changed. ~19,900 lines of JS across 23 files:
 |---|---|---|
 | `js/01-config.js` | 100 | `APP_VERSION`, `WHATS_NEW`, keys, `TAXONOMY`, ladders, `store` |
 | `js/02-api.js` | 240 | `api`/`rest`, signed URLs, `photoUrl` byte cache, `compressImage` |
-| `js/03-state.js` | 447 | globals, `loadData`, derived helpers, kv store, day plans |
+| `js/03-state.js` | 447 | globals, `loadData`, derived helpers, kv store, day-plan store |
 | `js/04-laundry.js` | 181 | derived dirty state, tolerances, overrides |
 | `js/05-dom.js` | 133 | `$`/`$$`, `esc`, toast, sheets, scroll helpers |
-| `js/06-home.js` | 884 | launcher, attention group, Tomorrow card, weather memory |
+| `js/06-home.js` | 884 | today's card, attention rows, laundry forecast, weather memory |
 | `js/07-closet.js` | 121 | lens/folder rendering |
 | `js/08-trip-mode.js` | 877 | trip mode, dashboards, recap, rhythm, milestones |
 | `js/09-item-detail.js` | 1321 | photo + details views, `FIELD_CONFIGS`, field sheet |
@@ -3011,7 +3160,7 @@ naming or ordering changed. ~19,900 lines of JS across 23 files:
 | `js/14-calendar.js` | 1028 | month/day views, logging pickers |
 | `js/15-stats.js` | 2343 | every stats view + report cards + review |
 | `js/16-capsules.js` | 1175 | capsules, trips, per-day planner |
-| `js/17-builder.js` | 692 | Build-a-Look canvas |
+| `js/17-builder.js` | 692 | Build-a-Look — pick the pieces (the arrangement is derived, 2026-08-21) |
 | `js/18-weather.js` | 311 | Open-Meteo, geocoding, `_wxCache` |
 | `js/19-wiring.js` | 798 | `switchTab`, `wireEvents`, delegation |
 | `js/20-rack.js` | 490 | **the rack** — three bands, rotation, second look, rack screen |
@@ -3824,7 +3973,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-17 r3`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-21 r1`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -4171,7 +4320,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **313/313** (2026-08-17 r3, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **313/313** (2026-08-21 r1, RUN GREEN — 5 cases went with the decisions they guarded and 5 replaced them — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

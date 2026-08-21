@@ -254,196 +254,24 @@ function _dpSuggestCtx(date, entryIdx, ctxs) {
   // planned workout day asks for Utility without a special case.
   return { kv: true, date, entryIdx, level: entrySuggestLevel(ctxs) };
 }
-let _dpAddCtx = null;   // entry index whose "＋ New…" context input is open
+/* ⚠️ THE DAY-PLAN EDITOR IS GONE (2026-08-21) — `openDayPlanSheet`, its context
+   multi-select, its per-entry Pick / ✨ Suggest / ✎ Build rows, `_dpAddCtx` and
+   the look picker behind it. Her ask: remove the planning-ahead features
+   entirely, except being able to set an outfit for a future day FROM THE
+   SUGGESTER.
 
-function openDayPlanSheet(date) {
-  const entries = dayPlan(date);
-  const rh = rhythmFor(date);
-  const wx = _dpWx(date);
-  const ctxOpts = contextOptions();
-  const entryCard = (e, idx) => {
-    const shown = [...new Set([...ctxOpts.slice(0, 10), ...(e.contexts || [])])];
-    const chips = shown.map(c =>
-      `<button class="cap-chip${(e.contexts || []).includes(c) ? " on" : ""}" data-dp-ctx="${idx}|${esc(c)}" style="font-size:12.5px">${esc(c)}</button>`).join("");
-    const lvls = [...new Set((e.contexts || []).map(c => contextFormalityLevel(c)).filter(Boolean))];
-    const derived = lvls.length ? Math.max(...lvls) : null;
-    const mixNote = (lvls.length > 1 && !e.level)
-      ? `<div class="muted" style="font-size:11.5px;padding-top:4px">Contexts differ in formality — suggesting for ${esc(occLabel(Math.max(...lvls)))}</div>` : "";
-    /* Formality per EVENT, independent of context (2026-07-30, her ask: "hone the
-       individual events by formality when context is not sufficient"). A set
-       level overrides whatever the contexts average to — a dinner tagged Friends
-       can still be a Dressed Up dinner.
-       ⚠️ Tapping the active level CLEARS it, back to the context guess. A chip
-       that can only be turned on is a trap (same rule as the formula chip). */
-    const fmlChips = OCCASION_LADDER.map((lbl, k) => {
-      const n = k + 1;
-      const on = e.level === n;
-      const auto = !e.level && derived === n;
-      return `<button class="cap-chip${on ? " on" : ""}" data-dp-lvl="${idx}|${n}"
-        style="font-size:12px${auto ? ";border-color:var(--accent);color:var(--accent)" : ""}"
-        title="${esc(OCCASION_HINTS[k] || "")}">${n}. ${esc(lbl)}</button>`;
-    }).join("");
-    const fmlNote = e.level
-      ? `<div class="muted" style="font-size:11.5px;padding-top:4px">Set to <b style="color:var(--text)">${esc(occLabel(e.level))}</b>${derived && derived !== e.level ? ` — contexts alone would say ${esc(occLabel(derived))}` : ""}. Tap it again for the guess.</div>`
-      : (derived ? `<div class="muted" style="font-size:11.5px;padding-top:4px">From the contexts: ${esc(occLabel(derived))}. Tap a level to pin a different one.</div>`
-                 : `<div class="muted" style="font-size:11.5px;padding-top:4px">No context yet — or just pin a formality.</div>`);
-    const fmlBlock = `<div style="font-size:12px;color:var(--muted);padding-top:8px">how dressy</div>
-      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:4px">${fmlChips}</div>${fmlNote}`;
-    const o = e.outfit ? outfitById.get(e.outfit) : null;
-    const worn = o && planWorn(date, o.id);
-    const lookHtml = o ? `
-      <div style="display:flex;align-items:center;gap:10px;padding-top:8px">
-        <button data-dp-open="${esc(o.id)}" style="width:56px;flex:none">${outfitCollageHtml(o, 4)}</button>
-        <button data-dp-open="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
-          <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(outfitName(o))}</div>
-          ${worn ? `<div style="font-size:12px;color:var(--accent)">✓ worn</div>` : ""}
-        </button>
-        ${!worn && date <= todayStr() ? `<button class="cap-chip" data-dp-wear="${idx}" style="flex:none">Wear it ✓</button>` : ""}
-        <button class="cap-chip" data-dp-detach="${idx}" style="flex:none;color:var(--muted)" title="Remove the look, keep the plan">✕</button>
-      </div>` : `
-      <div style="display:flex;gap:6px;padding-top:8px">
-        <button class="cap-chip" data-dp-pick="${idx}">＋ Look</button>
-        <button class="cap-chip" data-dp-suggest="${idx}">✨ Suggest</button>
-        <button class="cap-chip" data-dp-build="${idx}">✎ Build</button>
-      </div>`;
-    return `<div class="det-card" style="margin:0 16px 10px;padding:10px 12px">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:12px;color:var(--muted)">Outfit ${entries.length > 1 ? idx + 1 : ""} · contexts</div>
-        <button class="lnk" data-dp-rm="${idx}" style="font-size:12px;color:var(--muted)">remove</button>
-      </div>
-      <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;padding-top:6px">${chips}
-        <button class="cap-chip" data-dp-newctx="${idx}" style="font-size:12.5px;color:var(--muted)">＋ New…</button>
-      </div>
-      ${_dpAddCtx === idx ? `<div style="display:flex;gap:6px;padding-top:6px">
-        <input class="inp" id="dpNewCtxInput" placeholder="Name a context…" style="flex:1;font-size:13px" autocomplete="off">
-        <button class="cap-chip" data-dp-newctx-save="${idx}">Add</button>
-      </div>` : ""}
-      ${mixNote}${fmlBlock}${lookHtml}
-    </div>`;
-  };
-  $("#logInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="dpClose">Done</button>
-      <h2>Plan · ${esc(planDayLabel(date))}</h2>
-      <div style="width:48px"></div>
-    </div>
-    ${wx && wx.maxT != null ? `<div class="center muted" style="font-size:12.5px;padding:0 16px 8px">${wmoEmoji(wx.code)} ${wx.maxT}° / ${wx.minT}°</div>` : ""}
-    ${entries.map(entryCard).join("") || (rh
-      ? `<div class="center muted" style="font-size:13px;padding:4px 16px 12px;line-height:1.5">Usually <b style="color:var(--text)">${esc(rh.contexts.join(" · "))}</b> on ${esc(WEEKDAY_PLURAL[new Date(date + "T00:00:00").getDay()].toLowerCase())} — start there, or clear it once you're in.</div>`
-      : `<div class="center muted" style="font-size:13px;padding:4px 16px 12px">Nothing planned yet — set the day's context now, pick the outfit whenever.</div>`)}
-    <div style="padding:0 16px 16px"><button class="btn btn-sec" id="dpAdd" style="width:100%">＋ ${entries.length ? "Another outfit" : (rh ? `Plan this day · ${esc(rh.contexts.join(" · "))}` : "Plan this day")}</button></div>
-    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
-  showSheet("logSheet");
-  hydratePhotos($("#logInner"));
-  const save = async (next) => { await saveDayPlan(date, next); openDayPlanSheet(date); };
-  $("#dpClose").onclick = () => {
-    hideSheet("logSheet");
-    _dpAddCtx = null;
-    const tab = activeTabName();
-    if (tab === "home") renderHome();
-    else if (tab === "week") renderWeekPlan();
-    else if (tab === "calendar") renderCalendar();
-    else if (tab === "capsules") {
-      /* The pack's slate reads dayplan, so editing occasions here changes the
-         demand, the proposed counts and the coverage. Reload the state (which
-         keeps her stored pieces) rather than leaving a screen built on the old
-         occasions. */
-      renderCapsules();
-    }
-  };
-  // The weekday guess seeds the FIRST entry only, and only because this tap is
-  // the acceptance — nothing about the rhythm is ever written on its own.
-  $("#dpAdd").onclick = () => save([...JSON.parse(JSON.stringify(entries)),
-    { contexts: (!entries.length && rh) ? [...rh.contexts] : [], outfit: null }]);
-  $("#logInner").querySelectorAll("[data-dp-ctx]").forEach(b => b.onclick = () => {
-    const [idx, ctx] = b.dataset.dpCtx.split("|");
-    const next = JSON.parse(JSON.stringify(entries));
-    const e = next[+idx]; if (!e) return;
-    e.contexts = (e.contexts || []).includes(ctx) ? e.contexts.filter(c => c !== ctx) : [...(e.contexts || []), ctx];
-    save(next);
-  });
-  $("#logInner").querySelectorAll("[data-dp-lvl]").forEach(b => b.onclick = () => {
-    const [idx, n] = b.dataset.dpLvl.split("|");
-    const next = JSON.parse(JSON.stringify(entries));
-    const e = next[+idx]; if (!e) return;
-    e.level = (e.level === +n) ? null : +n;    // tapping the set level clears it
-    save(next);
-  });
-  $("#logInner").querySelectorAll("[data-dp-newctx]").forEach(b => b.onclick = () => {
-    _dpAddCtx = _dpAddCtx === +b.dataset.dpNewctx ? null : +b.dataset.dpNewctx;
-    openDayPlanSheet(date);
-    const inp = $("#dpNewCtxInput"); if (inp) inp.focus();
-  });
-  const addNewCtx = (idx) => {
-    const inp = $("#dpNewCtxInput");
-    const name = (inp ? inp.value : "").trim();
-    if (!name) return;
-    const next = JSON.parse(JSON.stringify(entries));
-    const e = next[idx]; if (!e) return;
-    if (!(e.contexts || []).includes(name)) e.contexts = [...(e.contexts || []), name];
-    _dpAddCtx = null;
-    save(next);
-  };
-  $("#logInner").querySelectorAll("[data-dp-newctx-save]").forEach(b =>
-    b.onclick = () => addNewCtx(+b.dataset.dpNewctxSave));
-  { const inp = $("#dpNewCtxInput");
-    if (inp) inp.onkeydown = (ev) => { if (ev.key === "Enter") { ev.preventDefault(); addNewCtx(_dpAddCtx); } }; }
-  $("#logInner").querySelectorAll("[data-dp-rm]").forEach(b => b.onclick = () => {
-    const next = JSON.parse(JSON.stringify(entries)); next.splice(+b.dataset.dpRm, 1); save(next);
-  });
-  $("#logInner").querySelectorAll("[data-dp-detach]").forEach(b => b.onclick = () => {
-    const next = JSON.parse(JSON.stringify(entries));
-    if (next[+b.dataset.dpDetach]) next[+b.dataset.dpDetach].outfit = null;
-    save(next);
-  });
-  $("#logInner").querySelectorAll("[data-dp-open]").forEach(b => b.onclick = () => {
-    hideSheet("logSheet"); openLookFrom(b.dataset.dpOpen);
-  });
-  $("#logInner").querySelectorAll("[data-dp-pick]").forEach(b => b.onclick = () => openPlanLookPickerKv(date, +b.dataset.dpPick));
-  $("#logInner").querySelectorAll("[data-dp-suggest]").forEach(b => b.onclick = () => {
-    const idx = +b.dataset.dpSuggest;
-    openSuggestSheet(null, null, _dpSuggestCtx(date, idx, (entries[idx] || {}).contexts));
-  });
-  $("#logInner").querySelectorAll("[data-dp-build]").forEach(b => b.onclick = () => {
-    hideSheet("logSheet");
-    openBuilder(null, null, { kv: true, date, entryIdx: +b.dataset.dpBuild });
-  });
-  $("#logInner").querySelectorAll("[data-dp-wear]").forEach(b => b.onclick = () => wearPlannedEntry(date, +b.dataset.dpWear));
-}
+   That one path is untouched and is now the only writer: the suggester's day
+   chips set `_sugg.forDate`, `_suggPlanCtx()` synthesises the same `{kv, date}`
+   context this editor used to pass, and "Plan for Thu" calls `addKvPlanLook`.
+   The store (`kv "dayplan"`), the pruning window and `wearPlannedEntry` all stay
+   — a plan she sets still shows on that day in the calendar, and still logs in
+   one tap when the day comes.
 
-// Attach a saved look to a plan entry: recent-first list with a name search.
-function openPlanLookPickerKv(date, entryIdx, q = "") {
-  const lastWornOf = o => { const s = outfitWearMap.get(o.id); return s && s.size ? [...s].sort().pop() : ""; };
-  let list = activeOutfits().slice().sort((a, b) => lastWornOf(b).localeCompare(lastWornOf(a)));
-  const needle = q.trim().toLowerCase();
-  if (needle) list = list.filter(o => outfitName(o).toLowerCase().includes(needle));
-  const rows = list.slice(0, 40).map(o => `
-    <div style="display:flex;align-items:center;gap:10px;padding:6px 16px;border-bottom:1px solid var(--line)">
-      <div style="width:56px;flex:none">${outfitCollageHtml(o, 4)}</div>
-      <button data-dpl-pick="${esc(o.id)}" style="flex:1;min-width:0;text-align:left">
-        <div style="font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.rating === 1 ? "♥ " : ""}${esc(outfitName(o))}</div>
-        <div style="font-size:12px;color:var(--muted)">${lastWornOf(o) ? "worn " + lastWornOf(o) : "never worn"}</div>
-      </button>
-    </div>`).join("");
-  $("#logInner").innerHTML = `
-    <div class="sheet-hdr">
-      <button class="lnk" id="dplBack">Back</button>
-      <h2>Pick a look</h2>
-      <div style="width:48px"></div>
-    </div>
-    <div style="padding:0 16px 8px"><input class="inp" id="dplQ" placeholder="Search looks…" value="${esc(q)}"></div>
-    <div style="max-height:55vh;overflow-y:auto">${rows || `<div class="center muted" style="padding:24px 0">No looks match</div>`}</div>
-    <div style="height:max(env(safe-area-inset-bottom),10px)"></div>`;
-  hydratePhotos($("#logInner"));
-  $("#dplBack").onclick = () => openDayPlanSheet(date);
-  const qEl = $("#dplQ");
-  let qT; qEl.oninput = () => { clearTimeout(qT); qT = setTimeout(() => openPlanLookPickerKv(date, entryIdx, qEl.value), 250); };
-  if (q) { qEl.focus(); qEl.setSelectionRange(qEl.value.length, qEl.value.length); }
-  $("#logInner").querySelectorAll("[data-dpl-pick]").forEach(b => b.onclick = async () => {
-    await addKvPlanLook(date, b.dataset.dplPick, entryIdx);
-    openDayPlanSheet(date);
-  });
-}
+   ⚠️ WHAT WENT WITH IT: declaring a CONTEXT for a future day. Nothing writes
+   `entry.contexts` any more, so `rackNeededLevels`/`rackDeclaredLevels` see only
+   what a trip's fixed events write (`saveCapsuleForm`, still live) plus her
+   habitual levels. That is a real narrowing of the rack's forward look and it is
+   deliberate — the control that fed it was a planning screen. */
 
 // Log a planned entry as actually worn: wear rows carry ALL the entry's
 // contexts (multi-context days were the point — one outfit across contexts).

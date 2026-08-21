@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-17 r3";
+const APP_VERSION = "2026-08-21 r1";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,15 @@ const APP_VERSION = "2026-08-17 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-21 r1", notes: [
+    "Looks are always arranged for you now, and every piece is always in frame. Moving and resizing pieces on the canvas is gone \u2014 a hand-arranged look could push a piece half off the edge, and it rendered clipped in every grid it appeared in. A six-piece look shows all six, on the tile, on the look page and in the builder. Build a Look is now: pick the pieces, see exactly how it will look, save",
+    "\u201c\uFF0B Add a piece\u201d opens the normal clothing picker \u2014 folders, filter funnel, status and laundry lenses, and you can pick several at once. It used to be a search box that quietly showed only the first 60 things in your closet",
+    "Style Stats no longer counts archived pieces anywhere. Contexts was listing clothes you'd archived among its top items; Available and Storage both still count, and the funnel can still bring Archive back on the pages that have one",
+    "Travel is no longer treated as one of your \u201cusual\u201d contexts. It's stamped automatically on every day of a trip, so a fortnight away was outvoting what you actually do on a Tuesday",
+    "The outfit suggester dropped its Context row and moved Formality up out of the Refine fold, where you can see it without opening anything. Picking a context only ever set a formality level for you \u2014 the level chips say it directly",
+    "Home lost the row of counts under the buttons. Every one of those was already a tab along the bottom",
+    "Planning ahead is gone, except the one piece of it you wanted: pick a day in the outfit suggester and \u201cPlan for Mon, Aug 24\u201d saves it. That day in the calendar shows what you planned, with a \u2715 to change your mind. The week planner, the day-plan sheet and the Tomorrow card are all removed",
+  ] },
   { v: "2026-08-17 r3", notes: [
     "The outfit suggester has a day now. A row of days sits with the pool and laundry chips — pick one and the season, that day's weather, its contexts and the laundry forecast all follow it, and the button changes from \"Wear this today\" to \"Plan for Thu, Aug 20\". Planning a day is the same sheet as asking what to wear, instead of a different route per screen",
     "Tomorrow's card stops apologising. It used to say \"Work — no clean outfit found; tap ✨ to dig\", which is an error message about the app's own search in the one place you go to plan. Nothing had failed — you just hadn't planned that day — so it says that, and gives you a proper \"✨ Plan this day\" button that opens the suggester already set to that day",

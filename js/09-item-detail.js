@@ -1025,12 +1025,22 @@ const RHYTHM_MAX_CTX = 2;
 const WEEKDAY_PLURAL = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/* ⚠️ TRAVEL IS NEVER A "USUAL" CONTEXT (2026-08-21, her ask: "remove travel from
+   the 'usual' contexts — it's not a routine or usual thing").
+
+   It is the one context nothing routine produces: `tripWearContext` auto-stamps
+   TRIP_CONTEXT on every wear inside a trip's dates, so a fortnight away writes
+   ~14 days of it in one block and it outranks the things she actually does on a
+   Tuesday. The rhythm is meant to answer "what does she usually do on this day
+   of the week", and two holidays a year are the opposite of that. It stays a
+   real context everywhere else — the stamp, the calendar, the Contexts stats
+   page — this only keeps it out of the habit derivation. */
 function weeklyRhythm(wearRows = null) {
   const ws = wearRows || wears;
   const byDow = [0, 1, 2, 3, 4, 5, 6].map(() => new Map());   // dow → ctx → Set(dates)
   for (const w of ws) {
     if (!w.worn_on) continue;
-    const cs = ctxArr(w);
+    const cs = ctxArr(w).filter(c => c !== TRIP_CONTEXT);
     if (!cs.length) continue;
     const m = byDow[new Date(w.worn_on + "T00:00:00").getDay()];
     for (const c of cs) { if (!m.has(c)) m.set(c, new Set()); m.get(c).add(w.worn_on); }

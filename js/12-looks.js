@@ -710,44 +710,31 @@ function layoutCanvasHtml(o, wrapCls, aspect) {
   return `<div class="${wrapCls}"${aspect ? ` style="aspect-ratio:${aspect}"` : ""}>${cells}</div>`;
 }
 
-/* What a look with no saved arrangement looks like (2026-08-04, her ask: "want
-   the option to set a look layout to default rather than collage").
+/* ⚠️ ONE ARRANGEMENT, DERIVED, EVERYWHERE (2026-08-21) — her ask: "there should
+   just be a default layout always."
 
-   Most of her 1,500+ looks were logged rather than arranged in the builder, so
-   the collage grid is what she sees nearly everywhere. "Default layout" renders
-   those through the same dressing-order arrangement the suggester previews with.
+   There used to be three ways a look could be drawn: a hand-dragged
+   `outfits.layout`, a store-backed "default arrangement" LENS over layout-less
+   looks (`lookFallbackMode`, 2026-08-04), and a collage grid under both. Three
+   renderings of one thing, only one of which could promise every piece was on
+   screen. Now there is one: `suggestionLayout(pieces)`, computed from the piece
+   count, which fits by construction.
 
-   ⚠️ PRESENTATION ONLY, and store-backed rather than written to rows: it must be
-   reversible in one tap and must never touch `outfits.layout`. A look she HAS
-   arranged always wins — this only fills in for looks with nothing saved. The
-   per-look "Use the default arrangement" button on the Details page is the
-   version that actually writes, so she can then edit it in the builder. */
-const LOOK_FALLBACK_KEY = "wardrobe.lookFallback";
-const lookFallbackMode = () => (store.getItem(LOOK_FALLBACK_KEY) === "layout" ? "layout" : "collage");
-function setLookFallbackMode(m) {
-  store.setItem(LOOK_FALLBACK_KEY, m === "layout" ? "layout" : "collage");
-}
-// The arrangement a layout-less look should get, or null to fall through to the
-// collage. Shared by the grid tiles and the look hero so they can't disagree.
-function lookFallbackLayout(pieces) {
-  if (lookFallbackMode() !== "layout" || !pieces.length) return null;
-  return suggestionLayout(pieces);
-}
+   ⚠️ THE STORED `outfits.layout` IS DELIBERATELY NOT READ ANY MORE and is
+   deliberately NOT migrated off the rows — same call as the `"mend"` tag and the
+   `wxaudit_home` kv key. It is an unread orphan, so hand-arranged looks she made
+   before today keep their data if this is ever reversed; nothing reads it, so no
+   look can render off the edge of the canvas.
 
+   ⚠️ `max` is ignored, and that is the ask, not an oversight: "if there are 6
+   items, they still need to always be visible." The parameter survives because
+   ~20 call sites pass it, and dropping it there would be churn for nothing. */
 function outfitCollageHtml(o, max, mini) {
-  const canvas = layoutCanvasHtml(o, "ocanvas" + (mini ? " omini" : ""));
-  if (canvas) return canvas;
-  const fb = lookFallbackLayout(outfitPieces(o));
-  if (fb) return layoutCanvasHtml({ layout: fb }, "ocanvas" + (mini ? " omini" : ""));
-  const pieces = outfitPieces(o).slice(0, max);
-  let cls = "ocollage" + (mini ? " omini" : "");
-  if (!pieces.length) return `<div class="${cls} empty"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>`;
-  if (pieces.length === 1) cls += " solo";
-  const cells = pieces.map((p, idx) => {
-    const span = (pieces.length === 3 && idx === 2) ? " span2" : "";  // wide bottom for 3-piece looks
-    return `<div class="opiece${span}" data-photo="${esc(p.image_path || "")}"></div>`;
-  }).join("");
-  return `<div class="${cls}">${cells}</div>`;
+  const pieces = outfitPieces(o);
+  if (!pieces.length) {
+    return `<div class="ocollage${mini ? " omini" : ""} empty"><svg viewBox="0 0 24 24"><path d="M16 4l-4 9-4-9"/><path d="M12 13l-9 7h18l-9-7z"/></svg></div>`;
+  }
+  return layoutCanvasHtml({ layout: suggestionLayout(pieces) }, "ocanvas" + (mini ? " omini" : ""));
 }
 
 // Formality label for a piece: explicit set or estimated set.
@@ -1565,28 +1552,72 @@ function suggestionPieceOrder(pieces) {
   return pieces.slice().sort((a, b) => rank(a) - rank(b));
 }
 
-// Build a simple layout array for the suggestion canvas preview — and, when she's
-// asked for it, the default arrangement for a saved look that has none.
+/* THE arrangement — every look, every view, no exceptions (2026-08-21).
+
+   Her ask: "remove the feature that allows you to move clothes around — there
+   should just be a default layout always. Clothes should ALWAYS fit within the
+   screen on every view of the look, so if there are 6 items they still need to
+   always be visible."
+
+   The old version was four hand-tuned grids for 1–4 pieces plus a rows-of-three
+   fallback at a FIXED s=0.30, which was only ever the suggester's preview — a
+   combo has four slots, so 5+ was the unreachable branch. Now that it draws every
+   saved look too, the count is unbounded and a constant size cannot hold: at nine
+   pieces the rows-of-three fallback runs the top and bottom rows off the canvas.
+
+   ⚠️ THE SIZE IS DERIVED FROM BOTH AXES, and taking only one is the bug this
+   replaces. Pieces are square and sized as a fraction of canvas WIDTH, so a
+   column count bounds them horizontally — but the canvas is TALLER than it is
+   wide, and the row count bounds them vertically in HEIGHT units, which converts
+   back through the aspect ratio. Whichever bound is tighter wins. Because every
+   position is then a row/column centre, nothing can overlap and nothing can
+   cross an edge, for any number of pieces. That is the guarantee a hand-dragged
+   `outfits.layout` could never make, which is why the drag is gone. */
+const LOOK_CANVAS_RATIO = 4 / 3;   // .ocanvas is aspect-ratio 3/4 → height = 4/3 × width
+const LOOK_GRID_FILL = 0.82;       // leaves a gutter between neighbours and the edge
+const LOOK_ROW_GAP = 0.045;        // gap between rows, in canvas-height units
+// How many across, by piece count: pairs sit side by side, then 2×2, then thirds.
+function lookGridCols(n) { return n <= 2 ? Math.max(1, n) : n <= 4 ? 2 : n <= 9 ? 3 : 4; }
+// Pieces per row, top row first. 3 is the one shape worth stating by hand: a
+// top over a bottom-and-shoes reads as an outfit, [2,1] reads as a leftover.
+function lookGridRows(n) {
+  if (n === 3) return [1, 2];
+  const cols = lookGridCols(n), rows = Math.max(1, Math.ceil(n / cols));
+  const base = Math.floor(n / rows), extra = n % rows;
+  return Array.from({ length: rows }, (_, r) => base + (r < extra ? 1 : 0));
+}
 function suggestionLayout(pieces) {
   const sorted = suggestionPieceOrder(pieces);
-  const grids = [
-    [[.5,.5,.75]],
-    [[.3,.5,.45],[.72,.5,.45]],
-    [[.5,.28,.55],[.28,.72,.42],[.72,.72,.42]],
-    [[.28,.28,.44],[.72,.28,.44],[.28,.72,.44],[.72,.72,.44]],
-  ];
-  const pos = grids[sorted.length - 1];
-  if (pos) return sorted.map((it, i) => ({ item_id: it.id, x: pos[i][0], y: pos[i][1], s: pos[i][2] }));
-  /* 5+ pieces. A suggested combo can't get here (four slots, and "＋ Layer" only
-     fires when there's no layer yet), but a SAVED look can — and the old code
-     indexed past the end of the four-piece grid and threw. Rows of three. */
-  const cols = 3, rows = Math.ceil(sorted.length / cols);
-  return sorted.map((it, i) => ({
-    item_id: it.id,
-    x: ((i % cols) + 0.5) / cols,
-    y: ((Math.floor(i / cols) + 0.5) / rows),
-    s: 0.30,
-  }));
+  const n = sorted.length;
+  if (!n) return [];
+  const rowSizes = lookGridRows(n);
+  const rows = rowSizes.length, widest = Math.max(...rowSizes);
+  // Horizontal room is 1/widest; vertical room is (1/rows) of the HEIGHT, which
+  // is LOOK_CANVAS_RATIO widths tall. The binding one sets the size.
+  const s = +(Math.min(1 / widest, LOOK_CANVAS_RATIO / rows) * LOOK_GRID_FILL).toFixed(4);
+  /* ⚠️ ROWS ARE PACKED AND CENTRED, NOT SPREAD OVER THE FULL HEIGHT. Dividing
+     the height evenly put a 6-piece look's two rows 141px apart in a 480px box
+     (measured) — every piece visible, which is what she asked for, but reading as
+     two unrelated bands rather than one outfit. The canvas is taller than it is
+     wide and the size is usually capped by the COLUMN count, so that slack is
+     structural, not a one-off.
+     The gap shrinks when there isn't room for the full one, which is what keeps
+     the top and bottom rows on the canvas at high piece counts. */
+  const pieceH = s / LOOK_CANVAS_RATIO;                 // piece height, in canvas-HEIGHT units
+  const slack = Math.max(0, 1 - rows * pieceH);
+  const gap = Math.min(LOOK_ROW_GAP, slack / (rows + 1));
+  const outer = (slack - gap * (rows - 1)) / 2;
+  const out = [];
+  let k = 0;
+  rowSizes.forEach((count, r) => {
+    const y = +((outer + (r + 0.5) * pieceH + r * gap).toFixed(4));
+    for (let j = 0; j < count; j++) {
+      // Centre a short row rather than left-aligning it against the widest one.
+      const x = +((0.5 + (j - (count - 1) / 2) / widest).toFixed(4));
+      out.push({ item_id: sorted[k++].id, x, y, s });
+    }
+  });
+  return out;
 }
 
 /* How tall the suggester's canvas needs to be, derived from the arrangement
@@ -1628,17 +1659,16 @@ const _suggClean = () => _sugg.useClean !== false;
 let _suggSwapSeen = new Map();  // slot → ids ✨ has already offered this session (see swapSuggestionPiece)
 let _suggSlideDir = null;  // "next" | "prev" → slide-in animation on the next render
 
-// C1: context chips on the suggestion sheet. Seed values (tweak here) for when a
-// context has under 3 formality_for-tagged wears to trust an empirical read.
+/* How dressy each context runs, as a starting guess. Seed values (tweak here)
+   for when a context has under 3 formality_for-tagged wears to trust an
+   empirical read. The suggester's own context chips are gone (2026-08-21), but
+   this still drives `contextFormalityLevel`, which the rack and every context
+   reader ask. */
 const CONTEXT_FORMALITY_SEED = {
   "Work": 5, "Symphony": 4, "Chorus Concert": 6, "Date Night": 4, "Friends": 2,
   "Rehearsal": 2, "Party/Shower": 4, "Wedding": 6, "Funeral": 4, "Errands": 2,
   "Travel": 3, "Flight": 2, "Workout": 1,
 };
-function topContextsByWearCount(limit = 6) {
-  const counts = countByDay(wears, ctxArr);
-  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([c]) => c);
-}
 /* How dressy this context runs, as OCCASIONS — one (day, level) pair each.
 
    ⚠️ THIS COUNTED WEAR ROWS UNTIL 2026-08-03, and both consequences were real.
@@ -1906,7 +1936,6 @@ function openSuggestSheet(seedItemId = null, capsuleId = null, planCtx = null, s
   _sugg.locked = new Set();
   _sugg.lockedRoles = new Map(); // id → pinned slot when it differs from suggestSlot
   _sugg.shapeKey = shapeKey || null;  // Round B: fill a formula's shape
-  _sugg.tmPick = null;                // set only by openTomorrowRevise
   _sugg.varyFrom = null;              // set only by openVaryLook
   _sugg.layerPick = null;             // the open layer/shirt picker, if any
   // Default pool is THE RACK (2026-07-26). Her four conditions when she approved
@@ -2058,6 +2087,18 @@ function _suggPrefs() {
    than no control. The row says which, in words, above the chips.
    ⚠️ Hidden when a formula is pinned: a shape already states the silhouette, so
    offering to contradict it can only produce an empty sheet. */
+/* ⚠️ DORMANT SINCE 2026-08-21, AND KNOWINGLY SO. Removing the suggester's
+   context chips removed the only thing that sets `_sugg.activeContext`, and a
+   standing rule is a rule about a CONTEXT — so this returns "" on every open,
+   `_suggPrefs()` is always null, and rules already stored in `kv "ctxprefs"`
+   are no longer applied either.
+
+   Kept rather than deleted because the model underneath (`contextPref`,
+   `comboMeetsPrefs`, `prefsPoolFilter`) is still wired into the pool and the
+   results, so this is one line from working again if she wants a way to say
+   "not a dress for this" back. It is NOT a live handler for removed markup —
+   it guards itself and renders nothing — but if a later round decides the
+   answer is no, this and the ctxprefs model should go together. */
 function suggestRatherHtml() {
   if (_sugg.shapeKey) return "";
   const ctx = _sugg.activeContext;
@@ -2174,29 +2215,6 @@ function suggestShapeChipsHtml() {
     <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
       ${tops.map(f => `<button class="cap-chip${_sugg.shapeKey === f.key ? " on" : ""}" data-sshape="${esc(f.key)}" style="font-size:13px">${esc(f.label)}</button>`).join("")}
     </div>
-  </div>`;
-}
-
-/* A context she dresses for at several levels (2026-08-03, her question:
-   "if I say I need an outfit for x context, in which I have worn different
-   formality levels, what happens?"). It used to take the mode, set it as
-   targetLevel — a HARD filter — and discard the rest, so a Work ask returned
-   Smart Casual pieces only and nothing on screen admitted that Work also runs
-   at 3 and 6. The Contexts stats page was showing her the spread the whole time.
-
-   Same rule as the pool chip: the narrowing is named, counted and one tap from
-   being changed. Only rendered when the history actually disagrees with itself —
-   a context that always runs at one level needs no extra row. */
-function suggestContextSpreadHtml() {
-  const c = _sugg.activeContext;
-  if (!c) return "";
-  const s = contextLevelSpread(c);
-  if (!s || s.levels.length < 2) return "";
-  const usual = s.levels[0].level;
-  return `<div style="padding:2px 16px 4px">
-    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">You dress for ${esc(c)} at ${s.levels.length} different levels — usually <b style="color:var(--text)">${esc(occLabel(usual))}</b></div>
-    <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${s.levels.map(({ level, days }) =>
-      `<button class="cap-chip${_sugg.targetLevel === level ? " on" : ""}" data-sctxlvl="${level}" style="font-size:12.5px">${esc(occLabel(level))} · ${days}×</button>`).join("")}</div>
   </div>`;
 }
 
@@ -2846,21 +2864,17 @@ function renderSuggestSheet() {
     return c ? `<div style="font-size:12px;color:var(--accent);text-align:center;padding:0 16px 2px">From: ${esc(c.name)}</div>` : "";
   })() : "";
 
-  // C1: her top contexts by wear count, above the formality chips. Picking one sets
-  // the target formality level from empirical wear data (or the seed fallback).
-  /* Every context she actually wears EXCEPT Workout. The Workout context is
-     still real everywhere else — she stamps it on wears and plans days with it —
-     but in the SUGGESTER it would be a second control for something formality
-     level 1 (Utility) already says, which is the duplication r13 removed
-     (her call: "I do still want the other contexts available to select though.
-     just not workout"). A planned Workout day still asks for level 1 by itself,
-     via CONTEXT_FORMALITY_SEED. */
-  const topContexts = topContextsByWearCount(8).filter(c => c !== "Workout").slice(0, 6);
-  const contextChipsHtml = topContexts.length ? `<div style="padding:12px 16px 4px">
-    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Context</div>
-    <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${topContexts.map(c =>
-      `<button class="cap-chip${_sugg.activeContext === c ? " on" : ""}" data-sctx="${esc(c)}" style="font-size:13px">${esc(c)}</button>`).join("")}</div>
-  </div>` : "";
+  /* ⚠️ THE CONTEXT ROW IS GONE (2026-08-21, her ask: "remove context from the
+     outfit suggester and move formality up; I always use it").
+
+     A context chip only ever did one thing here: translate a context into a
+     formality level via `contextFormalityLevel` and set that as the target. So
+     it was a second, lossier control for the thing directly below it — pick
+     "Church" and you got level 4 with no say in it, while the level chips say 4
+     outright. Two controls writing one piece of state, one of them guessing.
+     Formality takes the space it was using, and stops being folded away.
+     Contexts are untouched everywhere they mean something of their own: logging
+     a wear, the Contexts stats page, a piece's own history. */
 
   /* ⚠️ THE POOL AND LAUNDRY CHIPS NEVER FOLD (2026-08-14).
      Everything else that narrows the search moved behind "Refine", but these two
@@ -2905,9 +2919,23 @@ function renderSuggestSheet() {
     </div>`;
   })();
 
-  const poolRow = dayRow + `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:14px 16px 18px">
-    ${suggestPoolChipHtml()}${cleanChip}${wxChip}
+  /* ⚠️ FORMALITY SITS WITH THE POOL CHIPS, NOT INSIDE "Refine" (2026-08-21,
+     her ask: "move formality up; I always use it").
+
+     It is the one refinement she reaches for every time, and it was two taps
+     down inside a fold that is closed by default. It is NOT moved above the
+     outfit, though: that is exactly the shape 2026-08-14 fixed, where the sheet
+     answered "what should I wear" with 587px of query form and put the outfit at
+     y=765. The answer still leads; this sits directly under it, with the pool
+     and laundry chips that also never fold, and above the buttons that act on
+     it. Shape, season and "I'd rather…" stay folded — those she uses rarely. */
+  const levelRow = `<div style="padding:2px 16px 0">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:6px;text-align:center">Formality</div>
+    <div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center">${levelChips}</div>
   </div>`;
+  const poolRow = dayRow + `<div class="cap-catbar" style="flex-wrap:wrap;gap:6px;justify-content:center;padding:14px 16px 10px">
+    ${suggestPoolChipHtml()}${cleanChip}${wxChip}
+  </div>` + levelRow;
 
   /* Refine: everything that changes WHAT is searched, folded away by default.
      Opening on the answer is the whole point of the reorder — 25 chips ahead of
@@ -2915,9 +2943,9 @@ function renderSuggestSheet() {
      It starts OPEN whenever the caller pre-set a narrowing (a formula, a planned
      day's level), because then the fold would be hiding the reason the results
      look the way they do. */
+  // ⚠️ Formality is NOT summarised here any more — its chips are on screen
+  // unfolded, and naming a narrowing twice reads as two separate narrowings.
   const refineActive = [
-    _sugg.activeContext,
-    _sugg.targetLevel ? `${_sugg.targetLevel}. ${OCCASION_LADDER[_sugg.targetLevel - 1]}` : null,
     _sugg.shapeKey ? formulaLabel(_sugg.shapeKey) : null,
     _sugg.season !== currentSeason() ? (_sugg.season || "Any season") : null,
   ].filter(Boolean);
@@ -3050,13 +3078,7 @@ function renderSuggestSheet() {
       <div class="cap-catbar" style="justify-content:center">${refineBtn}</div>
       ${_sugg.refineOpen ? `<div style="border:1px solid var(--line);border-radius:12px;padding:4px 0 10px">
         ${suggestShapeChipsHtml()}
-        ${contextChipsHtml}
-        ${suggestContextSpreadHtml()}
         <div style="padding:12px 16px 4px">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Formality</div>
-          <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">${levelChips}</div>
-        </div>
-        <div style="padding:4px 16px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Season</div>
           <div class="cap-catbar" style="flex-wrap:wrap;gap:6px">
             ${SEASONS.map(s => `<button class="cap-chip${_sugg.season === s ? " on" : ""}" data-sseason="${s}" style="font-size:13px">${s}</button>`).join("")}
@@ -3078,15 +3100,9 @@ function renderSuggestSheet() {
        — a writeback nothing on screen named. With "Use this outfit" carrying
        that job explicitly, a close that also committed would mean the sheet had
        no way to back out at all. Save is the button; ✕ is "never mind". */
-    // Opened from the Tomorrow card: whatever it ends as is what the card keeps.
-    if (_sugg.tmPick) {
-      const c = _sugg.results[_sugg.idx];
-      if (c) tmPickSet(_sugg.tmPick.date, _sugg.tmPick.idx, c.pieces);
-      _sugg.tmPick = null;
-      hideSheet("logSheet");
-      if (activeTabName() === "home") renderHome();
-      return;
-    }
+    /* The Tomorrow-card writeback that used to live here went with the card
+       (2026-08-21). ✕ is "never mind" everywhere now; "Plan for <day>" is the
+       only thing that commits a future outfit. */
     hideSheet("logSheet");
   };
 
@@ -3102,28 +3118,8 @@ function renderSuggestSheet() {
     b.onclick = () => {
       const lvl = +b.dataset.slvl;
       _sugg.targetLevel = _sugg.targetLevel === lvl ? null : lvl;
-      _sugg.activeContext = null; // manual formality pick supersedes a context chip
       regen();
     };
-  });
-
-  $("#logInner").querySelectorAll("[data-sctx]").forEach(b => {
-    b.onclick = () => {
-      const c = b.dataset.sctx;
-      if (_sugg.activeContext === c) { _sugg.activeContext = null; }
-      else {
-        _sugg.activeContext = c;
-        const lvl = contextFormalityLevel(c);
-        if (lvl) _sugg.targetLevel = lvl;
-      }
-      regen();
-    };
-  });
-
-  // Picking a level from the spread row KEEPS the context selected — the point
-  // is "the dressier kind of Work day", not "forget Work".
-  $("#logInner").querySelectorAll("[data-sctxlvl]").forEach(b => {
-    b.onclick = () => { _sugg.targetLevel = +b.dataset.sctxlvl; regen(); };
   });
 
   /* Changing the day re-derives everything that depends on it: the season it
@@ -3383,7 +3379,7 @@ function renderSuggestSheet() {
       for (let i = 1; i < combo.pieces.length; i++) {
         const p = combo.pieces[i];
         if (!builder.pieces.find(x => x.item_id === p.id)) {
-          builder.pieces.push({ item_id: p.id, ...defaultPlacement(builder.pieces.length) });
+          builder.pieces.push({ item_id: p.id });
         }
       }
       renderBuilder();
@@ -3657,22 +3653,16 @@ function openRandomLook() {
 }
 
 // ---- outfit detail ----
-// Shared hero: a saved canvas layout, else a grid of piece photos.
+/* The big view of a look. Same derived arrangement as every thumbnail — see
+   outfitCollageHtml. The `.lk-hero` photo grid it used to fall back to is gone
+   with the saved-layout branch: there is nothing left to fall back FROM. */
 function lookHeroBlock(o) {
-  const saved = Array.isArray(o.layout) ? o.layout.filter(p => itemById.has(p.item_id)) : [];
-  const pieces = outfitPieces(o);
-  // A saved arrangement always wins; the fallback only fills in for looks that
-  // have none, and only when she's asked for it (see lookFallbackMode).
-  const lay = saved.length ? saved : (lookFallbackLayout(pieces) || []);
-  if (lay.length) return `<div class="lk-canvas">${lay.map((p, idx) => {
+  const lay = suggestionLayout(outfitPieces(o));
+  if (!lay.length) return `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
+  return `<div class="lk-canvas">${lay.map((p, idx) => {
     const it = itemById.get(p.item_id);
     return `<div class="lk-cpiece" data-look-item="${esc(it.id)}" data-photo="${esc(it.image_path || "")}" style="left:${p.x * 100}%;top:${p.y * 100}%;width:${p.s * 100}%;z-index:${idx + 1}"></div>`;
   }).join("")}</div>`;
-  if (pieces.length) return `<div class="lk-hero${pieces.length === 1 ? " solo" : ""}">${pieces.map((p, idx) => {
-    const span = (pieces.length === 3 && idx === 2) ? " span2" : "";
-    return `<div class="lk-heropiece${span}" data-look-item="${esc(p.id)}" data-photo="${esc(p.image_path || "")}"></div>`;
-  }).join("")}</div>`;
-  return `<div class="muted center" style="padding:30px">No photos for this look's pieces.</div>`;
 }
 
 // Look view: clean canvas + bottom action toolbar (Stylebook-style).
@@ -3808,12 +3798,11 @@ function openLookDetails(id) {
         <div class="det-row"><span class="det-lbl">Season</span><span class="det-val">${seasons.length ? seasons.map(s => `<span class="lk-chip">${esc(s)}</span>`).join(" ") : "—"}</span></div>
       </div>
 
-      <div class="det-section-label" style="display:flex;justify-content:space-between;align-items:center">PIECE FORMALITY<button class="lnk" id="lookEditPieces" style="font-size:12.5px;font-weight:600">Edit arrangement</button></div>
+      <div class="det-section-label">PIECE FORMALITY</div>
       <div class="det-card">${pieceRows || '<div class="det-row"><span class="det-val muted">No pieces</span></div>'}</div>
       <button class="lnk" id="lookAddPiece" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;color:var(--accent)">＋ Add a piece</button>
       <div class="muted" style="font-size:11.5px;text-align:center">Swipe a piece left to take it out.</div>
       ${missingLvlPieces.length ? `<button class="lnk" id="lookAddLevel" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:8px">+ Add “${lookLvl}. ${esc(occLabel(lookLvl))}” to ${missingLvlPieces.length} piece${missingLvlPieces.length === 1 ? "" : "s"}</button>` : ""}
-      ${its.length >= 2 ? `<button class="lnk" id="lookDefLayout" style="display:block;width:100%;text-align:center;font-size:13px;font-weight:600;padding:11px 0;margin-top:4px;color:var(--muted)">${(Array.isArray(o.layout) && o.layout.length) ? "Reset to the default arrangement" : "Use the default arrangement instead of a collage"}</button>` : ""}
 
       <div class="det-section-label">NOTES</div>
       <textarea class="det-notes-ta" id="lookNotes" placeholder="Notes about this look…">${esc(o.notes || "")}</textarea>
@@ -3934,52 +3923,99 @@ async function removeLookPiece(lookId_, itemId) {
       { label: "Undo", fn: () => addLookPiece(lookId_, itemId) });
   } catch (e) { toast(e.message); }
 }
-async function addLookPiece(lookId_, itemId) {
-  if ((outfitItemMap.get(lookId_) || []).includes(itemId)) return;
+const addLookPiece = (lookId_, itemId) => addLookPieces(lookId_, [itemId]);
+/* ⚠️ ONE POST AND ONE SYNC FOR THE WHOLE SELECTION. The picker is multi-select
+   now, and looping the single-piece version would re-render the details page and
+   fire `afterLookPieceEdit` — which can OFFER TO REWRITE A WEAR — once per piece.
+   The edit is one edit; it settles once. */
+async function addLookPieces(lookId_, itemIds) {
+  const have = new Set(outfitItemMap.get(lookId_) || []);
+  const ids = [...new Set(itemIds)].filter(id => id && !have.has(id) && itemById.has(id));
+  if (!ids.length) return;
   try {
+    const links = ids.map(item_id => ({ outfit_id: lookId_, item_id }));
     await rest("/outfit_items", {
       method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify([{ outfit_id: lookId_, item_id: itemId }]),
+      body: JSON.stringify(links),
     });
-    outfitLinks = outfitLinks.concat([{ outfit_id: lookId_, item_id: itemId }]);
+    outfitLinks = outfitLinks.concat(links);
     buildOutfitIndexes();
-    const it = itemById.get(itemId);
-    await afterLookPieceEdit(lookId_, `${(it && it.name) || "Piece"} added`, null);
+    const msg = ids.length === 1
+      ? `${(itemById.get(ids[0]) || {}).name || "Piece"} added`
+      : `${ids.length} pieces added`;
+    await afterLookPieceEdit(lookId_, msg, null);
   } catch (e) { toast(e.message); }
 }
-/* The add picker. A flat searchable list rather than the builder's folder drill
-   — this is a one-piece correction, and the whole point is fewer taps. */
+/* ⚠️ "＋ Add a piece" IS THE ORDINARY CLOTHING PICKER NOW (2026-08-21, her
+   report: "add a piece for some reason doesn't open the default clothing item
+   adder").
+
+   It was a bespoke one-off: a search box over `items` with no category browsing,
+   no funnel, no status lens, no laundry lens — and a hard `.slice(0, 60)`, so on
+   a 491-piece closet it silently showed the first 60 and nothing said so.
+   Everywhere else that adds clothing (calendar +Clothing, capsule add-items) is
+   built from `pickerPoolBase`/`pickerCatBar`/`pickerSubBar`/`pickerGridHtml` and
+   the shared `pickerFilter`; this is that, in the sheet.
+
+   ⚠️ MULTI-SELECT, because the shared grid is: `itemGridView(..., select:true)`
+   renders selection dots and `togglePick` maintains `_capPick`, so a
+   one-tap-adds-and-closes reading of those tiles would contradict what they look
+   like. Pieces already in the look are excluded from the pool rather than shown
+   ticked — ticking them would imply un-ticking removes them, and removal is the
+   swipe on the row behind this sheet. */
 function openLookAddPieceSheet(lookId_) {
-  let q = "";
+  _capPick = new Set();
+  _capPickFilter = "";
+  _capPickCat = null;
+  _capPickSub = null;
+  _capPickStatus = "Available";
+  _pickTripScope = false;      // adding to a look is a whole-closet question
+  pickerFilter = newFilterState();
+  const have = new Set(outfitItemMap.get(lookId_) || []);
+  const pool = () => pickerPool().filter(i => !have.has(i.id));
   const render = () => {
-    const have = new Set(outfitItemMap.get(lookId_) || []);
-    const pool = items
-      .filter(i => itemStatus(i) === "Available" && !have.has(i.id))
-      .filter(i => !q || itemMatchesText(i, q))
-      .slice(0, 60);
+    const list = pool();
+    const statusChip = (s, l) => `<button class="cap-chip${_capPickStatus === s ? " on" : ""}" data-lap-status="${s}">${l}</button>`;
     $("#logInner").innerHTML = `
       <div class="sheet-hdr">
         <button class="lnk" id="lapCancel">Cancel</button>
         <h2>Add a piece</h2>
-        <span style="width:52px"></span>
+        <button class="lnk" id="lapDone" style="font-weight:700;color:var(--accent)">Add</button>
       </div>
-      <div style="padding:8px 16px 0"><input class="inp" id="lapQ" placeholder="Search your closet…" value="${esc(q)}" autocomplete="off"></div>
-      <div style="padding:8px 10px 20px">${pool.length
-        ? `<div class="igrid">${pool.map(i => `<button class="gtile" data-lap="${esc(i.id)}">
-             <div class="gthumb" data-photo="${esc(i.image_path || "")}"></div>
-             <div class="gname">${esc(i.name || "Untitled")}</div>
-           </button>`).join("")}</div>`
-        : `<div class="center muted" style="padding:28px 0">Nothing matches.</div>`}</div>`;
+      <div style="padding:8px 16px 0;display:flex;gap:8px;align-items:center">
+        <input class="inp" id="lapQ" style="flex:1" placeholder="Search your closet…" value="${esc(_capPickFilter)}" autocomplete="off">
+        ${funnelBtnHtml("lapFilter", pickerFilter, render)}
+      </div>
+      <div class="cap-catbar" style="padding-top:6px">${statusChip("Available", "Available")}${statusChip("Storage", "Storage")}${statusChip("All", "All")}</div>
+      ${laundryLensHtml("lappick", pickerFilter, render)}
+      <div style="padding:8px 14px 2px;font-size:13px;color:var(--muted)" id="capPickCount">${_capPick.size} selected</div>
+      <div style="padding:0 10px 20px" id="lapResults">${pickerCatBar()}${pickerSubBar()}${pickerGridHtml(list)}</div>`;
     hydratePhotos($("#logInner"));
     $("#lapCancel").onclick = () => hideSheet("logSheet");
+    $("#lapDone").onclick = async () => {
+      const ids = [..._capPick];
+      hideSheet("logSheet");
+      if (ids.length) await addLookPieces(lookId_, ids);
+    };
     const inp = $("#lapQ");
     let t;
-    inp.oninput = () => { q = inp.value; clearTimeout(t); t = setTimeout(() => { render(); const a = $("#lapQ"); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); } }, 220); };
-    $("#logInner").querySelectorAll("[data-lap]").forEach(b => b.onclick = async () => {
-      hideSheet("logSheet");
-      await addLookPiece(lookId_, b.dataset.lap);
-      toast("Added to the look");
-    });
+    inp.oninput = () => {
+      _capPickFilter = inp.value;
+      clearTimeout(t);
+      t = setTimeout(() => { render(); const a = $("#lapQ"); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); } }, 220);
+    };
+    const inner = $("#logInner");
+    inner.onclick = (e) => {
+      if (e.target.closest("#lapFilter")) return openFilterSheet(pickerFilter, { onApply: render, title: "Filter & sort", dims: PICKER_FILTER_DIMS, sortable: true });
+      const st = e.target.closest("[data-lap-status]");
+      if (st) { _capPickStatus = st.dataset.lapStatus; _capPickCat = null; _capPickSub = null; return render(); }
+      const pc = e.target.closest("[data-pickcat]");
+      if (pc) { _capPickCat = pc.dataset.pickcat === "__all__" ? null : pc.dataset.pickcat; _capPickSub = null; return render(); }
+      const ps = e.target.closest("[data-picksub]");
+      if (ps) { _capPickSub = ps.dataset.picksub || null; return render(); }
+      const pk = e.target.closest("[data-pick]");
+      if (pk) return togglePick(pk.dataset.pick);   // updates the tile + #capPickCount
+    };
   };
   render();
   showSheet("logSheet");
@@ -4017,35 +4053,6 @@ function wireLookPieceSwipe(root) {
       acts.style.transform = opened ? "translateX(0)" : "translateX(100%)";
     }, { passive: true });
   });
-}
-
-/* Write the default arrangement onto ONE look (2026-08-04). The Settings toggle
-   is a lens over every layout-less look; this is the version that persists, so
-   the look then behaves like any other arranged look — the builder can edit it,
-   and turning the Settings toggle back to Collage leaves it alone.
-   Offered only when there's nothing saved to overwrite. */
-async function applyDefaultLayout(id) {
-  const o = outfitById.get(id);
-  if (!o) return;
-  const its = outfitItems(o).filter(Boolean);
-  if (its.length < 2) { toast("Not enough pieces to arrange"); return; }
-  const prev = Array.isArray(o.layout) ? o.layout : null;
-  const layout = suggestionLayout(its);
-  const write = async (lay) => {
-    o.layout = lay;
-    await rest(`/outfits?id=eq.${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
-      body: JSON.stringify({ layout: lay }),
-    });
-    if (lookId === id && lookView === "details") openLookDetails(id);
-  };
-  try {
-    await write(layout);
-    toast("Arranged — tweak it any time in the builder", { label: "Undo", fn: async () => {
-      try { await write(prev); } catch (e) { toast(e.message); }
-    } });
-  } catch (e) { o.layout = prev; toast(e.message); }
 }
 
 // "When You Wore It" — this look's wear dates; tap a day to set its context.
@@ -4090,14 +4097,15 @@ function openLookWears(id) {
   scrollToTop();
 }
 
-// Duplicate a look (copies name+"copy", layout, formality override, pieces).
+// Duplicate a look (copies name+"copy", formality override, pieces).
+// ⚠️ Not `layout` — nothing reads it; the arrangement follows the pieces.
 async function duplicateLook(id) {
   const o = outfitById.get(id); if (!o) return;
   const itemIds = (outfitItemMap.get(id) || []).slice();
   try {
     const rows = await rest("/outfits?select=*", {
       method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify({ name: o.name ? `${o.name} copy` : null, layout: o.layout || null, formality_override: o.formality_override || null }),
+      body: JSON.stringify({ name: o.name ? `${o.name} copy` : null, formality_override: o.formality_override || null }),
     });
     const no = Array.isArray(rows) ? rows[0] : rows;
     if (!no || !no.id) throw new Error("Could not duplicate look");

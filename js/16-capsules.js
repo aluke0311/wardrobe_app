@@ -1051,14 +1051,14 @@ async function saveComboAsOutfit(pieces) {
   const itemIds = pieces.map(p => p.id);
   const dup = findDuplicateOutfit(itemIds, null);
   if (dup) return dup.id;
-  const layout = suggestionLayout(pieces);
+  // ⚠️ No `layout` — the arrangement is derived at render time (2026-08-21).
   const rows = await rest("/outfits?select=*", {
     method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify({ name: null, layout }),
+    body: JSON.stringify({ name: null }),
   });
   const o = Array.isArray(rows) ? rows[0] : rows;
   if (!o || !o.id) throw new Error("Could not save look");
-  o.layout = layout; outfits.push(o);
+  outfits.push(o);
   const links = itemIds.map(item_id => ({ outfit_id: o.id, item_id }));
   await rest("/outfit_items", {
     method: "POST", headers: { "Content-Type": "application/json", Prefer: "return=minimal" },
