@@ -6,7 +6,7 @@ const SUPABASE_KEY = "sb_publishable_MbsUbmttzon5YNsJgUsDrw_Mg5NMCGy";
 const BUCKET = "wardrobe";
 // Version label shown in the UI: "YYYY-MM-DD vN". N resets to 1 on a new day and
 // increments for each additional push the same day (so same-day pushes differ).
-const APP_VERSION = "2026-08-21 r3";
+const APP_VERSION = "2026-08-21 r4";
 
 /* Every release, newest first (2026-08-04 r1, her ask: "in settings, the most
    recent few changes should be listed, or a new page with all the app updates
@@ -21,6 +21,9 @@ const APP_VERSION = "2026-08-21 r3";
    Notes are user-facing sentences, not commit subjects — this is the only
    place in the app that explains what she paid attention for. */
 const RELEASE_NOTES = [
+  { v: "2026-08-21 r4", notes: [
+    "Report cards stop listing clothes you've archived. Brands \u2192 Madewell was showing an archived pair of jeans under Underperformers, and tapping it took you to a piece you no longer own. The numbers at the top still count archived pieces \u2014 \u201cN of M never worn or archived early\u201d is the most useful thing a brand card says, and it needs them \u2014 but the lists below are only things you still have, and the note now says when they differ",
+  ] },
   { v: "2026-08-21 r3", notes: [
     "The outfit suggester's \u201cBottom half\u201d row now goes past dress-or-not: Anything \u00b7 No dress \u00b7 Pants \u00b7 Shorts \u00b7 Skirt \u00b7 A dress. \u201cPants\u201d means jeans, trousers, leggings and tights together \u2014 the level you actually think in, rather than one subcategory at a time. Still session-only: nothing is remembered or learned",
   ] },

@@ -2797,12 +2797,31 @@ function renderStatsReportDetailPage() {
   const r = rows.find(x => x.label === statsReportSel);
   if (!r) { statsView = "report"; renderStats(); return; }  // filter change can empty the group
 
+  /* ⚠️ THE NUMBERS COUNT ARCHIVED PIECES; THE LISTS DO NOT (2026-08-21 r4, her
+     report: Report cards → Brands → Madewell "actively shows me 'wide leg
+     madewell jeans' under underperformers. I click into those, and they say
+     archived").
+
+     `reportPool()` passes `noStatusDefault: true` on purpose — the dud rate is
+     literally "never worn, OR archived with under REPORT_DUD_WEARS wears", so
+     stripping archived pieces from the pool would silently delete the single
+     most useful thing a brand card says ("you bought five of these and archived
+     three of them barely worn"). That is worth keeping.
+
+     What is NOT worth keeping is listing a piece she has already got rid of as
+     an "underperformer" — it reads as advice about a decision she has already
+     made, and it is tappable, so she lands on an item page that says Archived.
+     So the split is by QUESTION: an aggregate about the past may count archived,
+     a browsable list of pieces may not. The note under the KPIs says so, because
+     two numbers that disagree without explanation are worse than either. */
   const scored = r.items.map(i => ({ i, p: per.get(i.id) }));
-  const worn = scored.filter(x => x.p.count > 0 && x.p.idx != null).sort((a, b) => b.p.idx - a.p.idx);
+  const shown = scored.filter(x => statsItemVisible(x.i));
+  const hiddenN = scored.length - shown.length;
+  const worn = shown.filter(x => x.p.count > 0 && x.p.idx != null).sort((a, b) => b.p.idx - a.p.idx);
   const best = worn.slice(0, 6);
   const bestIds = new Set(best.map(x => x.i.id));
   // Worst: never-worn first (priciest shelf-sitters lead), then lowest index.
-  const never = scored.filter(x => x.p.count === 0)
+  const never = shown.filter(x => x.p.count === 0)
     .sort((a, b) => (parseFloat(b.i.price) || 0) - (parseFloat(a.i.price) || 0));
   const worst = [...never, ...worn.slice().reverse().filter(x => !bestIds.has(x.i.id))].slice(0, 6);
 
@@ -2820,6 +2839,12 @@ function renderStatsReportDetailPage() {
       ? `${r.duds} of ${r.n} item${r.n === 1 ? "" : "s"} never worn or archived early.`
       : "No duds — everything got worn.";
   const giftNote = r.gifts ? ` Cost stats exclude ${r.gifts} gift${r.gifts === 1 ? "" : "s"}.` : "";
+  /* ⚠️ Say it rather than let the counts quietly disagree: the KPIs above are
+     computed over every piece including archived ones (the dud rate needs them),
+     while the grids below are pieces she still owns. */
+  const archNote = hiddenN
+    ? ` ${hiddenN} archived piece${hiddenN === 1 ? " is" : "s are"} counted above but not listed below.`
+    : "";
   // For subcategory the vs-similar index is ×1.0 by construction (items are
   // standardized against these same peers) — show the dud count instead.
   const secondKpi = REPORT_DIMS[field].showIdx === false
@@ -2840,12 +2865,16 @@ function renderStatsReportDetailPage() {
           ${kpi(r.medCPW != null ? money(r.medCPW) : "—", "Median $ / Wear")}${kpi(r.priced ? money(r.spend) : "—", "Total Spent")}
         </div>
       </div>
-      <div class="stats-note">${esc(dudNote)}${esc(giftNote)}</div>
+      <div class="stats-note">${esc(dudNote)}${esc(giftNote)}${esc(archNote)}</div>
     </div>`
     + (best.length ? `<div class="sf-label">Best performers</div>${itemGridView(best.map(x => x.i), { subtitleFn: subFn })}` : "")
     + (worst.length ? `<div class="sf-label">Underperformers</div>${itemGridView(worst.map(x => x.i), { subtitleFn: subFn })}` : "")
     + `<div class="frows" style="padding-top:8px"><button class="frow" id="srAllItems">
-        <div class="fmeta"><div class="fname">All ${r.n} item${r.n === 1 ? "" : "s"}</div></div>
+        ${/* ⚠️ Counts what it will actually SHOW. Labelling this with `r.n` — the
+              group total, archived included — sent her to a grid holding fewer
+              things than the row promised, which is the same leak from a
+              second door. */""}
+        <div class="fmeta"><div class="fname">All ${shown.length} item${shown.length === 1 ? "" : "s"}</div></div>
         <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
       </button></div><div style="height:24px"></div>`;
 
@@ -2855,9 +2884,9 @@ function renderStatsReportDetailPage() {
     btn.addEventListener("click", () => { if (btn.dataset.item) openItemFromStats(btn.dataset.item); });
   });
   $("#srAllItems").addEventListener("click", () => {
-    const counts = new Map(scored.map(x => [x.i.id, x.p.count]));
+    const counts = new Map(shown.map(x => [x.i.id, x.p.count]));
     statsView = "grid";
-    statsGridItems = scored.slice().sort((a, b) => b.p.count - a.p.count).map(x => x.i);
+    statsGridItems = shown.slice().sort((a, b) => b.p.count - a.p.count).map(x => x.i);
     statsGridTitle = r.label;
     statsFromReport = true; statsFromField = false; statsFromPalette = false; statsListKey = null;
     statsSubtitleFn = (i) => { const n = counts.get(i.id) || 0; return `${n} wear${n === 1 ? "" : "s"}`; };

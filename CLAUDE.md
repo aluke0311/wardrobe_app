@@ -317,6 +317,52 @@ jeans etc are all pants"*).
   `padding:0` because the wrapper already supplies the gutter. Found by measuring
   the rendered chips, not by reading.
 
+**2026-08-21 r4 — "NOTHING ARCHIVED IN STATS" WAS AN OVERCLAIM, AND THE REPORT
+CARDS PROVED IT. Selftest 315 → **316**, run GREEN; the new case
+mutation-checked red in BOTH directions.** Her report: Report cards → Brands →
+Madewell *"actively shows me 'wide leg madewell jeans' under underperformers. I
+click into those, and they say archived."*
+
+⚠️ **r1 FIXED THE PAGES BUILT FROM WEAR HISTORY AND I THEN DESCRIBED IT AS
+COVERING THE WHOLE STATS SECTION.** It did not. The report cards run off
+**`reportPool()`**, a second pool three functions away that passes
+`noStatusDefault: true` **on purpose** — and I had read that function during the
+r1 exploration, noted the comment, and still generalised the claim. **The lesson
+is about the CLAIM, not the code: "I fixed the readers I found" is not "nothing
+archived, anywhere."**
+
+- ⚠️ **THE POOL IS RIGHT AND STAYS.** `duds` is literally *"never worn, OR
+  archived with under `REPORT_DUD_WEARS` wears"* (the only place `itemStatus` is
+  consulted in `buildReportStats`), so stripping archived pieces would silently
+  delete the most useful thing a brand card says — "you bought five of these and
+  archived three barely worn". The split is **by QUESTION**: an aggregate about
+  the past may count archived; a browsable, TAPPABLE list may not.
+- **`shown` (= `scored` filtered by `statsItemVisible`) drives Best performers,
+  Underperformers and the "All N items" drill-in**; `r.n` / `r.duds` / the KPIs
+  keep the full group. ⚠️ **The "All N items" row counts what it will SHOW** —
+  labelling it `r.n` sent her to a grid smaller than the row promised, the same
+  leak through a second door.
+- ⚠️ **The note says when they differ** ("1 archived piece is counted above but
+  not listed below"). Two counts that disagree with no explanation are worse
+  than either alone.
+- ⚠️ **THE CASE RENDERS THE REAL PAGE.** `reportPool` and `statsItemVisible` were
+  each correct throughout; the defect was the call site that never combined
+  them — the r1 case asked `contextTopItems` directly and could never have seen
+  this. Same lesson as the Tomorrow-card pool case and the suggester overlap:
+  **when two correct functions are wired together wrongly, only driving the real
+  path can see it.** It asserts BOTH directions — no archived tile in either
+  grid, AND `n`/`duds` still count it — so "simplify reportPool into statsPool"
+  goes red too (verified; it trips the Storage assertion first).
+- **SWEPT AFTERWARDS RATHER THAN REASONED, which is what r1 should have done:**
+  all **16** stats views rendered with archived pieces deliberately made the
+  most-worn in the fixture, plus all **11** smart lists and all **9** field
+  pages — **zero** archived items rendered as a tappable target anywhere. That
+  sweep is the evidence for the claim; a later round needn't redo it.
+- ⚠️ **`statsPool()` remains Available-ONLY** (Storage excluded) and that is
+  unchanged and deliberate — it is the stricter reading of *"by default only show
+  available"*, and she has not complained about those pages. Only the
+  wear-history floor and this one are Available **+ Storage**.
+
 **2026-08-21 r1 — SEVEN ASKS: THE CANVAS, THE STATS POOL, AND PLANNING AHEAD.
 Selftest 313 → **313** (5 removed with their decisions, 5 added), run GREEN; all
 5 new cases mutation-checked red in the same session, and 2 existing cases
@@ -4053,7 +4099,7 @@ writes a new column/table before its migration is confirmed.**
 ## Conventions
 
 - **`APP_VERSION`** format: `YYYY-MM-DD rN`. New day = `r1`; same day = increment `rN`.
-  Currently `2026-08-21 r3`. ⚠️ The version lives in **THREE** places that must
+  Currently `2026-08-21 r4`. ⚠️ The version lives in **THREE** places that must
   stay in lockstep — the deploy skill does all three, the selftest pins all three:
   1. `APP_VERSION` in `js/01-config.js`;
   2. `<meta name="app-version">` in `index.html` (read by `checkForNewVersion`,
@@ -4400,7 +4446,7 @@ index.html — always load with a fresh query string (`/?v=<anything>`).
 it loads the app in an iframe and asserts the derivation logic (trip phases,
 sort keys incl. the legacy `"color"` mapping, laundry dirty/overrides,
 formality, recap math, exclusions, version-lockstep). Summary line = `N/N
-passed` — currently **315/315** (2026-08-21 r3, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
+passed` — currently **316/316** (2026-08-21 r4, RUN GREEN — it DROPPED from 428 when the pack solver's 121 cases went with the solver; a shrinking suite can be a good sign). The count went 124 → 131 → 152 over 2026-07-26; it had earlier DROPPED from 136 when r19 deleted the guessing layer and its cases — a shrinking suite can be a good sign, say so plainly rather than padding. **It is a deploy gate for logic
 changes** (skipped for CSS/copy/version-only deploys, which get a JavaScriptCore
 parse-check instead) — the trigger list is step 0 of the `deploy-wardrobe`
 skill. **Add a test whenever a session's ad-hoc console verification proves

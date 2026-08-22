@@ -1439,6 +1439,76 @@ async function run() {
       W.wears = saved.wears; W.statsDateRange = saved.range;
     }
   });
+  /* ⚠️ THE REPORT CARDS LEAKED ARCHIVED PIECES, AND THE FIRST FIX MISSED THEM
+     (2026-08-21 r4, her report: Report cards → Brands → Madewell "actively shows
+     me 'wide leg madewell jeans' under underperformers. I click into those, and
+     they say archived").
+
+     r1 put an archive floor on the pages built from WEAR HISTORY and I then
+     described it as covering the whole stats section. It did not: the report
+     cards run off `reportPool()`, which passes `noStatusDefault: true` on
+     purpose so the dud rate can see what got archived — a different pool, with
+     its own justification, three functions away.
+
+     ⚠️ THIS CASE RENDERS THE REAL PAGE rather than asking the pool. Both
+     `reportPool` and `statsItemVisible` were individually correct the whole
+     time; the defect lived in the call site that never combined them, which is
+     exactly the class of bug a unit-level assertion walks past (same lesson as
+     the Tomorrow-card pool case and the suggester overlap).
+     ⚠️ It asserts BOTH directions: no archived piece in any grid, and the dud
+     count still counts it. Asserting only the first would pass if someone
+     "simplified" reportPool into statsPool and quietly broke the dud rate. */
+  t("report cards count archived pieces but never list them", () => {
+    const saved = { items: W.items, byId: W.itemById, wears: W.wears, outfits: W.outfits,
+                    links: W.outfitLinks, view: W.statsView, field: W.statsReportField,
+                    sel: W.statsReportSel, filter: W.statsFilter, range: W.statsDateRange };
+    try {
+      const mk = (id, name, status, price) => ({ id, name, brand: "Madewell", category: "Bottoms",
+        subcategory: "Jeans", status, image_path: "", color_family: "Blue", formality: [2, 3],
+        season: ["Summer", "Fall", "Winter", "Spring"], price, acquisition: "New",
+        purchase_date: "2024-01-01" });
+      const its = [mk("m1", "Wide leg jeans", "Archive", 128), mk("m2", "Straight jeans", "Available", 118),
+                   mk("m3", "Crop jeans", "Storage", 98), mk("m4", "Shelf sitter", "Available", 148)];
+      W.items = its; W.itemById = new Map(its.map(i => [i.id, i]));
+      W.outfits = []; W.outfitLinks = [];
+      W.wears = [];
+      // The archived pair is worn twice and long ago — a textbook "archived early" dud,
+      // and low-index enough that it would otherwise LEAD the underperformers list.
+      for (let k = 0; k < 2; k++) W.wears.push({ id: "a" + k, item_id: "m1", worn_on: D(-(200 + k * 10)), context: [] });
+      for (let k = 0; k < 20; k++) W.wears.push({ id: "b" + k, item_id: "m2", worn_on: D(-(5 + k * 8)), context: [] });
+      W.wears.push({ id: "c0", item_id: "m3", worn_on: D(-30), context: [] });
+      W.buildOutfitIndexes(); W.buildOutfitWearMap();
+      W.statsFilter = W.newFilterState(); W.statsDateRange = "all";
+      W.switchTab("stats");
+      W.statsView = "report-detail"; W.statsReportField = "brand"; W.statsReportSel = "Madewell";
+      W.renderStats();
+      const body = W.document.querySelector("#statsBody");
+      const listed = [...body.querySelectorAll(".gtile")].map(b => b.dataset.item);
+      if (listed.includes("m1")) return `the archived piece is still listed: ${JSON.stringify(listed)}`;
+      if (!listed.includes("m3")) return "Storage was dropped too — she asked to keep it";
+      if (!listed.includes("m2") || !listed.includes("m4")) return `Available pieces missing: ${JSON.stringify(listed)}`;
+      // The "All N items" row is the second door into the same grid.
+      const allRow = body.querySelector("#srAllItems");
+      if (!allRow) return "no All-items row";
+      if (!/All 3 items/.test(allRow.innerText)) return `All-items row promises the wrong count: "${allRow.innerText.trim()}"`;
+      allRow.click();
+      const after = [...W.document.querySelector("#statsBody").querySelectorAll(".gtile")].map(b => b.dataset.item);
+      if (after.includes("m1")) return "the All-items grid still leaks the archived piece";
+      // ...and the number it is counted in survives.
+      const { rows } = W.buildReportStats("brand");
+      const row = rows.find(x => x.label === "Madewell");
+      if (!row) return "the Madewell group vanished";
+      if (row.n !== 4) return `the group stopped counting archived pieces: n=${row.n}`;
+      return row.duds === 2 ? true : `dud count lost the archived piece: duds=${row.duds}`;
+    } finally {
+      W.items = saved.items; W.itemById = saved.byId; W.wears = saved.wears;
+      W.outfits = saved.outfits; W.outfitLinks = saved.links;
+      W.statsView = saved.view; W.statsReportField = saved.field; W.statsReportSel = saved.sel;
+      W.statsFilter = saved.filter; W.statsDateRange = saved.range;
+      W.buildOutfitIndexes(); W.buildOutfitWearMap();
+    }
+  });
+
   t("buildRotationStats: per-item wear DAYS ride along for the drill-in", () => {
     const pool = [{ id: "a", status: "Available" }, { id: "b", status: "Available" }];
     const ws = [{ item_id: "a", worn_on: D(-5) }, { item_id: "a", worn_on: D(-5) },  // same day twice
